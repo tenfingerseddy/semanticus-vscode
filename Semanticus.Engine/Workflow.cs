@@ -36,8 +36,21 @@ namespace Semanticus.Engine
         public string Source { get; set; }             // "user" (.semanticus/workflows) | "stock" (shipped library)
         public string FilePath { get; set; }
         public string Error { get; set; }              // parse failure text (null = parsed clean)
+        /// <summary>A required stock workflow whose saved revision this install no longer ships: listed with the
+        /// reason in <see cref="Error"/>, never readable or runnable. Internal, so it never reaches either door.</summary>
+        internal bool PinUnavailable { get; set; }
         public WorkflowStep[] Steps { get; set; } = Array.Empty<WorkflowStep>();
         public SlotDef[] Slots { get; set; } = Array.Empty<SlotDef>();   // §10.3 template fill-ins (empty for a workflow); the body references each as {{name}}
+
+        // ---- format v3 (composer contract §1.2). Empty in a v1 or v2 file, which cannot carry them.
+
+        /// <summary>"Notes for your assistant": house style for every blank in this workflow, 2000 characters
+        /// or fewer. Sent with every request and frozen at run start.</summary>
+        public string AssistantNotes { get; set; }
+
+        /// <summary>"Template inputs, asked each time it starts." Asked on every run, in "Before it runs".
+        /// Not the same as <see cref="Slots"/>, which a template asks once, at instantiation.</summary>
+        public WorkflowQuestion[] Inputs { get; set; } = Array.Empty<WorkflowQuestion>();
 
         /// <summary>Unknown frontmatter keys, preserved verbatim (the parser ignores them for run semantics but
         /// keeps them here for forward-compat + provenance). A DISTILLED workflow (Learning Loop L3) carries
@@ -110,6 +123,106 @@ namespace Semanticus.Engine
         /// <summary>True when the id came from an explicit `id:` rather than the heading number. The canvas
         /// and the upgrader both need to tell "addressed by name" from "addressed by position".</summary>
         public bool HasExplicitId { get; set; }
+
+        // ---- format v3 (composer contract §1.3-§1.7), all from the `yaml step` fence.
+
+        /// <summary>Who does the step: "semanticus" (the engine runs <see cref="Action"/>), "assistant" (the
+        /// assistant does it, as every guided step always has), or "person" (the run stops and asks). A v1 or
+        /// v2 step is a guided step, which is "assistant" in the composer's words (contract §11.2), so that
+        /// is the default here. The v3 reader sets "semanticus" when a v3 step leaves the key out.</summary>
+        public string Performer { get; set; } = WorkflowPerformers.Assistant;
+
+        /// <summary>"change" or "after" (§1.6), as written or derived from the action's op; "prepare" for
+        /// an action that only reads. Null for a step with no action and no phase written.</summary>
+        public string Phase { get; set; }
+
+        /// <summary>True when the file wrote <c>phase:</c>; false when it was derived from the op.</summary>
+        public bool PhaseWritten { get; set; }
+
+        /// <summary>The op Semanticus runs and its arguments. Only on a <c>performer: semanticus</c> step.</summary>
+        public StepAction Action { get; set; }
+
+        public WorkflowQuestion[] Questions { get; set; } = Array.Empty<WorkflowQuestion>();
+        public WorkflowBlank[] Blanks { get; set; } = Array.Empty<WorkflowBlank>();
+
+        /// <summary>The v3 <c>instructions:</c> key, "Brief for your assistant", 2000 characters or fewer.
+        /// Not <see cref="Instructions"/>, which is the step's markdown body and has been since v1.</summary>
+        public string Brief { get; set; }
+
+        public WorkflowCheck[] Checks { get; set; } = Array.Empty<WorkflowCheck>();
+    }
+
+    /// <summary>The three performers a v3 step may name (contract §1.3).</summary>
+    public static class WorkflowPerformers
+    {
+        public const string Semanticus = "semanticus";
+        public const string Assistant = "assistant";
+        public const string Person = "person";
+        public static readonly string[] All = { Semanticus, Assistant, Person };
+    }
+
+    /// <summary>Composer contract 1.3: the op a <c>performer: semanticus</c> step runs, and its arguments in file order.</summary>
+    public sealed class StepAction
+    {
+        public string Op { get; set; }
+        public ActionArgument[] Arguments { get; set; } = Array.Empty<ActionArgument>();
+        public int Line { get; set; }
+
+        public ActionArgument Argument(string name) =>
+            Arguments.FirstOrDefault(a => string.Equals(a.Name, name, StringComparison.Ordinal));
+    }
+
+    /// <summary>One argument of an action: a single value, or a flat list for an op parameter that takes one
+    /// (<c>set_display_folder.refs</c>). A value is a literal, or carries <c>{{inputs.x}}</c>,
+    /// <c>{{questions.x}}</c>, <c>{{blanks.x}}</c> or <c>{{steps.id.result}}</c> references.</summary>
+    public sealed class ActionArgument
+    {
+        public string Name { get; set; }
+        public string Value { get; set; }
+        public string[] Values { get; set; }
+        public int Line { get; set; }
+    }
+
+    /// <summary>Composer contract 1.4: a question, on a step or in the frontmatter's <c>inputs:</c>, with who answers it.</summary>
+    public sealed class WorkflowQuestion
+    {
+        public string Name { get; set; }
+        public string Question { get; set; }
+        public string Type { get; set; } = "text";         // text | enum | number | objectRef
+        public string Required { get; set; } = "required"; // required | optional
+        public string By { get; set; } = "you";            // you | assistant | semanticus
+        public string[] Values { get; set; } = Array.Empty<string>();   // the choices of an enum
+        public string From { get; set; }                   // an enumerator (OpParameterKinds.Enumerators), with an optional ':argument'
+        public string Jev { get; set; }                    // a decision point id; registering one is L5's call
+        public string Default { get; set; }
+        public int Line { get; set; }
+    }
+
+    /// <summary>Composer contract 1.5: text a step needs that neither Semanticus nor Jev can write.</summary>
+    public sealed class WorkflowBlank
+    {
+        public string Name { get; set; }
+        public string Kind { get; set; }                   // dax | description | m | name | choice
+        public string Fills { get; set; }                  // the action argument the text becomes
+        public string By { get; set; } = "assistant";      // assistant | you (a person may always write it)
+        public string[] DependsOn { get; set; } = Array.Empty<string>();
+        public int? MaxChars { get; set; }
+        public string Choices { get; set; }                // an enumerator; required for kind: choice
+        public string Generator { get; set; }              // a generator id (OpParameterKinds.Generators)
+        public int Line { get; set; }
+    }
+
+    /// <summary>Composer contract 1.7: a check with the phase it runs in.</summary>
+    public sealed class WorkflowCheck
+    {
+        public string Kind { get; set; }
+        public string Phase { get; set; }                  // before | written | after
+        public string Target { get; set; }
+        public string Min { get; set; }                    // kept as written; the reader proved it is a number
+        public string Max { get; set; }
+        public string[] Of { get; set; } = Array.Empty<string>();
+        public string When { get; set; }
+        public int Line { get; set; }
     }
 
     /// <summary>§1.6 — a step repeated once per item in a list. Exactly one of <see cref="InLiteral"/> and
@@ -1107,6 +1220,8 @@ namespace Semanticus.Engine
                 Steps = (def.Steps ?? Array.Empty<WorkflowStep>()).Select(FreezeStep).ToArray(),
                 Slots = (def.Slots ?? Array.Empty<SlotDef>()).Select(FreezeSlot).ToArray(),
                 Provenance = CopyMap(def.Provenance, StringComparer.Ordinal),
+                AssistantNotes = def.AssistantNotes,
+                Inputs = (def.Inputs ?? Array.Empty<WorkflowQuestion>()).Select(FreezeQuestion).ToArray(),
             };
         }
 
@@ -1133,6 +1248,34 @@ namespace Semanticus.Engine
                 With = CopyMap(step.Call.With, StringComparer.Ordinal),
                 Returns = Copy(step.Call.Returns),
             },
+            Performer = step.Performer,
+            Phase = step.Phase,
+            PhaseWritten = step.PhaseWritten,
+            Action = step.Action == null ? null : new StepAction
+            {
+                Op = step.Action.Op, Line = step.Action.Line,
+                Arguments = (step.Action.Arguments ?? Array.Empty<ActionArgument>()).Select(a => a == null ? null : new ActionArgument
+                {
+                    Name = a.Name, Value = a.Value, Values = Copy(a.Values), Line = a.Line,
+                }).ToArray(),
+            },
+            Questions = (step.Questions ?? Array.Empty<WorkflowQuestion>()).Select(FreezeQuestion).ToArray(),
+            Blanks = (step.Blanks ?? Array.Empty<WorkflowBlank>()).Select(b => b == null ? null : new WorkflowBlank
+            {
+                Name = b.Name, Kind = b.Kind, Fills = b.Fills, By = b.By, DependsOn = Copy(b.DependsOn),
+                MaxChars = b.MaxChars, Choices = b.Choices, Generator = b.Generator, Line = b.Line,
+            }).ToArray(),
+            Brief = step.Brief,
+            Checks = (step.Checks ?? Array.Empty<WorkflowCheck>()).Select(c => c == null ? null : new WorkflowCheck
+            {
+                Kind = c.Kind, Phase = c.Phase, Target = c.Target, Min = c.Min, Max = c.Max, Of = Copy(c.Of), When = c.When, Line = c.Line,
+            }).ToArray(),
+        };
+
+        private static WorkflowQuestion FreezeQuestion(WorkflowQuestion q) => q == null ? null : new WorkflowQuestion
+        {
+            Name = q.Name, Question = q.Question, Type = q.Type, Required = q.Required, By = q.By, Values = Copy(q.Values),
+            From = q.From, Jev = q.Jev, Default = q.Default, Line = q.Line,
         };
 
         private static GateSpec FreezeGate(GateSpec gate) => gate == null ? null : new GateSpec
@@ -1260,6 +1403,8 @@ namespace Semanticus.Engine
         public int StepIndex { get; set; }
         public string Status { get; set; } = "active"; // active | completed | aborted
         public string AbortReason { get; set; }
+        /// <summary>The draft this run is the guided sub-run of (lane l9-finish), or null.</summary>
+        public string DraftId { get; set; }
         public string StartedUtc { get; set; } = DateTime.UtcNow.ToString("o");
         public string FinishedUtc { get; set; }
         public string Origin { get; set; }
@@ -1395,6 +1540,10 @@ namespace Semanticus.Engine
         public Dictionary<string, string> ObjectRefAliases { get; }
             = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public WorkflowCertificate Certificate { get; set; }
+
+        /// <summary>Who submitted or skipped each step ("you", "assistant"), by step instance id, for the run's report
+        /// snapshot in History (contract 8.8). Written under the engine's workflow gate.</summary>
+        public Dictionary<string, string> SubmittedBy { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
         /// <summary>The public route in: it DEEP-FREEZES the supplied definition and builds a one-definition
         /// closure over it, so a direct caller or an old fixture cannot create a run over a mutable definition
@@ -1552,6 +1701,13 @@ namespace Semanticus.Engine
         public bool Gated { get; set; }                // any enforced gate → starting it is Pro
         public string[] Triggers { get; set; } = Array.Empty<string>();
         public string Error { get; set; }
+        // Contract 21.2 (starters). Starter: a shipped file you copy with Use (instantiate_workflow_template); your own
+        // copies are not starters. Required: a team rule (a binding) names this workflow. ReplacesRequired: your
+        // project copy shadows the shipped version a team rule requires, which wins resolution outright, so the
+        // row says so ("Replaces a required workflow"); the engine never rewrites or deletes that copy.
+        public bool Starter { get; set; }
+        public bool Required { get; set; }
+        public bool ReplacesRequired { get; set; }
     }
 
     /// <summary>list_workflow_templates entry — the shelf summary (§10.5): name/title/whenToUse/version/source +
@@ -1600,6 +1756,13 @@ namespace Semanticus.Engine
         public string Title { get; set; }
         public string Instructions { get; set; }
         public GateInput[] Questions { get; set; } = Array.Empty<GateInput>();
+        /// <summary>F12: the questions whose answer Semanticus reads as data (a check's probe, its anchors, the grid and
+        /// open grains a proof runs over, a countersign, the certificate claim). Their shape is exact, so the assistant
+        /// fills them; the Studio shows them as the assistant's, not as a box for the person. Null, and so omitted on
+        /// the wire, when there are none, which keeps a plain run's payload byte-identical (WorkflowCallTests Case16).</summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string[] AssistantFills { get; set; }
         public string[] VerifyKinds { get; set; } = Array.Empty<string>();
         public string EffectiveStrictness { get; set; }
         public string[] Ops { get; set; } = Array.Empty<string>();  // the step's declared action chain
@@ -1662,6 +1825,12 @@ namespace Semanticus.Engine
         public int WorkflowVersion { get; set; }
         public string Status { get; set; }
         public string AbortReason { get; set; }
+        /// <summary>The draft this run is the guided sub-run of (lane l9-finish), or null. Such a run has no Plan row or
+        /// header chip of its own: the draft's row carries it, and the draft's step numbers are the ones a person sees.</summary>
+        // Absent when null under BOTH serializers, so a run that is no draft's sub-run keeps its view byte for byte
+        // (WorkflowCallTests Case16 pins the no-call view under System.Text.Json and Newtonsoft alike).
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)] public string DraftId { get; set; }
         public string StartedUtc { get; set; }
         public string FinishedUtc { get; set; }
         public string ModelName { get; set; }
@@ -1722,29 +1891,38 @@ namespace Semanticus.Engine
     {
         private const int MaxHeld = 8;
         private readonly List<WorkflowRunState> _runs = new List<WorkflowRunState>();
-        private int _seq;
 
         /// <summary>Unchanged signature, and it still reaches the PUBLIC run constructor, so a direct caller
         /// gets the same freeze a direct construction gets.</summary>
         public WorkflowRunState Start(WorkflowDef def, string settingsStrictness, string globalStrictness = null) =>
-            Add(seq => new WorkflowRunState("wfr-" + seq, def, settingsStrictness, globalStrictness));
+            Add(id => new WorkflowRunState(id, def, settingsStrictness, globalStrictness));
 
         /// <summary>[T220] The production route: the start path has already frozen, validated and entitled the
         /// complete reachable closure, and the run retains that same object.</summary>
         internal WorkflowRunState Start(WorkflowOwnerClosure closure, string globalStrictness = null,
-            Action<WorkflowRunState> initialize = null) => Add(seq =>
+            Action<WorkflowRunState> initialize = null) => Add(id =>
             {
-                var run = new WorkflowRunState("wfr-" + seq, closure, globalStrictness);
+                var run = new WorkflowRunState(id, closure, globalStrictness);
                 initialize?.Invoke(run);
                 return run;
             });
 
-        private WorkflowRunState Add(Func<int, WorkflowRunState> create)
+        // Random, not a counter (contract 1.3 and 8.8, Sol 24 Sep): a finished run's report outlives the engine in the
+        // History, and a counter restarted at 1 would give the next session's first run the same id as the last one's.
+        private static string NewRunId()
+        {
+            Span<byte> b = stackalloc byte[4];
+            System.Security.Cryptography.RandomNumberGenerator.Fill(b);
+            return "wfr-" + Convert.ToHexString(b).ToLowerInvariant();
+        }
+
+        private WorkflowRunState Add(Func<string, WorkflowRunState> create)
         {
             if (_runs.Count(r => r.Status == "active") >= MaxHeld)
                 throw new InvalidOperationException($"{MaxHeld} workflow runs are already active. Finish or abort one (abort_workflow) before starting another.");
-            var run = create(_seq + 1);
-            _seq++;
+            string id;
+            do id = NewRunId(); while (_runs.Any(r => r.RunId == id));
+            var run = create(id);
             _runs.Add(run);
             if (_runs.Count > MaxHeld)
             {
@@ -1766,7 +1944,7 @@ namespace Semanticus.Engine
 
         public WorkflowRunState Require(string runId) => Get(runId)
             ?? throw new InvalidOperationException(string.IsNullOrWhiteSpace(runId)
-                ? "No workflow run exists. Start a playbook first."
+                ? "No workflow run exists. Start a workflow first."
                 : $"Workflow run '{runId}' not found.");
     }
 }

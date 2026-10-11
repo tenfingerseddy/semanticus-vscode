@@ -13,7 +13,7 @@ namespace Semanticus.Tests
     /// <summary>
     /// rename_object cascades into the linguistic schema (docs/bug-set_synonyms-duplicate-name-collision.md,
     /// follow-up §): a rename rewrites DAX references but used NOT to touch the culture's LSDL, leaving the renamed
-    /// object's entity bound to the OLD name — an orphan the next set_synonyms/enable_qna prunes, silently deleting
+    /// object's entity bound to the OLD name — an orphan the next set_synonyms/create_linguistic_schema prunes, silently deleting
     /// authored synonyms one write later. Pins: the cascade follows columns/measures/tables/hierarchies/levels AND
     /// relationship bindings (the whole-document walk); the orphan-then-prune data loss no longer happens; the cascade
     /// rides the shared undo timeline; it is NON-THROWING per culture (a validator-refused culture is left untouched
@@ -74,7 +74,7 @@ namespace Semanticus.Tests
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client", "account holder" }, null, "agent");
 
                 // The rename: the fixup seam that used to orphan the linguistic entity.
@@ -103,7 +103,7 @@ namespace Semanticus.Tests
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
 
                 await engine.RenameObjectAsync("table:Work Pack", "Work Package", "agent");
@@ -125,7 +125,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 await engine.CreateHierarchyAsync("table:Work Pack", "Geography", new[] { "Region" }, "human");
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("hierarchy:Work Pack/Geography", new[] { "geo" }, null, "agent");
 
                 await engine.RenameObjectAsync("hierarchy:Work Pack/Geography", "Geo Hierarchy", "agent");
@@ -140,13 +140,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Undo_after_a_rename_restores_the_original_lsdl()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
                 var before = await ContentAsync(sessions);
 
@@ -158,13 +159,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Apply_plan_rename_also_cascades_the_linguistic_schema()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
 
                 // apply_plan's rename item routes through the same Session.Rename seam now. Rename is an opt-in kind,
@@ -204,15 +206,19 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Describe_collisions_distinguishes_refused_exact_from_write_through_fold()
+        public async Task Describe_collisions_names_fields_copilot_cannot_tell_apart_and_refuses_nothing()
         {
+            // 27 Sep ruling: no synonym write is refused because two visible fields read alike (nothing shows the
+            // validator refusing that), and the plural fold (our own approximation) is no longer a clash. The advisory
+            // names the Copilot ambiguity and says writes still work.
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.CreateColumnAsync("table:Task", "Client Name", "String", "Client Name", "human");   // exact dup of Work Pack[Client Name]
+                await engine.CreateColumnAsync("table:Task", "Client Name", "String", "Client Name", "human");   // same name as Work Pack[Client Name]
                 await engine.CreateColumnAsync("table:Work Pack", "Cycle Months", "Int64", "Cycle Months", "human");
-                await engine.CreateColumnAsync("table:Task", "Cycle Month", "Int64", "Cycle Month", "human");     // fold-only vs Cycle Months
+                await engine.CreateColumnAsync("table:Task", "Cycle Month", "Int64", "Cycle Month", "human");     // a plural apart: not a clash
                 await InjectAsync(sessions, Lsdl("",
                     Entity("work_pack.client_name", "Work Pack", "Client Name"),
                     Entity("task.client_name", "Task", "Client Name"),
@@ -224,21 +230,20 @@ namespace Semanticus.Tests
 
                 Assert.NotNull(msg);
                 Assert.Contains("client name", msg);
-                Assert.Contains("refuses writes until you rename or hide", msg);   // exact tier: hard refusal
-                Assert.Contains("After plural folding", msg);                      // fold tier: write proceeds
-                Assert.Contains("still writes", msg);
-                Assert.Contains("cycle month", msg);
+                Assert.Contains("Synonym writes still work", msg);
+                Assert.DoesNotContain("refuses", msg);
+                Assert.DoesNotContain("cycle month", msg);
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Describe_collisions_mixed_group_names_only_the_exact_pair_as_refused()
+        public async Task Describe_collisions_names_the_same_named_pair_and_not_its_plural_neighbour()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                // One FOLDED group of three: an exact pair ('Cycle Months' on two tables) plus a fold-only singular
-                // ('Cycle Month'). Only the exact pair is refused; the singular belongs in the warning sentence.
+                // 'Cycle Months' on two tables is one clash; 'Cycle Month' is a plural apart and is not in it.
                 await engine.CreateTableAsync("Task Action", "human");
                 await engine.CreateColumnAsync("table:Work Pack", "Cycle Months", "Int64", "Cycle Months", "human");
                 await engine.CreateColumnAsync("table:Task Action", "Cycle Months", "Int64", "Cycle Months", "human");
@@ -252,24 +257,20 @@ namespace Semanticus.Tests
                     LsdlSynonyms.DescribeCollisions(m, m.Cultures["en-US"]));
 
                 Assert.NotNull(msg);
-                var split = msg.IndexOf("After plural folding", StringComparison.Ordinal);
-                Assert.True(split > 0, "expected both an exact and a fold sentence: " + msg);
-                var refused = msg.Substring(0, split);
-                var folded = msg.Substring(split);
-                Assert.Contains("'Work Pack'[Cycle Months]", refused);      // the exact pair is the refused set
-                Assert.Contains("'Task Action'[Cycle Months]", refused);
-                Assert.DoesNotContain("'Task'[Cycle Month]", refused);      // the singular is NOT claimed refused
-                Assert.Contains("'Task'[Cycle Month]", folded);             // it lands in the write-through warning
+                Assert.Contains("'Work Pack'[Cycle Months]", msg);
+                Assert.Contains("'Task Action'[Cycle Months]", msg);
+                Assert.DoesNotContain("'Task'[Cycle Month]", msg);
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cascade_commit_failure_leaves_that_culture_untouched_warns_and_the_rename_succeeds()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
                 // A second culture proves per-culture isolation: only the faulted one is left untouched.
                 await InjectAsync(sessions, Lsdl("", Entity("work_pack.client_name", "Work Pack", "Client Name")), "fr-FR");
@@ -302,13 +303,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Batch_end_retry_recovers_a_transiently_refused_cascade()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Region", new[] { "area" }, null, "agent");
                 await engine.SetSynonymsAsync("column:Task/Task Status", new[] { "state" }, null, "agent");
 
@@ -344,13 +346,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Set_property_name_write_cascades_the_lsdl_and_rewrites_dax_like_rename_object()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
                 await engine.CreateMeasureAsync("table:Work Pack", "Clients", "COUNTROWS(FILTER('Work Pack', 'Work Pack'[Client Name] <> BLANK()))", "agent");
 
@@ -373,7 +376,7 @@ namespace Semanticus.Tests
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Region", new[] { "area" }, null, "agent");
                 await engine.SetSynonymsAsync("column:Task/Task Status", new[] { "state" }, null, "agent");
 
@@ -390,6 +393,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Concurrent_mutations_each_receive_only_their_own_cascade_warning()
         {
@@ -400,7 +404,7 @@ namespace Semanticus.Tests
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
 
                 // Caller B is an apply_plan with NO rename item (a plain set_description) — the exact case that, under
@@ -432,6 +436,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Apply_plan_attributes_a_cascade_warning_to_the_exact_renamed_object_not_the_first_same_named_item()
         {
@@ -442,7 +447,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 await engine.CreateColumnAsync("table:Task", "Client Name", "String", "Client Name", "human");   // same name, different table
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
                 // en-US carries Work Pack's entity; fr-FR carries ONLY Task's. Faulting fr-FR makes ONLY the second
                 // rename (Task) warn — and that warning must attach to the Task item, not the first same-named item.

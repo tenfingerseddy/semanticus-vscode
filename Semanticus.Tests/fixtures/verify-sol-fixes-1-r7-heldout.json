@@ -1,0 +1,1844 @@
+{
+ "what": "m11/sol-fixes-1 round 7 held-out set (the adding rule version 5), written blind by a separate helper session and labelled by the verifier before any run",
+ "lane": "m11/sol-fixes-1 at 79769b3d",
+ "writer": {
+  "command": "claude -p --tools \"\" --safe-mode --strict-mcp-config --no-session-persistence --model claude-opus-5-5 --output-format text < writer-input.md (cwd: an empty folder; the session variables of the calling session unset)",
+  "input": "verify-sol-fixes-1-r7-heldout-writer-input.md",
+  "input_sha256": "255e3e1fc00ecc9d63c6510efc02c36901330c6d5e742b95e79934e99997c287",
+  "output": "verify-sol-fixes-1-r7-heldout-writer-output.jsonl",
+  "output_sha256": "0c98c24ee128cc834448ad7fca3791874d36b72f243a8754d7f35b0ed892c2a5",
+  "ran": "2026-09-29T22:42:24+10:00 to 2026-09-29T22:45:17+10:00, exit 0, empty stderr"
+ },
+ "scoring": {
+  "must-not-keep": "harm = ANY kept add step in the final draft (none of the 60 asks for another add); 0 allowed in every mode, both doors",
+  "should-keep": "kept = every add in want is present and kept; offered = every add in want is present, kept or unticked; bar per mode over both doors: kept >= 90%, offered >= 97%",
+  "mixed": "reported with no bar",
+  "modes": "Jev saying no (every include 0.02), Jev sure of every add (adds 0.99, others 0.02), real Jev once; both doors each",
+  "flows": "one: compose_task words; more: compose then edit_draft refine; kept: compose before consent, consent, then refine",
+  "model": "the inventory the writer input names, built fresh for every run"
+ },
+ "items": [
+  {
+   "id": "T01",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "add Gross Profit to the list of measures to delete"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "adds Gross Profit to the list of measures to delete"
+  },
+  {
+   "id": "T02",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "Can you add the Sales[Customer Key] to Customers[Customer Key] relationship to the batch of relationships we're dropping"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "adds a new relationship to the batch being dropped"
+  },
+  {
+   "id": "T03",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "add a role called Finance Readers to the set of roles slated for removal"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "adds Finance Readers to the roles slated for removal"
+  },
+  {
+   "id": "T04",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "put the Budget table import in the pile of things to strip out before release"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "puts the Budget import in the strip-out pile"
+  },
+  {
+   "id": "T05",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "add Sales YoY % to the group of measures getting removed next sprint"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "adds Sales YoY % to the measures being removed"
+  },
+  {
+   "id": "T06",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "the calculation group Currency Conversion - add it to the cleanup list. everything on that list gets deleted"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "adds Currency Conversion to the cleanup list that gets deleted"
+  },
+  {
+   "id": "T07",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "add a Profit column to the Sales removal list"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "adds a Profit column to the Sales removal list"
+  },
+  {
+   "id": "T08",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "throw a new measure Avg Discount % into the deprecate-and-delete bucket"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "throws a new measure into the deprecate-and-delete bucket"
+  },
+  {
+   "id": "T09",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "include the Promotions table import in the set of imports we are rolling back"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "includes the Promotions import in the imports being rolled back"
+  },
+  {
+   "id": "T10",
+   "group": "take-away",
+   "part": "into a set",
+   "flow": "one",
+   "typings": [
+    "add the Sales to Date relationship onto the removal batch pls"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "adds the Sales to Date relationship onto the removal batch"
+  },
+  {
+   "id": "T11",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "add a measure Net Sales which should then be deleted"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Net Sales should then be deleted"
+  },
+  {
+   "id": "T12",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "add a column Margin % to Sales for removal"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "the Margin % column is added for removal"
+  },
+  {
+   "id": "T13",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "import the Returns table marked for deletion"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "the Returns import is marked for deletion (a reading where the source table carries that mark exists but is unlikely)"
+  },
+  {
+   "id": "T14",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "create a role Contractors that is to be dropped"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "Contractors is to be dropped"
+  },
+  {
+   "id": "T15",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "Add a calc group called Scenario Picker, slated for removal."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "Scenario Picker is slated for removal"
+  },
+  {
+   "id": "T16",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "add a relationship from Sales[Order Date] to Date[Date] flagged for deletion"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "the new relationship is flagged for deletion"
+  },
+  {
+   "id": "T17",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "new measure Units per Order to be removed"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Units per Order is to be removed"
+  },
+  {
+   "id": "T18",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "add Customer Tier column in Customers pending deletion"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "Customer Tier is pending deletion"
+  },
+  {
+   "id": "T19",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "import Targets table for deletion please"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "Targets is imported for deletion"
+  },
+  {
+   "id": "T20",
+   "group": "take-away",
+   "part": "words after the head",
+   "flow": "one",
+   "typings": [
+    "Add Weekly Sales measure scheduled to be dropped at next refresh"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Weekly Sales is scheduled to be dropped"
+  },
+  {
+   "id": "T21",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "Add a measure called Profit = [Total Sales] - [Margin]. Actually scratch that, don't add it."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "scratch that, do not add it"
+  },
+  {
+   "id": "T22",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "import the Inventory table from the warehouse db. no wait, forget the inventory table"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "no wait, forget the inventory table"
+  },
+  {
+   "id": "T23",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "create a role named Sales Reps with filter Customers[Region] = \"West\". Then delete the Sales Reps role."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "then delete the Sales Reps role"
+  },
+  {
+   "id": "T24",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "add a calculation group called Currency. On second thought, never mind the currency group"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "never mind the currency group"
+  },
+  {
+   "id": "T25",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "relate Sales Customer Key to Customers Customer Key... actually undo that relationship, I'll do it by hand"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "undo that relationship"
+  },
+  {
+   "id": "T26",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "Add a column Order Year to Sales as YEAR(Sales[Order Date]). Then remove Order Year."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "then remove Order Year"
+  },
+  {
+   "id": "T27",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "add Distinct Customers measure, DISTINCTCOUNT(Sales[Customer Key]). hmm, take that back"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "take that back"
+  },
+  {
+   "id": "T28",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "Please add a Discount % measure. Format it as a percentage. Then drop Discount % entirely, we don't need it."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "then drop Discount % entirely"
+  },
+  {
+   "id": "T29",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "import the Stores table from stores.csv. Actually cancel the Stores import, the file isn't final"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "cancel the Stores import"
+  },
+  {
+   "id": "T30",
+   "group": "take-away",
+   "part": "later sentence or retraction",
+   "flow": "one",
+   "typings": [
+    "Add a role Europe Only. Wait no. Remove that, the Europe Only role isn't needed"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "remove that, the Europe Only role is not needed"
+  },
+  {
+   "id": "T31",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "add a measure Avg Order Value = DIVIDE([Total Sales],[Order Count])",
+    "actually delete Avg Order Value, don't want it"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Add more words deletes Avg Order Value"
+  },
+  {
+   "id": "T32",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "import the Budget table from Budget.xlsx",
+    "scrap the budget import"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "Add more words scraps the budget import"
+  },
+  {
+   "id": "T33",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "make a list of stuff to delete from the model: Total Discount and the Discount column",
+    "add a measure Promo Sales to that list too"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Add more words adds Promo Sales to the delete list"
+  },
+  {
+   "id": "T34",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "create a role called Interns with read access to Sales only",
+    "nvm, get rid of the Interns role"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "Add more words gets rid of the Interns role"
+  },
+  {
+   "id": "T35",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "add a calculation group Period Comparison with items MTD, QTD, YTD",
+    "undo the Period Comparison calc group, Time Calculations already covers it"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "Add more words undoes the Period Comparison calc group"
+  },
+  {
+   "id": "T36",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "add relationship Sales[Customer Key] to Customers[Customer Key], many to one",
+    "drop that customer relationship again"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "Add more words drops the customer relationship again"
+  },
+  {
+   "id": "T37",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "add a column Line Total to Sales = Sales[Amount] * Sales[Quantity]",
+    "take back the Line Total column"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "Add more words takes back the Line Total column"
+  },
+  {
+   "id": "T38",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "anything in my next message goes on the list to delete",
+    "add a role Temp Access"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "the first typing puts everything in the next message on the delete list; the next adds Temp Access"
+  },
+  {
+   "id": "T39",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "add Sales Last Year measure using SAMEPERIODLASTYEAR on Date[Date]",
+    "forget the Sales Last Year measure, remove it"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Add more words removes Sales Last Year"
+  },
+  {
+   "id": "T40",
+   "group": "take-away",
+   "part": "Add more words",
+   "flow": "more",
+   "typings": [
+    "import Exchange Rates from the FX sql view",
+    "Exchange Rates goes on the list of tables to delete"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "Add more words puts Exchange Rates on the list of tables to delete"
+  },
+  {
+   "id": "T41",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "add a measure called Return Rate",
+    "remove Return Rate, changed my mind"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "kept words add Return Rate; the later words remove it"
+  },
+  {
+   "id": "T42",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "import the Suppliers table from the ERP",
+    "cancel the Suppliers import"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "kept words import Suppliers; the later words cancel it"
+  },
+  {
+   "id": "T43",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "please delete the calculation group I'm about to ask for, it's just a test",
+    "add a calculation group called YoY Toolkit"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "kept words delete the calc group about to be asked for; the later words ask for it"
+  },
+  {
+   "id": "T44",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "create role Warehouse Staff",
+    "actually don't. delete Warehouse Staff"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "kept words create Warehouse Staff; the later words say do not, delete it"
+  },
+  {
+   "id": "T45",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "add column Is Discounted to Sales = Sales[Discount] > 0",
+    "drop Is Discounted"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "kept words add Is Discounted; the later words drop it"
+  },
+  {
+   "id": "T46",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "relate Sales[Order Date] to Date[Date]",
+    "undo the relationship between Sales Order Date and Date"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "kept words relate; the later words undo the relationship"
+  },
+  {
+   "id": "T47",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "Add a measure Max Order Amount = MAX(Sales[Amount])",
+    "Put Max Order Amount on the removal list along with anything else temporary"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "kept words add Max Order Amount; the later words put it on the removal list"
+  },
+  {
+   "id": "T48",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "starting a list of things to remove from the model: Total Discount and the Discount column",
+    "add a Region Code column to that removal list too"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "kept words start a removal list; the later words add Region Code to it"
+  },
+  {
+   "id": "T49",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "add calc group Currency Formatting",
+    "never mind the currency formatting calc group"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "kept words add Currency Formatting; the later words say never mind"
+  },
+  {
+   "id": "T50",
+   "group": "take-away",
+   "part": "kept words",
+   "flow": "kept",
+   "typings": [
+    "import a Holidays table from holidays.csv",
+    "scratch the holidays table, not needed"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "kept words import Holidays; the later words scratch it"
+  },
+  {
+   "id": "T51",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "Add a measure Gross Margin % = DIVIDE([Margin],[Total Sales]), format it as percent with one decimal, put it in a Profitability folder, describe it as margin over sales, hide the Discount column, rename Total Quantity to Units Sold, add synonyms units and qty to Units Sold, mark Date as the date table, sort Month by Date, set Region's data category to State or Province, set Product Key to not summarize, set List Price to decimal number, describe Order Count as number of orders, and actually delete Gross Margin % at the end, I don't want it after all"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Gross Margin % is deleted after the twelfth clause"
+  },
+  {
+   "id": "T52",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "add a column Order Month to Sales = FORMAT(Sales[Order Date], \"MMM\"). then hide Customer Key in Sales. hide Product Key in Sales. rename Amount to Sales Amount. set Quantity to sum. set Discount to sum too. make Order Date a date type. describe Total Sales. describe Margin. put Total Sales and Margin in a KPIs folder. add synonyms revenue, turnover to Total Sales. format Average Price as currency. mark Date as date table. oh and the Order Month column, remove that, we'll get it from Date instead"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "Order Month is removed after the twelfth clause"
+  },
+  {
+   "id": "T53",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "Import the Returns table from the sales database, rename Customer Name to Customer, hide Customer Key on Customers, set Region's category to Continent, sort Month by Date, format Total Discount as currency, describe Total Discount, add synonym orders to Order Count, rename Average Price to Avg Price, put Avg Price in a Pricing folder, set List Price to don't summarize, set Year to whole number, hide Product Key on Products, and the Returns table - take that import back, it's not ready"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "the Returns import is taken back after the twelfth clause"
+  },
+  {
+   "id": "T54",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "relate Sales[Customer Key] to Customers[Customer Key] many-to-one, hide Customer Key in Sales, rename Customer Name to Customer, add synonyms client and account to Customer, describe the Customers table, set Region's data category to Continent, sort Month by Date, mark Date as the date table, format Total Sales as currency no decimals, format Margin the same way, put both in a Headline folder, describe Total Quantity as total units sold, set Quantity's summarize to sum, and on reflection put that Sales to Customers relationship on the list of things to remove"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "relate"
+   ],
+   "want": [],
+   "why": "the new relationship goes on the remove list after the twelfth clause"
+  },
+  {
+   "id": "T55",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "add a calculation group called Scenarios with Actual, Budget and Forecast items, rename Time Calculations to Time Intelligence, describe Time Intelligence, hide Discount, hide Product Key on Sales, set Order Date to date type, set Amount to decimal number, format Total Discount as currency, rename Total Discount to Discounts, add synonyms markdown and rebate to Discounts, put Discounts into a Pricing folder, describe Average Price, set Category to don't summarize, then delete the Scenarios calc group, we decided against it"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "calc-group"
+   ],
+   "want": [],
+   "why": "Scenarios is deleted after the twelfth clause"
+  },
+  {
+   "id": "T56",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "Create a role called Product Team with a filter on Products[Category] = \"Bikes\". Rename Product Name to Product. Add synonyms item and sku to Product. Hide List Price. Describe Category. Sort Month by Date. Mark Date as the date table. Set Year to whole number. Set Year to don't summarize. Format Order Count as whole number with thousands separator. Describe Order Count. Put Order Count and Total Quantity in a Volume folder. Rename Total Quantity to Units. Then drop the Product Team role, Regional Managers is enough."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "Product Team is dropped after the twelfth clause"
+  },
+  {
+   "id": "T57",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "add a Total Cost measure = SUMX(Sales, Sales[Quantity] * RELATED(Products[List Price])), format it as currency, describe it as cost at list, put it in a Finance folder, rename Margin to Gross Margin, format Gross Margin as currency, describe Gross Margin, add synonyms profit and GM to Gross Margin, hide Customer Key in Sales, hide Product Key in Sales, set Discount to sum, set Amount data type to fixed decimal, mark Date as the date table, sort Month by Date, and take back the Total Cost measure, I'll write it myself"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-measure"
+   ],
+   "want": [],
+   "why": "Total Cost is taken back after the twelfth clause"
+  },
+  {
+   "id": "T58",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "Add a column Price Tier to Products that buckets List Price into Budget, Standard and Premium; set List Price to decimal; set List Price to not summarize; describe List Price; rename Category to Product Category; add synonyms type and family to Product Category; hide Product Key on Products; set Region's data category to Country; rename Customer Name to Customer; describe Customers; sort Month by Date; mark Date as the date table; format Average Price as currency; and Price Tier should go on the delete list."
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "add-column"
+   ],
+   "want": [],
+   "why": "Price Tier goes on the delete list after the twelfth clause"
+  },
+  {
+   "id": "T59",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "import Store Locations from the stores sheet in Ops.xlsx, rename Order Date to Sale Date, set Sale Date to date type, describe Total Sales, describe Order Count, describe Margin, format Margin as currency, hide Discount, hide Customer Key on Sales, rename Region to Sales Region, set Sales Region category to State or Province, add synonym area to Sales Region, put Total Sales, Order Count and Margin in a Core folder, mark Date as date table, then cancel the Store Locations import"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "import"
+   ],
+   "want": [],
+   "why": "the Store Locations import is cancelled after the twelfth clause"
+  },
+  {
+   "id": "T60",
+   "group": "take-away",
+   "part": "past twelve clauses",
+   "flow": "one",
+   "typings": [
+    "Please add a role called Auditors, rename Average Price to Avg Price, format Avg Price as currency with 2 decimals, describe Avg Price, add synonym unit price to Avg Price, hide Quantity, set Quantity to sum anyway, rename Total Quantity to Qty, describe Qty, put Qty and Avg Price in a Volume & Price folder, sort Month by Date, set Month to text, mark Date as date table, describe the Regional Managers role, and scrap the Auditors role at the end - no Auditors role after all"
+   ],
+   "label": "must-not-keep",
+   "harm": [
+    "role"
+   ],
+   "want": [],
+   "why": "the Auditors role is scrapped after the twelfth clause"
+  },
+  {
+   "id": "P01",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Quick one - add a measure Sales per Customer = DIVIDE([Total Sales], DISTINCTCOUNT(Sales[Customer Key]))"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P02",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "When you get a sec, could you create a role called West Coast with Customers[Region] = \"West\""
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P03",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "boss wants a YTD number on the dashboard, add a measure Sales YTD using TOTALYTD over Date[Date]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P04",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "For the Monday deck: add a column Order Quarter to Sales, \"Q\" & QUARTER(Sales[Order Date])"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P05",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "ok so. new calculation group Currency Display, with items Local and USD"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P06",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Following up on the review - add a Units per Order measure, [Total Quantity] / [Order Count]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P07",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Last thing before I ship this: add a measure Discount Rate = DIVIDE([Total Discount],[Total Sales])"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P08",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "hey semanticus, import the Budget table from FinancePlan.xlsx"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P09",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "As agreed with finance, add a role Finance Read Only with no row filters."
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P10",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Per ticket BI-2231 add a column Customer Initial to Customers = LEFT(Customers[Customer Name],1)"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P11",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "If it's not too much trouble, I'd love a calculation group called Period Compare with PY and YoY% items"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P12",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Morning! Add a measure Avg Discount per Order = DIVIDE([Total Discount],[Order Count]) pls"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P13",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Before I forget - relate Sales[Customer Key] to Customers[Customer Key]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "relate"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P14",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "riffing on yesterday's chat, add a Price Band column on Products based on List Price"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P15",
+   "group": "plain",
+   "part": "lead-ins not on any list",
+   "flow": "one",
+   "typings": [
+    "Not urgent but while you're in there, add a measure Max Single Sale = MAX(Sales[Amount])"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P16",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "add a measure Orders Last 30 Days so ops can track recent volume"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P17",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "add a column Is Weekend to Date, which we'll use to split weekday vs weekend sales"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P18",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "create a role Northern Region filtering Customers[Region] = \"North\" because the north team is getting their own report"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P19",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "add a calculation group Units Toggle with Amount and Quantity items, for the chart that switches between revenue and volume"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P20",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "Add a measure Margin % = DIVIDE([Margin],[Total Sales]), it'll sit next to Margin in the KPI table"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P21",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "import the Targets table from targets.csv, which finance updates every quarter"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P22",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "add Order Year column to Sales from Order Date so we can slice without going through Date"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P23",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "add measure Average Quantity per Order which the warehouse team asked for last week"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P24",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "Create role Key Accounts, filtered to Customers in the Enterprise region, since those reps shouldn't see SMB data"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P25",
+   "group": "plain",
+   "part": "trailing clause",
+   "flow": "one",
+   "typings": [
+    "relate Sales[Order Date] to Date[Date], that's why the time intel measures are blank right now"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "relate"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P26",
+   "group": "plain",
+   "part": "relate or import",
+   "flow": "one",
+   "typings": [
+    "relate Sales Customer Key to Customers Customer Key, many to one, single direction"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "relate"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P27",
+   "group": "plain",
+   "part": "relate or import",
+   "flow": "one",
+   "typings": [
+    "import the Promotions table from the Marketing SQL db"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P28",
+   "group": "plain",
+   "part": "relate or import",
+   "flow": "one",
+   "typings": [
+    "can you join Sales to Date on Order Date = Date"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "relate"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P29",
+   "group": "plain",
+   "part": "relate or import",
+   "flow": "one",
+   "typings": [
+    "pull in the Stores table from stores.parquet"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P30",
+   "group": "plain",
+   "part": "relate or import",
+   "flow": "one",
+   "typings": [
+    "Import Exchange Rates from the FX feed and relate it to Date on Date."
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import",
+    "relate"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P31",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "add measure Total Orders YTD"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P32",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "new column in Products: Name and Category = Products[Product Name] & \" - \" & Products[Category]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P33",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "create a calc group called Scaling with Thousands and Millions items"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P34",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "add a role Category Managers with a filter on Products[Category]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P35",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "Add measures: Sales LY, Sales YoY, Sales YoY %"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P36",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "add a column Net Amount to Sales = Sales[Amount] - Sales[Discount]"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P37",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "import Headcount table from HR.xlsx"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P38",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "add a Customer Count measure, distinct count of Customer Key in Sales"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P39",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "add a role called Executives. no filters, they see everything"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "P40",
+   "group": "plain",
+   "part": "more",
+   "flow": "one",
+   "typings": [
+    "calc group Time Offsets please, items Prior Month and Prior Quarter"
+   ],
+   "label": "should-keep",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a plain add; nothing is taken away"
+  },
+  {
+   "id": "M01",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "replace Average Price with a new measure Avg Unit Price = DIVIDE([Total Sales],[Total Quantity])"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M02",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "delete the Regional Managers role and add a role Area Managers filtered on Customers[Region]"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M03",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "remove Total Discount, add Discount % = DIVIDE(SUM(Sales[Discount]), SUM(Sales[Amount])) instead"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M04",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "swap out Time Calculations for a new calc group called Period Math with MTD, QTD and YTD"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M05",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "drop the Discount column from Sales and add a Net Amount column = Sales[Amount] - Sales[Discount]"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M06",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "remove the Sales-Products relationship, then import Products v2 from the new catalog and relate Sales[Product Key] to Products v2[Product Key]"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "import",
+    "relate"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M07",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "add a Region Sales measure; Margin can go, nobody uses it"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M08",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "Import the Customers Clean table from the MDM extract and delete the old Customers table"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M09",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "kill Order Count and add Distinct Orders measure in its place"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M10",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "add a role Sales Ops, and remove Regional Managers since Sales Ops replaces it"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M11",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "Delete List Price column. Add a column List Price EUR = Products[List Price] * 0.92"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M12",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "remove the Time Calculations calc group. add a calculation group Currency Switch"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "calc-group"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M13",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "add Order Month column to Sales and remove the Month column from Date"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-column"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M14",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "put Average Price and Total Discount on the delete list, then add a Price After Discount measure"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M15",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "add a new measure Net Sales = [Total Sales] - [Total Discount], and remove Total Discount from the model"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M16",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "drop the Customers[Region] column and import a Regions table from geo.csv instead"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "import"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M17",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "remove the Regional Managers role; create role Country Leads with a Customers[Region] filter"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "role"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M18",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "Total Quantity is wrong, delete it and add a Units Sold measure = SUM(Sales[Quantity])"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M19",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "remove relationship Sales->Products, add relationship Sales[Customer Key] -> Customers[Customer Key]"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "relate"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  },
+  {
+   "id": "M20",
+   "group": "mixed",
+   "part": "mixed",
+   "flow": "one",
+   "typings": [
+    "clear out the Time Calculations group and the Margin measure, then add a Profit measure = [Total Sales] - SUMX(Sales, Sales[Quantity]*RELATED(Products[List Price]))"
+   ],
+   "label": "mixed",
+   "harm": [],
+   "want": [
+    "add-measure"
+   ],
+   "why": "a new thing is added and a different thing is taken away"
+  }
+ ]
+}

@@ -34,12 +34,14 @@ namespace Semanticus.LearnBench
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("learnbench");
             var tempRoot = Path.Combine(Path.GetTempPath(), "learnbench-" + Guid.NewGuid().ToString("N").Substring(0, 12));
             Directory.CreateDirectory(tempRoot);
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(tempRoot, "home");            // isolate GLOBAL-scope recall from the real ~/.semanticus
             Directory.CreateDirectory(home);
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
 
             var src = FindTestBim();
             try
@@ -80,7 +82,7 @@ namespace Semanticus.LearnBench
             catch (Exception ex) { Console.WriteLine("[X] threw: " + ex); return 2; }
             finally
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(tempRoot, true); } catch { }
             }
         }
@@ -100,7 +102,7 @@ namespace Semanticus.LearnBench
                 await e.OpenAsync(Path.Combine(dir, "m0.bim"));
 
                 // Naive attempt → the hard input gate rejects the empty submit (the failure that motivates the lesson).
-                var run = await McpTools.StartWorkflow(e, Task);
+                var run = await StartGuidedAsync(e);
                 var stepId = run.CurrentStep?.StepId ?? run.Steps.First().StepId;
                 try { await McpTools.SubmitWorkflowStep(e, run.RunId, stepId, Naive); }
                 catch { /* expected — missing required inputs */ }
@@ -113,6 +115,15 @@ namespace Semanticus.LearnBench
                     await McpTools.ApproveInsight(e, ins.Id);
             }
             finally { e.Dispose(); sessions.Dispose(); }
+        }
+
+        /// <summary>optimize-dax drafts since lane l9-finish (a composed starter). Its guided input gate is the failure this
+        /// bench teaches from, so every run starts from the starter's frozen guided bytes, saved as the project copy
+        /// (save_workflow replaces, so saving before each run is safe).</summary>
+        private static async Task<WorkflowRunView> StartGuidedAsync(LocalEngine e)
+        {
+            await McpTools.SaveWorkflow(e, Task, File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "workflows-compat", "v1.2.2", Task + ".md")));
+            return await McpTools.StartWorkflow(e, Task);
         }
 
         private static async Task<(int passedFirst, int rounds, int precisionHits)> EvalSplitAsync(string dir)
@@ -132,7 +143,7 @@ namespace Semanticus.LearnBench
                     if (recall.Candidates.Length > 0 && recall.Candidates[0].Insight?.Keys?.Contains(HintKey) == true) precisionHits++;
 
                     // 2) Scripted policy: WITH the hint, supply the required inputs; WITHOUT it, submit naively.
-                    var run = await McpTools.StartWorkflow(e, Task);
+                    var run = await StartGuidedAsync(e);
                     var stepId = run.CurrentStep?.StepId ?? run.Steps.First().StepId;
                     var first = hasHint ? Correct : Naive;
                     try

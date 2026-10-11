@@ -1,0 +1,24 @@
+table Warehouse
+	/// warehouse join key
+	column 'Warehouse Key'
+		dataType: int64
+		sourceColumn: WarehouseKey
+		summarizeBy: none
+
+	column 'Location Code'
+		dataType: int64
+		sourceColumn: LocationCode
+		summarizeBy: none
+
+	column Region
+		dataType: string
+		sourceColumn: Region
+		summarizeBy: none
+
+	partition Warehouse = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [WarehouseKey = Int64.Type, LocationCode = Int64.Type, Region = type text], {})
+			in
+				Source

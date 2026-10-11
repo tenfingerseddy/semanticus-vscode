@@ -1,0 +1,173 @@
+{
+  "Server": "s07-sql.example.invalid",
+  "Database": "LedgerAllocations",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_posting_date",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "POST_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "FISCAL_YEAR",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "PERIOD_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_account",
+      "KeyColumns": [
+        "ACCOUNT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ACCOUNT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ACCOUNT_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "ACCOUNT_GROUP",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_cost_center",
+      "KeyColumns": [
+        "CENTER_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CENTER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CENTER_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_ledger",
+      "KeyColumns": [
+        "ENTRY_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ENTRY_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ACCOUNT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CENTER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEBIT_AMT",
+          "DataType": "Decimal"
+        },
+        {
+          "Name": "CREDIT_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_allocation",
+      "KeyColumns": [
+        "ALLOCATION_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ALLOCATION_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "POSTED_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "ACCOUNT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CENTER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ALLOC_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_ledger",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_posting_date",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_ledger",
+      "FromColumn": "ACCOUNT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_account",
+      "ToColumn": "ACCOUNT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_ledger",
+      "FromColumn": "CENTER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_cost_center",
+      "ToColumn": "CENTER_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_allocation",
+      "FromColumn": "ACCOUNT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_account",
+      "ToColumn": "ACCOUNT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_allocation",
+      "FromColumn": "CENTER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_cost_center",
+      "ToColumn": "CENTER_ID"
+    }
+  ]
+}

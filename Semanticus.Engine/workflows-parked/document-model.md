@@ -64,7 +64,7 @@ verify:
 
 Persist with `save_model` so the descriptions, renames, and narrative sections land in the TMDL beside the
 model. Note for the next author that these descriptions are AI-readiness RAW MATERIAL: the model's
-10-step AI workflow starts with hygiene and descriptions, so this pass is what later Copilot / Q&A / data
+10-step AI workflow starts with hygiene and descriptions, so this pass is what later Copilot / data
 -agent grounding is built on. Keep it current with every subsequent model change rather than treating it
 as a one-time chore.
 

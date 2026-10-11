@@ -7,6 +7,10 @@ import { mDiagnostics } from './manalysis';
 import { useConnection } from './connection';
 import { gen, mQuoteIdent } from './mtransform';
 import { SamplePreview, AppliedStepsPanel, sourceMName, type GridCol } from './pqtransforms';
+import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
+import { draftModel, draftStore, heldDraft } from './drafts';
+import { OrphanDrafts } from './orphandrafts';
+import { MenuPop } from './menupop';
 import { isMContextCurrent, mContextToken, policyFetchAllowed, pollingExpressionForSave, reconcileExternalM, reconcileProfileSubject, reconcileSaveRevision, reconcileTableSelection } from './mcodelifecycle.mjs';
 
 // The M Code tab is one workspace: the M query is primary, with the selected table's incremental-refresh
@@ -51,6 +55,49 @@ type Form = {
 };
 const DEFAULT_FORM: Form = { dateColumn: '', storePeriods: 5, storeGranularity: 'Year', refreshPeriods: 10, refreshGranularity: 'Day', offset: 0, mode: 'Import', polling: '' };
 
+/** What a policy form holds, in the one shape the stale-copy guard compares: the form without its date column (the policy
+ *  DTO does not echo it) plus the on/off switch. A table with no policy is the defaults, switched off. */
+type PolicyFields = Omit<Form, 'dateColumn'> & { enabled: boolean };
+function policyFields(p: RefreshPolicyInfo | null | undefined): PolicyFields {
+  // The switch comes first in both shapes, the order the form's draft is built in: the draft store compares held values as JSON text.
+  if (!p?.enabled) { const { dateColumn, ...rest } = DEFAULT_FORM; void dateColumn; return { enabled: false, ...rest }; }
+  return {
+    enabled: true,
+    storePeriods: p.rollingWindowPeriods || DEFAULT_FORM.storePeriods,
+    storeGranularity: (GRANS.includes(p.rollingWindowGranularity as Gran) ? p.rollingWindowGranularity : DEFAULT_FORM.storeGranularity) as Gran,
+    refreshPeriods: p.incrementalPeriods || DEFAULT_FORM.refreshPeriods,
+    refreshGranularity: (GRANS.includes(p.incrementalGranularity as Gran) ? p.incrementalGranularity : DEFAULT_FORM.refreshGranularity) as Gran,
+    offset: p.incrementalPeriodsOffset || 0,
+    mode: p.mode === 'Hybrid' ? 'Hybrid' : 'Import',
+    polling: p.pollingExpression ?? '',
+  };
+}
+
+/** The policy the form started from, as the fields a save replaces, for the write to name. The engine compares each inside its own write. */
+const policyFence = (p: RefreshPolicyInfo | null | undefined) => JSON.stringify({
+  enabled: !!p?.enabled, mode: p?.mode ?? null,
+  rollingWindowGranularity: p?.rollingWindowGranularity ?? null, rollingWindowPeriods: p?.rollingWindowPeriods ?? null,
+  incrementalGranularity: p?.incrementalGranularity ?? null, incrementalPeriods: p?.incrementalPeriods ?? null,
+  incrementalPeriodsOffset: p?.incrementalPeriodsOffset ?? null, pollingExpression: p?.pollingExpression ?? null,
+});
+
+// What the person typed into a table's policy form and has not saved outlives the tab (join 11, the drafts class, drafts.ts): a tab
+// switch, another table, a restarted engine and a reload keep it, per table. The policy fields are held by the stale-copy guard with the
+// policy they were typed over; a date column the person picked is held beside them, since the policy DTO does not echo it. A draft ends
+// on a save the engine took, Discard, Use the new one, and Remove policy.
+const policyScope = (table: string) => 'mcode|policy|' + table;
+/** Where the M text typed into one query is held (F12): the query's id, so another query or table never shows it. */
+const mQueryScope = (targetId: string) => `mcode|query|${targetId}`;
+function holdPolicyDate(table: string, column: string) { const m = draftModel(); if (m && table) draftStore.set(m, policyScope(table), 'dateColumn', { value: column, base: null }); }
+function endPolicyDraft(table: string, m = draftModel()) { if (!m || !table) return; draftStore.clear(m, policyScope(table)); draftStore.clear(m, policyScope(table), 'dateColumn'); }
+const heldPolicyDate = (table: string) => heldDraft<string>(policyScope(table), 'dateColumn')?.value;
+/** The form a held draft opens on: the held fields over the defaults, and the held date column. */
+function heldPolicyForm(fields: PolicyFields | undefined, date: string | undefined): Form {
+  if (!fields) return { ...DEFAULT_FORM, dateColumn: date ?? '' };
+  const { enabled: _on, ...rest } = fields; void _on;
+  return { ...DEFAULT_FORM, ...rest, dateColumn: date ?? '' };
+}
+
 type Toast = { text: string; tone: 'ok' | 'error' };
 type RefreshBusyOp = 'save-policy' | 'remove-policy' | 'create-params' | 'add-filter';
 type BusyMap = Record<string, RefreshBusyOp>;
@@ -60,13 +107,18 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   const { session } = useConnection();
   const [doc, setDoc] = useState<DocModel | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const tableStateKey = 'pqTable:' + (session?.sessionId ?? '');
+  // The table the tab was on is remembered per model FILE when one is known, so a restarted engine (a new session id) opens on the same
+  // table and the draft held for it (join 11, the drafts class). With no model file, per session as before.
+  const tableStateKey = 'pqTable:' + (draftModel() || session?.sessionId || '');
   const [selected, setSelectedState] = useState<string>(() => loadState<string>(tableStateKey, ''));
   // Table-context token, updated SYNCHRONOUSLY with every selection change: a passive effect would leave a
   // window (setSelected(B) → before React re-renders) where an in-flight save/remove continuation still sees A
   // and applies A's state. Every selection path funnels through this setter.
   const selectedRef = useRef(loadState<string>(tableStateKey, ''));
-  const policyDraftDirtyRef = useRef(false);
+  // The held draft of the table the tab opens on: the form starts from it, open, and the server read below stands down.
+  const heldAtOpen = useRef<{ fields?: PolicyFields; date?: string } | null>(null);
+  if (heldAtOpen.current === null) heldAtOpen.current = { fields: heldDraft<PolicyFields>(policyScope(selectedRef.current))?.value, date: heldPolicyDate(selectedRef.current) };
+  const policyDraftDirtyRef = useRef(!!heldAtOpen.current.fields);
   const setSelected = useCallback((t: string) => {
     if (selectedRef.current !== t) policyDraftDirtyRef.current = false;
     selectedRef.current = t; setSelectedState(t);
@@ -82,10 +134,13 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     if (navTarget.partitionId) setMNav({ id: navTarget.partitionId, nonce: navTarget.nonce });
   }, [navTarget?.nonce]);  // eslint-disable-line react-hooks/exhaustive-deps
   const [policy, setPolicy] = useState<RefreshPolicyInfo | null>(null);
-  const [form, setForm] = useState<Form>(DEFAULT_FORM);
-  const [enabled, setEnabled] = useState(false);
+  const [policyOf, setPolicyOf] = useState('');   // the table `policy` was last read for (the live read, kept even while the form holds typed values)
+  const [form, setForm] = useState<Form>(() => heldPolicyForm(heldAtOpen.current?.fields, heldAtOpen.current?.date));
+  const [enabled, setEnabled] = useState(!!heldAtOpen.current.fields?.enabled);
   const [advanced, setAdvanced] = useState(false);
-  const [refreshOpen, setRefreshOpen] = useState(false);
+  const [refreshOpen, setRefreshOpen] = useState(!!(heldAtOpen.current.fields || heldAtOpen.current.date));
+  // Bumped when the person moves policy words typed for a table that is not here now onto a table (OrphanDrafts below): the form reads what is held again.
+  const [policyMoved, setPolicyMoved] = useState(0);
   const refreshPanelRef = useRef<HTMLElement>(null);
   // Resource-keyed busy map. Policy work, shared parameters, and a table's range filter can report independently;
   // the ref closes the same-tick double-click window before React commits the disabled state.
@@ -132,10 +187,12 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   const tables = useMemo(() => (doc?.tables ?? []).filter((t) => !t.isCalculated), [doc]);
   // Heal the selection: keep it if still present, else pick the first eligible table. A leftover name from the
   // previous model must not keep firing requests (and must not replace this tab with the engine error text).
+  // Not before the document has loaded: a tree jump mounts this tab with no document yet, and healing against an
+  // empty list wiped the jump's table, so the document then picked the model's first table (UAT-S07b-2-001).
   useEffect(() => {
-    const next = reconcileTableSelection(selected, tables.map((t) => t.name));
+    const next = reconcileTableSelection(selected, doc ? tables.map((t) => t.name) : null);
     if (next !== selected) setSelected(next);
-  }, [tables, selected]);
+  }, [doc, tables, selected]);
   // The honesty layer over that heal-snap: a tree jump to a table this tab can't edit (calculated — its logic is
   // DAX) used to be silently snapped back to the first eligible table, so the click looked like it did nothing.
   // Consumed once per navigation (whether the doc was already loaded or arrives after), never on doc reloads.
@@ -176,6 +233,8 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   // Has the USER picked a date column for this table? A wired-field seed may only override the default/heal
   // seed, never a human choice — reset per table, set by the selector's onChange.
   const dateColTouched = useRef(false);
+  const dateRestored = useRef(false);
+  if (!dateRestored.current) { dateRestored.current = true; if (heldAtOpen.current.date) dateColTouched.current = true; }
 
   // Load the selected table's policy → seed the form.
   useEffect(() => {
@@ -183,7 +242,15 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     // A model change can refresh this document while the person is typing in the policy form. Keep that draft;
     // replacing it from the server here made Save policy silently throw away a value that had just been entered.
     if (policyDraftDirtyRef.current) return;
-    dateColTouched.current = false;
+    // A table with a held draft opens on it, not on the server's copy (the guard below asks if the policy moved meanwhile).
+    const held = heldDraft<PolicyFields>(policyScope(selected)), heldDate = heldPolicyDate(selected);
+    dateColTouched.current = !!heldDate;
+    if (held) {
+      policyDraftDirtyRef.current = true;
+      setEnabled(held.value.enabled); setForm(heldPolicyForm(held.value, heldDate));
+      return;
+    }
+    if (!heldDate) dateColTouched.current = false;
     let cancelled = false;
     (async () => {
       try {
@@ -192,7 +259,7 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
         setPolicy(p);
         setEnabled(!!p?.enabled);
         setForm((f) => p?.enabled ? {
-          dateColumn: f.dateColumn, // dateColumn isn't echoed by the policy DTO; keep current / default below
+          dateColumn: heldDate ?? f.dateColumn, // dateColumn isn't echoed by the policy DTO; keep current / default below
           storePeriods: p.rollingWindowPeriods || DEFAULT_FORM.storePeriods,
           storeGranularity: (GRANS.includes(p.rollingWindowGranularity as Gran) ? p.rollingWindowGranularity : DEFAULT_FORM.storeGranularity) as Gran,
           refreshPeriods: p.incrementalPeriods || DEFAULT_FORM.refreshPeriods,
@@ -200,12 +267,26 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
           offset: p.incrementalPeriodsOffset || 0,
           mode: (p.mode === 'Hybrid' ? 'Hybrid' : 'Import'),
           polling: p.pollingExpression ?? '',
-        } : DEFAULT_FORM);
+        } : (heldDate ? { ...DEFAULT_FORM, dateColumn: heldDate } : DEFAULT_FORM));
         setErr(null);
       } catch (e) {
         if (!cancelled) setErr('Could not load refresh settings for this table. Pick another table and try again.');
         void e;
       }
+    })();
+    return () => { cancelled = true; };
+  }, [selected, tables, policyMoved]);
+
+  // The live policy is read on every model change even while the form holds typed values (the read above stands down then),
+  // so the guard below can see that the assistant changed the policy under a typed form (UAT stale-copy class, 2 Oct).
+  useEffect(() => {
+    if (!policyFetchAllowed(selected, tables.map((t) => t.name))) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await rpc<RefreshPolicyInfo>('getIncrementalRefreshPolicy', 'table:' + selected);
+        if (!cancelled) { setPolicy(p); setPolicyOf(selected); }
+      } catch { /* the read above reports it */ }
     })();
     return () => { cancelled = true; };
   }, [selected, tables]);
@@ -245,13 +326,28 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     setForm((f) => ({ ...f, [k]: v }));
   };
 
+  // The form saves a whole policy from the copy it holds. Where that copy started is the guard's business: it follows a
+  // live change while nothing is typed, asks (Keep mine / Use the new one) when words are typed, and Save re-reads first.
+  const policyRaw = useRef<RefreshPolicyInfo | null>(null);   // the policy the last Save read, as the engine sent it
+  const policyGuard = useEditBase<PolicyFields>({
+    // The scope changes when words were moved onto a table, so the guard opens again on what is held, over the value it was typed over (and asks if that moved).
+    current: policyOf === selected ? policyFields(policy) : undefined, scope: JSON.stringify([selected, policyMoved]), persist: selected ? { scope: policyScope(selected) } : undefined,
+    draft: { enabled, storePeriods: form.storePeriods, storeGranularity: form.storeGranularity, refreshPeriods: form.refreshPeriods,
+      refreshGranularity: form.refreshGranularity, offset: form.offset, mode: form.mode, polling: form.polling },
+    editing: true,
+    reseed: ({ enabled: on, ...fields }) => { policyDraftDirtyRef.current = false; setEnabled(on); setForm((f) => ({ ...f, ...fields })); },
+    readNow: async () => { const info = await rpc<RefreshPolicyInfo>('getIncrementalRefreshPolicy', 'table:' + selectedRef.current); policyRaw.current = info; return policyFields(info); },
+  });
+  const policyGuardRef = useRef(policyGuard); policyGuardRef.current = policyGuard;
+
   const createParams = useCallback(async () => {
     if (busyRef.current[PARAMS_BUSY_KEY] || Object.keys(busyRef.current).some((key) => key.startsWith('policy:'))) return;
     if (!beginBusy(PARAMS_BUSY_KEY, 'create-params')) return;
     clearActionError(PARAMS_BUSY_KEY);
     try {
-      if (!isParamExpr(rangeStart)) await rpc(rangeStart ? 'updateNamedExpression' : 'createNamedExpression', 'RangeStart', PARAM_M('2020, 1, 1, 0, 0, 0'));
-      if (!isParamExpr(rangeEnd)) await rpc(rangeEnd ? 'updateNamedExpression' : 'createNamedExpression', 'RangeEnd', PARAM_M('2021, 1, 1, 0, 0, 0'));
+      // An update names the expression the page showed as the one it replaces; the engine compares it inside its write.
+      if (!isParamExpr(rangeStart)) await (rangeStart ? rpc('updateNamedExpression', 'RangeStart', PARAM_M('2020, 1, 1, 0, 0, 0'), 'human', rangeStart.expression ?? '') : rpc('createNamedExpression', 'RangeStart', PARAM_M('2020, 1, 1, 0, 0, 0')));
+      if (!isParamExpr(rangeEnd)) await (rangeEnd ? rpc('updateNamedExpression', 'RangeEnd', PARAM_M('2021, 1, 1, 0, 0, 0'), 'human', rangeEnd.expression ?? '') : rpc('createNamedExpression', 'RangeEnd', PARAM_M('2021, 1, 1, 0, 0, 0')));
       setToast({ text: '✓ RangeStart / RangeEnd parameters are ready', tone: 'ok' });
       await loadDoc();
     } catch (e) { setActionError(PARAMS_BUSY_KEY, e); }
@@ -275,7 +371,8 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
       if (!mDateCol) throw new Error(`'${form.dateColumn}' has no source column to filter on because it is calculated or not loaded by the M query. Pick a date column that comes from the source.`);
       const next = await gen.incrementalRefreshFilter(partition.source ?? '', mDateCol);
       if (!next.ok) throw new Error(next.error);
-      await rpc('setPartitionM', `partition:${table.name}/${partition.name}`, next.m);
+      // The filter was built from the query text the page showed, and the write names that text as the one it replaces.
+      await rpc('setPartitionM', `partition:${table.name}/${partition.name}`, next.m, 'human', partition.source ?? '');
       setToast({ text: `✓ added the RangeStart / RangeEnd filter to query '${partition.name}'`, tone: 'ok' });
       await loadDoc();
     } catch (e) { setActionError(busyKey, e); }
@@ -295,29 +392,42 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     }
     if (!beginBusy(busyKey, 'save-policy')) return;
     clearActionError(errorKey);
+    const startedOn = draftModel();   // the model this Save was pressed on: its draft is ended under it
+    const sent = { enabled, storePeriods: form.storePeriods, storeGranularity: form.storeGranularity, refreshPeriods: form.refreshPeriods,
+      refreshGranularity: form.refreshGranularity, offset: form.offset, mode: form.mode, polling: form.polling };   // the words this Save carries
     try {
+      // The policy is read again first: a form whose starting point is older than the live policy writes nothing until the person chose.
+      if (!(await policyGuardRef.current.beforeSave())) return;
       const r = await rpc<{ warning?: string | null }>('setIncrementalRefreshPolicy', 'table:' + t, form.dateColumn || null,
         form.storePeriods, form.storeGranularity, form.refreshPeriods, form.refreshGranularity, form.offset,
-        form.mode, pollingExpressionForSave(form.polling), true);
+        form.mode, pollingExpressionForSave(form.polling), true, 'human', policyFence(policyRaw.current));
       // The engine can save WITH an advisory (e.g. the wired field matches no column's source name) — show it,
       // don't swallow it: both doors carry the same honesty.
       setToast({ text: r?.warning ? `✓ policy saved. ${r.warning}` : '✓ incremental refresh policy saved', tone: 'ok' });
       await loadDoc();
       const p = await rpc<RefreshPolicyInfo>('getIncrementalRefreshPolicy', 'table:' + t);
+      // R-B: the typed form is the policy now, and its draft ends, only when the words in it are still exactly the ones the engine took. Words typed while the Save was on its way stay in the form,
+      // held over the policy just saved, and the form is not reset from the server under them.
+      const typedSince = selectedRef.current === t && !sameValue(policyGuardRef.current.draftNow(), sent);
+      if (typedSince) policyGuardRef.current.saved(sent, policyFields(p));
+      else endPolicyDraft(t, startedOn);
       if (selectedRef.current === t) {
-        setPolicy(p); setEnabled(!!p?.enabled);
-        setForm((f) => ({ ...f,
-          storePeriods: p.rollingWindowPeriods || DEFAULT_FORM.storePeriods,
-          storeGranularity: (GRANS.includes(p.rollingWindowGranularity as Gran) ? p.rollingWindowGranularity : DEFAULT_FORM.storeGranularity) as Gran,
-          refreshPeriods: p.incrementalPeriods || DEFAULT_FORM.refreshPeriods,
-          refreshGranularity: (GRANS.includes(p.incrementalGranularity as Gran) ? p.incrementalGranularity : DEFAULT_FORM.refreshGranularity) as Gran,
-          offset: p.incrementalPeriodsOffset || 0,
-          mode: p.mode === 'Hybrid' ? 'Hybrid' : 'Import',
-          polling: p.pollingExpression ?? '',
-        }));
-        policyDraftDirtyRef.current = false;
+        setPolicy(p);
+        if (!typedSince) {
+          setEnabled(!!p?.enabled);
+          setForm((f) => ({ ...f,
+            storePeriods: p.rollingWindowPeriods || DEFAULT_FORM.storePeriods,
+            storeGranularity: (GRANS.includes(p.rollingWindowGranularity as Gran) ? p.rollingWindowGranularity : DEFAULT_FORM.storeGranularity) as Gran,
+            refreshPeriods: p.incrementalPeriods || DEFAULT_FORM.refreshPeriods,
+            refreshGranularity: (GRANS.includes(p.incrementalGranularity as Gran) ? p.incrementalGranularity : DEFAULT_FORM.refreshGranularity) as Gran,
+            offset: p.incrementalPeriodsOffset || 0,
+            mode: p.mode === 'Hybrid' ? 'Hybrid' : 'Import',
+            polling: p.pollingExpression ?? '',
+          }));
+          policyDraftDirtyRef.current = false;
+        }
       }
-    } catch (e) { setActionError(errorKey, e); }
+    } catch (e) { if (!(await policyGuardRef.current.refused(e))) setActionError(errorKey, e); }
     finally { endBusy(busyKey); }
   }, [selected, form, loadDoc, beginBusy, clearActionError, setActionError, endBusy]);
 
@@ -332,10 +442,13 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     try {
       await rpc('removeIncrementalRefreshPolicy', 'table:' + t);
       setToast({ text: '✓ incremental refresh policy removed', tone: 'ok' });
+      endPolicyDraft(t);   // the policy is gone, and with it what was typed over it
       if (selectedRef.current === t) {
         policyDraftDirtyRef.current = false;
         setEnabled(false); setPolicy(null); setForm(DEFAULT_FORM);
       }
+      // The form now stands on "no policy": that is its starting point, so nothing typed over the removed policy is asked about or held.
+      if (selectedRef.current === t) policyGuardRef.current.rebase(policyFields(null));
       await loadDoc();
     } catch (e) { setActionError(errorKey, e); }
     finally { endBusy(busyKey); }
@@ -346,8 +459,8 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
     window.setTimeout(() => refreshPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
   }, []);
 
-  if (!doc) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model…</div>;
-  if (!tables.length) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No import/query tables in this model. Incremental refresh applies to tables loaded by a query (M).</div>;
+  if (!doc) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Loading model…</div>;
+  if (!tables.length) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>No import/query tables in this model. Incremental refresh applies to tables loaded by a query (M).</div>;
 
   const clOk = cl >= CL_MIN;
   const hybridOk = cl >= CL_HYBRID;
@@ -358,6 +471,14 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   const paramsBusy = busyByResource[PARAMS_BUSY_KEY];
   const filterBusy = busyByResource[filterBusyKey];
   const policyBlocked = !!policyBusy || !!paramsBusy || !!filterBusy;
+  // The quiet mark and Discard: this table holds typed policy values (or a picked date column) that are not saved.
+  const policyDrafted = policyGuard.drafted || heldPolicyDate(selected) !== undefined;
+  const discardPolicy = () => {
+    const { enabled: on, ...fields } = policyFields(policy);
+    endPolicyDraft(selected);
+    policyDraftDirtyRef.current = false; dateColTouched.current = false;
+    setEnabled(on); setForm((f) => ({ ...f, ...fields, dateColumn: wiredColumn ?? dateColumnOptions[0] ?? '' }));
+  };
   const paramsWillCreate = !rangeStart || !rangeEnd;
   const paramsWillUpdate = (!!rangeStart && !isParamExpr(rangeStart)) || (!!rangeEnd && !isParamExpr(rangeEnd));
   const paramsRunningLabel = paramsWillCreate && paramsWillUpdate
@@ -394,44 +515,52 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
   ));
 
   return (
+    // One Visual Language (23 September): the scroll box is the page grid. The M query rows, the editor and its
+    // Applied steps, the preview and Incremental refresh are cards on it, each on whole columns.
     <div className="h-full flex flex-col">
-      <div className="flex-1 min-h-0 overflow-auto relative">
+      {/* gridAutoRows: this scroll box is also a grid with a fixed height. Without it a card that clips its content (the
+          Incremental refresh card) is sized to nothing and its controls can never be scrolled to (UAT-J9-S10a-004). */}
+      <div className="flex-1 min-h-0 overflow-auto relative sem-page" style={{ gridAutoRows: 'max-content' }}>
         {err && (
-          <div className="mx-4 mt-3 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div>
+          <div className="xe-error" role="alert">{err}</div>
         )}
         {toast && (
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] shadow-lg"
-            style={{ background: 'var(--sem-surface)', borderColor: toast.tone === 'ok' ? 'var(--sem-good)' : 'var(--sem-bad)', color: 'var(--sem-fg)' }}>
-            <span>{toast.text}</span>
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2 rounded-(--sem-radius-control) border px-3 py-1 sem-text-meta"
+            style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)', color: 'var(--sem-fg)', width: 'max-content' }}>
+            <span className="xe-msg" style={{ '--xe-dot': toast.tone === 'ok' ? 'var(--sem-good)' : 'var(--sem-bad)' } as React.CSSProperties}>{toast.text}</span>
             <button onClick={() => setToast(null)} style={{ background: 'transparent', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer' }}>✕</button>
           </div>
         )}
 
         <MLane
           doc={doc} table={table} tables={tables} selectedTable={selected} onSelectTable={setSelected}
-          refreshSummary={policySummary} onConfigureRefresh={configureRefresh}
           tableSwitchDisabled={policyBlocked} onToast={setToast} onSaved={loadDoc} initialTarget={mNav}
         />
 
-        <div className="px-4 pb-4">
-          <section ref={refreshPanelRef} className="rounded-lg border scroll-mt-3" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} aria-label="Incremental refresh settings">
-            <div className="flex items-center gap-2 px-3 py-2 flex-wrap">
-              <span className="font-semibold text-[12px]">Incremental refresh</span>
-              <span className="rounded-full px-2 py-0.5 text-[10px]" style={{ background: savedPolicyOn ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)', color: savedPolicyOn ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>
-                {savedPolicyOn ? 'On' : 'Off'}
-              </span>
-              <span style={hint}>{policyWindowSummary}</span>
-              <span style={{ ...hint, color: prereqsOk ? 'var(--sem-good)' : 'var(--sem-warn)' }}>{prereqsOk ? 'Setup healthy' : 'Setup needs attention'}</span>
-              {policyDirty && <span style={{ ...hint, color: 'var(--sem-warn)' }}>Unsaved changes</span>}
-              <button className="ml-auto" onClick={() => setRefreshOpen((open) => !open)} style={btn} aria-expanded={refreshOpen}>
+          <section ref={refreshPanelRef} className="sem-card sem-card-flush scroll-mt-3" aria-label="Incremental refresh settings">
+            <div className="sem-card-head flex-wrap">
+              <span className="sem-card-title">Incremental refresh</span>
+              {/* Instrument: the state is a word, not a coloured pill. */}
+              <span className="sem-text-meta" style={{ color: 'var(--sem-fg)' }}>{savedPolicyOn ? 'On' : 'Off'}</span>
+              <span className="sem-text-meta">{policyWindowSummary}</span>
+              <span className={'sem-text-meta xe-dot ' + (prereqsOk ? 'xe-dot-good' : 'xe-dot-warn')}>{prereqsOk ? 'Setup healthy' : 'Setup needs attention'}</span>
+              {policyDirty && <span className="xe-msg xe-msg-warn" style={{  }}>Unsaved changes</span>}
+              <button className="sem-btn sem-btn-sm ml-auto" onClick={() => setRefreshOpen((open) => !open)} aria-expanded={refreshOpen}>
                 Configure {refreshOpen ? '▴' : '▾'}
               </button>
+            </div>
+            {/* Policy words are held by the table's NAME. When the assistant renames or removes that table the words are not dropped, and not shown on the table the tab
+                falls back to: they are listed here, and the person chooses (join 11 solui, R-B). */}
+            <div className="px-4">
+              <OrphanDrafts prefix="mcode|policy|" live={doc ? tables.map((t) => t.name) : null} what="table"
+                nameOf={(name) => name} targetsFor={() => tables.map((t) => ({ id: t.name, label: t.name }))}
+                onMoved={() => { policyDraftDirtyRef.current = false; setPolicyMoved((n) => n + 1); setRefreshOpen(true); }} />
             </div>
 
             {refreshOpen && (
               <div style={{ borderTop: '1px solid var(--sem-border)' }}>
-                <section className="px-3 py-3" aria-labelledby="refresh-setup-heading">
-                  <div id="refresh-setup-heading" className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>Setup</div>
+                <section className="px-4 py-3" aria-labelledby="refresh-setup-heading">
+                  <div id="refresh-setup-heading" className="mb-2 text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>Setup</div>
                   <div className="divide-y" style={{ borderColor: 'var(--sem-border)' }}>
                     <Check ok={clOk} label={clOk ? 'Incremental refresh is available for this model' : 'This model needs an update before incremental refresh is available'}
                       detail={clOk ? 'The model supports incremental refresh policies.' : 'Update the model settings before saving a policy.'} />
@@ -452,10 +581,10 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                   </div>
                 </section>
 
-                <section className="px-3 py-3" style={{ borderTop: '1px solid var(--sem-border)' }} aria-labelledby="refresh-policy-heading">
+                <section className="px-4 py-3" style={{ borderTop: '1px solid var(--sem-rule)' }} aria-labelledby="refresh-policy-heading">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <div id="refresh-policy-heading" className="text-[10.5px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>Policy</div>
-                    <label className="flex items-center gap-2 text-[11px]">
+                    <div id="refresh-policy-heading" className="text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>Policy</div>
+                    <label className="flex items-center gap-2 text-(length:--sem-text-label)">
                       <input type="checkbox" checked={enabled} disabled={!!policyBusy} onChange={(e) => { policyDraftDirtyRef.current = true; setEnabled(e.target.checked); }} />
                       Configure incremental refresh for <b>{selected}</b>
                     </label>
@@ -468,7 +597,7 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                         : (dateColumnOptions.length === 0
                           ? 'No date column on this table is loaded from the source. Calculated columns and columns with no source name cannot be used.'
                           : undefined)}>
-                        <select value={form.dateColumn} disabled={!!policyBusy || dateColumnOptions.length === 0} onChange={(e) => { dateColTouched.current = true; set('dateColumn', e.target.value); }} style={{ ...input, width: '100%', maxWidth: 'unset' }}>
+                        <select className="sem-field sem-field-sm" value={form.dateColumn} disabled={!!policyBusy || dateColumnOptions.length === 0} onChange={(e) => { dateColTouched.current = true; set('dateColumn', e.target.value); holdPolicyDate(selected, e.target.value); }} style={{ width: '100%', maxWidth: 'unset' }}>
                           {dateColumnOptions.length === 0 && <option value="">(no source-loaded date column)</option>}
                           {dateColumnOptions.map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
@@ -489,50 +618,53 @@ export function MCodeView({ navTarget }: { navTarget?: { table: string; partitio
                         <Num value={form.offset} onChange={(v) => set('offset', v)} disabled={!!policyBusy} />
                       </PolicyField>
                       <PolicyField label="Mode" hintText={hybridOk ? 'Hybrid is available for this model.' : 'Hybrid is not available for this model.'}>
-                        <select value={form.mode} disabled={!!policyBusy} onChange={(e) => set('mode', e.target.value as Form['mode'])} style={{ ...input, width: '100%', maxWidth: 'unset' }}>
+                        <select className="sem-field sem-field-sm" value={form.mode} disabled={!!policyBusy} onChange={(e) => set('mode', e.target.value as Form['mode'])} style={{ width: '100%', maxWidth: 'unset' }}>
                           <option value="Import">Import</option>
                           <option value="Hybrid" disabled={!hybridOk}>Hybrid (real-time)</option>
                         </select>
                       </PolicyField>
-                      <div className="md:col-span-2 xl:col-span-3 rounded-md border px-3 py-2" style={{ borderColor: 'var(--sem-border)' }}>
-                        <button onClick={() => setAdvanced((a) => !a)} style={linkBtn} aria-expanded={advanced}>{advanced ? '▾' : '▸'} Advanced: detect data changes</button>
+                      <div className="md:col-span-2 xl:col-span-3 rounded-(--sem-radius-control) border px-3 py-2" style={{ borderColor: 'var(--sem-border)' }}>
+                        <button className="sem-btn sem-btn-sm sem-btn-quiet" onClick={() => setAdvanced((a) => !a)} aria-expanded={advanced}>{advanced ? '▾' : '▸'} Advanced: detect data changes</button>
                         {advanced && (
                           <div className="pt-2">
-                            <textarea value={form.polling} disabled={!!policyBusy} onChange={(e) => set('polling', e.target.value)} rows={2}
+                            <textarea className="sem-field sem-field-sm" value={form.polling} disabled={!!policyBusy} onChange={(e) => set('polling', e.target.value)} rows={2}
                               placeholder="An M expression returning the latest change value, for example List.Max(Source[LastModified])"
-                              style={{ ...input, width: '100%', maxWidth: 'unset', fontFamily: 'var(--vscode-editor-font-family, monospace)', resize: 'vertical' }} />
-                            <div style={hint}>Optional. A period is loaded again only when this value has changed.</div>
+                              style={{ width: '100%', maxWidth: 'unset', fontFamily: 'var(--vscode-editor-font-family, monospace)', resize: 'vertical' }} />
+                            <div className="sem-text-meta">Optional. A period is loaded again only when this value has changed.</div>
                           </div>
                         )}
                       </div>
-                      {!prereqsOk && <div className="md:col-span-2 xl:col-span-3" style={{ color: 'var(--sem-warn)', fontSize: 11 }}>{clOk
+                      {!prereqsOk && <div className="md:col-span-2 xl:col-span-3 xe-dot xe-dot-warn" style={{ fontSize: 'var(--sem-text-label)' }}>{clOk
                         ? 'Applying the policy will create or repair the two parameters and add the range filter. Use the setup actions above to review each change first.'
                         : 'Update the model settings before saving an incremental refresh policy.'}</div>}
                     </div>
                   )}
 
+                  {policyGuard.moved && <EditMovedBanner what="policy" theirs={policyGuard.theirs} onKeepMine={policyGuard.keepMine} onUseNew={() => { policyGuard.useNew(); endPolicyDraft(selected); }} disabled={!!policyBusy} />}
                   <div className="flex items-center justify-end gap-2 pt-3 flex-wrap">
                     <div className="mr-auto flex flex-col gap-1">
-                      <span style={hint}>{policy?.enabled ? 'A policy is configured for this table.' : 'No policy on this table yet.'}</span>
-                      {policyActionsBusyReason && <span role="status" style={hint}>{policyActionsBusyReason}</span>}
+                      <span className="sem-text-meta">{policy?.enabled ? 'A policy is configured for this table.' : 'No policy on this table yet.'}</span>
+                      {policyActionsBusyReason && <span className="sem-text-meta" role="status">{policyActionsBusyReason}</span>}
                     </div>
+                    <DraftMark show={policyDrafted} />
+                    {policyDrafted && !policyGuard.moved && (
+                      <button className="sem-btn sem-btn-sm" onClick={discardPolicy} disabled={policyBlocked} title="Throw away what you typed and show the saved policy again.">Discard</button>
+                    )}
                     {policy?.enabled && (
                       <div className="flex flex-col items-end gap-1">
-                        <button onClick={remove} disabled={policyBlocked} style={{ ...btn, color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }}>{policyBusy === 'remove-policy' ? 'Removing…' : 'Remove policy'}</button>
-                        {actionErrors[`remove-policy:${selected}`] && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 360 }}>{actionErrors[`remove-policy:${selected}`]}</span>}
+                        <button className="sem-btn sem-btn-sm" onClick={remove} disabled={policyBlocked} style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }}>{policyBusy === 'remove-policy' ? 'Removing…' : 'Remove policy'}</button>
+                        {actionErrors[`remove-policy:${selected}`] && <span className="xe-error" role="alert" style={{ maxWidth: 360 }}>{actionErrors[`remove-policy:${selected}`]}</span>}
                       </div>
                     )}
                     <div className="flex flex-col items-end gap-1">
-                      <button onClick={save} disabled={policyBlocked || !enabled || dateColumnOptions.length === 0} style={primaryBtn}>{policyBusy === 'save-policy' ? 'Applying…' : 'Save policy'}</button>
-                      {actionErrors[`save-policy:${selected}`] && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 360 }}>{actionErrors[`save-policy:${selected}`]}</span>}
+                      <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={save} disabled={policyBlocked || !enabled || dateColumnOptions.length === 0}>{policyBusy === 'save-policy' ? 'Applying…' : 'Save policy'}</button>
+                      {actionErrors[`save-policy:${selected}`] && <span className="xe-error" role="alert" style={{ maxWidth: 360 }}>{actionErrors[`save-policy:${selected}`]}</span>}
                     </div>
                   </div>
                 </section>
               </div>
             )}
           </section>
-          <div className="pt-2" style={{ ...hint, fontSize: 10 }}>Incremental refresh configures when rows are stored and loaded again. It does not run a refresh.</div>
-        </div>
       </div>
     </div>
   );
@@ -555,14 +687,12 @@ function targetText(doc: DocModel, id: string): string | null {
   }
   return null;
 }
-function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummary, onConfigureRefresh, tableSwitchDisabled, onToast, onSaved, initialTarget }: {
+function MLane({ doc, table, tables, selectedTable, onSelectTable, tableSwitchDisabled, onToast, onSaved, initialTarget }: {
   doc: DocModel;
   table: DocTable | null;
   tables: DocTable[];
   selectedTable: string;
   onSelectTable: (table: string) => void;
-  refreshSummary: string;
-  onConfigureRefresh: () => void;
   tableSwitchDisabled?: boolean;
   onToast: (toast: Toast | null) => void;
   onSaved: () => Promise<void> | void;
@@ -576,6 +706,12 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     return [...ps, ...es];
   }, [table, doc.expressions]);
 
+  // Every M query of the model, by the id its words are held under. Words held for an id that is not here (a query that was renamed or removed) are listed, never held where nobody can see them.
+  const allQueries = useMemo(() => [
+    ...doc.tables.flatMap((t) => t.partitions.filter((p) => p.sourceType === 'M').map((p) => ({ id: `partition:${t.name}/${p.name}`, label: `Query · ${t.name} / ${p.name}` }))),
+    ...(doc.expressions ?? []).filter((e) => (e.kind || 'M') === 'M').map((e) => ({ id: `expr:${e.name}`, label: `Shared query · ${e.name}` })),
+  ], [doc.tables, doc.expressions]);
+  const [movedWords, setMovedWords] = useState(0);   // words moved onto a query: the editor reads what it holds again
   const [targetId, setTargetId] = useState('');
   const textRevisionRef = useRef(0);
   const currentContextRef = useRef(mContextToken(selectedTable, '', 0));
@@ -623,14 +759,17 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     textRef.current = next; originalRef.current = next;
     setTextState(next); setOriginalState(next); setServerConflict(null); invalidateContext();
   }, [invalidateContext]);
+  const endQueryDraft = useCallback(() => { const m = draftModel(); if (m && targetIdRef.current) draftStore.clear(m, mQueryScope(targetIdRef.current), ''); }, []);
   const selectTarget = useCallback((id: string) => {
     if (id !== targetIdRef.current && !confirmDiscard('another query')) return;
+    if (id !== targetIdRef.current) endQueryDraft();   // the person confirmed discarding it
     invalidateContext(selectedTable, id); setTargetId(id);
-  }, [confirmDiscard, invalidateContext, selectedTable]);
+  }, [confirmDiscard, endQueryDraft, invalidateContext, selectedTable]);
   const selectTable = useCallback((name: string) => {
     if (name !== selectedTable && !confirmDiscard('another table')) return;
+    if (name !== selectedTable) endQueryDraft();   // the person confirmed discarding it
     invalidateContext(name, ''); onSelectTable(name);
-  }, [confirmDiscard, invalidateContext, onSelectTable, selectedTable]);
+  }, [confirmDiscard, endQueryDraft, invalidateContext, onSelectTable, selectedTable]);
   const [profileRevision, setProfileRevision] = useState(0);
   const [validity, setValidity] = useState<{ ok: boolean; error?: string } | null>(null);
   const [codeBusy, setCodeBusy] = useState<CodeBusy | null>(null);
@@ -678,6 +817,7 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
 
   // P4 — create a new shared expression / parameter (edit is the target dropdown + Save; this is the missing "C").
   const [creating, setCreating] = useState(false);
+  const [moreMenu, setMoreMenu] = useState(false);
   const [newName, setNewName] = useState('');
   const doCreate = async () => {
     const name = newName.trim();
@@ -728,10 +868,14 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
   useEffect(() => {
     const tx = targets.find((t) => t.id === target?.id)?.text ?? '';
     loadedTargetRef.current = target?.id ?? '';
-    textRef.current = tx; originalRef.current = tx;
-    setTextState(tx); setOriginalState(tx); setServerConflict(null); setMsg(null); invalidateContext();
+    // Words typed into this query and not saved (F12) open again as typed, over the text they were typed over. If the query changed meanwhile, the next effect finds the editor dirty over a
+    // newer server text and offers "Reload server M": the person's words are never replaced, and Save waits for that choice.
+    const held = target ? heldDraft<string>(mQueryScope(target.id)) : undefined;
+    const start = held ? held.value : tx, base = held ? held.base : tx;
+    textRef.current = start; originalRef.current = base;
+    setTextState(start); setOriginalState(base); setServerConflict(null); setMsg(null); invalidateContext();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.id]);
+  }, [target?.id, movedWords]);
 
   // A doc reload can carry M written outside this lane (range-filter setup or policy auto-wiring). Clean editors
   // reload immediately. Dirty editors keep the local text, expose a conflict with a reload action, and block Save
@@ -765,6 +909,14 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
   }, [text]);
   const dirty = text !== original;
   editorDirtyRef.current = dirty;
+  // Hold what is typed above this lane (F12), on every change, over the text it was typed over. It ends when the text is back to where it started (a save, Revert, typing it back, Reload server M).
+  // Read from the refs: on the first pass after a mount the state still holds the empty start while the load effect has already put the restored words in the refs.
+  useEffect(() => {
+    const m = draftModel();
+    if (!m || !target || loadedTargetRef.current !== target.id) return;
+    const typed = textRef.current, base = originalRef.current;
+    if (typed !== base) draftStore.set(m, mQueryScope(target.id), '', { value: typed, base }); else draftStore.clear(m, mQueryScope(target.id), '');
+  }, [text, original, target?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const doFormat = async () => {
     if (!target) return;
@@ -820,8 +972,9 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
         await onSaved();
         return;
       }
-      if (savingTarget.kind === 'partition') await rpc('setPartitionM', savingTarget.id, savingText);
-      else await rpc('updateNamedExpression', savingTarget.name, savingText);
+      // The text just read is the one this write replaces, and the engine compares it inside its own write: a read here can still be a moment behind.
+      if (savingTarget.kind === 'partition') await rpc('setPartitionM', savingTarget.id, savingText, 'human', latestText);
+      else await rpc('updateNamedExpression', savingTarget.name, savingText, 'human', latestText);
       if (!isMContextCurrent(operationContext, currentContextRef.current)) {
         onToast({ text: 'An earlier M revision was saved. Newer local edits remain unsaved.', tone: 'error' });
         await onSaved();
@@ -852,108 +1005,97 @@ function MLane({ doc, table, tables, selectedTable, onSelectTable, refreshSummar
     : tableSwitchDisabled ? 'The table selector is unavailable while the policy action finishes.' : null;
 
   const hasEditableM = !!target && text.trim().length > 0;
+  const orphanWords = <OrphanDrafts prefix="mcode|query|" live={allQueries.map((q) => q.id)} what="M query"
+    nameOf={(id) => allQueries.find((q) => q.id === id)?.label ?? id.replace(/^partition:|^expr:/, '')}
+    targetsFor={() => allQueries.map((q) => ({ id: q.id, label: q.label }))} onMoved={() => setMovedWords((n) => n + 1)} />;
   const contextStrip = (
-    <div className="border-b" style={{ borderColor: 'var(--sem-border)' }}>
-      <div className="flex items-center gap-2 px-4 py-2 text-[11px] flex-wrap">
-        <span style={{ color: 'var(--sem-muted)' }}>Table</span>
-        <select value={selectedTable} onChange={(e) => selectTable(e.target.value)} disabled={tableSwitchDisabled || codeActing} style={input} title="Choose a table">
+    <div className="flex items-center gap-2 flex-wrap sem-text-meta">
+        <span>Table</span>
+        <select className="sem-field sem-field-sm" value={selectedTable} onChange={(e) => selectTable(e.target.value)} disabled={tableSwitchDisabled || codeActing} title="Choose a table">
           {tables.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
         </select>
-        <span aria-hidden="true" style={{ color: 'var(--sem-muted)' }}>›</span>
-        <span style={{ color: 'var(--sem-muted)' }}>Editing</span>
-        <select value={target?.id ?? ''} onChange={(e) => selectTarget(e.target.value)} disabled={!target || codeActing} style={input} title="Choose an M query">
+        <span aria-hidden="true">›</span>
+        <span>Editing</span>
+        <select className="sem-field sem-field-sm" value={target?.id ?? ''} onChange={(e) => selectTarget(e.target.value)} disabled={!target || codeActing} title="Choose an M query">
           {targets.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
         </select>
-        {codeBusyReason && <span role="status" style={hint}>{codeBusyReason}</span>}
-        {hasEditableM && validity && <span className="ml-auto" style={{ fontSize: 10.5, color: validity.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{validity.ok ? '✓ valid M' : (validity.error || 'M needs attention')}</span>}
-      </div>
-      <div className="flex items-center gap-2 px-4 py-1.5 text-[10.5px]" style={{ borderTop: '1px solid var(--sem-border)' }}>
-        <span style={{ color: 'var(--sem-muted)' }}>Refresh:</span>
-        <span>{refreshSummary}</span>
-        <button className="ml-auto" onClick={onConfigureRefresh} style={linkBtn}>Configure</button>
-      </div>
+        {codeBusyReason && <span className="sem-text-meta" role="status">{codeBusyReason}</span>}
+        {/* The state shows only on a problem: a query that is fine shows nothing (A2/P5). */}
+        {hasEditableM && validity && !validity.ok && <span className="ml-auto xe-msg" style={{ '--xe-dot': validity.ok ? 'var(--sem-good)' : 'var(--sem-bad)' } as React.CSSProperties}>{validity.error || 'M needs attention'}</span>}
     </div>
   );
 
   if (!targets.length) return (
-    <>
+    <div className="sem-grid">
       {contextStrip}
-      <div className="p-4" style={hint}>This table has no editable M query, and the model has no shared M queries.</div>
-    </>
+      {orphanWords}
+      <div className="sem-text-meta">This table has no editable M query, and the model has no shared M queries.</div>
+    </div>
   );
 
   return (
-    <div className="min-w-0">
+    <div className="sem-grid">
       {contextStrip}
-      <div className="flex items-center gap-2 px-4 py-2 flex-wrap" style={{ borderBottom: '1px solid var(--sem-border)' }}>
-          <button onClick={doFormat} disabled={codeActing} style={btn} title="Pretty-print the M (offline)">{codeBusy?.op === 'format' ? 'Formatting…' : 'Format'}</button>
-          <button onClick={doSave} disabled={codeActing || !dirty || serverConflict != null} style={primaryBtn}>{codeBusy?.op === 'save' ? 'Saving…' : 'Save M'}</button>
-          <button onClick={() => setEditorText(original)} disabled={codeActing || !dirty} style={btn}>Revert</button>
-          {serverConflict != null && <button onClick={reloadServerText} disabled={codeActing} style={btn}>Reload server M</button>}
-          {codeBusy && <span role="status" style={hint}>Other M actions are unavailable while {codeBusyActivity}.</span>}
-          <span style={{ width: 1, height: 16, background: 'var(--sem-border)' }} />
-          {!creating ? (
-            <button onClick={() => setCreating(true)} disabled={codeActing} style={btn} title="Create a new shared M query or parameter">New query</button>
-          ) : (
+      {orphanWords}
+      <div className="flex items-center gap-2 flex-wrap">
+          <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={doSave} disabled={codeActing || !dirty || serverConflict != null}>{codeBusy?.op === 'save' ? 'Saving…' : 'Save M'}</button>
+          <button className="sem-btn sem-btn-sm" onClick={doFormat} disabled={codeActing} title="Pretty-print the M (offline)">{codeBusy?.op === 'format' ? 'Formatting…' : 'Format'}</button>
+          {/* Revert is the one control a person needs beside Save M, and only while there is something to undo. */}
+          {dirty && <button className="sem-btn sem-btn-sm" onClick={() => setEditorText(original)} disabled={codeActing}>Revert</button>}
+          <DraftMark show={dirty} />
+          {serverConflict != null && <button className="sem-btn sem-btn-sm" onClick={reloadServerText} disabled={codeActing}>Reload server M</button>}
+          {codeBusy && <span className="sem-text-meta" role="status">Other M actions are unavailable while {codeBusyActivity}.</span>}
+          {/* New query, Duplicate and Create reference are rare: one menu. Their forms open here when chosen. */}
+          <span className="relative">
+            <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" aria-label="More for this query" aria-haspopup="menu" aria-expanded={moreMenu} disabled={codeActing} onClick={() => setMoreMenu((o) => !o)}>⋯</button>
+            {moreMenu && <MenuPop onClose={() => setMoreMenu(false)} items={[
+              { label: 'New query', detail: 'Create a new shared M query or parameter.', act: () => setCreating(true) },
+              ...(target?.kind === 'expression' ? [
+                { label: 'Duplicate', detail: 'Copy this query under a new name.', act: () => void doDuplicate() },
+                { label: 'Create reference', detail: 'Create a new query that references this one.', act: () => { setRefMode(true); setRefName(`${target.name} (ref)`); } },
+              ] : []),
+            ]} />}
+          </span>
+          {creating && (
             <>
-              <input autoFocus value={newName} disabled={codeActing} onChange={(e) => setNewName(e.target.value)}
+              <input className="sem-field sem-field-sm" autoFocus value={newName} disabled={codeActing} onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') void doCreate(); else if (e.key === 'Escape') { setCreating(false); setNewName(''); } }}
-                placeholder="new query name" style={{ ...input, maxWidth: 160 }} />
-              <button onClick={doCreate} disabled={codeActing || !newName.trim()} style={primaryBtn}>{codeBusy?.op === 'create-query' ? 'Creating…' : 'Create'}</button>
-              <button onClick={() => { setCreating(false); setNewName(''); }} disabled={codeActing} style={btn}>Cancel</button>
+                placeholder="new query name" style={{ maxWidth: 160 }} />
+              <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={doCreate} disabled={codeActing || !newName.trim()}>{codeBusy?.op === 'create-query' ? 'Creating…' : 'Create'}</button>
+              <button className="sem-btn sem-btn-sm" onClick={() => { setCreating(false); setNewName(''); }} disabled={codeActing}>Cancel</button>
             </>
           )}
-          {target?.kind === 'expression' && !creating && (
+          {target?.kind === 'expression' && !creating && refMode && (
             <>
-              <button onClick={doDuplicate} disabled={codeActing} style={btn} title="Copy this query under a new name">{codeBusy?.op === 'duplicate' ? 'Duplicating…' : 'Duplicate'}</button>
-              {!refMode ? (
-                <button onClick={() => { setRefMode(true); setRefName(`${target.name} (ref)`); }} disabled={codeActing} style={btn} title="Create a new query that references this one">Create reference</button>
-              ) : (
-                <>
-                  <input autoFocus value={refName} disabled={codeActing} onChange={(e) => setRefName(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') void doReference(); else if (e.key === 'Escape') { setRefMode(false); setRefName(''); } }}
-                    placeholder="reference name" style={{ ...input, maxWidth: 160 }} />
-                  <button onClick={doReference} disabled={codeActing || !refName.trim()} style={primaryBtn}>{codeBusy?.op === 'create-reference' ? 'Creating…' : 'Create reference'}</button>
-                  <button onClick={() => { setRefMode(false); setRefName(''); }} disabled={codeActing} style={btn}>Cancel</button>
-                </>
-              )}
+              <input className="sem-field sem-field-sm" autoFocus value={refName} disabled={codeActing} onChange={(e) => setRefName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') void doReference(); else if (e.key === 'Escape') { setRefMode(false); setRefName(''); } }}
+                placeholder="reference name" style={{ maxWidth: 160 }} />
+              <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={doReference} disabled={codeActing || !refName.trim()}>{codeBusy?.op === 'create-reference' ? 'Creating…' : 'Create reference'}</button>
+              <button className="sem-btn sem-btn-sm" onClick={() => { setRefMode(false); setRefName(''); }} disabled={codeActing}>Cancel</button>
             </>
           )}
-          {msg && <span role={msg.startsWith('✓') ? 'status' : 'alert'} style={{ fontSize: 10.5, color: msg.startsWith('✓') ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{msg}</span>}
+          {msg && <span role={msg.startsWith('✓') ? 'status' : 'alert'} className={'sem-text-meta xe-dot ' + (msg.startsWith('✓') ? 'xe-dot-good' : 'xe-dot-bad')}>{msg}</span>}
       </div>
 
-      <div className="p-4 pb-10">
-        <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_240px] items-start">
-          <section className="min-w-0" aria-labelledby="m-editor-heading">
-            <div id="m-editor-heading" className="mb-1.5 text-[11.5px] font-semibold">M editor</div>
+          <section className="sem-card sem-span-9 sem-stack" aria-label="M editor" title="Editing M changes the query, it does not run a refresh. Type to autocomplete (Ctrl+Space), or hover a name for its inferred type.">
             {/* 420 put the preview panel's own hint row exactly on the fold at 1440x900, so it rendered as a
                 sliced half-line above the context bar. The editor is still resizable by hand. */}
             <MEditor value={text} onChange={setEditorText} minHeight={370} selection={selection ?? undefined} resizable />
-            <div className="pt-1.5" style={{ ...hint, fontSize: 10 }}>Editing M changes the query definition. It does not run a refresh. Type to autocomplete M (Ctrl+Space), or hover a name for its inferred type.</div>
           </section>
-          <aside className="min-w-0" aria-label="Applied steps">
-            <AppliedStepsPanel text={text} contextToken={editorContextToken} isContextCurrent={isEditorContextCurrent} onChange={setEditorText} collapsibleOnCompact
+          <aside className="sem-span-3 min-w-0 self-start" aria-label="Applied steps">
+            <AppliedStepsPanel text={text} contextToken={editorContextToken} identity={mContextToken(selectedTable, target?.id ?? '', 0)} isContextCurrent={isEditorContextCurrent} onChange={setEditorText} collapsibleOnCompact
               onSelect={(from, to) => setSelection((s) => ({ from, to, nonce: (s?.nonce ?? 0) + 1 }))}
               onError={failTransform} />
           </aside>
-        </div>
         {sampleTable && (
-          <div className="mt-4">
             <SamplePreview tableName={sampleTable} docColumns={docColumns} mText={text} connected={!!conn?.connected}
               contextToken={editorContextToken} isContextCurrent={isEditorContextCurrent} profileRevision={profileRevision} apply={applyTransform} fail={failTransform} />
-          </div>
         )}
-      </div>
     </div>
   );
 }
 
 // --- little building blocks ---
-const input: React.CSSProperties = { background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 11, padding: '2px 6px', maxWidth: 220 };
-const btn: React.CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 11, padding: '3px 10px', cursor: 'pointer' };
-const primaryBtn: React.CSSProperties = { ...btn, background: 'var(--sem-accent-soft)', borderColor: 'var(--sem-accent)' };
-const linkBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: 'var(--sem-accent)', cursor: 'pointer', fontSize: 11, padding: 0 };
-const hint: React.CSSProperties = { color: 'var(--sem-muted)', fontSize: 10.5 };
 
 function periodsLabel(periods: number, granularity: string): string {
   return `${periods} ${granularity.toLowerCase()}${periods === 1 ? '' : 's'}`;
@@ -966,19 +1108,19 @@ function refreshWindowFitsArchive(storePeriods: number, storeGran: Gran, refresh
 }
 function PolicyField({ label, hintText, children }: { label: string; hintText?: string; children: React.ReactNode }) {
   return (
-    <label className="min-w-0 flex flex-col gap-1 text-[11px]">
+    <label className="min-w-0 flex flex-col gap-1 text-(length:--sem-text-label)">
       <span style={{ color: 'var(--sem-muted)' }}>{label}</span>
       {children}
-      {hintText && <span style={hint}>{hintText}</span>}
+      {hintText && <span className="sem-text-meta">{hintText}</span>}
     </label>
   );
 }
 function Num({ value, onChange, disabled }: { value: number; onChange: (v: number) => void; disabled?: boolean }) {
-  return <input type="number" min={0} value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, parseInt(e.target.value || '0', 10)))} style={{ ...input, width: '100%', maxWidth: 'unset' }} />;
+  return <input className="sem-field sem-field-sm" type="number" min={0} value={value} disabled={disabled} onChange={(e) => onChange(Math.max(0, parseInt(e.target.value || '0', 10)))} style={{ width: '100%', maxWidth: 'unset' }} />;
 }
 function GranSel({ value, onChange, disabled }: { value: Gran; onChange: (v: Gran) => void; disabled?: boolean }) {
   return (
-    <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as Gran)} style={{ ...input, width: '100%', maxWidth: 'unset' }}>
+    <select className="sem-field sem-field-sm" value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as Gran)} style={{ width: '100%', maxWidth: 'unset' }}>
       {GRANS.map((g) => <option key={g} value={g}>{g}</option>)}
     </select>
   );
@@ -986,16 +1128,16 @@ function GranSel({ value, onChange, disabled }: { value: Gran; onChange: (v: Gra
 function Check({ ok, label, detail, action, busy, busyReason }: { ok: boolean; label: string; detail?: string; action?: { label: string; run: () => void; running?: boolean; runningLabel?: string; error?: string }; busy?: boolean; busyReason?: string | null }) {
   return (
     <div className="flex items-start gap-2 py-2">
-      <span style={{ color: ok ? 'var(--sem-good)' : 'var(--sem-warn)', fontWeight: 700, width: 14 }}>{ok ? '✓' : '!'}</span>
+      <span className={'xe-dot ' + (ok ? 'xe-dot-good' : 'xe-dot-warn')} style={{ fontWeight: 'var(--sem-weight-strong)', width: 14 }}>{ok ? '✓' : '!'}</span>
       <div className="flex-1 min-w-0">
         <div style={{ color: 'var(--sem-fg)' }}>{label}</div>
-        {detail && <div style={hint}>{detail}</div>}
+        {detail && <div className="sem-text-meta">{detail}</div>}
       </div>
       {action && (
         <div className="flex flex-col items-end gap-1">
-          <button onClick={action.run} disabled={busy} style={btn}>{action.running ? (action.runningLabel ?? 'Working…') : action.label}</button>
-          {action.error && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 360 }}>{action.error}</span>}
-          {busyReason && <span role="status" style={{ ...hint, maxWidth: 360 }}>{busyReason}</span>}
+          <button className="sem-btn sem-btn-sm" onClick={action.run} disabled={busy}>{action.running ? (action.runningLabel ?? 'Working…') : action.label}</button>
+          {action.error && <span className="xe-error" role="alert" style={{ maxWidth: 360 }}>{action.error}</span>}
+          {busyReason && <span className="sem-text-meta" role="status" style={{ maxWidth: 360 }}>{busyReason}</span>}
         </div>
       )}
     </div>

@@ -66,6 +66,7 @@ namespace Semanticus.Tests
 
         // The product-level assertion: the op reaches the state the rule asks about. This is the one that would have
         // caught the defect without anyone having to know what IsKey is.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mark_date_table_alone_satisfies_the_model_should_have_a_date_table_rule()
         {
@@ -166,15 +167,16 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- generate_date_table: the Note must not claim a marking it did not complete -----------------------------
+        // ---- generate_date_table: the Note says what the op did, and the op finishes the marking --------------------
 
-        // The sibling op sets DataCategory = "Time" and nothing else, then said "Marked as a date table." That sentence
-        // was false, and a customer reads it. IsKey cannot be set there — a calculated table has no columns until it is
-        // deployed and processed — and NOTHING sets it later either: the only IsKey writes in the whole solution are
-        // build_model_from_spec, apply_schema_update and mark_date_table, none of which is a refresh path. So the honest
-        // Note says the marking is unfinished and names the op that finishes it.
+        // The sibling op once set DataCategory = "Time" and nothing else, then said "Marked as a date table." That was
+        // false, so the Note was changed to say the marking was unfinished. The joint verifier (27 Sep, DT2) found the
+        // plan line built on the same core saying "Add Date and mark it as the date table" with no key. The core now
+        // declares CALENDAR's Date column (as the calendar templates do) and keys it through MarkDateTableCore, so the
+        // table IS marked, both date-table best-practice rules clear, and the Note says so. The guard is unchanged in
+        // spirit: ground truth first, and the Note must match it.
         [Fact]
-        public async Task Generate_date_table_note_does_not_claim_a_marking_it_did_not_complete()
+        public async Task Generate_date_table_marks_the_new_table_on_its_date_column_and_the_note_says_so()
         {
             var sm = new SessionManager();
             using var engine = new LocalEngine(sm, new Fake());
@@ -182,18 +184,19 @@ namespace Semanticus.Tests
 
             var r = await engine.GenerateDateTableAsync("Date", null, null, markAsDate: true, "human");
 
-            // Ground truth first: the model is NOT a marked date table, so any Note claiming it is would be false.
+            // Ground truth first: the model IS a marked date table (category and a DateTime key).
             var card = await engine.BpaScanAsync();
-            Assert.Contains(card.Violations, v => v.RuleId == "MODEL_SHOULD_HAVE_A_DATE_TABLE");
-            Assert.Contains(card.Violations, v => v.RuleId == "DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE");
+            Assert.DoesNotContain(card.Violations, v => v.RuleId == "MODEL_SHOULD_HAVE_A_DATE_TABLE");
+            Assert.DoesNotContain(card.Violations, v => v.RuleId == "DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE");
+            Assert.Equal("Time", await PropAsync(engine, "table:Date", "DataCategory"));
+            Assert.Equal("True", await PropAsync(engine, "column:Date/Date", "IsKey"));
 
-            // Therefore the Note must not say it was marked, must say the marking is unfinished, and must name the op
-            // that finishes it rather than leaving the user to discover the gap from a red gate.
-            Assert.DoesNotContain("Marked as a date table.", r.Note);
-            Assert.Contains("not finished", r.Note, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("mark_date_table", r.Note);
-            // And it must not promise that a refresh completes it, because nothing sets IsKey on refresh.
-            Assert.DoesNotContain("will be marked", r.Note, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("marked as the model's date table", r.Note, StringComparison.Ordinal);
+            Assert.DoesNotContain("not finished", r.Note, StringComparison.OrdinalIgnoreCase);
+
+            // One undo step takes the table, its column and the mark back together.
+            await engine.UndoAsync("human");
+            Assert.False(await sm.Current.ReadAsync(m => m.Tables.Contains("Date")));
         }
 
         [Fact]
@@ -240,6 +243,7 @@ namespace Semanticus.Tests
             return await engine.ApplyPlanAsync(new[] { item.Id }, "human");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_sets_the_named_column_as_the_key()
         {
@@ -319,6 +323,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_refuses_a_non_datetime_column_and_changes_nothing()
         {
@@ -338,6 +343,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_refuses_a_missing_column_and_changes_nothing()
         {
@@ -373,6 +379,7 @@ namespace Semanticus.Tests
 
         // A refusal must not poison its neighbours either: the other approved items in the same batch still apply,
         // and the date table is the only thing left untouched. That is what "no partial mutation" means here.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_refusal_leaves_the_rest_of_the_batch_applied()
         {
@@ -398,6 +405,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_is_one_undo_entry_that_reverts_both_halves()
         {
@@ -450,6 +458,7 @@ namespace Semanticus.Tests
         // was left in place. That value is reachable: the public property writer stores a string exactly as typed.
         // Both real rules compare the category exactly ("Time"), so the mark reported success while the findings
         // stayed open, and with the date column already the key the op reported no change at all.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mark_date_table_makes_a_lowercase_time_category_canonical_and_clears_the_real_findings()
         {
@@ -495,6 +504,7 @@ namespace Semanticus.Tests
 
         // The same reachable state on the plan door. This is the worse report of the two: with the column already
         // the key, the item said the table was already marked and nothing changed, while the gate stayed red.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_makes_a_lowercase_time_category_canonical_and_clears_the_real_findings()
         {
@@ -533,6 +543,7 @@ namespace Semanticus.Tests
 
         // An already-marked table is the satisfied case: the item must not invent a change it did not make. The
         // direct op already reports Changed = false there; the plan door must be equally honest in its note.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Plan_mark_date_table_does_not_invent_a_change_on_an_already_marked_table()
         {

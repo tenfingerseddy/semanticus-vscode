@@ -1,0 +1,1065 @@
+{
+ "version": 1,
+ "point": "date.table",
+ "split": "heldout",
+ "note": "HELD-OUT reviewer-written labels for the date.table replay, round 2. Written after round 1 (labels.json, now development evidence) and before any round 2 answer. Same format as labels.json. New domains and names throughout; none of these models or names was in round 1. Contoso-style placeholders only.",
+ "items": [
+  {
+   "id": "h-1",
+   "source": "heldout",
+   "note": "General ledger with a Dates table on the one side, from files.",
+   "tables": [
+    {
+     "name": "GL Entries",
+     "cols": [
+      "PostingDate:DateTime",
+      "AccountKey:Int64",
+      "Amount:Decimal"
+     ]
+    },
+    {
+     "name": "Account",
+     "cols": [
+      "AccountKey:Int64",
+      "Account:String",
+      "Account Type:String"
+     ]
+    },
+    {
+     "name": "Dates",
+     "cols": [
+      "Date:DateTime",
+      "Fiscal Year:Int64",
+      "Fiscal Period:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "GL Entries/PostingDate>Dates/Date",
+    "GL Entries/AccountKey>Account/AccountKey"
+   ],
+   "measures": [
+    "GL Entries|Balance|SUM ( 'GL Entries'[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Dates",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-2",
+   "source": "heldout",
+   "note": "General ledger with no date table, with data.",
+   "tables": [
+    {
+     "name": "GL Entries",
+     "cols": [
+      "PostingDate:DateTime",
+      "AccountKey:Int64",
+      "Amount:Decimal"
+     ]
+    },
+    {
+     "name": "Account",
+     "cols": [
+      "AccountKey:Int64",
+      "Account:String",
+      "OpenedOn:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "GL Entries/AccountKey>Account/AccountKey"
+   ],
+   "measures": [
+    "GL Entries|Balance|SUM ( 'GL Entries'[Amount] )",
+    "GL Entries|Balance YTD|TOTALYTD ( [Balance], 'GL Entries'[PostingDate] )"
+   ],
+   "facts": {
+    "GL Entries/PostingDate": "repeats",
+    "Account/OpenedOn": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-3",
+   "source": "heldout",
+   "note": "A month-level Fiscal Periods table measured with gaps beside a ledger, and no daily date table.",
+   "tables": [
+    {
+     "name": "GL Entries",
+     "cols": [
+      "PeriodStart:DateTime",
+      "Amount:Decimal"
+     ]
+    },
+    {
+     "name": "Fiscal Periods",
+     "cols": [
+      "PeriodStart:DateTime",
+      "Period Name:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "GL Entries/PeriodStart>Fiscal Periods/PeriodStart"
+   ],
+   "measures": [
+    "GL Entries|Balance|SUM ( 'GL Entries'[Amount] )"
+   ],
+   "facts": {
+    "Fiscal Periods/PeriodStart": "gaps",
+    "GL Entries/PeriodStart": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-4",
+   "source": "heldout",
+   "note": "Shipments with a DimCalendar table joined on a date, from files.",
+   "tables": [
+    {
+     "name": "Shipments",
+     "cols": [
+      "ShipDate:DateTime",
+      "CarrierKey:Int64",
+      "Weight:Double"
+     ]
+    },
+    {
+     "name": "Carrier",
+     "cols": [
+      "CarrierKey:Int64",
+      "Carrier:String"
+     ]
+    },
+    {
+     "name": "DimCalendar",
+     "cols": [
+      "CalendarDate:DateTime",
+      "Week:Int64",
+      "Month:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Shipments/ShipDate>DimCalendar/CalendarDate",
+    "Shipments/CarrierKey>Carrier/CarrierKey"
+   ],
+   "measures": [
+    "Shipments|Total Weight|SUM ( Shipments[Weight] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "DimCalendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-5",
+   "source": "heldout",
+   "note": "Shipments with no date table, from files, and the carrier has a contract start date.",
+   "tables": [
+    {
+     "name": "Shipments",
+     "cols": [
+      "ShipDate:DateTime",
+      "DeliveredDate:DateTime",
+      "CarrierKey:Int64",
+      "Weight:Double"
+     ]
+    },
+    {
+     "name": "Carrier",
+     "cols": [
+      "CarrierKey:Int64",
+      "Carrier:String",
+      "ContractStart:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Shipments/CarrierKey>Carrier/CarrierKey"
+   ],
+   "measures": [
+    "Shipments|Total Weight|SUM ( Shipments[Weight] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-6",
+   "source": "heldout",
+   "note": "Shipments with a proper Date Dimension and a Public Holidays list, with data.",
+   "tables": [
+    {
+     "name": "Shipments",
+     "cols": [
+      "ShipDate:DateTime",
+      "Weight:Double"
+     ]
+    },
+    {
+     "name": "Date Dimension",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "Is Workday:Boolean"
+     ]
+    },
+    {
+     "name": "Public Holidays",
+     "cols": [
+      "Holiday Date:DateTime",
+      "Holiday:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Shipments/ShipDate>Date Dimension/Date"
+   ],
+   "measures": [
+    "Shipments|Total Weight|SUM ( Shipments[Weight] )"
+   ],
+   "facts": {
+    "Date Dimension/Date": "day",
+    "Public Holidays/Holiday Date": "gaps",
+    "Shipments/ShipDate": "repeats"
+   },
+   "label": {
+    "table": "Date Dimension",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-7",
+   "source": "heldout",
+   "note": "Web sessions with timestamps and a Calendar built by CALENDARAUTO, not related yet.",
+   "tables": [
+    {
+     "name": "Sessions",
+     "cols": [
+      "SessionStart:DateTime",
+      "PageViews:Int64",
+      "Channel:String"
+     ]
+    },
+    {
+     "name": "Calendar",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ],
+     "calendar": "ADDCOLUMNS ( CALENDARAUTO (), \"Year\", YEAR ( [Date] ) )"
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Sessions|Views|SUM ( Sessions[PageViews] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Calendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-8",
+   "source": "heldout",
+   "note": "Web sessions only, one flat table, from files.",
+   "tables": [
+    {
+     "name": "Sessions",
+     "cols": [
+      "SessionID:String",
+      "SessionStart:DateTime",
+      "PageViews:Int64",
+      "Channel:String"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Sessions|Views|SUM ( Sessions[PageViews] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-9",
+   "source": "heldout",
+   "note": "Subscriptions with start and end dates and a Date table used by time intelligence, from files.",
+   "tables": [
+    {
+     "name": "Subscriptions",
+     "cols": [
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "PlanKey:Int64",
+      "MRR:Decimal"
+     ]
+    },
+    {
+     "name": "Plan",
+     "cols": [
+      "PlanKey:Int64",
+      "Plan:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Month:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Subscriptions/StartDate>Date/Date",
+    "Subscriptions/PlanKey>Plan/PlanKey"
+   ],
+   "measures": [
+    "Subscriptions|MRR Total|SUM ( Subscriptions[MRR] )",
+    "Subscriptions|MRR PY|CALCULATE ( [MRR Total], SAMEPERIODLASTYEAR ( 'Date'[Date] ) )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-10",
+   "source": "heldout",
+   "note": "Subscriptions and plans, no date table, with data.",
+   "tables": [
+    {
+     "name": "Subscriptions",
+     "cols": [
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "PlanKey:Int64",
+      "MRR:Decimal"
+     ]
+    },
+    {
+     "name": "Plan",
+     "cols": [
+      "PlanKey:Int64",
+      "Plan:String",
+      "LaunchedOn:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Subscriptions/PlanKey>Plan/PlanKey"
+   ],
+   "measures": [
+    "Subscriptions|MRR Total|SUM ( Subscriptions[MRR] )"
+   ],
+   "facts": {
+    "Subscriptions/StartDate": "repeats",
+    "Subscriptions/EndDate": "repeats",
+    "Plan/LaunchedOn": "gaps"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-11",
+   "source": "heldout",
+   "note": "Production runs with a Shift Calendar measured one row per day, used by the fact.",
+   "tables": [
+    {
+     "name": "Production",
+     "cols": [
+      "RunDate:DateTime",
+      "LineKey:Int64",
+      "Units:Int64"
+     ]
+    },
+    {
+     "name": "Line",
+     "cols": [
+      "LineKey:Int64",
+      "Line:String"
+     ]
+    },
+    {
+     "name": "Shift Calendar",
+     "cols": [
+      "Day:DateTime",
+      "Shift Pattern:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Production/RunDate>Shift Calendar/Day",
+    "Production/LineKey>Line/LineKey"
+   ],
+   "measures": [
+    "Production|Units Made|SUM ( Production[Units] )"
+   ],
+   "facts": {
+    "Shift Calendar/Day": "day",
+    "Production/RunDate": "repeats"
+   },
+   "label": {
+    "table": "Shift Calendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-12",
+   "source": "heldout",
+   "note": "Production runs with a Maintenance Log beside them and no date table, from files.",
+   "tables": [
+    {
+     "name": "Production",
+     "cols": [
+      "RunDate:DateTime",
+      "LineKey:Int64",
+      "Units:Int64"
+     ]
+    },
+    {
+     "name": "Line",
+     "cols": [
+      "LineKey:Int64",
+      "Line:String"
+     ]
+    },
+    {
+     "name": "Maintenance Log",
+     "cols": [
+      "Serviced On:DateTime",
+      "LineKey:Int64",
+      "Notes:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Production/LineKey>Line/LineKey"
+   ],
+   "measures": [
+    "Production|Units Made|SUM ( Production[Units] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-13",
+   "source": "heldout",
+   "note": "Enrolments with a Term Dates table (one row per day) related, from files.",
+   "tables": [
+    {
+     "name": "Enrolments",
+     "cols": [
+      "EnrolDate:DateTime",
+      "CourseKey:Int64",
+      "Students:Int64"
+     ]
+    },
+    {
+     "name": "Course",
+     "cols": [
+      "CourseKey:Int64",
+      "Course:String"
+     ]
+    },
+    {
+     "name": "Term Dates",
+     "cols": [
+      "Date:DateTime",
+      "Term:String",
+      "Week Of Term:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Enrolments/EnrolDate>Term Dates/Date",
+    "Enrolments/CourseKey>Course/CourseKey"
+   ],
+   "measures": [
+    "Enrolments|Total Students|SUM ( Enrolments[Students] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Term Dates",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-14",
+   "source": "heldout",
+   "note": "A course catalogue with published dates and no facts.",
+   "tables": [
+    {
+     "name": "Course",
+     "cols": [
+      "CourseKey:Int64",
+      "Course:String",
+      "Published:DateTime",
+      "DepartmentKey:Int64"
+     ]
+    },
+    {
+     "name": "Department",
+     "cols": [
+      "DepartmentKey:Int64",
+      "Department:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Course/DepartmentKey>Department/DepartmentKey"
+   ],
+   "measures": [],
+   "facts": {},
+   "label": {
+    "table": "none",
+    "mark": true,
+    "alsoOk": [
+     "generate"
+    ]
+   }
+  },
+  {
+   "id": "h-15",
+   "source": "heldout",
+   "note": "Meter readings with timestamps and a Time table of hours, and no daily table, with data.",
+   "tables": [
+    {
+     "name": "Readings",
+     "cols": [
+      "ReadingAt:DateTime",
+      "MeterKey:Int64",
+      "kWh:Double"
+     ]
+    },
+    {
+     "name": "Meter",
+     "cols": [
+      "MeterKey:Int64",
+      "Meter:String"
+     ]
+    },
+    {
+     "name": "Hours",
+     "cols": [
+      "Hour:Int64",
+      "Label:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Readings/MeterKey>Meter/MeterKey"
+   ],
+   "measures": [
+    "Readings|Energy|SUM ( Readings[kWh] )"
+   ],
+   "facts": {
+    "Readings/ReadingAt": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-16",
+   "source": "heldout",
+   "note": "Meter readings with a Day table on the one side, from files.",
+   "tables": [
+    {
+     "name": "Readings",
+     "cols": [
+      "ReadingDay:DateTime",
+      "MeterKey:Int64",
+      "kWh:Double"
+     ]
+    },
+    {
+     "name": "Meter",
+     "cols": [
+      "MeterKey:Int64",
+      "Meter:String"
+     ]
+    },
+    {
+     "name": "Day",
+     "cols": [
+      "Day:DateTime",
+      "Month:String",
+      "Season:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Readings/ReadingDay>Day/Day",
+    "Readings/MeterKey>Meter/MeterKey"
+   ],
+   "measures": [
+    "Readings|Energy|SUM ( Readings[kWh] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Day",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-17",
+   "source": "heldout",
+   "note": "Retail with a Kalender table (the date table in German) and time intelligence over it, from files.",
+   "tables": [
+    {
+     "name": "Umsatz",
+     "cols": [
+      "Datum:DateTime",
+      "Betrag:Decimal"
+     ]
+    },
+    {
+     "name": "Kalender",
+     "cols": [
+      "Datum:DateTime",
+      "Jahr:Int64",
+      "Monat:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Umsatz/Datum>Kalender/Datum"
+   ],
+   "measures": [
+    "Umsatz|Summe|SUM ( Umsatz[Betrag] )",
+    "Umsatz|Summe VJ|CALCULATE ( [Summe], SAMEPERIODLASTYEAR ( Kalender[Datum] ) )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Kalender",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-18",
+   "source": "heldout",
+   "note": "Retail with a Calendar table and a Promotion Calendar of campaign start days, both with data.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SaleDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Calendar",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ]
+    },
+    {
+     "name": "Promotion Calendar",
+     "cols": [
+      "Campaign Start:DateTime",
+      "Campaign:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/SaleDate>Calendar/Date"
+   ],
+   "measures": [
+    "Sales|Revenue|SUM ( Sales[Amount] )"
+   ],
+   "facts": {
+    "Calendar/Date": "day",
+    "Promotion Calendar/Campaign Start": "gaps",
+    "Sales/SaleDate": "repeats"
+   },
+   "label": {
+    "table": "Calendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-19",
+   "source": "heldout",
+   "note": "Orders with an Order Dates table that repeats days (loaded from order lines), and time intelligence.",
+   "tables": [
+    {
+     "name": "Orders",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Order Dates",
+     "cols": [
+      "OrderDate:DateTime",
+      "Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Orders/OrderDate>Order Dates/OrderDate"
+   ],
+   "measures": [
+    "Orders|Revenue|SUM ( Orders[Amount] )",
+    "Orders|Revenue YTD|TOTALYTD ( [Revenue], 'Order Dates'[OrderDate] )"
+   ],
+   "facts": {
+    "Order Dates/OrderDate": "repeats",
+    "Orders/OrderDate": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-20",
+   "source": "heldout",
+   "note": "Retail where the only date-like table is Store with an opening date, from files.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "StoreKey:Int64",
+      "SaleDateKey:Int64",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "Store:String",
+      "Opened:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Revenue|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-21",
+   "source": "heldout",
+   "note": "A Contoso-style star where the date table is named Time and joined on a date.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "ProductKey:Int64",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "Product:String"
+     ]
+    },
+    {
+     "name": "Time",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDate>Time/Date",
+    "Sales/ProductKey>Product/ProductKey"
+   ],
+   "measures": [
+    "Sales|Revenue|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Time",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-22",
+   "source": "heldout",
+   "note": "A Contoso-style star with a CALENDAR table named Periods, not related, from files.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Periods",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ],
+     "calendar": "CALENDAR ( DATE ( 2020, 1, 1 ), DATE ( 2026, 12, 31 ) )"
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Sales|Revenue|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Periods",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-23",
+   "source": "heldout",
+   "note": "A reference model with only Country and Currency tables and a currency's adoption date.",
+   "tables": [
+    {
+     "name": "Country",
+     "cols": [
+      "CountryKey:Int64",
+      "Country:String",
+      "CurrencyKey:Int64"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "Currency:String",
+      "Adopted:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Country/CurrencyKey>Currency/CurrencyKey"
+   ],
+   "measures": [],
+   "facts": {},
+   "label": {
+    "table": "none",
+    "mark": true,
+    "alsoOk": [
+     "generate"
+    ]
+   }
+  },
+  {
+   "id": "h-24",
+   "source": "heldout",
+   "note": "Budget and actuals both related to a Dates table, with data.",
+   "tables": [
+    {
+     "name": "Actuals",
+     "cols": [
+      "Date:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Budget",
+     "cols": [
+      "Date:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Dates",
+     "cols": [
+      "Date:DateTime",
+      "Month:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Actuals/Date>Dates/Date",
+    "Budget/Date>Dates/Date"
+   ],
+   "measures": [
+    "Actuals|Actual|SUM ( Actuals[Amount] )"
+   ],
+   "facts": {
+    "Dates/Date": "day",
+    "Actuals/Date": "repeats",
+    "Budget/Date": "repeats"
+   },
+   "label": {
+    "table": "Dates",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-25",
+   "source": "heldout",
+   "note": "A Snapshot table with one row per day of stock levels (a fact), no date table, from files.",
+   "tables": [
+    {
+     "name": "Stock Snapshot",
+     "cols": [
+      "Snapshot Date:DateTime",
+      "ProductKey:Int64",
+      "On Hand:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "Product:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Stock Snapshot/ProductKey>Product/ProductKey"
+   ],
+   "measures": [
+    "Stock Snapshot|Stock|SUM ( 'Stock Snapshot'[On Hand] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-26",
+   "source": "heldout",
+   "note": "Support tickets with opened and closed dates and a Calendar related to opened, with data.",
+   "tables": [
+    {
+     "name": "Tickets",
+     "cols": [
+      "Opened:DateTime",
+      "Closed:DateTime",
+      "AgentKey:Int64"
+     ]
+    },
+    {
+     "name": "Agent",
+     "cols": [
+      "AgentKey:Int64",
+      "Agent:String",
+      "HiredOn:DateTime"
+     ]
+    },
+    {
+     "name": "Calendar",
+     "cols": [
+      "Date:DateTime",
+      "Week:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Tickets/Opened>Calendar/Date",
+    "Tickets/AgentKey>Agent/AgentKey"
+   ],
+   "measures": [
+    "Tickets|Tickets Opened|COUNTROWS ( Tickets )"
+   ],
+   "facts": {
+    "Calendar/Date": "day",
+    "Tickets/Opened": "repeats",
+    "Tickets/Closed": "repeats",
+    "Agent/HiredOn": "repeats"
+   },
+   "label": {
+    "table": "Calendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-27",
+   "source": "heldout",
+   "note": "Support tickets with no date table, from files: Agent has one date column and is offered.",
+   "tables": [
+    {
+     "name": "Tickets",
+     "cols": [
+      "Opened:DateTime",
+      "Closed:DateTime",
+      "AgentKey:Int64"
+     ]
+    },
+    {
+     "name": "Agent",
+     "cols": [
+      "AgentKey:Int64",
+      "Agent:String",
+      "HiredOn:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Tickets/AgentKey>Agent/AgentKey"
+   ],
+   "measures": [
+    "Tickets|Tickets Opened|COUNTROWS ( Tickets )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "h-28",
+   "source": "heldout",
+   "note": "A model that is only a DateTable so far, from files.",
+   "tables": [
+    {
+     "name": "DateTable",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "Month:String"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [],
+   "facts": {},
+   "label": {
+    "table": "DateTable",
+    "mark": true
+   }
+  }
+ ]
+}

@@ -1,10 +1,11 @@
 ---
+schemaVersion: 3
 kind: template
 name: deploy-freeze-guard
-title: Release checks for {{freeze_window}}
-description: While changes are locked, send every deploy through a set of checks: confirm the change is allowed under your rules, prove the model did not get worse (no new readiness or best-practice problems), and record who approved anything that ships. Most of the year it stays out of your way; while changes are locked it makes the rule enforce itself.
+title: "Release checks for {{freeze_window}}"
+description: "While changes are locked, send every deploy through a set of checks: confirm the change is allowed under your rules, prove the model did not get worse (no new readiness or best-practice problems), and record who approved anything that ships. Most of the year it stays out of your way; while changes are locked it makes the rule enforce itself."
 whenToUse: "A recurring period when changes are locked (month-end, quarter-end, or a production-only window). Fill it in with when changes are locked, what your rules allow, and who can approve an exception."
-version: 1
+version: 2
 strictness: hard
 triggers: [deploy_live]
 slots:
@@ -26,6 +27,10 @@ slots:
 ---
 
 ## Step 1: Check the change against your rules
+```yaml step
+id: step-1
+performer: assistant
+```
 
 Changes are locked: {{freeze_window}}. Check this change against your rules: {{change_policy}}.
 Say plainly whether it can ship, is blocked, or needs approval, and why.
@@ -39,6 +44,10 @@ inputs:
 ```
 
 ## Step 2: Prove the model is still clean
+```yaml step
+id: step-2
+performer: assistant
+```
 
 A deploy while changes are locked must not make the model worse. The app re-scans: readiness must not drop
 and no new best-practice problem may appear across the model. A hard gate: if it got worse, fix it or do not ship.
@@ -52,6 +61,10 @@ verify:
 ```
 
 ## Step 3: Record who approved it
+```yaml step
+id: step-3
+performer: assistant
+```
 
 Nothing ships while changes are locked without approval: {{override_authority}}. Record who approved it,
 the business reason, and the rollback plan. Every exception is written down, never a silent bypass.
@@ -63,3 +76,17 @@ inputs:
     type: text
     required: required
 ```
+
+## Step 4: Save the release record
+```yaml step
+id: step-4
+performer: semanticus
+phase: after
+action:
+  op: save_evidence
+  source: workflow
+```
+
+Semanticus saves the record of this release with the model: the change, the rescan and who approved it.
+Every exception is written down, never a silent bypass. Nothing here runs if a check before it stopped the
+draft.

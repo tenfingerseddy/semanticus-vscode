@@ -21,5 +21,19 @@ namespace Semanticus.Tests
             var path = Path.Combine(AppContext.BaseDirectory, "TestData", fileName);
             return File.Exists(path) ? path : throw new FileNotFoundException(fileName + " was not copied beside the test assembly", path);
         }
+
+        /// <summary>Open an empty Analysis Services model at <paramref name="compatibilityLevel"/>. CreateModelAsync only
+        /// makes Power BI models, which need CL 1465 or higher, so a test that needs an older model (one that cannot
+        /// hold a linguistic schema) opens this instead. Nothing is left on disk.</summary>
+        public static async System.Threading.Tasks.Task OpenEmptyBimAsync(Semanticus.Engine.LocalEngine engine, string name, int compatibilityLevel)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "semanticus-tests", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var path = Path.Combine(dir, name + ".bim");
+            File.WriteAllText(path, "{\"name\":\"" + name + "\",\"compatibilityLevel\":" + compatibilityLevel + ",\"model\":{\"culture\":\"en-US\"}}");
+            // The model is read into memory on open, so the folder goes straight away: /tmp is a shared tmpfs.
+            try { await engine.OpenAsync(path); }
+            finally { Directory.Delete(dir, recursive: true); }
+        }
     }
 }

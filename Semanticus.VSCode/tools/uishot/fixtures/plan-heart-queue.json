@@ -1,0 +1,255 @@
+{
+ "_about": [
+  "The queue scene of the Plan page (mockup section 5): the assistant's track, in the order it takes them.",
+  "Read by the page's driver (cp-plan-drive.mjs), by test/plan-heart.test.mjs, and by Semanticus.Tests/PlanHeartFoldParityTests.cs,",
+  "which runs the engine's own fold line over these rows. plan-heart-fold-on.txt and plan-heart-fold-paused.txt are what both doors must print."
+ ],
+ "assistantQueue": "on",
+ "items": [
+  {
+   "section": "Structure",
+   "value": "",
+   "who": "asst",
+   "status": "ready",
+   "confidence": 0,
+   "why": [],
+   "diff": [],
+   "touches": "",
+   "tables": [],
+   "skipReason": null,
+   "skippedUtc": null,
+   "state": "gap",
+   "changeSet": null,
+   "source": "you",
+   "sourcePage": "diagram",
+   "doer": "assistant",
+   "stateNote": "since its last call",
+   "doneWhen": "model_check",
+   "doneText": null,
+   "objects": [
+    "table:Store"
+   ],
+   "reads": [],
+   "writes": [
+    "table:Store"
+   ],
+   "footprintKnown": true,
+   "waitsFor": [],
+   "held": false,
+   "order": 1,
+   "note": null,
+   "reply": null,
+   "claim": {
+    "claimedBy": "Claude Code",
+    "since": "2026-09-24T10:41:00+00:00"
+   },
+   "originLink": null,
+   "events": [],
+   "id": "pt-a41b6f02",
+   "title": "Add a Store geography hierarchy",
+   "sub": "Store: Country, State, City",
+   "stateWord": "on_it",
+   "jump": {
+    "tool": "diagram",
+    "label": "Diagram"
+   }
+  },
+  {
+   "section": "Meaning",
+   "value": "",
+   "who": "asst",
+   "status": "ready",
+   "confidence": 0,
+   "why": [],
+   "diff": [],
+   "touches": "",
+   "tables": [],
+   "skipReason": null,
+   "skippedUtc": null,
+   "state": "gap",
+   "changeSet": null,
+   "source": "jev",
+   "sourcePage": null,
+   "doer": "assistant",
+   "stateNote": "on its next call",
+   "doneWhen": "has_words",
+   "doneText": "Semanticus checks the model: all 12 have words.",
+   "objects": [
+    "column:Product/Brand",
+    "column:Product/Colour"
+   ],
+   "reads": [
+    "column:Product/Brand",
+    "column:Product/Colour"
+   ],
+   "writes": [
+    "column:Product/Brand",
+    "column:Product/Colour"
+   ],
+   "footprintKnown": true,
+   "waitsFor": [],
+   "held": false,
+   "order": 2,
+   "note": "Keep each under 20 words. Use the words the sales team uses.",
+   "reply": null,
+   "claim": null,
+   "originLink": null,
+   "events": [],
+   "id": "pt-3b7d0c21",
+   "title": "Write descriptions for 12 Product columns",
+   "sub": "Product: Brand, Colour and 10 more",
+   "stateWord": "ready",
+   "jump": {
+    "tool": "readiness",
+    "label": "AI readiness"
+   }
+  },
+  {
+   "section": "Meaning",
+   "value": "",
+   "who": "asst",
+   "status": "ready",
+   "confidence": 0,
+   "why": [],
+   "diff": [],
+   "touches": "",
+   "tables": [],
+   "skipReason": null,
+   "skippedUtc": null,
+   "state": "gap",
+   "changeSet": null,
+   "source": "you",
+   "sourcePage": "readiness",
+   "doer": "assistant",
+   "stateNote": "on its next call",
+   "doneWhen": "has_words",
+   "doneText": null,
+   "objects": [
+    "measure:Product/Units Sold"
+   ],
+   "reads": [
+    "measure:Product/Units Sold"
+   ],
+   "writes": [
+    "measure:Product/Units Sold"
+   ],
+   "footprintKnown": true,
+   "waitsFor": [],
+   "held": false,
+   "order": 3,
+   "note": "Keep each one to a sentence.",
+   "reply": null,
+   "claim": null,
+   "originLink": null,
+   "events": [],
+   "id": "pt-9e2f7a10",
+   "title": "Describe 8 Product measures",
+   "sub": "Product: Units Sold and 7 more",
+   "stateWord": "ready",
+   "jump": {
+    "tool": "readiness",
+    "label": "AI readiness"
+   }
+  },
+  {
+   "section": "Meaning",
+   "value": "",
+   "who": "asst",
+   "status": "ready",
+   "confidence": 0,
+   "why": [],
+   "diff": [],
+   "touches": "",
+   "tables": [],
+   "skipReason": null,
+   "skippedUtc": null,
+   "state": "gap",
+   "changeSet": null,
+   "source": "words",
+   "sourcePage": null,
+   "doer": "assistant",
+   "stateNote": null,
+   "doneWhen": "has_words",
+   "doneText": null,
+   "objects": [
+    "table:Customer"
+   ],
+   "reads": [],
+   "writes": [
+    "table:Customer"
+   ],
+   "footprintKnown": false,
+   "waitsFor": [],
+   "held": true,
+   "order": 4,
+   "note": null,
+   "reply": null,
+   "claim": null,
+   "originLink": null,
+   "events": [],
+   "id": "pt-0d6e33b8",
+   "title": "Add synonyms for Customer",
+   "sub": "Customer: from your aim: easy to ask about customers",
+   "stateWord": "paused",
+   "jump": {
+    "tool": "instructions",
+    "label": "AI instructions"
+   }
+  },
+  {
+   "section": "Meaning",
+   "value": "",
+   "who": "asst",
+   "status": "ready",
+   "confidence": 0,
+   "why": [],
+   "diff": [],
+   "touches": "",
+   "tables": [],
+   "skipReason": null,
+   "skippedUtc": null,
+   "state": "gap",
+   "changeSet": null,
+   "source": "words",
+   "sourcePage": null,
+   "doer": "assistant",
+   "stateNote": null,
+   "doneWhen": "has_words",
+   "doneText": null,
+   "objects": [
+    "measure:Sales/YTD Sales",
+    "measure:Sales/Sales LY"
+   ],
+   "reads": [
+    "measure:Sales/YTD Sales",
+    "measure:Sales/Sales LY"
+   ],
+   "writes": [
+    "measure:Sales/YTD Sales",
+    "measure:Sales/Sales LY"
+   ],
+   "footprintKnown": true,
+   "waitsFor": [
+    {
+     "id": "timeintel/measure:Sales/Sales Amount",
+     "title": "Add year to date and last year measures"
+    }
+   ],
+   "held": false,
+   "order": 5,
+   "note": null,
+   "reply": null,
+   "claim": null,
+   "originLink": null,
+   "events": [],
+   "id": "pt-c4e1a9f3",
+   "title": "Describe the 2 new time measures",
+   "sub": "Waits for: Add year to date and last year measures",
+   "stateWord": "waiting",
+   "jump": {
+    "tool": "readiness",
+    "label": "AI readiness"
+   }
+  }
+ ]
+}

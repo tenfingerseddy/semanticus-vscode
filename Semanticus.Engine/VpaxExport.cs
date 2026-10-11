@@ -17,10 +17,10 @@ namespace Semanticus.Engine
         private const string App = "Semanticus";
         private const string Ver = "1.0";
 
-        public static int Write(string path, Microsoft.AnalysisServices.Tabular.Database db)
+        public static int Write(string path, Microsoft.AnalysisServices.Tabular.Database db, bool createNew = false)
         {
             var daxModel = TomExtractor.GetDaxModel(db.Model, App, Ver);
-            using (var fs = File.Create(path))
+            using (var fs = Create(path, createNew))
                 VpaxTools.ExportVpax(fs, daxModel);
             return daxModel.Tables.Count;
         }
@@ -28,7 +28,12 @@ namespace Semanticus.Engine
         /// <summary>Metadata (from TOM) PLUS live storage statistics read over <paramref name="connectionString"/>
         /// (a token-bearing XMLA connection string). Opens its OWN short-lived AdomdConnection so it never contends
         /// with the engine's single-threaded live connection.</summary>
-        public static int WriteWithStats(string path, Microsoft.AnalysisServices.Tabular.Database db, string connectionString, int sampleRows)
+        /// <summary>The file, made new when the person approved a file that was not there: if one has appeared since, the write fails
+        /// rather than replace it.</summary>
+        private static FileStream Create(string path, bool createNew) =>
+            new FileStream(path, createNew ? FileMode.CreateNew : FileMode.Create, FileAccess.ReadWrite, FileShare.None);
+
+        public static int WriteWithStats(string path, Microsoft.AnalysisServices.Tabular.Database db, string connectionString, int sampleRows, bool createNew = false)
         {
             var daxModel = TomExtractor.GetDaxModel(db.Model, App, Ver);
             using (var conn = new Adomd.AdomdConnection(connectionString))
@@ -41,7 +46,7 @@ namespace Semanticus.Engine
                 StatExtractor.UpdateStatisticsModel(daxModel, conn, sampleRows);
 #pragma warning restore CS0618
             }
-            using (var fs = File.Create(path))
+            using (var fs = Create(path, createNew))
                 VpaxTools.ExportVpax(fs, daxModel);
             return daxModel.Tables.Count;
         }

@@ -1,4 +1,4 @@
-// Acceptance driver for the cp/promote-account lane: Changes > Published > Promote, driven through the
+// Acceptance driver for the cp/promote-account lane: Publish > Promote, driven through the
 // sign-in failure Kane hit on the Yoga (2026-09-14) and out the other side.
 //
 // The harness answers a Fabric read per sign-in mode, the way a real token acquisition does: the Azure
@@ -34,14 +34,35 @@ const browser = await puppeteer.launch({ executablePath, headless: true, protoco
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const LABEL = process.env.SHOTLABEL || 'after';
 
-// Each job: where to go, then the buttons to press in order, then what text must be on screen.
+// Each job: where to go (Published is the Publish area's only tool, so pressing the area lands on it and there is
+// no tab to press), then the buttons to press in order, then what the page must show (`expect`, judged below).
+
+// What each job's page must show once its steps have run. A value is matched exactly, { has } is a substring the
+// text must contain, { min } a lowest count, and null means the thing must be absent. The driver used only to NOTE a
+// missing area or button and print what it saw, so when the "Changes" area was renamed Publish every job stopped
+// short of the page and it still exited 0 (verifier, m11/header-stable round 2). Now a note or a miss fails the run.
+const judge = (want, seen) => {
+  const misses = [];
+  for (const [k, w] of Object.entries(want || {})) {
+    const path = k.split('.'); let v = seen; for (const p of path) v = v == null ? undefined : v[p];
+    const ok = w === null ? v == null
+      : typeof w === 'object' && 'has' in w ? typeof v === 'string' && v.includes(w.has)
+      : typeof w === 'object' && 'min' in w ? typeof v === 'number' && v >= w.min
+      : v === w;
+    if (!ok) misses.push(`${k} is ${JSON.stringify(v)}, expected ${JSON.stringify(w)}`);
+  }
+  return misses;
+};
+const NOT_SIGNED_IN = 'not signed in to the Azure command line';
 const JOBS = [
-  { slug: 'promote-azcli-failure', area: 'Changes', tab: 'Published', q: 'promote=azcli', press: ['Promote', 'Find my pipelines'] },
-  { slug: 'promote-azcli-signed-in', area: 'Changes', tab: 'Published', q: 'promote=azcli', press: ['Promote', 'Find my pipelines', 'Sign in'] },
-  { slug: 'promote-default-picker', area: 'Changes', tab: 'Published', press: ['Promote'] },
-  { slug: 'promote-default-found', area: 'Changes', tab: 'Published', press: ['Promote', 'Find my pipelines'] },
-  // The Data agent page lives inside Published > Advanced, so its picker is reached the same way.
-  { slug: 'dataagent-picker', area: 'Changes', tab: 'Published', press: ['Advanced', 'Data Agent'] },
+  { slug: 'promote-azcli-failure', area: 'Publish', q: 'promote=azcli', press: ['Promote', 'Find my pipelines'],
+    expect: { problem: { has: NOT_SIGNED_IN }, fix: 'Sign in', pickerValue: 'azcli', pipelines: 0 } },
+  { slug: 'promote-azcli-signed-in', area: 'Publish', q: 'promote=azcli', press: ['Promote', 'Find my pipelines', 'Sign in'],
+    expect: { problem: null, fix: null, pickerValue: 'interactive', pipelines: { min: 1 } } },
+  { slug: 'promote-default-picker', area: 'Publish', press: ['Promote'],
+    expect: { problem: null, pickerValue: 'interactive', pipelines: 0 } },
+  { slug: 'promote-default-found', area: 'Publish', press: ['Promote', 'Find my pipelines'],
+    expect: { problem: null, pickerValue: 'interactive', pipelines: { min: 1 }, go: 'Promote 3 items from Test to Production', steps: 0, tokenShown: false } },
 ];
 
 const clickText = (label) => (t) => {
@@ -65,8 +86,10 @@ for (const job of JOBS) {
     const okArea = await page.evaluate((a) => { const b = [...document.querySelectorAll('nav button')].find((x) => (x.textContent || '').trim() === a); if (b) b.click(); return !!b; }, job.area);
     if (!okArea) note += `area "${job.area}" not found; `;
     await wait(900);
-    const okTab = await page.evaluate(clickText(), job.tab);
-    if (!okTab) note += `tab "${job.tab}" not found; `;
+    if (job.tab) {
+      const okTab = await page.evaluate(clickText(), job.tab);
+      if (!okTab) note += `tab "${job.tab}" not found; `;
+    }
     await wait(1200);
     for (const label of job.press) {
       const ok = await page.evaluate(clickText(), label);
@@ -79,6 +102,9 @@ for (const job of JOBS) {
       const picker = document.querySelector('[data-testid="account-picker"] select');
       return {
         problem: t('[data-testid="promote-problem"]'),
+        go: t('[data-testid="promote-go"]'),   // the one write button: the check ran by itself, so it already names the move
+        steps: [...document.querySelectorAll('button')].filter((b) => /^(Preview|Confirm)/.test((b.textContent || '').trim())).length,
+        tokenShown: /confirm token|PROD-AB12CD34EF/.test(document.body.innerText),
         fix: t('[data-testid="promote-signin-fix"]'),
         pickerValue: picker ? picker.value : null,
         pickerLabel: picker && picker.selectedOptions[0] ? picker.selectedOptions[0].textContent : null,
@@ -98,3 +124,9 @@ await browser.close();
 server.close();
 writeFileSync(join(OUT, `results-promote-${LABEL}.json`), JSON.stringify(results, null, 2));
 console.log(JSON.stringify(results, null, 2));
+const failures = results.flatMap((r) => [
+  ...(r.note ? [`${r.job}: ${r.note.trim()}`] : []),
+  ...(r.seen ? judge(JOBS.find((j) => j.slug === r.job).expect, r.seen).map((m) => `${r.job}: ${m}`) : [`${r.job}: nothing was read`]),
+]);
+console.log(failures.length ? `FAIL ${failures.length} check(s):\n  ${failures.join('\n  ')}` : `ok all ${results.length} jobs reached their page and showed what they should`);
+if (failures.length) process.exit(1);

@@ -24,38 +24,52 @@ namespace Semanticus.Engine
                 throw new ArgumentException("scope='model' deliberately excludes reports. Omit reportPaths, or retry with scope='modelAndReports'.");
 
             var session = _sessions.Require();
-            // Tests is Pro, so a free impact assessment does not read the saved checks. It says so in Unknowns
-            // and in Coverage rather than reporting a confident zero, which would be worse than not answering.
-            var savedChecksArePro = !Entitlement.FeatureGrants.Grants(_entitlement, Entitlement.ProFeature.Tests);
-            var tests = savedChecksArePro ? null : await ListTestDefinitionsCoreAsync();
+            // Saved checks are free on every tier since 22 September, so every impact assessment reads them.
+            // The tier-shaped hole this used to leave in Unknowns and Coverage is gone with the gate.
+            var tests = await ListTestDefinitionsCoreAsync();
 
             // The engine-owned scope first; then any local folder handed in on the request, for this call only.
             List<(string path, string error, ReportDefinitionReader.ParseResult result)> parsed = null;
+            // Positional with `parsed`: the stable choice id behind every reading, so a hit can be joined back to
+            // the report it came from by id. Two chosen reports in different workspaces can share a display name.
+            List<string> parsedChoiceIds = null;
             var adHoc = new List<ReportScopeReport>();
             if (scopeName == "modelAndReports")
             {
-                parsed = CheckedReportPartsFor(session);
+                var coverage = CheckedCoverageFor(session);
+                if (coverage.Parts.Count > 0)
+                {
+                    parsed = coverage.Parts;
+                    parsedChoiceIds = coverage.ChoiceIds;
+                }
                 var handed = (request.ReportPaths ?? Array.Empty<string>()).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
                 if (handed.Count > 0)
                 {
                     parsed ??= new List<(string path, string error, ReportDefinitionReader.ParseResult result)>();
+                    parsedChoiceIds ??= new List<string>();
                     var now = DateTime.UtcNow.ToString("o");
                     foreach (var p in handed)
                     {
                         if (parsed.Any(x => string.Equals(x.path, p, StringComparison.OrdinalIgnoreCase))) continue;
                         var pr = ReportDefinitionReader.ReadLocalPbir(p);
-                        parsed.Add((p, pr.DefinitionFound ? null : "No readable report definition was found at that path.", pr));
+                        var readError = pr.DefinitionFound ? null : "No readable report definition was found at that path.";
+                        parsed.Add((p, readError, pr));
+                        parsedChoiceIds.Add("local:" + p);
+                        var clean = pr.DefinitionFound && pr.SkippedParts == 0;
                         // A folder handed in on the call was read for this answer, so it belongs in the account of
                         // what was checked. It is NOT saved: only set_report_scope changes the model's own list.
+                        //
+                        // A definition that was FOUND but only partly parsed used to land here as
+                        // couldNotBeFullyChecked with no note at all, so the card carried a state with nothing
+                        // behind it. Every state that is not a clean check now names its cause.
                         adHoc.Add(new ReportScopeReport
                         {
                             Id = "local:" + p, Kind = "local",
                             Name = System.IO.Path.GetFileName(p.TrimEnd('/', '\\')),
                             Source = p,
-                            State = pr.DefinitionFound && pr.SkippedParts == 0
-                                ? ReportScopeStates.Checked : ReportScopeStates.CouldNotBeFullyChecked,
+                            State = clean ? ReportScopeStates.Checked : ReportScopeStates.CouldNotBeFullyChecked,
                             CheckedWhenUtc = now,
-                            Note = pr.DefinitionFound ? null : "No readable report definition was found at that path.",
+                            Note = clean ? null : ReportCheckNotes.For(pr.DefinitionFound, pr.SkippedParts, 0, readError),
                         });
                     }
                 }
@@ -72,8 +86,8 @@ namespace Semanticus.Engine
                 scope = ReportScopeResult.From(modelName, scope.Reports.Concat(adHoc), scope.Note);
             return await session.ReadAsync(model =>
             {
-                var reports = parsed == null || parsed.Count == 0 ? null : LineageGraph.AnalyzeReports(model, parsed);
-                return ImpactAssessmentBuilder.Build(model, normalized, reports, tests, scope, savedChecksArePro);
+                var reports = parsed == null || parsed.Count == 0 ? null : LineageGraph.AnalyzeReports(model, parsed, parsedChoiceIds);
+                return ImpactAssessmentBuilder.Build(model, normalized, reports, tests, scope);
             });
         }
     }

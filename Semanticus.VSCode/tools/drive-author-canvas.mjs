@@ -66,7 +66,7 @@ const MEASURE = `
       var e = document.querySelector('[data-wf-canvas-step="' + (n - 1) + '"]');
       if (!e) return false;
       var r = e.getBoundingClientRect();
-      var ev = function (type) { return new MouseEvent(type, { bubbles: true, cancelable: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }); };
+      var ev = function (type) { return new MouseEvent(type, { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }); };
       e.dispatchEvent(ev('mousedown')); e.dispatchEvent(ev('mouseup')); e.dispatchEvent(ev('click'));
       return true;
     },
@@ -94,7 +94,8 @@ const shot = async (page, name) => {
 
 // Workflows tab -> Library -> new-measure -> Edit workflow -> Canvas.
 const openAuthorCanvas = async (page) => {
-  await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html`, { waitUntil: 'networkidle0', timeout: 30000 });
+  // Workflows is a Pro area (the area row shows it locked on the free plan), so every journey opens as Pro.
+  await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?tier=pro`, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 15000 });
   await wait(1000);
   await page.evaluate(() => { const b = [...document.querySelectorAll('nav button')].find((x) => (x.textContent || '').trim() === 'Workflows'); if (b) b.click(); });
@@ -186,7 +187,8 @@ const behaviour = async () => {
   await page.evaluate(() => {
     const pane = document.querySelector('.sem-wf-canvas .react-flow__pane');
     const r = pane.getBoundingClientRect();
-    const ev = (t) => new MouseEvent(t, { bubbles: true, cancelable: true, clientX: r.left + 30, clientY: r.top + r.height - 40 });
+    // view: window, as a real click has: without it React Flow's pan handler reads event.view.document and throws.
+    const ev = (t) => new MouseEvent(t, { bubbles: true, cancelable: true, view: window, clientX: r.left + 30, clientY: r.top + r.height - 40 });
     pane.dispatchEvent(ev('mousedown')); pane.dispatchEvent(ev('mouseup')); pane.dispatchEvent(ev('click'));
   });
   await wait(800);

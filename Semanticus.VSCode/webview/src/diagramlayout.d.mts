@@ -1,0 +1,22 @@
+// Types for diagramlayout.mjs (a plain ES module so the node tests run the same code the webview and the document ship).
+import type { RoutePoint, RouteEnd } from './diagramroute.mjs';
+export type Side = 'top' | 'right' | 'bottom' | 'left';
+export type XY = { x: number; y: number };
+export type Size = { w: number; h: number };
+export type Anchor = { rel: string; kind: 'source' | 'target'; side: Side; frac: number };
+export type LayoutMode = 'free' | 'hierarchy' | 'busmatrix' | 'layered';
+export type LayoutTable = { name: string };
+export type LayoutRel = { name: string; fromTable: string; toTable: string; fromCardinality: string; toCardinality: string };
+export declare const NODE_W: number;
+export declare const NODE_H: number;
+export declare const SLOT: number;
+export declare function sizeForAnchors(anchors: Anchor[]): Size;
+export declare function classifyRoles(tables: LayoutTable[], rels: LayoutRel[]): { dims: string[]; facts: string[]; iso: string[]; neighbors: (n: string) => Set<string> };
+export declare function baryOrder(rank: string[], otherIndex: Map<string, number>, neighbors: (n: string) => Set<string>): string[];
+export declare function busMatrixPositions(tables: LayoutTable[], rels: LayoutRel[], sizeOf: (name: string) => Size, aspect?: number): Map<string, XY>;
+export declare function roleOf(r: LayoutRel): { manyT: string; oneT: string };
+export declare function anchorKey(side: Side, centers: Map<string, XY>, table: string, other: string): number;
+export declare function computeAnchors(members: LayoutTable[], rels: LayoutRel[], layout: LayoutMode, centers?: Map<string, XY>): Map<string, Anchor[]>;
+export type StaticCard<T> = { t: T; x: number; y: number; w: number; h: number };
+export type StaticLine<R> = { r: R; id: string; src: RouteEnd; dst: RouteEnd; pts: RoutePoint[] | null };
+export declare function staticDiagram<T extends LayoutTable, R extends LayoutRel>(graph: { tables: T[]; relationships: R[] }, opts?: { aspect?: number }): { cards: StaticCard<T>[]; lines: StaticLine<R>[]; isolated: T[] };

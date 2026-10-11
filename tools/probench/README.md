@@ -11,7 +11,7 @@ assistant retrying on raw error text?*
 |---|---|---|
 | **FREE** | The task prompt + the model summary. ONE response, no tools. | The floor: paste-and-pray. |
 | **FREE+** | Same prompt. May run `validate_dax` + `run_dax` and retry on the raw error/result text, up to the attempt cap. No probe, no equivalence proof, no benchmark-pick. | A smart free user iterating by hand. **The honest control.** |
-| **PRO** | Same prompt. The enforced loop: `probe_measure` across the filter-context matrix → iterate on engine-computed evidence → `verify_dax_equivalence` where a reference expression exists → `benchmark_dax_coldwarm` pick when multiple candidates pass. Same attempt cap. | The Pro referee. |
+| **PRO** | Same prompt. The enforced loop: `probe_measure` across the filter-context matrix → iterate on engine-computed evidence → `verify_dax_equivalence` where a reference expression exists → `benchmark_dax` (mode `coldWarm`) pick when multiple candidates pass. Same attempt cap. | The Pro referee. |
 
 **The headline is `PRO − FREE+`, never `PRO − FREE`.** Retrying alone must not be creditable to the
 loop. Same assistant, same model, same tasks, same oracle; only the loop varies.
@@ -27,7 +27,7 @@ loop. Same assistant, same model, same tasks, same oracle; only the loop varies.
   standalone script that shares **zero code** with the engine's `verify_dax_equivalence`.
 - **Attempt budget**: identical across FREE+/PRO (`config.json: attemptCap`). We report `PRO@1`,
   `PRO@cap` and `FREE+@cap`.
-- **Perf** (only among `pass@1.0` candidates): cold/warm medians via `benchmark_dax_coldwarm`,
+- **Perf** (only among `pass@1.0` candidates): cold/warm medians via `benchmark_dax` (mode `coldWarm`),
   interleaved arms, reported as relative speedup with IQR.
 - **Where Pro does NOT help is a headline, not a footnote**: per-tier deltas are published even
   (especially) when ≈ 0.

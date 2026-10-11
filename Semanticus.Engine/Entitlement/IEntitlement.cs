@@ -2,11 +2,12 @@ using System;
 
 namespace Semanticus.Engine.Entitlement
 {
-    /// <summary>Whether this installation is entitled to the Pro tier. Pro is four whole features (see
-    /// <see cref="ProFeature"/>): Create in Model, Tests and Saved reports, Advanced publishing, and Workflows.
-    /// Every operation behind one of those is Pro on both doors, reads included; everything else is free, every
-    /// bulk apply included. Read-only, offline, secret-free: it verifies a signed token with an EMBEDDED PUBLIC
-    /// key only, so no private key, no Anthropic/Fabric creds, no network, no inference (golden rule #1 holds).</summary>
+    /// <summary>Whether this installation is entitled to the Pro tier. Since 22 September 2026 Pro is the whole
+    /// Workflows tab and the ask box (see <see cref="ProFeature"/>), plus the ranked and run plan, which is gated
+    /// on the tier rather than on a named feature. Everything a person can do by hand or with their own assistant
+    /// is free, every read and every bulk apply included. Read-only, offline, secret-free: it verifies a signed
+    /// token with an EMBEDDED PUBLIC key only, so no private key, no Anthropic/Fabric creds, no network, no
+    /// inference (golden rule #1 holds).</summary>
     public interface IEntitlement
     {
         bool IsPro { get; }
@@ -24,9 +25,12 @@ namespace Semanticus.Engine.Entitlement
                                                         // grace advisory while still Pro ("expired X; in grace until Y")
         public string ManageUrl { get; set; } = LicenseEntitlement.ManageUrl; // one product-owned Pro plans/support page
 
-        /// <summary>The effective feature grants: the wire ids "modelCreate", "tests", "publishedAdvanced",
-        /// "workflows". Free is an empty array, never null. Computed in ONE place (<see cref="FeatureGrants"/>) and
-        /// used by both this response and the gate, so a page and the engine can never disagree.</summary>
+        /// <summary>The effective feature grants, as wire ids. Today there is exactly one, "workflows", so a Pro
+        /// session reports ["workflows"] and a free session reports []. Never null. Only a feature that IS a tab
+        /// has a wire id, because this array exists for a page to lock a tab on; the ask box and the ranked plan
+        /// are paid and carry none, and a page keys those on the tier. Computed in ONE place
+        /// (<see cref="FeatureGrants"/>) and used by both this response and the gate, so a page and the engine
+        /// can never disagree.</summary>
         public string[] Features { get; set; } = Array.Empty<string>();
     }
 
@@ -42,10 +46,10 @@ namespace Semanticus.Engine.Entitlement
     /// <summary>The single gate helper, so every Pro refusal reads identically.</summary>
     public static class EntitlementGuard
     {
-        /// <summary>The feature gate. The tab is the one a person would open (Power Query, Tests, Fabric Git,
-        /// Workflows), never the enum name, and the free alternative comes from <see cref="ProFeatures"/>, so one
-        /// feature always refuses with one sentence. Effective grants come from <see cref="FeatureGrants"/>, the
-        /// same function get_entitlement reports from.</summary>
+        /// <summary>The feature gate. The tab is the one a person would open (Workflows, Ask about this model),
+        /// never the enum name, and the free alternative comes from <see cref="ProFeatures"/>, so one feature
+        /// always refuses with one sentence. Effective grants come from <see cref="FeatureGrants"/>, the same
+        /// function get_entitlement reports from.</summary>
         public static void RequirePro(IEntitlement e, ProFeature feature, string tab = null)
             => RequirePro(FeatureGrants.Grants(e, feature),
                           string.IsNullOrWhiteSpace(tab) ? ProFeatures.DefaultTab(feature) : tab,

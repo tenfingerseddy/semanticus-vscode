@@ -31,13 +31,16 @@ namespace Semanticus.Tests
             Assert.NotNull(usage);   // must not throw the feature gate
         }
 
+        /// <summary>The two listings this projection was built to stand in for are free themselves since
+        /// 22 September 2026. The projection stays because it is the narrow answer Connections wants, not
+        /// because the wide ones are shut, and this test proves the gate that used to shut them is gone.</summary>
         [Fact]
-        public async Task The_free_tier_is_still_refused_the_two_Pro_listings_it_replaces()
+        public async Task The_two_listings_this_replaces_are_free_now_as_well()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(false));
             await engine.OpenAsync(TestModels.FindBim());
-            await Assert.ThrowsAsync<EntitlementException>(() => engine.ListTestDefinitionsAsync());
-            await Assert.ThrowsAsync<EntitlementException>(() => engine.ListTableSourceMappingsAsync());
+            Assert.NotNull(await engine.ListTestDefinitionsAsync());
+            Assert.NotNull(await engine.ListTableSourceMappingsAsync());
         }
 
         /// <summary>The contract, asserted as a shape rather than as prose: id, name, the names of the checks using

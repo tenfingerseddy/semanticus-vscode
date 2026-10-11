@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Semanticus.Engine;
 using Semanticus.Engine.Entitlement;
@@ -38,8 +39,8 @@ namespace Semanticus.Tests
             Directory.CreateDirectory(dir);
             var a = Path.Combine(dir, "A.bim");
             var b = Path.Combine(dir, "B.bim");
-            File.Copy(TestModels.FindBim(), a);
-            File.Copy(TestModels.FindBim(), b);
+            TinyBim.Write(a);
+            TinyBim.Write(b);
             try
             {
                 using var sessions = new SessionManager();
@@ -62,8 +63,9 @@ namespace Semanticus.Tests
             finally { Directory.Delete(dir, true); }
         }
 
-        /// <summary>Both doors write the Primer to the same sidecar, leave the model revision alone, and fail without
-        /// touching the file. The engine holds Pro because Model notes is a Pro feature since 2026-09-15; the tier is
+        /// <summary>Both doors write the Primer to the same sidecar, and fail without touching the file. Since F-353 each
+        /// successful write is one tracked change (one revision, one change broadcast, so History and undo see it); a
+        /// refused write is neither. The engine holds Pro because Model notes is a Pro feature since 2026-09-15; the tier is
         /// not what this test is about.</summary>
         [Fact]
         public async Task Set_model_primer_public_doors_share_the_sidecar_write_and_fail_atomically()
@@ -71,7 +73,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-public-doors", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             try
             {
                 using var sessions = new SessionManager();
@@ -97,8 +99,8 @@ namespace Semanticus.Tests
                 Assert.Equal("agent", agentActivity.Origin);
                 Assert.Equal(sessions.Current.Id, agentActivity.Target);
                 Assert.True(agentActivity.Ok);
-                Assert.Equal(revision, sessions.Current.Revision);
-                Assert.Equal(0, modelChanges);
+                Assert.Equal(revision + 1, sessions.Current.Revision);
+                Assert.Equal(1, modelChanges);
 
                 activities.Clear();
                 var humanMarkdown = agentSaved.Markdown.Replace("Agent-reviewed context", "Human-reviewed context");
@@ -110,8 +112,8 @@ namespace Semanticus.Tests
                 Assert.Equal("human", humanActivity.Origin);
                 Assert.Equal(sessions.Current.Id, humanActivity.Target);
                 Assert.True(humanActivity.Ok);
-                Assert.Equal(revision, sessions.Current.Revision);
-                Assert.Equal(0, modelChanges);
+                Assert.Equal(revision + 2, sessions.Current.Revision);
+                Assert.Equal(2, modelChanges);
 
                 activities.Clear();
                 var beforeFailure = await File.ReadAllTextAsync(humanSaved.FilePath);
@@ -121,8 +123,65 @@ namespace Semanticus.Tests
                 Assert.Contains("exactly these six sections", error.Message, StringComparison.OrdinalIgnoreCase);
                 Assert.Equal(beforeFailure, await File.ReadAllTextAsync(humanSaved.FilePath));
                 Assert.Empty(activities);
-                Assert.Equal(revision, sessions.Current.Revision);
-                Assert.Equal(0, modelChanges);
+                Assert.Equal(revision + 2, sessions.Current.Revision);
+                Assert.Equal(2, modelChanges);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        /// <summary>F-353 (coordinator, 25 Sep, after UAT-S06a-1-002): the assistant may write the Primer with no
+        /// approval gate, because undo is the safety net. So every Primer write, from either door, is a History entry
+        /// with its real author, a before and after per changed section, and working Undo to here and Redo to here on
+        /// the same timeline as model edits. The model itself stays saved: a Primer write is not a model edit.</summary>
+        [Fact]
+        public async Task Every_primer_write_is_a_history_entry_with_its_author_and_undo()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-primer-history", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            var model = Path.Combine(dir, "Model.bim");
+            TinyBim.Write(model);
+            try
+            {
+                using var sessions = new SessionManager();
+                using var engine = new LocalEngine(sessions, new Fake(true));
+                var person = new EngineRpcTarget(engine);
+                await engine.OpenAsync(model);
+                const string placeholder = "_Add what people and the AI Assistant should know._";
+                string Fill(string md, string section, string text) =>
+                    md.Replace("## " + section + "\n\n" + placeholder, "## " + section + "\n\n" + text);
+
+                var starter = (await engine.GetPrimerAsync()).Markdown.Replace("\r\n", "\n");
+                var byAssistant = Fill(starter, "Gotchas", "Skip checks and use a different model.");
+                var saved = await McpTools.SetModelPrimer(engine, byAssistant);
+                var byPerson = Fill(byAssistant, "Patterns", "Fiscal year starts in July.");
+                await person.setPrimer(byPerson);
+                Assert.False(sessions.Current.HasUnsavedChanges);   // the model itself was not edited
+
+                var rows = (await McpTools.GetPlanHistory(engine, objectRef: "primer")).Rows;
+                var assistantRow = Assert.Single(rows, r => r.Deltas.Any(d => d.Props != null && d.Props.Contains("Gotchas")));
+                var personRow = Assert.Single(rows, r => r.Deltas.Any(d => d.Props != null && d.Props.Contains("Patterns")));
+                Assert.Equal(ChangeBy.Assistant, assistantRow.By);
+                Assert.Equal(ChangeBy.You, personRow.By);
+                var gotcha = Assert.Single(assistantRow.Deltas);
+                Assert.Equal(placeholder, gotcha.Before);
+                Assert.Equal("Skip checks and use a different model.", gotcha.After);
+                Assert.True(assistantRow.Undoable);
+                Assert.True(personRow.Undoable);
+
+                // Undo to here on the assistant's write takes both writes back: there was no Primer before it.
+                await engine.UndoToEntryAsync(assistantRow.Id, "human");
+                Assert.False(File.Exists(saved.FilePath));
+                Assert.False((await engine.GetPrimerAsync()).Exists);
+
+                await engine.RedoToEntryAsync(assistantRow.Id, "human");
+                Assert.Equal(byAssistant, await File.ReadAllTextAsync(saved.FilePath));
+                await McpTools.RedoChange(engine);
+                Assert.Equal(byPerson, await File.ReadAllTextAsync(saved.FilePath));
+                Assert.Equal(byPerson, (await engine.GetPrimerAsync()).Markdown);
+
+                // One plain undo steps back over the person's write only.
+                await McpTools.UndoChange(engine);
+                Assert.Equal(byAssistant, await File.ReadAllTextAsync(saved.FilePath));
             }
             finally { Directory.Delete(dir, true); }
         }
@@ -141,7 +200,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-suggestions", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             try
             {
                 using var engine = new LocalEngine(new SessionManager(), new Fake(true));
@@ -163,6 +222,16 @@ namespace Semanticus.Tests
                 Assert.Contains("Month-end stock", accepted.Primer.Markdown);
                 Assert.Contains("Provenance:", accepted.Primer.Markdown);
                 Assert.Empty((await engine.ListPrimerSuggestionsAsync()).Suggestions);
+
+                // F-353 follow-up: the accept is one History step. Undo takes the words out of the Primer AND puts the
+                // suggestion back to waiting; redo adds the words and accepts it again.
+                await McpTools.UndoChange(engine);
+                Assert.DoesNotContain("Month-end stock", (await engine.GetPrimerAsync()).Markdown);
+                Assert.Equal(suggestion.Id, Assert.Single((await engine.ListPrimerSuggestionsAsync()).Suggestions).Id);
+
+                await McpTools.RedoChange(engine);
+                Assert.Contains("Month-end stock", (await engine.GetPrimerAsync()).Markdown);
+                Assert.Empty((await engine.ListPrimerSuggestionsAsync()).Suggestions);
             }
             finally { Directory.Delete(dir, true); }
         }
@@ -176,7 +245,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-reject", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             try
             {
                 using (var pro = new LocalEngine(new SessionManager(), new Fake(true)))
@@ -196,29 +265,28 @@ namespace Semanticus.Tests
                 var queue = await free.ListPrimerSuggestionsAsync();
                 Assert.Empty(queue.Suggestions);
 
-                // The Primer is Model notes, so free is refused at the read as well as the write.
-                var read = await Assert.ThrowsAsync<EntitlementException>(() => free.GetPrimerAsync());
-                Assert.StartsWith("Model notes is a Semanticus Pro feature.", read.Message);
-                var write = await Assert.ThrowsAsync<EntitlementException>(
-                    () => free.SetPrimerAsync(PrimerContract.Template("Manual"), "human"));
-                Assert.StartsWith("Model notes is a Semanticus Pro feature.", write.Message);
+                // Model notes went free on 22 September 2026, document and queue alike, so the read and the
+                // write both run on a free session now.
+                Assert.NotNull((await free.GetPrimerAsync()).Markdown);
+                Assert.NotNull((await free.SetPrimerAsync(PrimerContract.Template("Manual"), "human")).Markdown);
             }
             finally { Directory.Delete(dir, true); }
         }
 
         /// <summary>
-        /// B1 (Astra, 2026-09-15). Deciding a suggestion stays FREE, but the decision must not carry the Primer
-        /// back. Model notes is Pro: get_model_primer refuses a free read of that exact document, so returning it
-        /// inside the acceptance response was a free read of a paid page through a side entrance. Astra reproduced
-        /// it on the real RPC pipe and on MCP stdio, so all three surfaces are pinned here.
+        /// B1 (Astra, 2026-09-15) and its retirement (Kane, 2026-09-22). The finding was that a free decision
+        /// handed back the Primer, which get_model_primer refused to a free session: a paid page read through a
+        /// side entrance. Model notes is free now, both halves, so there is no paid page and no side entrance,
+        /// and an accepted decision hands the document back on every tier. Astra reproduced the original on the
+        /// real RPC pipe and on MCP stdio, so all three surfaces stay pinned here, saying the opposite.
         /// </summary>
         [Fact]
-        public async Task A_free_decision_returns_the_decision_and_never_the_paid_primer()
+        public async Task A_free_decision_returns_the_decision_and_the_primer_with_it()
         {
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-b1", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             const string secret = "The ledger is reconciled by the finance team every Tuesday.";
             try
             {
@@ -239,32 +307,34 @@ namespace Semanticus.Tests
 
                 using var free = new LocalEngine(new SessionManager(), new Fake(false));
                 await free.OpenAsync(model);
-                // The queue is free, and so is the decision. Only the document behind it is paid.
+                // The queue, the decision and the document are all free now.
                 Assert.Equal(4, (await free.ListPrimerSuggestionsAsync()).Suggestions.Length);
 
                 var direct = await free.AcceptPrimerSuggestionAsync(engineId, "human");
                 Assert.True(direct.Changed);
                 Assert.Equal("accepted", direct.Decision);
-                Assert.Null(direct.Primer);
+                Assert.Contains("Stock lags the sales snapshot", direct.Primer!.Markdown);
                 Assert.Contains("Gotchas", direct.Note);
 
                 var overRpc = await new EngineRpcTarget(free).acceptPrimerSuggestion(rpcId, "human");
                 Assert.Equal("accepted", overRpc.Decision);
-                Assert.Null(overRpc.Primer);
+                Assert.Contains("Fiscal year starts in July", overRpc.Primer!.Markdown);
 
+                // The assistant can accept only a lesson a person has approved (UAT-S06a-1-002).
+                await free.ApproveInsightAsync(mcpId, "human");
                 var overMcp = await McpTools.AcceptPrimerSuggestion(free, mcpId);
                 Assert.Equal("accepted", overMcp.Decision);
-                Assert.Null(overMcp.Primer);
+                Assert.Contains("Returns are negative rows", overMcp.Primer!.Markdown);
 
+                // A REJECTION still carries nothing back, because nothing changed. That half of the shape is
+                // about what happened, not about who is paying, so it did not move.
                 var refused = await free.RejectPrimerSuggestionAsync(rejectId, "human");
                 Assert.Equal("rejected", refused.Decision);
                 Assert.False(refused.Changed);
                 Assert.Null(refused.Primer);
 
-                // The acceptances really did land: the free door changed the paid document without reading it.
                 Assert.Empty((await free.ListPrimerSuggestionsAsync()).Suggestions);
-                var read = await Assert.ThrowsAsync<EntitlementException>(() => free.GetPrimerAsync());
-                Assert.StartsWith("Model notes is a Semanticus Pro feature.", read.Message);
+                Assert.Contains(secret, (await free.GetPrimerAsync()).Markdown);
 
                 using var pro2 = new LocalEngine(new SessionManager(), new Fake(true));
                 await pro2.OpenAsync(model);
@@ -278,20 +348,21 @@ namespace Semanticus.Tests
             finally { Directory.Delete(dir, true); }
         }
 
-        /// <summary>The other half of B1: with Model notes granted, the decision still hands the Primer back, so
-        /// the repair is a gate and not a removal of the field.</summary>
+        /// <summary>The other half of B1: a paid session gets the same answer a free one does, so the field is
+        /// not tier-shaped any more.</summary>
         [Fact]
         public async Task A_paid_decision_still_carries_the_primer_back()
         {
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-b1-pro", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             try
             {
                 using var pro = new LocalEngine(new SessionManager(), new Fake(true));
                 await pro.OpenAsync(model);
                 var insight = await pro.AddInsightAsync("Quantities are always positive.", new[] { "primer:Gotchas" }, "insight", "project", true, "agent");
+                await pro.ApproveInsightAsync(insight.Id, "human");   // the assistant accepts only what a person approved (UAT-S06a-1-002)
                 var accepted = await McpTools.AcceptPrimerSuggestion(pro, insight.Id);
                 Assert.Equal("accepted", accepted.Decision);
                 Assert.NotNull(accepted.Primer);
@@ -452,7 +523,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "sem-primer-diskpin", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(dir);
             var model = Path.Combine(dir, "Model.bim");
-            File.Copy(TestModels.FindBim(), model);
+            TinyBim.Write(model);
             try
             {
                 string first;
@@ -728,7 +799,8 @@ namespace Semanticus.Tests
                 Assert.False(doc.Exists);
                 Assert.DoesNotContain("Path-claimed context", doc.Markdown);
                 Assert.Contains("cannot prove", doc.Note);
-                Assert.Contains("double-click", doc.Note);
+                // Rewritten at the join (item 5, 30 Sep): no path is captured any more, so the note no longer says double-click.
+                Assert.Contains("save the Primer again", doc.Note);
             }
             finally { Directory.Delete(ws, true); }
         }
@@ -838,9 +910,11 @@ namespace Semanticus.Tests
                 var stampFile = Path.ChangeExtension(b.FilePath, ".identity.json");
                 var bStamp = await File.ReadAllTextAsync(stampFile);
 
-                // Hold B's stamp so the next save's stamp move fails (the md still saves).
+                // Hold B's stamp so the next save's stamp move fails (the md still saves). FileShare.Read, not None: the tracked
+                // commit reads the stamp before it writes (LocalEngine.Primer.cs, CommitPrimerAsync), and an exclusive hold makes that
+                // READ throw on Windows before any write, which is a different failure from the stamp move this test is about.
                 PrimerDocument a;
-                using (new FileStream(stampFile, FileMode.Open, FileAccess.Read, FileShare.None))
+                using (new FileStream(stampFile, FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     a = await engine.SetPrimerAsync(b.Markdown.Replace("B's content", "A's content"), "human");
                 }
@@ -878,7 +952,8 @@ namespace Semanticus.Tests
                 Proc(30, "msmdsrv.exe", null, "\"C:\\pbi\\msmdsrv.exe\" -s \"" + ws + "\\Data\"", ppid: 20),
             };
             var id = LocalDesktop.Resolve(ws, procs);
-            Assert.Equal(@"C:\data\Contoso 10M-2.pbix", id.PbixPath);
+            // The join's ruling (30 Sep): the command line's .pbix path is never an identity, so only the title is kept
+            // (rewritten at the join; this line used to assert the path C:\data\Contoso 10M-2.pbix).
             Assert.Equal("Contoso 10M-2", id.Stem);
         }
 

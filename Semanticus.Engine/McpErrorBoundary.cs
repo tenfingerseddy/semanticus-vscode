@@ -31,7 +31,11 @@ namespace Semanticus.Engine
             try { return await next().ConfigureAwait(false); }
             catch (Exception ex) when (ex is not OperationCanceledException && ex is not McpProtocolException)
             {
-                var msg = PlainFrameworkError(FabricRest.Scrub(Root(ex).Message));
+                // An older engine behind this door has no such method (Kane, 25 Sep): that is a build mismatch, and
+                // the RPC text ("No method by the name 'x' is found.") means nothing to the assistant or the person.
+                var msg = EngineUpdateGuard.IsMethodNotFound(ex)
+                    ? EngineUpdateGuard.PersonText
+                    : PlainFrameworkError(FabricRest.Scrub(Root(ex).Message));
                 if (string.IsNullOrWhiteSpace(msg)) msg = ex.GetType().Name;   // never regress to an empty error
                 var content = new List<ContentBlock> { new TextContentBlock { Text = $"{toolName ?? "tool"} failed: {msg}" } };
                 // A call that committed then threw carries its drained health on the exception's Data (set by

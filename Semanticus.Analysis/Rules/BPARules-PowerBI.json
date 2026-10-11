@@ -38,7 +38,9 @@
 //
 // MODIFIED. This is not upstream's file verbatim: 69 of its 71 rules ship, two of those with their
 // scope narrowed, one with its percentage fix format normalized, five Semanticus-authored SEM_ rules
-// are appended, and documentation links were stripped from 29 description fields. MIT permits
+// are appended, and documentation links were stripped from 29 description fields. Four rules exempt
+// field parameters, and the flag-format, date-format and two measure-format rules check and fix
+// differently. MIT permits
 // modification. Every difference and its reason is
 // listed in BPARules-PowerBI.PROVENANCE.md, in this directory.
 [
@@ -227,11 +229,12 @@
     "ID": "REDUCE_USAGE_OF_CALCULATED_TABLES",
     "Name": "[Performance] Reduce usage of calculated tables",
     "Category": "Performance",
-    "Description": "Migrate calculated table logic to your data warehouse. Reliance on calculated tables will lead to technical debt and potential misalignments if you have multiple models on your platform.",
+    "Description": "Migrate calculated table logic to your data warehouse. Reliance on calculated tables will lead to technical debt and potential misalignments if you have multiple models on your platform. A generated calendar is not flagged: a calculated table whose whole expression is CALENDAR or CALENDARAUTO, or ADDCOLUMNS over one of them, is a date table built the way Microsoft's date table guidance describes, and it is what Semanticus builds from a model spec. Any other calculated table is still flagged, including one that uses a calendar somewhere inside other logic.",
     "Severity": 2,
     "Scope": "CalculatedTable",
-    "Expression": "1=1",
-    "CompatibilityLevel": 1200
+    "Expression": "Expression = null\r\nor not Regex.IsMatch(Expression, \"(?i)^\\s*(ADDCOLUMNS\\s*\\(\\s*)?CALENDAR(AUTO)?\\s*\\(\")",
+    "CompatibilityLevel": 1200,
+    "ExemptFieldParameters": true
   },
   {
     "ID": "REMOVE_REDUNDANT_COLUMNS_IN_RELATED_TABLES",
@@ -291,7 +294,8 @@
     "Severity": 3,
     "Scope": "Measure, CalculatedColumn, CalculatedTable, KPI, CalculationItem",
     "Expression": "DependsOn.Any(Key.ObjectType = \"Measure\" and Value.Any(FullyQualified))",
-    "CompatibilityLevel": 1200
+    "CompatibilityLevel": 1200,
+    "ExemptFieldParameters": true
   },
   {
     "ID": "AVOID_DUPLICATE_MEASURES",
@@ -480,12 +484,13 @@
     "ID": "UNNECESSARY_COLUMNS",
     "Name": "[Maintenance] Remove unnecessary columns",
     "Category": "Maintenance",
-    "Description": "Hidden columns that are not referenced by any DAX expressions, relationships, hierarchy levels or Sort By-properties should be removed.",
+    "Description": "Hidden columns that are not referenced by any DAX expressions, relationships, hierarchy levels or Sort By-properties should be removed. A key column is never flagged: the column marked as its table's key, and every column of a key the model spec declares, which a model built from a SQL source records on each one. A key is the row identity of its table, the date table rules need one on a marked date table, and removing one part of a two-part key leaves its rows ambiguous.",
     "Severity": 2,
     "Scope": "DataColumn, CalculatedColumn, CalculatedTableColumn",
-    "Expression": "(IsHidden or Table.IsHidden)\n\n\r\nand ReferencedBy.Count = 0\r\n\n\nand (not UsedInRelationships.Any())\n\n\r\nand (not UsedInSortBy.Any())\n\n\r\nand (not UsedInHierarchies.Any())\n\n\r\nand (not Table.RowLevelSecurity.Any(\nit <> null and it.IndexOf(\"[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0\n))\n\n and (not Model.Roles.Any(RowLevelSecurity.Any(\nit <> null and \n(\nit.IndexOf(current.Table.Name + \"[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0 or\n it.IndexOf(\"'\" + current.Table.Name + \"'[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0\n )\n)))\r\nand not (\r\nObjectLevelSecurity.Any(it.ToString() == \"None\"))\r\nand not (\r\nTable.ObjectLevelSecurity.Any(it.ToString() == \"None\"))",
+    "Expression": "(IsHidden or Table.IsHidden)\n\n\r\nand ReferencedBy.Count = 0\r\n\n\nand (not UsedInRelationships.Any())\n\n\r\nand (not UsedInSortBy.Any())\n\n\r\nand (not UsedInHierarchies.Any())\n\n\r\nand (not Table.RowLevelSecurity.Any(\nit <> null and it.IndexOf(\"[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0\n))\n\n and (not Model.Roles.Any(RowLevelSecurity.Any(\nit <> null and \n(\nit.IndexOf(current.Table.Name + \"[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0 or\n it.IndexOf(\"'\" + current.Table.Name + \"'[\" + current.Name + \"]\", \"OrdinalIgnoreCase\") >= 0\n )\n)))\r\nand not (\r\nObjectLevelSecurity.Any(it.ToString() == \"None\"))\r\nand not (\r\nTable.ObjectLevelSecurity.Any(it.ToString() == \"None\"))\r\nand not IsKey\r\nand not HasAnnotation(\"Semanticus_SourceKey\")",
     "FixExpression": "Delete()",
-    "CompatibilityLevel": 1200
+    "CompatibilityLevel": 1200,
+    "ExemptFieldParameters": true
   },
   {
     "ID": "UNNECESSARY_MEASURES",
@@ -527,7 +532,8 @@
     "Severity": 1,
     "Scope": "Table, CalculatedTable",
     "Expression": "UsedInRelationships.Count() == 0",
-    "CompatibilityLevel": 1200
+    "CompatibilityLevel": 1200,
+    "ExemptFieldParameters": true
   },
   {
     "ID": "OBJECTS_WITH_NO_DESCRIPTION",
@@ -595,10 +601,10 @@
     "ID": "FORMAT_FLAG_COLUMNS_AS_YES/NO_VALUE_STRINGS",
     "Name": "[Formatting] Format flag columns as Yes/No value strings",
     "Category": "Formatting",
-    "Description": "Flags must be properly formatted as Yes/No as this is easier to read than using 0/1 integer values.",
+    "Description": "Flags read better as Yes/No than as 0/1. Every flag this rule catches clears it with the same three-part format string \"Yes\";\"Yes\";\"No\" (set it with set_property on FormatString): the first part shows positive values, the second negative values, the third zero. A two-part \"Yes\";\"No\" is not enough, because its first part also covers zero, so a 0 flag would read as Yes. A true/false flag clears it the same way, because true counts as the first part and false as the third. A flag already stored as text is never flagged. A date column is never flagged for its name either, because a date cannot be shown as Yes or No.",
     "Severity": 1,
     "Scope": "DataColumn, CalculatedColumn, CalculatedTableColumn",
-    "Expression": "(\nName.StartsWith(\"Is\") and \nDataType = \"Int64\" and \nnot (IsHidden or Table.IsHidden)\n) \r\nor\r\n\n(\nName.EndsWith(\" Flag\") and \nDataType <> \"String\" and \nnot (IsHidden or Table.IsHidden)\n)",
+    "Expression": "((\nName.StartsWith(\"Is\") and \nDataType = \"Int64\" and \nnot (IsHidden or Table.IsHidden)\n) \r\nor\r\n\n(\nName.EndsWith(\" Flag\") and \nDataType <> \"String\" and \nDataType <> \"DateTime\" and \nnot (IsHidden or Table.IsHidden)\n))\r\nand not (\r\nFormatString <> null and\r\n(\r\nFormatString.Replace(\" \", \"\").ToUpperInvariant() = \"\"\"YES\"\";\"\"YES\"\";\"\"NO\"\"\"\r\nor\r\nFormatString.Replace(\" \", \"\").ToUpperInvariant().StartsWith(\"\"\"YES\"\";\"\"YES\"\";\"\"NO\"\";\")\r\n)\r\n)",
     "CompatibilityLevel": 1200
   },
   {
@@ -615,21 +621,21 @@
     "ID": "DATECOLUMN_FORMATSTRING",
     "Name": "[Formatting] Provide format string for \"Date\" columns",
     "Category": "Formatting",
-    "Description": "Columns of type \"DateTime\" that have \"Month\" in their names should be formatted as \"mm/dd/yyyy\".",
+    "Description": "Columns of type \"DateTime\" with \"Date\" in their names should have a date format string. Any real date format passes, including Long Date, Short Date and regional patterns such as dd/mm/yyyy, so only a column with no format string at all is flagged. This rule is advice only and has no one-click fix, because a date format chosen for you can hide the time a date holds. Choose one that fits, such as the ISO form \"yyyy-mm-dd\", which reads the same in every country. No fix changes a format string that is already there.",
     "Severity": 1,
     "Scope": "DataColumn, CalculatedColumn, CalculatedTableColumn",
-    "Expression": "Name.IndexOf(\"Date\", \"OrdinalIgnoreCase\") >= 0 \r\nand \r\nDataType = \"DateTime\" \r\nand \r\nFormatString <> \"mm/dd/yyyy\"",
-    "FixExpression": "FormatString = \"mm/dd/yyyy\"",
+    "Expression": "Name.IndexOf(\"Date\", \"OrdinalIgnoreCase\") >= 0 \r\nand \r\nDataType = \"DateTime\" \r\nand \r\n(FormatString = null or FormatString.Trim() = \"\")",
+    "FixExpression": "FormatString = \"yyyy-mm-dd\"",
     "CompatibilityLevel": 1200
   },
   {
     "ID": "MONTHCOLUMN_FORMATSTRING",
     "Name": "[Formatting] Provide format string for \"Month\" columns",
     "Category": "Formatting",
-    "Description": "Columns of type \"DateTime\" that have \"Month\" in their names should be formatted as \"MMMM yyyy\".",
+    "Description": "Columns of type \"DateTime\" with \"Month\" in their names should have a date format string. Any real date format passes, including Long Date, Short Date, the ISO \"yyyy-mm-dd\" and month patterns such as \"mmm yyyy\", so only a column with no format string at all is flagged. This rule is advice only and has no one-click fix, because a format chosen for you can hide what the column holds. Choose one that fits, such as \"MMMM yyyy\", which spells the month out in full. No fix changes a format string that is already there.",
     "Severity": 1,
     "Scope": "DataColumn, CalculatedColumn, CalculatedTableColumn",
-    "Expression": "Name.IndexOf(\"Month\", \"OrdinalIgnoreCase\") >= 0 and DataType = \"DateTime\" and FormatString <> \"MMMM yyyy\"",
+    "Expression": "Name.IndexOf(\"Month\", \"OrdinalIgnoreCase\") >= 0 \r\nand \r\nDataType = \"DateTime\" \r\nand \r\n(FormatString = null or FormatString.Trim() = \"\")",
     "FixExpression": "FormatString = \"MMMM yyyy\"",
     "CompatibilityLevel": 1200
   },
@@ -658,9 +664,10 @@
     "ID": "PERCENTAGE_FORMATTING",
     "Name": "[Formatting] Percentages should be formatted with thousands separators and 1 decimal",
     "Category": "Formatting",
-    "Severity": 2,
+    "Severity": 1,
     "Scope": "Measure",
-    "Expression": "FormatString.Contains(\"%\") and FormatString <> \"#,0.0%;-#,0.0%;#,0.0%\"",
+    "Description": "Percentages read better with thousands separators and one decimal, written #,0.0%;-#,0.0%;#,0.0%. This rule is advice only and has no one-click fix: Fix all skips it and no plan applies it, because a fix never writes over a format string that is already there, and a format made of these characters can still mean something else, such as 0.0%;;, which shows nothing for a negative value or zero. If the house style is what you want, set it yourself. The rule raises a measure only when it has no format string expression and its format string is made only of plain number characters with a % sign in it: the placeholders 0 and #, the comma, the full stop, the semicolon, brackets, the minus sign, the % sign and spaces, plus any number of quoted pieces of that punctuation such as \"-\", with at least one 0 or # and not already the house style. Anything else is not raised: words in any language or script, a currency symbol of any kind, a date or time format, a % inside quotes (which shows a percent sign without turning the number into a percentage), and any measure whose format is set by a format string expression.",
+    "Expression": "string.IsNullOrWhitespace(FormatStringExpression)\r\nand FormatString.Contains(\"%\")\r\nand Regex.Replace(FormatString, \"[0#,.;() %-]|\"\"[,.;() -]*\"\"\", \"\") = \"\"\r\nand (FormatString.Contains(\"0\") or FormatString.Contains(\"#\"))\r\nand FormatString <> \"#,0.0%;-#,0.0%;#,0.0%\"",
     "FixExpression": "FormatString = \"#,0.0%;-#,0.0%;#,0.0%\"",
     "CompatibilityLevel": 1200
   },
@@ -668,9 +675,10 @@
     "ID": "INTEGER_FORMATTING",
     "Name": "[Formatting] Whole numbers should be formatted with thousands separators and no decimals",
     "Category": "Formatting",
-    "Severity": 2,
+    "Severity": 1,
     "Scope": "Measure",
-    "Expression": "not FormatString.Contains(\"$\") and not FormatString.Contains(\"%\") and not (FormatString = \"#,0\" or FormatString = \"#,0.0\")",
+    "Description": "Whole numbers read better with thousands separators and no decimals, written #,0. This rule raises a measure only when it has no format string expression, in two cases. The first is a measure whose format string is blank (empty, or only spaces or other blank characters). Its one-click fix fills in #,0 only when Semanticus can prove the measure holds a whole number: a count (COUNT, COUNTA, COUNTROWS, DISTINCTCOUNT or DISTINCTCOUNTNOBLANK), or a SUM of a whole-number column that the model shows is a quantity (not a key, not in a relationship, no data category, summarised by sum, and no name that marks a year, an ID or a code). It never fills a MIN or a MAX, because years, keys and codes live there and no column can prove otherwise. It never fills a measure while a calculation group has an item or an expression with no format of its own, because that group would show the measure through its own arithmetic. A format of only blank spaces counts as blank here, but the fix leaves it alone. Any other blank measure is advice with no one-click fix, because #,0 would change what a person reads: a ratio such as 73% would read 1, money would lose its cents, hours their fractions, and a date would read as a number. Choose the format that fits what it shows. The second is a format string made only of plain number characters: the placeholders 0 and #, the comma, the full stop, the semicolon, brackets, the minus sign and spaces, plus any number of quoted pieces of that punctuation such as \"-\", with at least one 0 or # and not already #,0, #,0.0, #,##0 or #,##0.0, each of which already shows thousands separators. That case is advice only and has no one-click fix: Fix all skips it and no plan applies it, because a fix never writes over a format string that is already there, and a format made of these characters can still mean something else, such as ##0,, which shows a number in millions, 0.00;; which shows nothing for a negative value or zero, or 0000-00-00 which lays out a date key. If #,0 is what you want, set it yourself. Anything else is not raised: a date or time format, a currency symbol of any kind, a unit or a word in any language or script, a scientific or named format such as Standard, and any measure whose format is set by a format string expression. Percentages have their own rule.",
+    "Expression": "string.IsNullOrWhitespace(FormatStringExpression)\r\nand\r\n(\r\n(FormatString = null or FormatString.Trim() = \"\")\r\nor\r\n(\r\nRegex.Replace(FormatString, \"[0#,.;() %-]|\"\"[,.;() -]*\"\"\", \"\") = \"\"\r\nand (FormatString.Contains(\"0\") or FormatString.Contains(\"#\"))\r\nand not FormatString.Contains(\"%\")\r\nand not (FormatString = \"#,0\" or FormatString = \"#,0.0\" or FormatString = \"#,##0\" or FormatString = \"#,##0.0\")\r\n)\r\n)",
     "FixExpression": "FormatString = \"#,0\"",
     "CompatibilityLevel": 1200
   },

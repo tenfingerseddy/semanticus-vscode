@@ -122,7 +122,7 @@ verify:
             var (e, ws) = Make();
             try
             {
-                var r = await e.CheckWorkflowAsync("new-measure");          // shipped beside the test binary
+                var r = await e.CheckWorkflowAsync("optimize-dax");         // shipped beside the test binary
                 Assert.Null(r.ParseError);
                 Assert.True(r.Ok, "clean stock workflow should have no warn findings: " + string.Join(" | ", r.Findings.Select(f => f.Severity + ":" + f.Message)));
                 Assert.DoesNotContain(r.Findings, f => f.Severity == "warn");
@@ -130,26 +130,19 @@ verify:
             finally { Directory.Delete(ws, true); }
         }
 
-        // The shipped stock launch set is 16 workflows (Semanticus.Engine/workflows/*.md), all gated and all
+        // The shipped stock set is 9 workflows (Semanticus.Engine/workflows/*.md, contract 21.2), all gated and all
         // covered below. Every case must survive the admission dry-run: its triggers/ops are real ops, every
         // verify probe/when names a collected input, and each dax_probe/dax_equivalence/object-bpa verify has
         // an objectRef target to act on. A future stock-workflow edit naming a phantom op or an unresolved probe
         // is caught here, not in production.
         [Theory]
-        [InlineData("add-relationship")]
-        [InlineData("calendar-setup")]
         [InlineData("check-blast-radius")]
         [InlineData("deploy-to-production")]
         [InlineData("governed-rename")]
-        [InlineData("import-table")]
         [InlineData("incremental-refresh-setup")]
-        [InlineData("make-ai-ready")]
-        [InlineData("model-hygiene-pass")]
-        [InlineData("new-measure")]
         [InlineData("optimize-dax")]
         [InlineData("refactor-to-calculation-group")]
         [InlineData("secure-with-rls")]
-        [InlineData("time-intelligence-variants")]
         [InlineData("verified-measure")]
         [InlineData("reconcile-saved-tests-sql")]
         public async Task Every_stock_workflow_passes_the_admission_dry_run(string name)
@@ -160,6 +153,30 @@ verify:
                 var r = await e.CheckWorkflowAsync(name);
                 Assert.Null(r.ParseError);
                 Assert.True(r.Ok, $"'{name}' should have no warn findings: " + string.Join(" | ", r.Findings.Select(f => f.Severity + ":" + f.Message)));
+                Assert.DoesNotContain(r.Findings, f => f.Severity == "warn");
+            }
+            finally { Directory.Delete(ws, true); }
+        }
+
+        // The seven parked starters (lane W3) still run wherever a pin or a project copy reaches them, so their frozen
+        // copies must keep passing the same dry run. Each is loaded from its compat freeze, never deleted.
+        [Theory]
+        [InlineData("add-relationship")]
+        [InlineData("calendar-setup")]
+        [InlineData("import-table")]
+        [InlineData("make-ai-ready")]
+        [InlineData("model-hygiene-pass")]
+        [InlineData("new-measure")]
+        [InlineData("time-intelligence-variants")]
+        public async Task Every_parked_starters_freeze_passes_the_admission_dry_run(string name)
+        {
+            var (e, ws) = Make();
+            try
+            {
+                WorkflowSeedLibraryTests.LoadParkedAsProjectCopy(ws, name);
+                var r = await e.CheckWorkflowAsync(name);
+                Assert.Null(r.ParseError);
+                Assert.True(r.Ok, $"frozen '{name}' should have no warn findings: " + string.Join(" | ", r.Findings.Select(f => f.Severity + ":" + f.Message)));
                 Assert.DoesNotContain(r.Findings, f => f.Severity == "warn");
             }
             finally { Directory.Delete(ws, true); }

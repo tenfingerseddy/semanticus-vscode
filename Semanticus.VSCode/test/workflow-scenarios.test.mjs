@@ -5,22 +5,14 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
-const scenarios = read('webview/src/workflowscenarios.tsx');
 const designer = read('webview/src/workflowdesign.tsx');
 const forms = read('webview/src/workflowforms.tsx');
 const workflows = read('webview/src/workflows.tsx');
 const template = read('../Semanticus.Engine/workflow-templates/hard-measure.md');
 const canonical = read('../Semanticus.Engine/workflows/verified-measure.md');
 
-const aiReady = scenarios.indexOf("id: 'make-model-ai-ready'");
-const hardMeasure = scenarios.indexOf("id: 'hard-measure'");
-const monthEnd = scenarios.indexOf("id: 'month-end-close'");
-assert.ok(aiReady >= 0 && hardMeasure > aiReady, 'AI-ready and hard-measure must be the first two catalog entries');
-assert.ok(monthEnd > hardMeasure, 'Month-end close must remain available below the two hero jobs');
-assert.match(scenarios, /SCENARIOS\.filter\(\(s\) => s\.hero\)/, 'the picker must render an explicit hero tier first');
-assert.match(scenarios, /s\.kind === 'template' && !s\.hero/, 'hero templates must not be duplicated in the depth tier');
-assert.match(scenarios, /Define the business rule[\s\S]*trusted answers from source rows[\s\S]*test it against those answers/i,
-  'the featured card explains that independent source answers are established before testing the calculation');
+// The webview scenario catalog (workflowscenarios.tsx) was cut with Home and Library (lane W2, contract 21.1 rows
+// 16 and 17): starters come from the engine's own lists now. The shipped files it pointed at are still guarded.
 for (const [name, text] of [['featured template', template], ['executable workflow', canonical]]) {
   assert.match(text, /## Step 1: Fix the specification[\s\S]*## Step 2: Lock the expected values/,
     `${name} must use the requirement-first, test-first spine`);
@@ -37,7 +29,9 @@ for (const [name, text] of [['featured template', template], ['executable workfl
     `${name} must not put Microsoft product names in user-facing copy`);
 }
 
-assert.match(template, /version: 5/, 'the separately versioned featured template must remain on its v5 contract');
+// Lane l9-finish: both files moved to format 3 and end with one step Semanticus runs (a save), so each version went up one;
+// the gated steps and their contracts are unchanged (StarterDraftTests and TemplateV3Tests hold the gates to the frozen files).
+assert.match(template, /version: 6/, 'the separately versioned featured template must remain on its v5 contract, now in format 3');
 assert.match(template, /## Step 7: Performance when attested, then finalize for production/,
   'the featured template must retain its attested-timing performance pass');
 assert.match(template, /openShapesFrom: openShapes/,
@@ -45,7 +39,7 @@ assert.match(template, /openShapesFrom: openShapes/,
 assert.match(template, /## Step 6: HARD gate[\s\S]*probe: witnessDax[\s\S]*openShapesFrom: open/,
   'the featured template must hard-gate candidate equality against the locked witness on the pinned partition');
 
-assert.match(canonical, /version: 7/, 'the executable stock workflow must carry the v7 shaped-anchor coverage contract as version 7');
+assert.match(canonical, /version: 8/, 'the executable stock workflow must carry the v7 shaped-anchor coverage contract, now in format 3 as version 8');
 
 // =====================================================================================================
 // THE SHIPPED SEED IS FOUR PERSON-FACING STEPS, AND EACH ONE IS ASSERTED WHERE IT LIVES.
@@ -59,8 +53,9 @@ const stepsOf = (text) => Object.fromEntries(text.split(/^(?=##\s*Step\s+\d+\s*:
   .filter((s) => /^##\s*Step\s+\d+\s*:/.test(s))
   .map((s) => [s.match(/^##\s*Step\s+(\d+)/)[1], s]));
 const cs = stepsOf(canonical);
-assert.deepEqual(Object.keys(cs), ['1', '2', '3', '4'],
-  'the shipped verified-measure seed is four person-facing steps; a step added or lost invalidates every slice below');
+assert.deepEqual(Object.keys(cs), ['1', '2', '3', '4', '5'],
+  'the shipped verified-measure seed is four person-facing steps and a save Semanticus runs; a step added or lost invalidates every slice below');
+assert.match(cs['5'], /performer: semanticus[\s\S]*op: save_model/, 'step 5 is the save Semanticus runs itself (lane l9-finish)');
 
 // Step 1 fixes the requirement, and nothing is authored against anything else.
 assert.match(cs['1'], /## Step 1: Fix the specification\. The requirement text is the only source/,
@@ -82,7 +77,7 @@ assert.match(cs['2'], /OUTSIDE DAX[\s\S]*small GROUPED\s+row extract/i,
   'Step 2 must derive anchors from small grouped extracts with arithmetic outside DAX');
 
 // Step 3 authors ONE candidate and enforces the locked anchors through the structured gate.
-assert.match(cs['3'], /## Step 3: Author ONE canonical candidate[\s\S]*name: expectedValues[\s\S]*REQUIRED RECEIPT[\s\S]*required: optional[\s\S]*verify:\s*\r?\n\s*- kind: expected_values\s*\r?\n\s*anchors: expectedValues/,
+assert.match(cs['3'], /## Step 3: Write one candidate formula[\s\S]*name: expectedValues[\s\S]*REQUIRED RECEIPT[\s\S]*required: optional[\s\S]*verify:\s*\r?\n\s*- kind: expected_values\s*\r?\n\s*anchors: expectedValues/,
   'Step 3 must expose an optional receipted anchor revision that shadows Step 2 only when answered, and always enforce the latest set');
 assert.match(cs['3'], /Every changed anchor object must contain originalExpect[\s\S]*correctedExpect[\s\S]*row-returning extractQuery/,
   'anchor revisions must name the engine-enforced receipt fields and live row-returning query');
@@ -112,8 +107,8 @@ assert.match(cs['4'], /A skipped, offline or zero-coverage verify is not a pass[
 assert.doesNotMatch(canonical, /verified-measure-v51|prowfv|probench|23M-row|v1 record|v5 witness/i,
   'benchmark arm names and benchmark-specific wording must not leak into the stock workflow');
 
-assert.match(forms, /Add evidence report/, 'workflow steps must expose evidence as a first-class addable action');
-assert.match(forms, /Evidence exports only after the run is completed or aborted/, 'the designer must explain when evidence becomes final');
+assert.match(forms, /Add a workflow report/, 'workflow steps must expose the report as a first-class addable action');
+assert.match(forms, /The report exports only after the run is completed or aborted/, 'the designer must explain when the report becomes final');
 
 // =====================================================================================================
 // THE ADD-A-STEP CONTROLS. 1.2.0 shipped with the only add control inside a selected step's form
@@ -132,16 +127,19 @@ assert.match(designer, /Add the first step<\/button>/,
   'the Steps rail must carry an add action when the workflow has no steps at all');
 assert.match(designer, /\+ Add step<\/button>/,
   'the Steps rail must keep a persistent add control at its end at every step count, the way the 1.1.3 outline did');
-assert.match(designer, /aria-label=\{`Insert a step after step \$\{index \+ 1\}`\}/,
-  'the rail must offer an insert control between steps, not only an append at the end');
+// Contract 21.1 row 61 (lane W2): one + Add step, not an insert link between every pair. Adding in the middle is
+// still one click: Add step after, in the step's own "More for this step" and in the canvas drawer's menu.
+assert.doesNotMatch(designer, /Insert a step after step/, 'the outline carries one + Add step, not an insert between every pair');
+assert.match(forms, /onClick=\{addAfter\}>Add step after</, 'Add step after stays on every step');
 assert.match(designer, /steps\.length === 0[\s\S]{0,200}addFirstStep/,
   'the zero-step case must be what decides the rail add control, not the selection');
 // Canvas used to carry a third WorkflowEmptySteps card in its right-hand form column. That column is
 // gone (the step editor is a drawer that only exists while a step is chosen, 2026-09-15), so the Canvas
 // zero-step add action is the canvas's own centred empty state instead. Both paths are still asserted:
 // two cards in Steps, and the canvas empty state below.
-assert.match(designer, /<WorkflowEmptySteps[\s\S]{0,4000}<WorkflowEmptySteps/,
-  'Steps (settings selected) and Steps (no step selected) must each offer the empty-state add action');
+// Settings is a drawer now (lane W2), so Steps has one form column and one empty state.
+assert.match(designer, /selected < 0 \|\| !step\s*\?\s*<WorkflowEmptySteps/,
+  'Steps with no step selected must offer the empty-state add action');
 assert.match(canvas, /data-wf-canvas-empty="true"[\s\S]{0,600}Add the first step/,
   'Canvas must offer the same add action from its own empty state, since it no longer has a form column');
 assert.match(designer, /onAddStep=\{steps\.length \? addStepAtEnd : addFirstStep\}/,
@@ -150,19 +148,20 @@ assert.match(canvas, /data-wf-canvas-empty/,
   'the canvas body must show its own empty state rather than an empty grid');
 assert.match(canvas, /onAddStep && <Button primary disabled=\{addDisabled\}/,
   'the canvas empty state must use the shared Button, so a control restyle reaches this surface too');
-assert.match(designer, /const STOCK_EDIT_NOTE = 'Copy to this project to edit';/,
-  'a read-only built-in must explain how to get an editable copy');
-assert.match(designer, /\{stock && <small className="sem-wf-restriction">\{STOCK_EDIT_NOTE\}<\/small>\}/,
-  'the read-only note must sit beside the disabled rail controls, not replace them');
+assert.match(designer, /A starter\. Use it to make a copy you can change\./,
+  'a starter opened in Author must explain how to get a copy of its own (Use, contract 21.2)');
+assert.match(designer, /\{stock && <span className="sem-wf-note">\{readOnlyNote\}<\/span>\}/,
+  'the starter note sits in the header, beside the disabled controls, not in place of them');
 assert.match(forms, /\{readOnlyNote && <small className="sem-wf-restriction">\{readOnlyNote\}<\/small>\}/,
   'the read-only note must sit beside the disabled step actions, so a built-in shows controls and a reason, never an absence');
 assert.match(forms, /focusKey !== step\.key \|\| !titleRef\.current/,
   'a step added from any control must land with the caret in its title');
 assert.doesNotMatch(designer, /[\u2014\u2013]/, 'the designer must carry no em or en dashes (product copy rule)');
 assert.doesNotMatch(forms, /[\u2014\u2013]/, 'the step forms must carry no em or en dashes (product copy rule)');
-assert.match(workflows, /'check-blast-radius': 'Review a change'/, 'Check blast radius must live with change review');
-assert.match(workflows, /'governed-rename': 'Review a change'/, 'Safe rename must live beside the blast-radius workflow');
-assert.match(workflows, /data-workflow=\{w\.name\}/, 'the workflow rail must remain directly targetable by the visual harness');
+// The journey groups (GROUP_OF) were cut with Library (contract 21.1 row 24): the list sorts by name and filters by
+// Required, Off and Hidden. A row is still directly targetable by the drivers.
+assert.doesNotMatch(workflows, /GROUP_OF/, 'the journey groups are gone');
+assert.match(workflows, /data-workflow=\{w\.name\}/, 'each workflow row must remain directly targetable by the visual harness');
 
 // =====================================================================================================
 // [T171] THE SCREENSHOT HARNESS FIXTURE IS THE SHIPPED LIBRARY, OR THE PICTURES ARE FICTION.

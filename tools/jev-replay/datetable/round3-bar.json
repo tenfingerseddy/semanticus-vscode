@@ -1,0 +1,19 @@
+{
+ "point": "date.table",
+ "round": 3,
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "key": "key.json, derived by derive-key.mjs from each model's structure and declared data, not from a reviewer's call. Hand-checked on a seeded 10% sample (7 of 64: aw-1, cm-2, h-19, h-2, ns-2, ns-3, s-13): 7 of 7 agree. Models the key marks unverifiable are reported apart and count for nobody.",
+ "facts": "Jev is given exactly the facts the key is built from: every date column measured (repeats, missing days), the relationships and which tables relate to each table, and whether time intelligence is used.",
+ "decisions": ["needed", "table", "mark"],
+ "proPath": "Per decision: Jev's answer when its confidence is at least confidenceBar, else the rule's answer.",
+ "rules": {
+  "needed": "The shipped rule: needed when DATE-MARK fires (the model's formulas use time intelligence).",
+  "table": "The shipped rule: the one table PlanDateMark names (the one date column time intelligence reads, off the many side). No such table is no answer, which counts as wrong. Scored only on models the key says need a date table AND where the engine offered at least one table (with none, a new one is the only answer, is not asked, and is nobody's decision).",
+  "mark": "The shipped rule: always mark. Scored only on models the key says need a date table."
+ },
+ "ship": "A decision goes to Jev only when the Pro path is right on at least minGainPoints percentage points more of its models than the rule, AND an exact two-sided McNemar test on the paired right-or-wrong results gives p below maxP. The point goes live (DateTableFamily.JevDecides = true) only when BOTH needed and table ship; mark ships on its own or the engine always marks.",
+ "confidenceBar": 0.85,
+ "minGainPoints": 5,
+ "maxP": 0.05
+}

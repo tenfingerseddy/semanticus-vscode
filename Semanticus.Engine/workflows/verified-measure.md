@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: verified-measure
 title: Test a complex measure
 description: Define the hard cases for a measure, compare a candidate with independent expected values, and report checked and unresolved cases.
 whenToUse: "Use for ratios, shares, time logic, distinct counts or other measures that can look right in a simple total. For a straightforward new measure, use Add a measure; for a speed or readability rewrite, use Fix a slow measure."
-version: 7
+version: 8
 strictness: hard
 triggers: [create_measure, update_measure]
 ---
 
 ## Step 1: Fix the specification. The requirement text is the only source
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Restate the metric and its grain, and classify additivity PER DIMENSION rather than globally (for example
 "snapshot over Date; recomputed, not summed, across currency pairs; non-additive over customer"). The
@@ -46,7 +51,7 @@ OVERRIDDEN. Nothing is silently absorbed into "verified".
 ops: [get_grounding, get_model_graph]
 inputs:
   - name: requirement
-    question: "The metric and grain, restated, with additivity PER DIMENSION, and the model facts you read confirmed by the user."
+    question: "The metric and its grain in your own words, how it adds up across each dimension, and the model facts confirmed with you."
     type: text
     required: required
   - name: clarification
@@ -56,6 +61,10 @@ inputs:
 ```
 
 ## Step 2: Lock the expected values before any candidate exists
+```yaml step
+performer: assistant
+id: step-2
+```
 
 Test first. Declare `equivalenceGrid` and the requirement-silent `openGrains` NOW, before a candidate
 exists. The grid is a comma-separated list of qualified display columns. Open grains use only the canonical
@@ -137,7 +146,7 @@ inputs:
     type: text
     required: answer-or-decline
   - name: naiveForm
-    question: "The tempting naive wrong form; the diverging grain; and whether that grain is anchored from a PINNED ledger entry or declared requirement-silent in openGrains."
+    question: "The tempting wrong formula, the total where it gives a different answer, and whether the requirement pins that total or leaves it open."
     type: text
     required: required
 verify:
@@ -145,7 +154,11 @@ verify:
     anchors: expectedValues
 ```
 
-## Step 3: Author ONE canonical candidate
+## Step 3: Write one candidate formula
+```yaml step
+performer: assistant
+id: step-3
+```
 
 Draft a SINGLE production candidate: the clearest correct expression for the Step-1 specification. It may
 compose model measures, but reuse is not proof; treat every reused measure's semantics as UNVERIFIED until
@@ -183,6 +196,10 @@ verify:
 ```
 
 ## Step 4: Reconcile against an independent witness, then finalize honestly
+```yaml step
+performer: assistant
+id: step-4
+```
 
 Build the raw-row witness, run the battery, let the hard gate prove the grid, and finish the measure for
 production. This is one step so the person answers once, not four times; the discipline below is yours to
@@ -243,7 +260,7 @@ witness revision counts, and any skipped step with its reason.
 
 ```yaml gate
 strictness: hard
-ops: [probe_measure, run_dax, benchmark_dax, update_measure, rename_object, set_measure_format, set_description, set_display_folder, save_model]
+ops: [probe_measure, run_dax, benchmark_dax, update_measure, rename_object, set_measure_format, set_description, set_display_folder]
 inputs:
   - name: witnessDax
     question: "The raw-row witness, verbatim: ZERO bare measure references; every dependency rebuilt from qualified base columns; SARGable plain column filters, date ranges as predicates, grouped extracts; no bare FILTER over ALL of the fact table; no candidate idioms; it implements only the ledger. The engine refuses bare refs and this input may not be declined."
@@ -251,19 +268,19 @@ inputs:
     required: required
     daxPurity: no-bare-measures
   - name: battery
-    question: "Candidate AND witness value, blank or error at every ledger context and both named layouts; each PINNED context's match against its pin; and the OPEN contexts' returned values, recorded and not acted on."
+    question: "What the candidate and the independent check each return at every listed case and both layouts, whether each pinned case matches, and what the open cases returned."
     type: text
     required: required
   - name: adjudications
-    question: "For each disagreement: the GROUPED row extract, the arithmetic verdict naming which side was convicted or INCONCLUSIVE, any witness revision with before and after expressions, and confirmation the FULL battery was re-run after every change. Decline when nothing disagreed."
+    question: "For each disagreement, the grouped rows, the arithmetic that settled it (or that it could not be settled), any change to the independent check, and that every case was run again after each change. Decline when nothing disagreed."
     type: text
     required: answer-or-decline
   - name: perfPass
-    question: "The candidate against the MODEL FLOOR at its natural grid, with measure-faithful cold and warm timings and any zero-storage-engine reading discarded, plus the winning rewrite and its match against the locked anchors when one was applied. Decline when no comparable live environment was available; unmeasured is unverified."
+    question: "How fast the candidate is next to the simplest correct formula, timed cold and warm, and any faster rewrite with its match against the expected values. Decline when there was no live model to time it on."
     type: text
     required: answer-or-decline
   - name: finalized
-    question: "The production name, format string, description including the PINNED conventions, and display folder applied to the measure, with the checked grains and every unresolved OPEN observation."
+    question: "The final name, format, description and display folder given to the measure, which totals were checked, and anything the requirement left open."
     type: text
     required: required
   - name: countersign
@@ -282,3 +299,15 @@ verify:
   - kind: expected_values
     anchors: expectedValues
 ```
+
+## Step 5: Save the finished measure
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_model
+```
+
+Semanticus saves the model once the witness gate has passed and the measure is finalized, so the saved
+file holds the proven version. Nothing here runs if Step 4 stopped the draft.

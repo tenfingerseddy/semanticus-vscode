@@ -1,0 +1,8230 @@
+{
+ "point": "query.summarize",
+ "set": "natural-tune",
+ "note": "Natural business questions, every reasonable reading accepted, reviewed by an independent labeller, split before any run (seed 20260928, stratified by model and type). TUNING half: fixes may be tried and measured on it.",
+ "items": [
+  {
+   "id": "ncr-002",
+   "words": "how much did we sell this year",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "This year's sales, revenue or quantity; by year or by year and month.",
+   "review": "Added year+fiscal quarter. askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-002"
+  },
+  {
+   "id": "nca-002",
+   "words": "how much did we sell this year",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "This year's sales, revenue or quantity; by year or by year and month.",
+   "review": "Added year+fiscal quarter. askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-002"
+  },
+  {
+   "id": "ncr-004",
+   "words": "bike sales last quarter",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Bikes by quarter (or month) so the latest one can be read off.",
+   "review": "askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Bikes"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-004"
+  },
+  {
+   "id": "nca-004",
+   "words": "bike sales last quarter",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Bikes by quarter (or month) so the latest one can be read off.",
+   "review": "askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Bikes"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-004"
+  },
+  {
+   "id": "ncr-005",
+   "words": "how are we tracking",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Open health check; any sales measure, total or over time.",
+   "review": "Added year+fiscal quarter.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-005"
+  },
+  {
+   "id": "nca-005",
+   "words": "how are we tracking",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Open health check; any sales measure, total or over time.",
+   "review": "Added year+fiscal quarter.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-005"
+  },
+  {
+   "id": "ncr-007",
+   "words": "how's Canada going?",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Canada's sales, total or over time.",
+   "review": "Allowed two measures and more views (year+month, quarter, product or category).",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Canada"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-007"
+  },
+  {
+   "id": "nca-007",
+   "words": "how's Canada going?",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Canada"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Canada's sales, total or over time.",
+   "review": "Allowed two measures and more views (year+month, quarter, product or category).",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Canada"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-007"
+  },
+  {
+   "id": "ncr-009",
+   "words": "which country buys the most",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by country.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-009"
+  },
+  {
+   "id": "nca-009",
+   "words": "which country buys the most",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by country.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-009"
+  },
+  {
+   "id": "ncr-011",
+   "words": "which promotion worked best",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by promotion; revenue, quantity or revenue per unit.",
+   "review": "Allowed two measures per promotion; 'worked best' names none.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-011"
+  },
+  {
+   "id": "nca-011",
+   "words": "which promotion worked best",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by promotion; revenue, quantity or revenue per unit.",
+   "review": "Allowed two measures per promotion; 'worked best' names none.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-011"
+  },
+  {
+   "id": "ncr-013",
+   "words": "our three slowest months",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Bottom three months by sales; with or without the year.",
+   "review": "Added the full month split: 'three' is spelled out, which the product may not see, and a full list still answers it.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Total Revenue",
+      "Order Quantity"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "contoso",
+   "pair": "nc-013"
+  },
+  {
+   "id": "nca-013",
+   "words": "our three slowest months",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Bottom three months by sales; with or without the year.",
+   "review": "Added the full month split: 'three' is spelled out, which the product may not see, and a full list still answers it.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Total Revenue",
+      "Order Quantity"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "contoso-ai",
+   "pair": "nc-013"
+  },
+  {
+   "id": "ncr-014",
+   "words": "5 biggest customers",
+   "type": "top_n_natural",
+   "accept": "decline",
+   "askOk": false,
+   "why": "This model has no customer table, so customers cannot be ranked.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc-014"
+  },
+  {
+   "id": "nca-014",
+   "words": "5 biggest customers",
+   "type": "top_n_natural",
+   "accept": "decline",
+   "askOk": false,
+   "why": "This model has no customer table, so customers cannot be ranked.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc-014"
+  },
+  {
+   "id": "ncr-016",
+   "words": "summer sale versus no discount",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Summer Sale",
+        "No Discount"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Summer Sale",
+        "No Discount"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Two promotions compared; the measure is not said.",
+   "review": "Allowed two measures; no measure is named.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-016"
+  },
+  {
+   "id": "nca-016",
+   "words": "summer sale versus no discount",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Summer Sale",
+        "No Discount"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ],
+      [
+       "Total Revenue",
+       "Order Quantity",
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Summer Sale",
+        "No Discount"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Two promotions compared; the measure is not said.",
+   "review": "Allowed two measures; no measure is named.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity",
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-016"
+  },
+  {
+   "id": "ncr-018",
+   "words": "bikes vs accessories on units",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes",
+        "Accessories"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Quantity for the two named categories.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-018"
+  },
+  {
+   "id": "nca-018",
+   "words": "bikes vs accessories on units",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Bikes",
+        "Accessories"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Quantity for the two named categories.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-018"
+  },
+  {
+   "id": "ncr-019",
+   "words": "revenu by contry",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Total Revenue by country.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-019"
+  },
+  {
+   "id": "nca-019",
+   "words": "revenu by contry",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Total Revenue by country.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-019"
+  },
+  {
+   "id": "ncr-022",
+   "words": "retunred units by catgory",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned Units by category; returns reach Product, so this works.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-022"
+  },
+  {
+   "id": "nca-022",
+   "words": "retunred units by catgory",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned Units by category; returns reach Product, so this works.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-022"
+  },
+  {
+   "id": "ncr-023",
+   "words": "profit by country",
+   "type": "business_word",
+   "accept": "decline",
+   "askOk": true,
+   "why": "No cost or profit in this model; revenue is not profit, though asking whether revenue will do is fair.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc-023"
+  },
+  {
+   "id": "nca-023",
+   "words": "profit by country",
+   "type": "business_word",
+   "accept": "decline",
+   "askOk": true,
+   "why": "No cost or profit in this model; revenue is not profit, though asking whether revenue will do is fair.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc-023"
+  },
+  {
+   "id": "ncr-025",
+   "words": "how many orders did we get",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "No order count; Order Quantity is the nearest fair reading.",
+   "review": "askOk to true: there is no order count, so asking whether units ordered will do is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-025"
+  },
+  {
+   "id": "nca-025",
+   "words": "how many orders did we get",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "No order count; Order Quantity is the nearest fair reading.",
+   "review": "askOk to true: there is no order count, so asking whether units ordered will do is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-025"
+  },
+  {
+   "id": "ncr-029",
+   "words": "how many units came back for each product",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned Units per product.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-029"
+  },
+  {
+   "id": "nca-029",
+   "words": "how many units came back for each product",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned Units per product.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-029"
+  },
+  {
+   "id": "ncr-030",
+   "words": "sales through the Holiday Offer",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Holiday Offer"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales under the Holiday Offer promotion.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Promotion[Promotion Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Holiday Offer"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-030"
+  },
+  {
+   "id": "nca-030",
+   "words": "sales through the Holiday Offer",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Promotion[Promotion Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Holiday Offer"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales under the Holiday Offer promotion.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Promotion[Promotion Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Holiday Offer"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-030"
+  },
+  {
+   "id": "ncr-032",
+   "words": "sales and returns by brand",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "A sales measure and Returned Units per brand; returns reach Product.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ],
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-032"
+  },
+  {
+   "id": "nca-032",
+   "words": "sales and returns by brand",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue",
+       "Order Quantity"
+      ],
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "A sales measure and Returned Units per brand; returns reach Product.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue",
+      "Order Quantity"
+     ],
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-032"
+  },
+  {
+   "id": "ncr-035",
+   "words": "silver helmets revenue",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Color]"
+       ],
+       "op": "is",
+       "values": [
+        "Silver"
+       ]
+      },
+      {
+       "column": [
+        "Product[Product Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Helmet"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue for silver helmets: two filters.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Color]"
+      ],
+      "op": "is",
+      "values": [
+       "Silver"
+      ]
+     },
+     {
+      "column": [
+       "Product[Product Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Helmet"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-035"
+  },
+  {
+   "id": "nca-035",
+   "words": "silver helmets revenue",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Color]"
+       ],
+       "op": "is",
+       "values": [
+        "Silver"
+       ]
+      },
+      {
+       "column": [
+        "Product[Product Name]"
+       ],
+       "op": "is",
+       "values": [
+        "Helmet"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue for silver helmets: two filters.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Color]"
+      ],
+      "op": "is",
+      "values": [
+       "Silver"
+      ]
+     },
+     {
+      "column": [
+       "Product[Product Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Helmet"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-035"
+  },
+  {
+   "id": "ncr-036",
+   "words": "units sold in Austin",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[City]"
+       ],
+       "op": "is",
+       "values": [
+        "Austin"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Quantity for Austin.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Austin"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc-036"
+  },
+  {
+   "id": "nca-036",
+   "words": "units sold in Austin",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Geography[City]"
+       ],
+       "op": "is",
+       "values": [
+        "Austin"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Quantity for Austin.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Austin"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc-036"
+  },
+  {
+   "id": "ncr-038",
+   "words": "returns by country",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": false,
+   "why": "Returns reach only Product, so they cannot be split by country.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc-038"
+  },
+  {
+   "id": "nca-038",
+   "words": "returns by country",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": false,
+   "why": "Returns reach only Product, so they cannot be split by country.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc-038"
+  },
+  {
+   "id": "nn-001",
+   "words": "how did sales do last month",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Wants sales for the latest month; the product has no today, so a month-by-month split of any sales measure lets them read it off.",
+   "review": "Added any two date columns that pin month and year (e.g. Year+YearMonth). askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-002",
+   "words": "what were sales like this year?",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Wants this year's sales; a split by year or by month shows it, with Net Sales, Units or profit all fair meanings of 'sales'.",
+   "review": "Added month-with-year pairs and a year+quarter split; both show this year's shape. askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-007",
+   "words": "orders over the last couple of months",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Order count for recent months; a monthly split answers it, and 'couple of months' is loose enough to ask.",
+   "review": "Added month-with-year pairs.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-008",
+   "words": "profit in Q4 last year",
+   "type": "vague_period",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Q4 is named, the year is relative; Q4 profit split by year (or by month) shows last year's Q4.",
+   "review": "Added month-with-year pairs and year+quarter inside the Q4 filter. askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "Q4"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-015",
+   "words": "how's Kitchen tracking",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Kitchen"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "How the Kitchen category is going; its sales or profit, total, over time or by what sits inside it.",
+   "review": "Widened to all six headline measures, one or two, plus quarter and month-with-year views.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units",
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Kitchen"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-016",
+   "words": "are trade customers doing ok?",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[CustomerName]",
+       "Customer[CustomerCode]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[CustomerName]",
+       "Customer[CustomerCode]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Health of the Trade segment; headline measures for Trade, total, over time or per customer.",
+   "review": "Allowed two headline measures (a health check) plus quarter and month-with-year views.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit",
+      "Margin %",
+      "Units",
+      "Order Count",
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Customer[Segment]"
+      ],
+      "op": "is",
+      "values": [
+       "Trade"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-017",
+   "words": "how did the South region perform",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]",
+       "Store[StoreCode]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]",
+       "Store[StoreCode]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "South"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "South region performance; either region column, any headline measure, total or broken down.",
+   "review": "Allowed two headline measures (a performance check) plus quarter and month-with-year views.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit",
+      "Margin %",
+      "Units",
+      "Order Count",
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "South"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-018",
+   "words": "overall how'd we do in 2024",
+   "type": "how_doing",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ],
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Margin %",
+       "Units",
+       "Order Count",
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "A 2024 summary; headline numbers for 2024 as a total or through the year.",
+   "review": "Inside the 2024 filter, a by-year row, year+quarter or month-with-year also summarise 2024.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit",
+      "Margin %",
+      "Units",
+      "Order Count",
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-020",
+   "words": "which region sells the most",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]",
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by region to see the leader; either region column, money or units.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-022",
+   "words": "which category makes us the most money",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Categories by money; 'makes us money' reads as sales or profit.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-024",
+   "words": "what day of the week is busiest",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count",
+       "Units",
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Activity by weekday; orders, units or sales split by day of week.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count",
+      "Units",
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]",
+      "Date[DayOfWeekNumber]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-025",
+   "words": "which brand has the better margin",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Margin by brand; margin percent or gross profit.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-026",
+   "words": "lowest margin subcategory?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Margin by subcategory to spot the lowest.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-028",
+   "words": "our 5 biggest customers",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit",
+       "Order Count",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[CustomerName]",
+       "Customer[CustomerCode]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Net Sales",
+       "Gross Profit",
+       "Order Count",
+       "Units"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Top five customers; 'biggest' is most likely spend but profit, orders or units are fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit",
+      "Order Count",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[CustomerName]",
+      "Customer[CustomerCode]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Net Sales",
+      "Gross Profit",
+      "Order Count",
+      "Units"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-029",
+   "words": "3 worst sellers",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Net Sales",
+       "Units"
+      ],
+      "lowest": true
+     }
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]",
+       "Store[StoreCode]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 3,
+      "by": [
+       "Net Sales",
+       "Units"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Bottom three products by sales money or units.",
+   "review": "Added bottom 3 stores: 'sellers' can mean the stores that sell, not only products.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Net Sales",
+      "Units"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-030",
+   "words": "top ten products by units",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 10,
+      "by": [
+       "Units"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Ten products with the most units; the number is spelled out.",
+   "review": "Added the full product split by Units: the number is spelled out ('ten'), which the product may not see, and a full ranked list still answers it.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Units"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-032",
+   "words": "bottom 4 SKUs on profit",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 4,
+      "by": [
+       "Gross Profit",
+       "Margin %"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Four least profitable products; SKU or product name both identify them.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 4,
+     "by": [
+      "Gross Profit",
+      "Margin %"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-034",
+   "words": "which 5 products get returned most",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returns Amount",
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Returns Amount",
+       "Return Rate %"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Five products with the most returns, by returns amount or return rate.",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount",
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Returns Amount",
+      "Return Rate %"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-037",
+   "words": "sales compared to last year",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "No change calculation exists, so sales side by side by year (or by month across years) is the fair answer.",
+   "review": "Added month-with-year pairs and year+quarter side by side. askOk to true: the product has no today, so asking which period is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-038",
+   "words": "2024 vs 2025 net sales",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024",
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024",
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024",
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Net Sales for each of the two named years; split by year, with or without keeping just those two.",
+   "review": "Added month-by-month across the two years; it compares the named years too.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-039",
+   "words": "year over year profit by region",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Store[Region]",
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Profit by year and region side by side.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ],
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-041",
+   "words": "weekends versus weekdays, how do sales compare",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[IsWeekend]",
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales split by the weekend flag, or by day of week.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[IsWeekend]",
+      "Date[DayOfWeek]",
+      "Date[DayOfWeekNumber]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-042",
+   "words": "retail vs trade spending",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Retail",
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Retail",
+        "Trade"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Net Sales for each segment.",
+   "review": "Added Average Order Value: 'spending' can mean spend per order.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-046",
+   "words": "slaes by regoin",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]",
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by region with two typos; either region column.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-047",
+   "words": "gross proft by catagory",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Gross Profit by category, both words misspelled.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-048",
+   "words": "untis sold in the Nroth",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]",
+        "Customer[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "North"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Units in the North region; the value is misspelled.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "North"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-052",
+   "words": "how many Sumit Boots did we sell",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units",
+       "Order Count"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[ProductName]"
+       ],
+       "op": "is",
+       "values": [
+        "Summit Boots"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Units of Summit Boots; counting orders is a fair reading of 'how many'.",
+   "expect": {
+    "measures": [
+     [
+      "Units",
+      "Order Count"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[ProductName]"
+      ],
+      "op": "is",
+      "values": [
+       "Summit Boots"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-054",
+   "words": "ordr count by moth in 2025",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Count by month within 2025; 'moth' is month.",
+   "review": "Added month-with-year pairs inside the 2025 filter.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-060",
+   "words": "how much got refunded",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Refunds are Returns Amount; a total, a split by year is fine too.",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-061",
+   "words": "takings by day of the week",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Takings are Net Sales; by weekday.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]",
+      "Date[DayOfWeekNumber]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-062",
+   "words": "margins by channel",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Channel]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Margin % or Gross Profit by channel.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-063",
+   "words": "what's the discount rate running at",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ],
+      [
+       "Date[MonthName]",
+       "Date[MonthNumber]",
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Legacy Discount %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "The only discount measure is Legacy Discount %; a total or its trend.",
+   "review": "Added month-with-year pairs and year+quarter for 'running at'.",
+   "expect": {
+    "measures": [
+     [
+      "Legacy Discount %"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-066",
+   "words": "sales by city",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[City]",
+       "Customer[City]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Sales by city; store city or customer city.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]",
+      "Customer[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-067",
+   "words": "units sold per brand",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Units by brand.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-068",
+   "words": "what do people buy on weekends",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[IsWeekend]",
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ],
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[IsWeekend]",
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ],
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[IsWeekend]",
+       "Date[DayOfWeek]",
+       "Date[DayOfWeekNumber]"
+      ],
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "What sells at the weekend; no weekend value is said, so split by the weekend flag or weekday and by product.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[IsWeekend]",
+      "Date[DayOfWeek]",
+      "Date[DayOfWeekNumber]"
+     ],
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-070",
+   "words": "how many orders came through online",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[Channel]"
+       ],
+       "op": "is",
+       "values": [
+        "Online"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order Count for the Online channel.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[Channel]"
+      ],
+      "op": "is",
+      "values": [
+       "Online"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-073",
+   "words": "sales and profit by store",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Units"
+      ],
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]",
+       "Store[StoreCode]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Two numbers per store: a sales measure and a profit measure.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Units"
+     ],
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]",
+      "Store[StoreCode]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-075",
+   "words": "units and returns by product",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ],
+      [
+       "Returns Amount",
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]",
+       "Product[SKU]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Units plus a returns measure, per product.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ],
+     [
+      "Returns Amount",
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]",
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-076",
+   "words": "cost and profit by category",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Cost"
+      ],
+      [
+       "Gross Profit",
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Total Cost and Gross Profit (or margin) per category.",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ],
+     [
+      "Gross Profit",
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-080",
+   "words": "return rate and returns amount, trade vs retail",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ],
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ],
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Customer[Segment]"
+       ],
+       "op": "is",
+       "values": [
+        "Trade",
+        "Retail"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Both returns measures per segment.",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ],
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-081",
+   "words": "how much did we make in Pine Crest",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[City]",
+        "Customer[City]"
+       ],
+       "op": "is",
+       "values": [
+        "Pine Crest"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Money made in Pine Crest; sales or profit, store city or customer city.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[City]",
+       "Customer[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Pine Crest"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-082",
+   "words": "total units for Apparel",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Category]"
+       ],
+       "op": "is",
+       "values": [
+        "Apparel"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Units for the Apparel category.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Apparel"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-084",
+   "words": "gross profit from Polaris Line",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[Brand]"
+       ],
+       "op": "is",
+       "values": [
+        "Polaris Line"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Gross Profit for the Polaris Line brand.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Brand]"
+      ],
+      "op": "is",
+      "values": [
+       "Polaris Line"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-087",
+   "words": "returns on the Wireless Speaker",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returns Amount",
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[ProductName]"
+       ],
+       "op": "is",
+       "values": [
+        "Wireless Speaker"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ],
+      [
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Product[ProductName]"
+       ],
+       "op": "is",
+       "values": [
+        "Wireless Speaker"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returns for one product, amount or rate.",
+   "review": "Added both returns measures together: 'returns' fits the amount and the rate at once.",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount",
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[ProductName]"
+      ],
+      "op": "is",
+      "values": [
+       "Wireless Speaker"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn-089",
+   "words": "what was footfall at Harborview last week",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": false,
+   "why": "Footfall (people through the door) is not recorded.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn-094",
+   "words": "are we hitting our targets",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "No targets or budget in the model; asking which target they mean is fair.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn-095",
+   "words": "how much did we spend on marketing",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": false,
+   "why": "No marketing spend data.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn-096",
+   "words": "what's the rent on each store",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": false,
+   "why": "No property or rent costs; Total Cost is product cost.",
+   "expect": "decline",
+   "model": "northstar"
+  }
+ ]
+}

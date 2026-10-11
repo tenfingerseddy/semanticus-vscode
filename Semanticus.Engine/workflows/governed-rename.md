@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: governed-rename
 title: Rename with impact review
 description: Review model and report uses, preview one reference-aware rename, apply it once, and record remaining external work.
-version: 2
+version: 3
 strictness: hard
 whenToUse: "Use when renaming a published measure, column or table may affect reports or external text. For a quick model-only rename, use the direct rename action; for review without applying, use Review a risky change."
 triggers: [rename_object, add_plan_item]
 ---
 
 ## Step 1: Assess the rename
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Name the exact object and proposed new name. Supply local PBIR report folders or decline with why the review
 is model-only. `impact_assessment` records TOM dependants, supplied report uses, saved tests, interview
@@ -35,6 +40,10 @@ verify:
 ```
 
 ## Step 2: Stage and review the exact rename
+```yaml step
+performer: assistant
+id: step-2
+```
 
 Call `add_plan_item` with `kind: rename` and `after: newName`, then inspect it with `get_plan`. Do not apply
 until the target and new name match the Step-1 decision. `plan_item_staged` checks the shared plan item,
@@ -53,6 +62,10 @@ verify:
 ```
 
 ## Step 3: Capture representative values when possible
+```yaml step
+performer: assistant
+id: step-3
+```
 
 Call `capture_baseline` before applying, including measurable dependants and a useful group-by grid. Record
 the capture id or decline with the live-query gap. A model-only rename can continue, but the missing value
@@ -72,6 +85,10 @@ verify:
 ```
 
 ## Step 4: Apply once and replay the relevant evidence
+```yaml step
+performer: assistant
+id: step-4
+```
 
 Record the external bindings that need owners, state whether the reviewed rename should proceed, then approve
 the exact plan item and call `apply_plan`. If a baseline exists, deploy the local change to the same query
@@ -99,12 +116,16 @@ verify:
   - kind: tests_replay
 ```
 
-## Step 5: Export the rename record
-
-Export the terminal workflow evidence and save the evidence artifact when the project needs it. The record
-contains the impact scope, exact plan item, baseline result, test report and every external gap. A normal
-model-only rename can continue through the direct rename action without this workflow.
-
-```yaml gate
-ops: [export_workflow_evidence, save_evidence]
+## Step 5: Save the rename record
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_evidence
+  source: workflow
 ```
+
+Semanticus saves the record of the checked steps with the model. The record contains the impact scope,
+exact plan item, baseline result, test report and every external gap. A normal model-only rename can
+continue through the direct rename action without this workflow.

@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: optimize-dax
 title: Fix a slow measure
 description: Freeze a measure, compare a rewrite across useful contexts, and keep it only when the evidence supports it.
-whenToUse: "Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose SPEED for measured timing work or READABILITY when the goal is a clearer equivalent expression. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure."
-version: 1
+whenToUse: "Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose speed for measured timing work, or readability when the goal is a clearer formula that means the same. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure."
+version: 2
 strictness: hard
 triggers: [benchmark_dax, profile_dax, update_measure]
 ---
 
 ## Step 1: Freeze the original and choose the goal
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Use `get_dax` before editing and paste the exact expression into `originalDax`; the engine has no automatic
 field that captures a read result into a later gate. Name the target measure, choose SPEED or READABILITY,
@@ -40,6 +45,10 @@ inputs:
 ```
 
 ## Step 2: Inspect the measured bottleneck when SPEED is selected
+```yaml step
+performer: assistant
+id: step-2
+```
 
 For SPEED, use `profile_dax`, `capture_query_plan` and `clear_cache` only when the connected environment
 supports them, then repeat the same benchmark shape. For READABILITY, go straight to the rewrite. A local
@@ -51,11 +60,16 @@ ops: [profile_dax, capture_query_plan, clear_cache, benchmark_dax]
 ```
 
 ## Step 3: Rewrite and prove the meaning stayed the same
+```yaml step
+performer: assistant
+id: step-3
+```
 
 Apply one focused `update_measure` after `validate_dax` and `lint_dax`, keeping the existing format and
 description. The hard equivalence check compares the frozen expression with the current one over the
-declared grid. A grand-total match is too thin; if a product or customer context differs, revert with
-`update_measure` and keep the original.
+declared grid. A grand-total match is too thin. Send the rewrite as this step's writes: if a product or
+customer context differs, the check takes the rewrite back, the original stays, and the draft stops so you
+can rewrite and run it again.
 
 ```yaml gate
 strictness: hard
@@ -66,17 +80,33 @@ verify:
 ```
 
 ## Step 4: Keep the supported result
+```yaml step
+performer: assistant
+id: step-4
+```
 
 For SPEED, rerun the same benchmark and let `benchmark_delta` compare it with `speedBaselineMs`; only a
 measured comparable result can support “faster”. For READABILITY, review the proven-equivalent expression
 and retain it only when it is actually clearer. If the timing is unavailable or regresses, revert rather
-than claiming success. Save after the chosen version is accepted.
+than claiming success. Semanticus saves the model after this step is accepted.
 
 ```yaml gate
 strictness: hard
-ops: [benchmark_dax, save_model]
+ops: [benchmark_dax]
 verify:
   - kind: benchmark_delta
     when: inputs.speedBaselineMs.answered
     probe: speedBaselineMs
 ```
+
+## Step 5: Save the kept version
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_model
+```
+
+Semanticus saves the model once Step 4 has kept the proven version. Nothing here runs if a check before it
+stopped the draft.

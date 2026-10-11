@@ -100,6 +100,8 @@ namespace Semanticus.PerfSmoke
 
         public static async Task<int> Main(string[] args)
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("perfsmoke");
             try
             {
                 var cfg = Parse(args);

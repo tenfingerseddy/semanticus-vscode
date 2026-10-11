@@ -13,23 +13,29 @@ namespace Semanticus.Tests
     /// proves a violation, a clean state and a genuinely dormant population. The tests drive the shared LocalEngine
     /// path so the scorecard sees the same model state as both public doors.
     /// </summary>
-    public sealed class ReadinessCatalogBatch3Tests
+    public sealed class ReadinessCatalogBatch3Tests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public ReadinessCatalogBatch3Tests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro => true;
             public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "pro" };
         }
 
-        private static async Task<(LocalEngine Engine, SessionManager Sessions)> BaseModelAsync()
+        private async Task<(LocalEngine Engine, SessionManager Sessions)> BaseModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake());
+            return (await _copies.OpenAsync("base", BuildBaseModelAsync, new Fake(), sessions), sessions);
+        }
+
+        private static async Task BuildBaseModelAsync(LocalEngine engine)
+        {
             await engine.CreateModelAsync("CatalogBatch3", 1604);
             var table = await engine.CreateTableAsync("Customers", "human");
             await engine.CreateColumnAsync(table, "Customer Name", "String", "Customer Name", "human");
             await engine.CreateColumnAsync(table, "Account Name", "String", "Account Name", "human");
-            return (engine, sessions);
         }
 
         private static bool Fires(Scorecard score, string id) => score.Findings.Any(f => f.RuleId == id);
@@ -46,7 +52,7 @@ namespace Semanticus.Tests
             {
                 Assert.Equal(0, (await EvaluateAsync(sessions, "SYN-COLLIDE")).Applicable);
 
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetSynonymsAsync("column:Customers/Customer Name", new[] { "client" }, null, "agent");
                 await engine.SetSynonymsAsync("column:Customers/Account Name", new[] { "client" }, null, "agent");
 

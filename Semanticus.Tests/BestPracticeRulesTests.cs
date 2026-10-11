@@ -44,6 +44,7 @@ namespace Semanticus.Tests
 
         // ---- the Weights KeyNotFound hazard: every enum category scores without throwing ---------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_readiness_category_scores_without_throwing()
         {
@@ -69,6 +70,7 @@ namespace Semanticus.Tests
 
         // ---- an IFERROR measure: the scored rule fires and presents the category ----------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Iferror_measure_activates_best_practice_and_docks_the_score()
         {
@@ -85,6 +87,7 @@ namespace Semanticus.Tests
 
         // ---- an advisory rule surfaces its finding but NEVER activates the category on its own ---------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Advisory_distinctcount_surfaces_but_does_not_activate_the_category()
         {
@@ -109,6 +112,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(card.Findings, f => f.RuleId == "BP-AUTO-DATETIME");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Auto_datetime_fires_on_a_hidden_local_date_table()
         {
@@ -156,6 +160,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(card.Findings, f => f.RuleId.StartsWith("BP-DAX-", StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Iferror_without_division_scores_zero_with_no_sibling_dilution()
         {
@@ -171,6 +176,7 @@ namespace Semanticus.Tests
             Assert.Equal(1, bp.Applicable);     // exactly the violating object — no triggered-but-passing padding
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Column_op_measure_surfaces_only_the_advisory()
         {
@@ -183,6 +189,7 @@ namespace Semanticus.Tests
             Assert.False(Cat(card, ReadinessCategory.BestPractice).HasRules);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Date_mark_fires_once_time_intelligence_is_used()
         {

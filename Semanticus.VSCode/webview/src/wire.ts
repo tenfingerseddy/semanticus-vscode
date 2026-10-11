@@ -19,6 +19,10 @@ export interface ConnectionStatus {
 export interface ColumnDef {
   name: string;
   type?: string;
+  /** The model's own format string for a measure column, sent with an answer so a percent reads as a percent wherever
+   *  the answer is drawn (a table, a card, a chart). Absent for a column that is not a measure, and on a result the
+   *  engine ran from typed DAX, which carries no formats. */
+  format?: string;
 }
 
 export interface ResultSet {
@@ -30,6 +34,8 @@ export interface ResultSet {
   error?: string;
   query?: string;
   cancelled?: boolean;
+  /** Set by foldSortColumns: for each group-by position, the model's sort-by value of every label (daxvisual.tsx). */
+  sortRank?: (Map<string, number | string | null> | null)[];
 }
 
 export function rowAnnouncement(rowCount: number, truncated: boolean): string {

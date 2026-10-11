@@ -1,0 +1,11 @@
+relationship f8c6eb5e-4462-5a41-b5d2-67aea70d74ae
+	fromColumn: Events.'Event Date Key'
+	toColumn: Calendar.'Date Key'
+
+relationship 33cd7ac2-e67a-5942-a3d7-370c26ceec24
+	fromColumn: Events.'Campaign Key'
+	toColumn: Campaign.'Campaign Key'
+
+relationship 9a9c29eb-0439-541d-800b-8bdde1fe1ecc
+	fromColumn: Events.'Device Key'
+	toColumn: Device.'Device Key'

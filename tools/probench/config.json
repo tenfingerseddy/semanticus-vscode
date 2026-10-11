@@ -10,6 +10,6 @@
   "arms": {
     "free":     { "tools": [] },
     "freeplus": { "tools": ["validate_dax", "run_dax"] },
-    "pro":      { "tools": ["validate_dax", "run_dax", "probe_measure", "verify_dax_equivalence", "benchmark_dax_coldwarm"] }
+    "pro":      { "tools": ["validate_dax", "run_dax", "probe_measure", "verify_dax_equivalence", "benchmark_dax"] }
   }
 }

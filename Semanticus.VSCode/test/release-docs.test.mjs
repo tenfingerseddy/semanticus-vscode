@@ -44,7 +44,7 @@ assert.match(changelog, /## \[1\.0\.1\] - 2026-07-14/u);
 assert.notEqual(packageJson.publisher, 'kane', 'package publisher still uses the obsolete placeholder');
 assert.equal(packageJson.version, packageLock.version, 'package.json and package-lock.json versions differ');
 assert.equal(packageJson.version, packageLock.packages[''].version, 'root package-lock entry has a different version');
-assert.equal(packageJson.version, '1.2.0', 'release package version is not 1.2.0');
+assert.equal(packageJson.version, '1.3.0', 'release package version is not 1.3.0');
 assert.match(checklist, new RegExp(`package\\.json.*${packageJson.publisher}`, 'su'),
   'release checklist does not name the package publisher awaiting human ownership verification');
 assert.doesNotMatch(checklist, /replace `?"publisher": "kane"`?/u,
@@ -66,5 +66,15 @@ assert.match(acceptance, /portal upload of the verified packages/iu,
 assert.match(acceptance, /publish\.yml[\s\S]{0,200}?packages and verifies[\s\S]{0,200}?does not publish/iu,
   'the RC acceptance procedure must state that the tag workflow never publishes');
 });
+
+// "Model work runs locally" is true, and on its own it hides what Pro sends. Both READMEs say it beside it, in the
+// consent card's own terms: the model's shape goes to the advice service once a person allows it for that model,
+// and rows, values and credentials never go (consent.tsx CARD, DecisionRegistry.cs).
+for (const [name, text] of [['README.md', rootReadme], ['Semanticus.VSCode/README.md', marketplaceReadme]]) {
+  const para = text.replace(/\s+/g, ' ').match(/Model work runs locally\.[^\n]*?(?=\[|$)/u)?.[0] ?? '';
+  assert.match(para, /Pro sends .*model's shape.*advice service/iu, `${name} does not say what Pro sends beside "runs locally"`);
+  assert.match(para, /only after you allow it for that model/iu, `${name} does not say Pro asks first`);
+  assert.match(para, /never rows, values or credentials/iu, `${name} does not say what never goes`);
+}
 
 console.log('release documentation contract tests passed');

@@ -22,6 +22,35 @@ namespace Semanticus.Tests
             ConnectionRegistry.RootOverride = _root;
         }
 
+        /// <summary>K18 (Kane, 8 Oct): a new question failed with "The connection is not open." A closed query connection opens
+        /// again once, the query runs again, and the closed-connection words are never what a person reads.</summary>
+        [Fact]
+        public void K18_a_closed_query_connection_reopens_once_and_the_query_runs_again()
+        {
+            var runs = 0; var reopens = 0;
+            var ok = LiveConnection.RunReopeningOnce(
+                () => ++runs == 1 ? new ResultSet { Error = "The connection is not open." } : new ResultSet { RowCount = 1 },
+                () => { reopens++; return true; });
+            Assert.Null(ok.Error);
+            Assert.Equal((2, 1), (runs, reopens));
+
+            runs = 0; reopens = 0;
+            var dead = LiveConnection.RunReopeningOnce(
+                () => { runs++; return new ResultSet { Error = "The connection is not open." }; },
+                () => { reopens++; return false; });
+            Assert.Equal(LiveConnection.ConnectionDroppedLine, dead.Error);
+            Assert.DoesNotContain("not open", dead.Error);
+            Assert.Equal((1, 1), (runs, reopens));
+
+            // The query that was running when the connection dropped says it was lost, not that it is closed: same reopen, same one retry.
+            runs = 0; reopens = 0;
+            var lost = LiveConnection.RunReopeningOnce(
+                () => ++runs == 1 ? new ResultSet { Error = "The connection either timed out or was lost." } : new ResultSet { RowCount = 1 },
+                () => { reopens++; return true; });
+            Assert.Null(lost.Error);
+            Assert.Equal((2, 1), (runs, reopens));
+        }
+
         public void Dispose()
         {
             ConnectionRegistry.RootOverride = _safeRoot;
@@ -141,6 +170,7 @@ namespace Semanticus.Tests
         {
             var repo = Path.Combine(_root, "user-repo");
             Directory.CreateDirectory(Path.Combine(repo, ".git"));
+            File.WriteAllText(Path.Combine(repo, ".git", "HEAD"), "ref: refs/heads/main\n");   // a repository, not an empty folder (drop 14)
             var model = Path.Combine(repo, "model.bim");
             File.Copy(TestModels.FindBim(), model);
             using var engine = new LocalEngine(new SessionManager());
@@ -162,6 +192,7 @@ namespace Semanticus.Tests
         {
             var repo = Path.Combine(_root, "linked-repo");
             Directory.CreateDirectory(Path.Combine(repo, ".git"));
+            File.WriteAllText(Path.Combine(repo, ".git", "HEAD"), "ref: refs/heads/main\n");   // a repository, not an empty folder (drop 14)
             var model = Path.Combine(repo, "model.bim");
             File.Copy(TestModels.FindBim(), model);
             using var engine = new LocalEngine(new SessionManager());

@@ -44,7 +44,8 @@ assert.match(findings, /type SevFilter = 'all' \| 'error' \| 'warning' \| 'info'
 assert.match(findings, /aria-pressed=\{on\}/, 'a filter chip must expose its pressed state to assistive tech');
 assert.match(findings, /role="group" aria-label="Filter findings by level"/,
   'the chips must be one labelled group, not four loose buttons');
-assert.match(findings, /disabled=\{n === 0\}/, 'a bucket with nothing in it must not be offered');
+assert.match(findings, /SEV_BUCKETS\.filter\(\(b\) => b\.key === 'all' \|\| sevCounts\[b\.key\] > 0 \|\| sev === b\.key\)/, 'a bucket with nothing in it must not be offered (it is not drawn, unless it is the one switched on)');
+assert.match(findings, /const FILTER_FROM = 9;/, 'a short list needs no filter row');
 assert.match(findings, /showing \{shown\.length\} of \{rows\.length\}/,
   'a narrowed list must say what it is hiding');
 assert.match(findings, /No findings at this severity\. Pick another filter above\./,
@@ -64,7 +65,7 @@ assert.match(findings, /f === 'error' \? s >= 3 : f === 'warning' \? s === 2 : s
   'the buckets must be at-least for Errors, or Critical findings vanish from the Errors chip');
 
 // =====================================================================================================
-// B3 (walkthrough): the green primary on Model quality and AI understanding looked inert on the free tier.
+// B3 (walkthrough): the green primary on Model quality and AI readiness looked inert on the free tier.
 // The engine DOES gate both (LocalEngine.BpaFixAllAsync / ApplySafeFixesAsync call EntitlementGuard.RequirePro)
 // and the webview DOES turn that refusal into the upsell — the screenshot harness was the half that lied,
 // answering every unmocked method with {}. So the harness must now refuse on free and work on Pro, and the

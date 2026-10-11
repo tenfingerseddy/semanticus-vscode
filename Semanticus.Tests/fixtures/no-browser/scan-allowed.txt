@@ -1,0 +1,44 @@
+# Lines the no-browser source scan (NoBrowserSignInGuardTests) may pass: <repo-relative path><TAB><exact trimmed line>.
+# Each one names a launcher, the BROWSER variable or a browser credential without starting anything.
+# The guard's own checks: it names the launchers, the variable and the opt-in to look for them, and its two probes call
+# a stub by its full path only after proving it is a stub.
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.False(InteractiveSignIn.Allowed, "this test run may open a browser: something passed " + InteractiveSignIn.Option);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Equal(Path.Combine(stubDir, "xdg-open"), Environment.GetEnvironmentVariable("BROWSER"));
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	foreach (var name in new[] { "xdg-open", "omarchy-launch-browser", "systemd-run", "gtk-launch", "uwsm-app", "hyprctl", "gdbus", "busctl", "dbus-send" })
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("omarchy-launch-browser https://example.invalid/nested-run-probe", output);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	var stub = Path.Combine(Path.GetDirectoryName(StubLog())!, "omarchy-launch-browser");
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	var stub = Path.Combine(Path.GetDirectoryName(armed)!, "omarchy-launch-browser");
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("omarchy-launch-browser https://example.invalid/smoke-probe", withCall.Output);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.True(File.Exists(Path.Combine(homeC, "no-browser", "omarchy-launch-browser")),
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	if (stubDir != null) psi.Environment["BROWSER"] = Path.Combine(stubDir, "xdg-open");
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	private static readonly Regex OptIn = new Regex(@"--interactive-signin|InteractiveSignIn\.(ApplyCommandLine|Option)", RegexOptions.Compiled);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("InteractiveSignIn.ApplyCommandLine(args);", serve);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.DoesNotContain("--interactive-signin", Read("Semanticus.Engine", "OwnerSpawner.cs"));
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	var builders = product.SelectMany(f => Regex.Matches(File.ReadAllText(f), @"new\s+InteractiveBrowserCredential\s*\(").Select(_ => Path.GetFileName(f))).ToList();
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	"Azure.Identity.InteractiveBrowserCredential",
+# The guard's own rules name the browsers, the variable and the flags they look for, and its Azure CLI checks name
+# the calls the stub log must hold.
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("az account get-access-token --output json --resource https://analysis.windows.net/powerbi/api", output);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("az account show -o json", output);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains("az account show -o json", calls);
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	Assert.Contains(calls, l => l.StartsWith("az account get-access-token ", StringComparison.Ordinal));
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	private static readonly string[] Common = { "open", "gio", "code", "codium", "firefox", "chromium", "brave", "vivaldi", "opera", "epiphany", "librewolf", "uwsm", "flatpak" };
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	@"(chromium|chromium-browser|google-chrome|google-chrome-stable|chrome|msedge|microsoft-edge|microsoft-edge-stable|firefox|firefox-esr|"
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	+ @"brave|brave-browser|vivaldi|vivaldi-stable|opera|librewolf|epiphany|qutebrowser|safari)";
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	("the BROWSER variable", R(@"\$\{?BROWSER\b|\$env:BROWSER\b|process\.env\.BROWSER\b|process\.env\[\s*" + Q + @"BROWSER|GetEnvironmentVariables?\(\s*\)?\s*\[?\s*""BROWSER""|os\.environ(\.get)?\s*[\[(]\s*" + Q + "BROWSER"
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	+ @"|\bstart\s+['""]?https?:|/c\s+start\b|FileProtocolHandler|\bInvoke-Item\b|(^|[;|{]\s*)ii\s+\$|\bexplorer(\.exe)?\s+['""]?(\$|https?:)|Process\]::Start\(\s*\$", RegexOptions.IgnoreCase)),
+Semanticus.Tests/NoBrowserSignInGuardTests.cs	("a headed browser", R(@"\bheadless\s*[:=]\s*(false|False|0)\b|--headed\b")),
+# Person-run release tools: the VS Code command line printing its extensions and its version (it opens no window),
+# and the sign-in sentinel's list of browser process names it watches for.
+tools/release/rc-acceptance.ps1	$matches = @(& code --list-extensions --show-versions | Where-Object {
+tools/release/rc-acceptance.ps1	$codeVersion = @(& code --version)
+tools/release/signin-sentinel.ps1	'msedge', 'chrome', 'firefox', 'brave', 'opera', 'opera_gx', 'iexplore', 'msedgewebview2',
+tools/release/signin-sentinel.ps1	'vivaldi', 'arc', 'chromium', 'thorium', 'ungoogled-chromium', 'waterfox', 'librewolf'
+# The screenshot runtime's cache folder names, one of which is a browser's.
+Semanticus.VSCode/test/uishot-runtime.test.mjs	'chrome',
+Semanticus.VSCode/test/uishot-runtime.test.mjs	assert.equal(parseShellDirName('chrome'), null);
+# The billing end-to-end harness (a sandbox-only tool, never run by a test) drives Stripe's hosted pages in HEADLESS chromium with its own
+# scratch profile and no window, so it never reaches the desktop session. This one line names the default browser path; nothing else in the tool is allowed.
+tools/fulfillment/e2e/browser.mjs	const CHROMIUM = process.env.BILLING_E2E_CHROMIUM || '/usr/bin/chromium';
+Semanticus.Tests/PlanStatementCheck4FixTests.cs	private static readonly string[] EngineWords = { "introspection", "authMode", "tenant=", "tenantId", "token", "az default", "MCP", "parameter", "azcli", "AADSTS", "Azure.Identity", "Exception", "RootActivityId" };
+Semanticus.Tests/PlanStatementCheck4FixTests.cs	Assert.Contains("az login", message);

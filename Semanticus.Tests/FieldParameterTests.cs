@@ -35,6 +35,25 @@ namespace Semanticus.Tests
             return (engine, sessions);
         }
 
+        /// <summary>A field parameter's columns are made by its table's formula, so TOM cannot delete one alone
+        /// (DeleteResolvedObject refuses it). The unused sweep must never offer one: the Plan's cleanup approved one
+        /// on a real model and the whole set went back (m11 M4 lane n, "Metric Selector").</summary>
+        [Fact]
+        public async Task The_unused_sweep_never_offers_a_column_its_table_formula_makes()
+        {
+            var (engine, _) = await NewPbiModelAsync();
+            using (engine)
+            {
+                var t = await engine.CreateTableAsync("Sales", "human");
+                var mRef = await engine.CreateMeasureAsync(t, "Total Sales", "1", "human");
+                await engine.CreateFieldParameterAsync("My Parameter", new[] { new FieldParameterItem { ObjectRef = mRef } }, "human");
+
+                var unused = await engine.UnusedObjectsAsync();
+
+                Assert.DoesNotContain(unused.Items, i => string.Equals(i.Table, "My Parameter", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
         [Fact]
         public async Task Builds_the_full_power_bi_field_parameter_structure()
         {

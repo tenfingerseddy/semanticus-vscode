@@ -16,12 +16,6 @@ import { createContextBusyOwnerGate, createRequestGate, transformErrorForAction,
 //   • AppliedStepsPanel — the interactive Applied-Steps outline (rename / delete / click-to-select).
 // ===================================================================================================
 
-// shared inline styles (mirrors mcode.tsx — kept local so this module stands alone)
-const input: React.CSSProperties = { background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 11, padding: '2px 6px', maxWidth: 220 };
-const btn: React.CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 11, padding: '3px 10px', cursor: 'pointer' };
-const primaryBtn: React.CSSProperties = { ...btn, background: 'var(--sem-accent-soft)', borderColor: 'var(--sem-accent)' };
-const linkBtn: React.CSSProperties = { background: 'transparent', border: 'none', color: 'var(--sem-accent)', cursor: 'pointer', fontSize: 11, padding: 0 };
-const hint: React.CSSProperties = { color: 'var(--sem-muted)', fontSize: 10.5 };
 
 // Dual identity: `name` is the MODEL name (display, DAX profile refs, doc lookups); `mName` is the
 // PARTITION-OUTPUT name M operates on (TOM DataColumn.SourceColumn — can legitimately differ from Name).
@@ -219,7 +213,9 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
   fail: (error: string) => void;                         // err → show the kernel message verbatim
 }) {
   const tableNameRef = useRef(tableName); tableNameRef.current = tableName;
-  const [menu, setMenu] = useState<{ ci: number; x: number; y: number } | null>(null);
+  // The open column menu knows its column by NAME, with the column as it was when it opened (R-B): a list that shifts under it (the assistant added or dropped a
+  // column, a reconnect swapped the document's columns for the sample's) never aims its typed form at another column, and a column that went is said, not read as undefined.
+  const [menu, setMenu] = useState<{ name: string; col: GridCol; x: number; y: number } | null>(null);
   const [profile, setProfile] = useState<ProfileState>(idleProfile);
   const profileRef = useRef(profile); profileRef.current = profile;
   const [profileDetails, setProfileDetails] = useState(false);
@@ -265,8 +261,11 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
   // Reset on table switch and auto-load once when a live engine is present (the Data tab auto-previews the
   // same way) — so the preview headers show live types/rows without a manual step. Offline the headers still
   // render from docColumns.
+  // Only another TABLE closes the column menu: a connection that drops or comes back is not the person leaving it, and the menu follows its column by name.
+  const menuTableRef = useRef(tableName);
   useEffect(() => {
-    sampleReq.current++; sampleBusyRef.current = null; setSampleBusy(null); setSample(null); setSampleErr(null); setMenu(null);
+    sampleReq.current++; sampleBusyRef.current = null; setSampleBusy(null); setSample(null); setSampleErr(null);
+    if (menuTableRef.current !== tableName) { menuTableRef.current = tableName; setMenu(null); }
     transformBusyGate.current.reset(); setTransformBusy(null); setTransformErrors({});
     if (connected && tableName) void loadSample();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -410,9 +409,11 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
 
   // Open the per-column ops menu from a header trigger (⌄ click or right-click); anchor under the header cell.
   const openMenu = (ci: number, anchor: HTMLElement) => {
-    const rect = anchor.getBoundingClientRect();
-    setMenu((m) => (m?.ci === ci ? null : { ci, x: rect.left, y: rect.bottom + 4 }));
+    const rect = anchor.getBoundingClientRect(), c = columns[ci];
+    if (!c) return;
+    setMenu((m) => (m?.name === c.name ? null : { name: c.name, col: c, x: rect.left, y: rect.bottom + 4 }));
   };
+  const menuIndex = menu ? columns.findIndex((c) => c.name === menu.name) : -1;
 
   // Profiling docks under each header. Completed columns appear as they arrive; a failed column shows n/a and its
   // reason in place. Columns beyond the disclosed limit remain explicitly not profiled.
@@ -420,7 +421,7 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
     const c = columns[ci]; if (!c) return null;
     const reason = profile.failed[c.name];
     if (reason) return (
-      <div style={{ ...hint, color: 'var(--sem-bad)' }}>
+      <div className="xe-error" style={{  }}>
         <div className="font-semibold">n/a</div>
         <div className="truncate" title={reason}>{reason}</div>
       </div>
@@ -428,28 +429,28 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
     const p = profile.data[c.name];
     if (!p) {
       if (profile.status === 'running' && profile.activeColumns.includes(c.name)) return (
-        <div className="animate-pulse" role="status" style={hint}>
+        <div className="sem-text-meta animate-pulse" role="status">
           <div className="rounded" style={{ width: '72%', height: 8, background: 'var(--sem-border)' }} />
           <div className="mt-1 rounded" style={{ width: '48%', height: 5, background: 'var(--sem-border)' }} />
           <span className="sr-only">Profiling {c.name}</span>
         </div>
       );
-      return <span style={hint}>{ci >= PROFILE_LIMIT ? 'Not profiled' : 'No result'}</span>;
+      return <span className="sem-text-meta">{ci >= PROFILE_LIMIT ? 'Not profiled' : 'No result'}</span>;
     }
     const total = profile.total ?? 0;
     const validPct = total > 0 ? Math.max(0, Math.min(100, ((total - p.nulls) / total) * 100)) : 100;
     const blankPct = total > 0 ? Math.max(0, Math.min(100, (p.nulls / total) * 100)) : null;
     return (
       <div>
-        <div className="flex items-center justify-between text-[10px]" style={{ color: 'var(--sem-muted)' }}>
+        <div className="flex items-center justify-between text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           <span>{p.distinct.toLocaleString()} distinct</span>
           <span>{p.nulls.toLocaleString()} blank{blankPct != null ? ` (${blankPct.toFixed(0)}%)` : ''}</span>
         </div>
-        <div className="mt-0.5 rounded-full overflow-hidden" style={{ height: 4, background: 'color-mix(in srgb,var(--sem-bad) 55%, transparent)' }} title={`${validPct.toFixed(0)}% non-null`}>
+        <div className="mt-1 rounded-full overflow-hidden" style={{ height: 4, background: 'color-mix(in srgb,var(--sem-bad) 55%, transparent)' }} title={`${validPct.toFixed(0)}% non-null`}>
           <div style={{ width: validPct + '%', height: '100%', background: 'var(--sem-good)' }} />
         </div>
         {(p.min != null || p.max != null) && (
-          <div className="mt-0.5 text-[10px]" style={{ color: 'var(--sem-muted)' }}>
+          <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
             {p.min != null ? `min ${p.min.toLocaleString()}` : ''}{p.min != null && p.max != null ? ' · ' : ''}{p.max != null ? `max ${p.max.toLocaleString()}` : ''}
           </div>
         )}
@@ -476,85 +477,80 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
   const transformBusyReason = transformBusy ? `Other transform controls are unavailable while ${transformBusy.label.replace(/…$/, '').toLowerCase()}.` : null;
 
   return (
-    <div className="rounded-lg border" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
+    <div className="sem-card sem-card-flush">
       {/* table-level transform bar — the per-column ops now live on the grid headers below */}
-      <div className="flex items-center gap-2 px-3 py-1.5 flex-wrap" style={{ borderBottom: '1px solid var(--sem-border)' }}>
-        <span className="font-semibold text-[11.5px]">Preview</span>
-        <span style={{ width: 1, height: 14, background: 'var(--sem-border)' }} />
-        <button disabled={!!transformBusy} style={btn} title="Add a Table.Distinct step (all columns)"
+      <div className="sem-card-head flex-wrap">
+        <span className="sem-card-title">Preview</span>
+        <button className="sem-btn sem-btn-sm" disabled={!!transformBusy} title="Add a Table.Distinct step (all columns)"
           onClick={() => void run(gen.removeDuplicates(mText, []), 'remove-duplicates', 'Removing duplicates…')}>
           {transformBusy?.action === 'remove-duplicates' ? transformBusy.label : 'Remove duplicates'}
         </button>
-        {removeDuplicatesError && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 420 }}>{removeDuplicatesError}</span>}
+        {removeDuplicatesError && <span className="xe-error" role="alert" style={{ maxWidth: 420 }}>{removeDuplicatesError}</span>}
         <KeepTopN disabled={!!transformBusy} busy={transformBusy?.action === 'keep-top'} busyLabel={transformBusy?.action === 'keep-top' ? transformBusy.label : undefined}
           onApply={(n) => run(gen.keepTopN(mText, n), 'keep-top', 'Applying…')} />
-        {keepTopError && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 420 }}>{keepTopError}</span>}
-        <span className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>· click a header ⌄ (or right-click) for per-column operations</span>
-        {transformBusyReason && <span role="status" style={hint}>{transformBusyReason}</span>}
+        {keepTopError && <span className="xe-error" role="alert" style={{ maxWidth: 420 }}>{keepTopError}</span>}
+        {transformBusyReason && <span className="sem-text-meta" role="status">{transformBusyReason}</span>}
         <div className="ml-auto flex items-center gap-2">
-          {sampleErr && <span role="alert" style={{ ...hint, color: 'var(--sem-bad)', maxWidth: 360 }}>{sampleErr}</span>}
-          {connected && <button style={btn} disabled={!!sampleBusy} onClick={() => void loadSample(true)}>{sampleBusy ? 'Refreshing…' : 'Refresh'}</button>}
-          <span style={hint}>Profiles up to {PROFILE_LIMIT} columns</span>
-          {profile.status === 'stale' && <span role="status" style={{ ...hint, color: 'var(--sem-warn)', fontWeight: 600 }}>Out of date</span>}
-          <button style={profile.status === 'idle' || profile.status === 'stale' || profile.status === 'failed' ? primaryBtn : btn}
+          {sampleErr && <span className="xe-error" role="alert" style={{ maxWidth: 360 }}>{sampleErr}</span>}
+          {connected && <button className="sem-btn sem-btn-sm" disabled={!!sampleBusy} onClick={() => void loadSample(true)}>{sampleBusy ? 'Refreshing…' : 'Refresh'}</button>}
+          {profile.status === 'stale' && <span className="xe-msg xe-msg-warn" role="status">Out of date</span>}
+          <button className="sem-btn sem-btn-sm" title={`Profile up to ${PROFILE_LIMIT} columns to see distinct values, blank values and numeric ranges.`}
             disabled={!connected || profile.status === 'running' || visible.length === 0} onClick={profileAction}>
             {profileActionLabel}
           </button>
-          {(profile.status === 'stale' || profile.status === 'failed') && <button style={btn} onClick={hideProfile}>Hide</button>}
+          {(profile.status === 'stale' || profile.status === 'failed') && <button className="sem-btn sem-btn-sm" onClick={hideProfile}>Hide</button>}
         </div>
       </div>
 
-      {(!connected || visible.length === 0 || profile.status !== 'results') && (
-        <div className="flex items-center gap-2 px-3 py-1.5 flex-wrap" style={{ ...hint, borderBottom: '1px solid var(--sem-border)' }}>
+      {(!connected || visible.length === 0 || (profile.status !== 'results' && profile.status !== 'idle')) && (
+        <div className="sem-text-meta flex items-center gap-2 px-4 py-2 flex-wrap" style={{ borderBottom: '1px solid var(--sem-rule)' }}>
           {!connected ? <span>Profile needs a live connection</span> : visible.length === 0 ? (
             <span>No columns are available to profile.</span>
-          ) : profile.status === 'idle' ? (
-            <span>Profile columns to see distinct values, blank values, and numeric ranges.</span>
           ) : profile.status === 'running' ? (
             <>
               <div role="progressbar" aria-label="Column profile progress"
                 aria-valuemin={profile.progress ? 0 : undefined} aria-valuemax={profile.progress?.total} aria-valuenow={profile.progress?.completed}
                 className={profile.progress ? 'overflow-hidden rounded-full' : 'overflow-hidden rounded-full animate-pulse'}
-                style={{ width: 120, height: 5, background: 'var(--sem-border)' }}>
+                style={{ width: 120, height: 4, background: 'var(--sem-rule)' }}>
                 <div style={{
-                  height: '100%', background: 'var(--sem-accent)',
+                  height: '100%', background: 'var(--sem-muted)',
                   width: profile.progress && profile.progress.total > 0 ? `${(profile.progress.completed / profile.progress.total) * 100}%` : '35%',
                 }} />
               </div>
               <span role="status">{profile.progress ? `${profile.progress.completed} of ${profile.progress.total} columns complete` : 'Preparing profile…'}</span>
             </>
           ) : profile.status === 'stale' ? <span>Results are out of date.</span> : profile.status === 'failed' ? <span>Profile failed.</span> : null}
-          {profile.error && <span role="alert" style={{ color: 'var(--sem-bad)', maxWidth: 460 }}>{profile.error}</span>}
+          {profile.error && <span role="alert" className="xe-error" style={{ maxWidth: 460 }}>{profile.error}</span>}
         </div>
       )}
 
       {/* the preview grid — its headers ARE the column-op surface (type glyph + name + ⌄/right-click menu),
           with the profiling strip docked under the headers when Profile is on. Offline: headers only. */}
-      <div className="px-2 pt-2 pb-1">
-        <ResultGrid
+      <div className="px-4 pt-2 pb-1">
+        <ResultGrid framed={false}
           columns={columns} rows={sample?.rows ?? []} height={showProfile ? 300 : 260} filterable={false}
-          showTypeGlyph onColumnMenu={openMenu} menuCol={menu?.ci ?? null}
+          showTypeGlyph onColumnMenu={openMenu} menuCol={menuIndex >= 0 ? menuIndex : null}
           subHeader={showProfile ? profileCell : undefined}
         />
       </div>
       {profileDetails && profileHasDetails && (
         <div ref={profileDetailsRef} tabIndex={-1} role="region" aria-label="Profile failure details"
-          className="mx-3 mb-2 rounded border px-3 py-2 outline-none" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', fontSize: 10.5 }}>
+          className="mx-4 mb-2 sem-inset outline-none sem-text-meta" style={{ color: 'var(--sem-fg)' }}>
           <div className="font-semibold mb-1">Profile details</div>
-          {profile.error && <div style={{ color: 'var(--sem-bad)' }}>{profile.error}</div>}
+          {profile.error && <div className="xe-error">{profile.error}</div>}
           {Object.entries(profile.failed).map(([name, reason]) => (
-            <div key={name} className="grid gap-2 py-0.5" style={{ gridTemplateColumns: 'minmax(90px, 180px) minmax(0, 1fr)' }}>
+            <div key={name} className="grid gap-2 py-0" style={{ gridTemplateColumns: 'minmax(90px, 180px) minmax(0, 1fr)' }}>
               <span className="font-semibold truncate" title={name}>{name}</span>
-              <span style={{ color: 'var(--sem-bad)' }}>{reason}</span>
+              <span style={{ color: 'var(--sem-muted)' }}>{reason}</span>
             </div>
           ))}
           {failedCount > 0 && profile.status === 'results' && (
-            <button className="mt-2" style={btn} disabled={!connected}
+            <button className="sem-btn sem-btn-sm mt-2" disabled={!connected}
               onClick={() => void startProfile(Object.keys(profile.failed))}>Retry skipped columns</button>
           )}
         </div>
       )}
-      <div className="flex items-center gap-2 px-3 pb-2 flex-wrap" style={{ ...hint }}>
+      <div className="flex items-center gap-2 px-4 pb-3 flex-wrap sem-text-meta">
         <span>
           {!connected
             ? 'Connect to a live model to preview rows. Column operations work offline; the preview shows loaded data.'
@@ -571,9 +567,9 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
             <span>{profiledCount} profiled</span>
             <span>{failedCount} failed</span>
             <span>{notProfiledCount} not profiled{columns.length > PROFILE_LIMIT ? ` (${PROFILE_LIMIT}-column limit)` : ''}</span>
-            {profile.status === 'stale' && <span style={{ color: 'var(--sem-warn)' }}>Out of date</span>}
+            {profile.status === 'stale' && <span className="xe-dot xe-dot-warn">Out of date</span>}
             {profileHasDetails && (
-              <button style={linkBtn} onClick={() => setProfileDetails((open) => !open)}>
+              <button className="sem-btn sem-btn-sm sem-btn-quiet" onClick={() => setProfileDetails((open) => !open)}>
                 {profileDetails ? 'Hide details' : 'View details'}
               </button>
             )}
@@ -582,8 +578,8 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
       </div>
 
       {menu && (
-        <ColumnMenu
-          col={columns[menu.ci]} x={menu.x} y={menu.y} mText={mText}
+        <ColumnMenu key={menu.name} gone={menuIndex < 0}
+          col={menuIndex >= 0 ? columns[menuIndex] : menu.col} x={menu.x} y={menu.y} mText={mText}
           tableName={tableName} onClose={() => setMenu(null)} run={run} busy={transformBusy} errors={transformErrors}
         />
       )}
@@ -593,14 +589,17 @@ export function SamplePreview({ tableName, docColumns, mText, contextToken, isCo
 
 // The per-column dropdown: direct actions + inline sub-forms for the ones that need input. Anchored (fixed)
 // under the chip's ⌄, with a click-away backdrop (matches grid.tsx's FilterPopover pattern).
-function ColumnMenu({ col, x, y, mText, tableName, onClose, run, busy, errors }: {
+function ColumnMenu({ col, gone = false, x, y, mText, tableName, onClose, run: runLive, busy, errors }: {
   col: GridCol; x: number; y: number; mText: string; tableName: string | null;
+  /** The column is not in the table now (renamed or removed by another writer): the menu stays so typed words stay on screen, and nothing applies. */
+  gone?: boolean;
   onClose: () => void;
   run: (p: Promise<TransformResult>, action: TransformAction, label: string, column?: string) => Promise<boolean>;
   busy: TransformBusy | null;
   errors: Record<string, string>;
 }) {
   const [view, setView] = useState<'menu' | 'rename' | 'type' | 'filter' | 'replace'>('menu');
+  const run: typeof runLive = (p, ...rest) => (gone ? Promise.resolve(false) : runLive(p, ...rest));
   const numeric = isNumType(col.type);
   // M operates on the PARTITION-OUTPUT name (SourceColumn), not the model name. Unknown ⇒ the ops stand down —
   // never write M against a guessed name. The sub-views are only reachable from the ops list, so srcName is
@@ -613,16 +612,21 @@ function ColumnMenu({ col, x, y, mText, tableName, onClose, run, busy, errors }:
   return (
     <>
       <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => { if (!busy) onClose(); }} />
-      <div className="fixed rounded-lg border shadow-lg" style={{ zIndex: 50, top: y, left, width: W, background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="px-3 py-1.5 text-[11px] font-semibold truncate" style={{ borderBottom: '1px solid var(--sem-border)' }} title={col.name}>{col.name}</div>
-        {view === 'menu' && srcName == null && (
-          <div className="px-3 py-2" style={{ ...hint }}>
+      <div className="fixed rounded-(--sem-radius-card) border shadow-lg" style={{ zIndex: 50, top: y, left, width: W, background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="px-3 py-1 text-(length:--sem-text-label) font-semibold truncate" style={{ borderBottom: '1px solid var(--sem-border)' }} title={col.name}>{col.name}</div>
+        {gone && (
+          <div className="px-3 py-2 xe-msg xe-msg-warn" role="alert" data-testid="column-gone">
+            The column {col.name} is not in this table now. It may have been renamed or removed. Nothing was applied{view === 'menu' ? '.' : ', and what you typed is kept below.'}
+          </div>
+        )}
+        {view === 'menu' && !gone && srcName == null && (
+          <div className="px-3 py-2" >
             {col.calc
               ? 'This column is calculated in the model; M transforms do not apply.'
               : "M transforms need the column's source name; not available for this column."}
           </div>
         )}
-        {view === 'menu' && srcName != null && (
+        {view === 'menu' && !gone && srcName != null && (
           <div className="py-1">
             <MenuItem disabled={!!busy} busy={busy?.action === 'remove-column'} busyLabel={busy?.label}
               onClick={() => void run(gen.removeColumns(mText, [srcName]), 'remove-column', 'Removing…', col.name)}>Remove</MenuItem>
@@ -640,25 +644,25 @@ function ColumnMenu({ col, x, y, mText, tableName, onClose, run, busy, errors }:
             <MenuItem disabled={!!busy} busy={busy?.action === 'trim-clean'} busyLabel={busy?.label}
               onClick={() => void run(gen.trimClean(mText, [srcName]), 'trim-clean', 'Cleaning…', col.name)}>Trim &amp; Clean</MenuItem>
             <TransformActionError error={errorFor('trim-clean')} />
-            {busy && <div className="px-3 py-1" role="status" style={hint}>Other actions are unavailable while {busy.label.replace(/…$/, '').toLowerCase()}.</div>}
+            {busy && <div className="sem-text-meta px-3 py-1" role="status">Other actions are unavailable while {busy.label.replace(/…$/, '').toLowerCase()}.</div>}
           </div>
         )}
         {view === 'rename' && srcName != null && (
           <RenameForm onCancel={() => setView('menu')} onApply={(to) => run(gen.renameColumn(mText, srcName, to), 'rename-column', 'Renaming…', col.name)}
-            initial={srcName} busy={!!busy} busyLabel={busy?.label} error={errorFor('rename-column')} />
+            initial={srcName} busy={!!busy} busyLabel={busy?.label} error={errorFor('rename-column')} blocked={gone} />
         )}
         {view === 'type' && srcName != null && (
           <TypeForm onCancel={() => setView('menu')} onApply={(mType) => run(gen.changeType(mText, srcName, mType), 'change-type', 'Changing type…', col.name)}
-            busy={!!busy} busyLabel={busy?.label} error={errorFor('change-type')} />
+            busy={!!busy} busyLabel={busy?.label} error={errorFor('change-type')} blocked={gone} />
         )}
         {view === 'filter' && srcName != null && (
           <FilterForm numeric={numeric} onCancel={() => setView('menu')}
             onApply={(op, literal) => run(gen.filterRows(mText, srcName, op, literal), 'filter-rows', 'Filtering…', col.name)}
-            busy={!!busy} busyLabel={busy?.label} error={errorFor('filter-rows')} />
+            busy={!!busy} busyLabel={busy?.label} error={errorFor('filter-rows')} blocked={gone} />
         )}
         {view === 'replace' && srcName != null && (
           <ReplaceForm onCancel={() => setView('menu')} onApply={(find, repl) => run(gen.replaceValues(mText, srcName, find, repl), 'replace-values', 'Replacing…', col.name)}
-            busy={!!busy} busyLabel={busy?.label} error={errorFor('replace-values')} />
+            busy={!!busy} busyLabel={busy?.label} error={errorFor('replace-values')} blocked={gone} />
         )}
       </div>
     </>
@@ -666,18 +670,19 @@ function ColumnMenu({ col, x, y, mText, tableName, onClose, run, busy, errors }:
 }
 
 function TransformActionError({ error }: { error: string | null }) {
-  return error ? <div className="px-3 py-1" role="alert" style={{ ...hint, color: 'var(--sem-bad)' }}>{error}</div> : null;
+  return error ? <div className="xe-error px-3 py-1" role="alert" style={{  }}>{error}</div> : null;
 }
 
 function MenuItem({ children, onClick, disabled, busy, busyLabel }: { children: React.ReactNode; onClick: () => void; disabled?: boolean; busy?: boolean; busyLabel?: string }) {
   return (
-    <button onClick={onClick} disabled={disabled} className="w-full text-left px-3 py-1 text-[11.5px] hover:opacity-80"
+    <button onClick={onClick} disabled={disabled} className="w-full text-left px-3 py-1 text-xs hover:opacity-80"
       style={{ background: 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: disabled ? 'default' : 'pointer' }}>{busy ? (busyLabel ?? 'Applying…') : children}</button>
   );
 }
 
-function SubForm({ children, onApply, onCancel, canApply = true, applyLabel = 'Add step', busy, busyLabel, error }: {
+function SubForm({ children, onApply, onCancel, canApply = true, applyLabel = 'Add step', busy, busyLabel, error, blocked }: {
   children: React.ReactNode;
+  blocked?: boolean;
   onApply: () => Promise<boolean>;
   onCancel: () => void;
   canApply?: boolean;
@@ -687,40 +692,40 @@ function SubForm({ children, onApply, onCancel, canApply = true, applyLabel = 'A
   error?: string | null;
 }) {
   return (
-    <div className="p-2.5 flex flex-col gap-2">
+    <div className="p-3 flex flex-col gap-2">
       {children}
-      {error && <div role="alert" style={{ ...hint, color: 'var(--sem-bad)' }}>{error}</div>}
+      {error && <div className="xe-error" role="alert" style={{  }}>{error}</div>}
       <div className="flex items-center gap-2 justify-end pt-1">
-        <button onClick={onCancel} disabled={busy} style={btn}>Cancel</button>
-        <button onClick={() => void onApply()} disabled={busy || !canApply} style={primaryBtn}>{busy ? (busyLabel ?? 'Applying…') : applyLabel}</button>
+        <button className="sem-btn sem-btn-sm" onClick={onCancel} disabled={busy}>Cancel</button>
+        <button className="sem-btn sem-btn-sm sem-btn-primary" onClick={() => void onApply()} disabled={busy || !canApply || blocked}>{busy ? (busyLabel ?? 'Applying…') : applyLabel}</button>
       </div>
     </div>
   );
 }
 
-function RenameForm({ initial, onApply, onCancel, busy, busyLabel, error }: { initial: string; onApply: (to: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null }) {
+function RenameForm({ initial, onApply, onCancel, busy, busyLabel, error, blocked }: { initial: string; onApply: (to: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null; blocked?: boolean }) {
   const [v, setV] = useState(initial);
   return (
-    <SubForm onCancel={onCancel} onApply={() => onApply(v.trim())} canApply={!!v.trim() && v.trim() !== initial} busy={busy} busyLabel={busyLabel} error={error}>
-      <label className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>New column name</label>
-      <input autoFocus value={v} disabled={busy} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && v.trim() && !busy) void onApply(v.trim()); }} style={{ ...input, maxWidth: 'unset', width: '100%' }} />
+    <SubForm onCancel={onCancel} onApply={() => onApply(v.trim())} canApply={!!v.trim() && v.trim() !== initial} busy={busy} busyLabel={busyLabel} error={error} blocked={blocked}>
+      <label className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>New column name</label>
+      <input className="sem-field sem-field-sm" autoFocus value={v} disabled={busy} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && v.trim() && !busy && !blocked) void onApply(v.trim()); }} style={{ maxWidth: 'unset', width: '100%' }} />
     </SubForm>
   );
 }
 
-function TypeForm({ onApply, onCancel, busy, busyLabel, error }: { onApply: (mType: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null }) {
+function TypeForm({ onApply, onCancel, busy, busyLabel, error, blocked }: { onApply: (mType: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null; blocked?: boolean }) {
   const [t, setT] = useState(M_TYPES[0][1]);
   return (
-    <SubForm onCancel={onCancel} onApply={() => onApply(t)} busy={busy} busyLabel={busyLabel} error={error}>
-      <label className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Change type to</label>
-      <select autoFocus value={t} disabled={busy} onChange={(e) => setT(e.target.value)} style={{ ...input, maxWidth: 'unset', width: '100%' }}>
+    <SubForm onCancel={onCancel} onApply={() => onApply(t)} busy={busy} busyLabel={busyLabel} error={error} blocked={blocked}>
+      <label className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Change type to</label>
+      <select className="sem-field sem-field-sm" autoFocus value={t} disabled={busy} onChange={(e) => setT(e.target.value)} style={{ maxWidth: 'unset', width: '100%' }}>
         {M_TYPES.map(([label, mType]) => <option key={mType} value={mType}>{label}</option>)}
       </select>
     </SubForm>
   );
 }
 
-function FilterForm({ numeric, onApply, onCancel, busy, busyLabel, error }: { numeric: boolean; onApply: (op: FilterOp, literal: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null }) {
+function FilterForm({ numeric, onApply, onCancel, busy, busyLabel, error, blocked }: { numeric: boolean; onApply: (op: FilterOp, literal: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null; blocked?: boolean }) {
   const ops = numeric ? NUM_OPS : TXT_OPS;
   const [op, setOp] = useState<FilterOp>(ops[0][0]);
   const [val, setVal] = useState('');
@@ -732,28 +737,28 @@ function FilterForm({ numeric, onApply, onCancel, busy, busyLabel, error }: { nu
     return numeric && /^-?\d+(\.\d+)?$/.test(t) ? t : mString(val);
   };
   return (
-    <SubForm onCancel={onCancel} onApply={() => onApply(op, literal())} canApply={!needsValue || val.trim().length > 0} applyLabel="Filter" busy={busy} busyLabel={busyLabel} error={error}>
-      <label className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Keep rows where the value…</label>
-      <select autoFocus value={op} disabled={busy} onChange={(e) => setOp(e.target.value as FilterOp)} style={{ ...input, maxWidth: 'unset', width: '100%' }}>
+    <SubForm onCancel={onCancel} onApply={() => onApply(op, literal())} canApply={!needsValue || val.trim().length > 0} applyLabel="Filter" busy={busy} busyLabel={busyLabel} error={error} blocked={blocked}>
+      <label className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Keep rows where the value…</label>
+      <select className="sem-field sem-field-sm" autoFocus value={op} disabled={busy} onChange={(e) => setOp(e.target.value as FilterOp)} style={{ maxWidth: 'unset', width: '100%' }}>
         {ops.map(([o, label]) => <option key={o} value={o}>{label}</option>)}
       </select>
       {needsValue && (
-        <input value={val} disabled={busy} onChange={(e) => setVal(e.target.value)} placeholder={numeric ? 'value (number)' : 'value'} inputMode={numeric ? 'decimal' : 'text'}
-          onKeyDown={(e) => { if (e.key === 'Enter' && val.trim() && !busy) void onApply(op, literal()); }} style={{ ...input, maxWidth: 'unset', width: '100%' }} />
+        <input className="sem-field sem-field-sm" value={val} disabled={busy} onChange={(e) => setVal(e.target.value)} placeholder={numeric ? 'value (number)' : 'value'} inputMode={numeric ? 'decimal' : 'text'}
+          onKeyDown={(e) => { if (e.key === 'Enter' && val.trim() && !busy && !blocked) void onApply(op, literal()); }} style={{ maxWidth: 'unset', width: '100%' }} />
       )}
     </SubForm>
   );
 }
 
-function ReplaceForm({ onApply, onCancel, busy, busyLabel, error }: { onApply: (find: string, repl: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null }) {
+function ReplaceForm({ onApply, onCancel, busy, busyLabel, error, blocked }: { onApply: (find: string, repl: string) => Promise<boolean>; onCancel: () => void; busy?: boolean; busyLabel?: string; error?: string | null; blocked?: boolean }) {
   const [find, setFind] = useState('');
   const [repl, setRepl] = useState('');
   return (
-    <SubForm onCancel={onCancel} onApply={() => onApply(find, repl)} canApply={find.length > 0} busy={busy} busyLabel={busyLabel} error={error}>
-      <label className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Value to find</label>
-      <input autoFocus value={find} disabled={busy} onChange={(e) => setFind(e.target.value)} style={{ ...input, maxWidth: 'unset', width: '100%' }} />
-      <label className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Replace with</label>
-      <input value={repl} disabled={busy} onChange={(e) => setRepl(e.target.value)} style={{ ...input, maxWidth: 'unset', width: '100%' }} />
+    <SubForm onCancel={onCancel} onApply={() => onApply(find, repl)} canApply={find.length > 0} busy={busy} busyLabel={busyLabel} error={error} blocked={blocked}>
+      <label className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Value to find</label>
+      <input className="sem-field sem-field-sm" autoFocus value={find} disabled={busy} onChange={(e) => setFind(e.target.value)} style={{ maxWidth: 'unset', width: '100%' }} />
+      <label className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Replace with</label>
+      <input className="sem-field sem-field-sm" value={repl} disabled={busy} onChange={(e) => setRepl(e.target.value)} style={{ maxWidth: 'unset', width: '100%' }} />
     </SubForm>
   );
 }
@@ -761,14 +766,14 @@ function ReplaceForm({ onApply, onCancel, busy, busyLabel, error }: { onApply: (
 function KeepTopN({ disabled, busy, busyLabel, onApply }: { disabled?: boolean; busy?: boolean; busyLabel?: string; onApply: (n: number) => Promise<boolean> }) {
   const [open, setOpen] = useState(false);
   const [n, setN] = useState(100);
-  if (!open) return <button disabled={disabled} style={btn} onClick={() => setOpen(true)} title="Keep the first N rows (Table.FirstN)">Keep top N…</button>;
+  if (!open) return <button className="sem-btn sem-btn-sm" disabled={disabled} onClick={() => setOpen(true)} title="Keep the first N rows (Table.FirstN)">Keep top N…</button>;
   const apply = async () => { if (await onApply(n)) setOpen(false); };
   return (
     <span className="inline-flex items-center gap-1">
-      <input type="number" min={1} autoFocus value={n} disabled={busy} onChange={(e) => setN(Math.max(1, parseInt(e.target.value || '1', 10)))}
-        onKeyDown={(e) => { if (e.key === 'Enter' && !busy) void apply(); else if (e.key === 'Escape' && !busy) setOpen(false); }} style={{ ...input, width: 64 }} />
-      <button style={primaryBtn} disabled={busy} onClick={() => void apply()}>{busy ? (busyLabel ?? 'Applying…') : 'Keep'}</button>
-      <button style={btn} disabled={busy} onClick={() => setOpen(false)}>✕</button>
+      <input className="sem-field sem-field-sm" type="number" min={1} autoFocus value={n} disabled={busy} onChange={(e) => setN(Math.max(1, parseInt(e.target.value || '1', 10)))}
+        onKeyDown={(e) => { if (e.key === 'Enter' && !busy) void apply(); else if (e.key === 'Escape' && !busy) setOpen(false); }} style={{ width: 64 }} />
+      <button className="sem-btn sem-btn-sm sem-btn-primary" disabled={busy} onClick={() => void apply()}>{busy ? (busyLabel ?? 'Applying…') : 'Keep'}</button>
+      <button className="sem-btn sem-btn-sm" disabled={busy} onClick={() => setOpen(false)}>✕</button>
     </span>
   );
 }
@@ -805,9 +810,11 @@ function profileChunkDax(table: string, cols: { name: string; i: number; numeric
  * messages, shown verbatim). Clicking a step selects/scrolls its binding span in the editor. Falls back to
  * a read-only list when the M isn't a single let…in… shape (letShape returns null).
  */
-export function AppliedStepsPanel({ text, contextToken, isContextCurrent, onChange, onSelect, onError, collapsibleOnCompact = false }: {
+export function AppliedStepsPanel({ text, contextToken, identity, isContextCurrent, onChange, onSelect, onError, collapsibleOnCompact = false }: {
   text: string;
   contextToken: string;
+  /** Which table and query the steps belong to, without the text revision. A name typed for a step stays while the text moves under it, and ends when this changes. The caller that shows more than one query passes it; the rename box is closed when it changes. */
+  identity?: string;
   isContextCurrent: (captured: string) => boolean;
   onChange: (m: string) => void;
   onSelect: (from: number, to: number) => void;
@@ -823,10 +830,17 @@ export function AppliedStepsPanel({ text, contextToken, isContextCurrent, onChan
   const busyGate = useRef(createContextBusyOwnerGate<StepOperation>(contextToken));
   const [stepError, setStepError] = useState<{ name: string; text: string } | null>(null);
   const [compactOpen, setCompactOpen] = useState(false);
+  // The name typed for a step is the person's words (join 11 solui round 2, U2 b): another writer's edit to this query's M moves the token and ends the operation under way,
+  // but it does not close the rename box. Only another table or query does. A step that is not in the new text any more leaves its words named here, never dropped.
+  const [lost, setLost] = useState<{ step: string; words: string } | null>(null);
   useEffect(() => {
     busyGate.current.resetContext(contextToken);
-    setBusy(null); setEditing(null); setDraft(''); setStepError(null);
+    setBusy(null); setStepError(null);
   }, [contextToken]);
+  useEffect(() => { setEditing(null); setDraft(''); setLost(null); }, [identity]);
+  useEffect(() => {
+    if (editing != null && !shape?.steps.some((st) => st.name === editing)) { setLost({ step: editing, words: draft }); setEditing(null); setDraft(''); }
+  }, [shape, editing]);
   useEffect(() => () => { busyGate.current.reset(); }, []);
 
   const doRename = async (oldName: string) => {
@@ -883,54 +897,57 @@ export function AppliedStepsPanel({ text, contextToken, isContextCurrent, onChan
   };
 
   return (
-    <div className="rounded-lg border" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-      <div className="flex items-center gap-2 px-3 py-2 text-[12px] font-semibold" style={{ borderBottom: '1px solid var(--sem-border)' }}>
-        <span>Applied steps{shape ? ` (${shape.steps.length})` : ''}</span>
+    <div className="sem-card sem-card-flush">
+      <div className="sem-card-head">
+        <span className="sem-card-title">Applied steps{shape ? <span className="sem-num sem-text-meta"> {shape.steps.length}</span> : ''}</span>
         {collapsibleOnCompact && (
-          <button className="ml-auto xl:hidden" onClick={() => setCompactOpen((open) => !open)} aria-expanded={compactOpen}
-            style={{ ...btn, padding: '1px 7px' }}>{compactOpen ? 'Collapse ▴' : 'Expand ▾'}</button>
+          <button className="sem-btn sem-btn-sm ml-auto xl:hidden" onClick={() => setCompactOpen((open) => !open)} aria-expanded={compactOpen}
+            style={{ padding: '1px var(--sem-space-2)' }}>{compactOpen ? 'Collapse ▴' : 'Expand ▾'}</button>
         )}
       </div>
       <div className={collapsibleOnCompact && !compactOpen ? 'hidden xl:block' : ''}>
         <div className="px-2 py-2" style={{ maxHeight: 420, overflow: 'auto' }}>
+          {lost && <div role="alert" data-testid="step-rename-lost" className="sem-text-meta px-2 pb-1" style={{ color: 'var(--sem-warn)' }}>
+            The step "{lost.step}" is not in the query now. Your name "{lost.words}" is kept here. <button type="button" className="xe-link" onClick={() => setLost(null)}>Dismiss</button>
+          </div>}
           {!shape ? (
-            <div style={{ ...hint, padding: '2px 6px' }}>No let…in… steps detected. Edit the M directly.</div>
+            <div className="sem-text-meta" style={{ padding: 'var(--sem-space-1) var(--sem-space-2)' }}>No let…in… steps detected. Edit the M directly.</div>
           ) : (
             <>
-              {shape.steps.length === 0 && <div style={{ ...hint, padding: '2px 6px' }}>No steps detected.</div>}
+              {shape.steps.length === 0 && <div className="sem-text-meta" style={{ padding: 'var(--sem-space-1) var(--sem-space-2)' }}>No steps detected.</div>}
               {shape.steps.map((st, i) => {
                 const thisBusy = busy?.resource === `step:${st.name}` ? busy.action : null;
                 return (
                   <div key={st.name}>
-                    <div className="group flex items-center gap-1 px-2 py-1 rounded-md hover:bg-[color-mix(in_srgb,var(--sem-fg)_6%,transparent)]" style={{ fontSize: 11 }}>
+                    <div className="group flex items-center gap-1 px-2 py-1 rounded-(--sem-radius-control) hover:bg-[color-mix(in_srgb,var(--sem-fg)_6%,transparent)]" style={{ fontSize: 'var(--sem-text-label)' }}>
                       <span style={{ color: 'var(--sem-muted)', width: 16 }}>{i + 1}</span>
                       {editing === st.name ? (
                         <>
-                          <input autoFocus value={draft} disabled={!!busy} onChange={(e) => setDraft(e.target.value)}
+                          <input className="sem-field sem-field-sm" autoFocus value={draft} disabled={!!busy} onChange={(e) => setDraft(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') void doRename(st.name); else if (e.key === 'Escape' && !busy) setEditing(null); }}
-                            onBlur={() => void doRename(st.name)} style={{ ...input, maxWidth: 'unset', flex: 1, minWidth: 0 }} />
-                          {thisBusy === 'rename' && <span style={hint}>Renaming…</span>}
+                            onBlur={() => void doRename(st.name)} style={{ maxWidth: 'unset', flex: 1, minWidth: 0 }} />
+                          {thisBusy === 'rename' && <span className="sem-text-meta">Renaming…</span>}
                         </>
                       ) : (
                         <button onClick={() => onSelect(st.start, st.end)} title="Select this step in the editor" className="flex-1 min-w-0 truncate text-left"
                           style={{ background: 'none', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer', padding: 0 }}>{st.name}</button>
                       )}
                       {editing !== st.name && (
-                        <span className={`shrink-0 flex items-center gap-0.5 transition-opacity ${thisBusy ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <span className={`shrink-0 flex items-center gap-1 transition-opacity ${thisBusy ? 'visible' : 'invisible group-hover:visible group-focus-within:visible'}`}>
                           <button onClick={() => { setEditing(st.name); setDraft(st.name); setStepError(null); }} disabled={!!busy} title="Rename step"
-                            style={{ background: 'none', border: 'none', color: 'var(--sem-muted)', cursor: busy ? 'default' : 'pointer', padding: '0 2px' }}>✎</button>
+                            style={{ background: 'none', border: 'none', color: 'var(--sem-muted)', cursor: busy ? 'default' : 'pointer', padding: '0 var(--sem-space-1)' }}>✎</button>
                           <button onClick={() => void doDelete(st.name)} disabled={!!busy} title="Delete step (references re-point to the previous step)"
-                            style={{ background: 'none', border: 'none', color: 'var(--sem-bad)', cursor: busy ? 'default' : 'pointer', padding: '0 2px' }}>{thisBusy === 'delete' ? 'Deleting…' : '✕'}</button>
+                            style={{ background: 'none', border: 'none', color: 'var(--sem-muted)', cursor: busy ? 'default' : 'pointer', padding: '0 var(--sem-space-1)' }}>{thisBusy === 'delete' ? 'Deleting…' : '✕'}</button>
                         </span>
                       )}
                     </div>
-                    {stepError?.name === st.name && <div className="px-8 pb-1" role="alert" style={{ ...hint, color: 'var(--sem-bad)' }}>{stepError.text}</div>}
+                    {stepError?.name === st.name && <div className="xe-error px-8 pb-1" role="alert" style={{  }}>{stepError.text}</div>}
                   </div>
                 );
               })}
-              <div className="px-2 py-1 truncate" style={{ fontSize: 11 }} title={shape.result}>
-                <span style={{ color: 'var(--sem-muted)', marginRight: 6 }}>→</span>
-                <span style={{ color: 'var(--sem-accent)' }}>(result)</span>
+              <div className="px-2 py-1 truncate" style={{ fontSize: 'var(--sem-text-label)' }} title={shape.result}>
+                <span style={{ color: 'var(--sem-muted)', marginRight: 'var(--sem-space-2)' }}>→</span>
+                <span style={{ color: 'var(--sem-fg)' }}>(result)</span>
               </div>
             </>
           )}

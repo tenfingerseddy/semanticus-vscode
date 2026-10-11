@@ -23,7 +23,8 @@ assert.match(knowledge, /'downvoteInsight'/, 'Insights must expose downvote');
 assert.match(knowledge, /'editInsight'/, 'Insights must expose edit');
 assert.match(knowledge, /'deleteInsight'/, 'Insights must expose delete');
 assert.match(knowledge, /'approveInsight'/, 'Pending insights must be approvable');
-assert.match(knowledge, /Pending approval/, 'the guide\'s Pending approval section must exist');
+assert.match(knowledge, /Pending approval/, 'a lesson held out of recall still says why (its Not reviewed tag tooltip)');
+assert.match(knowledge, /What your assistant learned/, 'the lessons, Recall and Delete sit in one fold');
 assert.match(knowledge, /Upvote/, 'the guide\'s Upvote control must exist');
 assert.match(knowledge, /Downvote/, 'the guide\'s Downvote control must exist');
 
@@ -35,9 +36,13 @@ assert.match(knowledge, /'purgeKnowledge'/, 'Purge must call purgeKnowledge');
 assert.match(knowledge, /purgeKnowledge',\s*scope,\s*confirm/, 'Purge must pass an explicit confirm flag');
 assert.match(knowledge, /confirm\s*\?\s*'done'\s*:\s*'review'/, 'Purge must preview before it confirms');
 
-assert.match(knowledge, /Learned workflows/, 'the guide\'s Learned workflows section must exist');
-assert.match(knowledge, /'checkWorkflow'/, 'Learned workflows must offer Check');
-assert.match(knowledge, /'replayCheckWorkflow'/, 'Learned workflows must offer Replay check');
+// Minimal pass (8 Oct): the Saved workflows card is gone from Notes (it repeated the Workflows tab).
+assert.doesNotMatch(knowledge, /Saved workflows/, 'Saved workflows live on the Workflows tab, not on Notes');
+// A saved workflow's Check and Check against past runs moved to its own menu in Author (lane W2, contract 21.1
+// row 72); the section here opens it there. Both doors keep both checks.
+const author = read(vscodeRoot, 'webview/src/workflowdesign.tsx');
+assert.match(author, /rpc<CheckReport>\('checkWorkflow', name\)/, 'a workflow must offer Check in Author');
+assert.match(author, /rpc<ReplayReport>\('replayCheckWorkflow', name\)/, 'a workflow must offer Check against past runs in Author');
 
 assert.match(rpcTarget, /listInsights\(/, 'the UI door must share listInsights with the engine RPC');
 assert.match(rpcTarget, /recallExperience\(/, 'the UI door must share recallExperience with the engine RPC');

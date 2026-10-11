@@ -39,12 +39,15 @@ export const mLanguage = StreamLanguage.define<MState>({
   tokenTable: undefined,
 });
 
+// The code palette is the one the Explore and Edit pages share (--xe-code-* in styles.css): VS Code's own string
+// and number colours per theme, keywords in the strong weight, names in the text colour. Every colour holds
+// 4.5:1 in Dark Modern, Light Modern and High Contrast; the jade accent is not a syntax colour (Instrument).
 export const mHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: 'var(--sem-accent)' },
-  { tag: t.string, color: 'var(--sem-good)' },
+  { tag: t.keyword, color: 'var(--sem-fg)', fontWeight: '600' },
+  { tag: t.string, color: 'var(--xe-code-string)' },
   { tag: t.comment, color: 'var(--sem-muted)', fontStyle: 'italic' },
-  { tag: t.number, color: 'var(--sem-warn)' },
-  { tag: t.variableName, color: '#9cdcfe' },
+  { tag: t.number, color: 'var(--xe-code-number)' },
+  { tag: t.variableName, color: 'var(--sem-fg)' },
   { tag: t.operator, color: 'var(--sem-fg)' },
 ]);
 

@@ -80,9 +80,9 @@ bodies) and require the engine running. Honest label, honestly limited.
    (which *already exists*, at just 327 chars / ~82 tokens) can express most of them.
 9. **9 `git_*` passthroughs cost ~572 tokens** for what is essentially one CLI with
    subcommands.
-10. **The summary/full read pairs are already the *right* pattern** — `ai_readiness_summary`
-    vs `ai_readiness_scan`, `bpa_summary` vs `bpa_scan`, `model_graph_summary` vs
-    `get_model_graph`. The `--results` proxy confirms the "summary" DTOs are materially
+10. **The summary/full read pairs are already the *right* pattern**: the readiness, BPA and
+    graph summaries (since 2026-09-24 one read each: `ai_readiness_scan`, `bpa_scan` and
+    `get_model_graph` with `detail='summary'`). The `--results` proxy confirms the "summary" DTOs are materially
     smaller (e.g. `ModelGraphSummary` 10 fields/depth-1 vs `ModelGraph` 20/depth-2).
     This is the composite-read discipline to *extend*, not to cut.
 

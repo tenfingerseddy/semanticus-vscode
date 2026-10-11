@@ -1,0 +1,80 @@
+table Journal
+	/// journal entry identifier
+	column 'Entry ID'
+		dataType: int64
+		sourceColumn: EntryID
+		summarizeBy: none
+
+	/// posting date join key
+	column 'Posting Date Key'
+		dataType: int64
+		sourceColumn: PostingDateKey
+		summarizeBy: none
+
+	/// account join key
+	column 'Account Key'
+		dataType: int64
+		sourceColumn: AccountKey
+		summarizeBy: none
+
+	/// department join key
+	column 'Department Key'
+		dataType: int64
+		sourceColumn: DepartmentKey
+		summarizeBy: none
+
+	column Amount
+		dataType: double
+		sourceColumn: Amount
+		summarizeBy: none
+
+	/// translated amount in USD. Cents must remain visible.
+	column 'Reporting USD'
+		dataType: double
+		sourceColumn: ReportingUSD
+		summarizeBy: none
+
+	column 'Currency Code'
+		dataType: string
+		sourceColumn: CurrencyCode
+		summarizeBy: none
+
+	column 'Exchange Rate'
+		dataType: double
+		sourceColumn: ExchangeRate
+		summarizeBy: none
+
+	column 'Document Number'
+		dataType: int64
+		sourceColumn: DocumentNumber
+		summarizeBy: none
+
+	/// reported revenue in USD. Cents must remain visible.
+	measure 'Reporting Revenue' = CALCULATE(SUM(Journal[Reporting USD]), Accounts[Account Type] = "Revenue")
+
+	/// reported expense in USD. Cents must remain visible.
+	measure 'Reporting Expense' = CALCULATE(SUM(Journal[Reporting USD]), Accounts[Account Type] = "Expense")
+
+	/// operating profit in USD. Cents must remain visible.
+	measure 'Operating Profit' = [Reporting Revenue] - [Reporting Expense]
+
+	/// operating profit divided by revenue. Report to at least a tenth of a percentage point.
+	measure 'Operating Margin' = DIVIDE([Operating Profit], [Reporting Revenue])
+
+	/// expense divided by revenue. Report to at least a tenth of a percentage point.
+	measure 'Expense Ratio' = DIVIDE([Reporting Expense], [Reporting Revenue])
+
+	/// count of journal entries
+	measure 'Entry Count' = DISTINCTCOUNT(Journal[Entry ID])
+
+	measure 'Average FX Rate' = AVERAGE(Journal[Exchange Rate])
+
+	measure 'Raw Amount' = SUM(Journal[Amount])
+
+	partition Journal = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [EntryID = Int64.Type, PostingDateKey = Int64.Type, AccountKey = Int64.Type, DepartmentKey = Int64.Type, Amount = type number, ReportingUSD = type number, CurrencyCode = type text, ExchangeRate = type number, DocumentNumber = Int64.Type], {})
+			in
+				Source

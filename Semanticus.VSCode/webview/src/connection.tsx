@@ -51,6 +51,8 @@ export interface SessionInfo {
   modelName?: string;
   source?: string;             // the edited model's origin: a local folder/file path, or an XMLA endpoint when live-bound
   hasUnsavedChanges?: boolean;
+  /** The person's own unsaved work: hasUnsavedChanges without the marker that records Jev's permission. The warnings read this one. Absent from an older engine. */
+  hasUnsavedEdits?: boolean;
   diskDiverged?: boolean;
   tables?: number;
   measures?: number;
@@ -62,6 +64,11 @@ export interface SessionInfo {
   liveDataSource?: string;     // the attached query engine's data source
   currentAccount?: string;     // the account (UPN) the live-bound/queried model is signed in as — for the identity bar; null = unknown
   currentTenant?: string;      // the tenant that account/connection belongs to, when known
+  /** Which MODEL this is, as the engine says (LocalEngine.ModelIdentityOf): `desktop:<stem>`, `live:<endpoint>|<database>`, `file:<path>` or `unsaved:<guid>`. The key a person's
+   *  held, unsaved words are filed under (drafts.ts reads it verbatim). Absent from an engine that predates it. */
+  modelIdentity?: string;
+  /** A name for that model a person can read, for the list of words kept for other models. Display only. */
+  modelLabel?: string;
   /** The model's TOM compatibility level. OPTIONAL and often absent: no free read carried it before
    *  2026-09-15 (listCalendars, getDocModel and getSpec all did, and all three became Pro reads with their
    *  features), so the engine half of the feature-line slice adds it here. Overview uses it for the free
@@ -196,33 +203,18 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 }
 
 /** Compact query-runtime status. Every tab opens the shared Connections drawer, so attach/open/publish choices never
- * fork into a second set of endpoint fields with different memory or wording. */
+ * fork into a second set of endpoint fields with different memory or wording. Connected, it draws nothing: the footer
+ * "Tests" slot already names the model and opens the same picker, so a second line here said the same fact twice. */
 export function ConnectBar({ hint }: { hint?: string }) {
-  const { conn, session, context, busy, err, disconnect, openConnections } = useConnection();
-  const testing = context?.querying;
-
-  if (conn?.connected) {
-    const label = testing?.modelName || testing?.database || conn.dataSource;
-    const kind = testing?.kind === 'localDesktop' || conn.kind === 'local' ? 'local running model' : 'published model';
-    return (
-      <div className="flex items-center gap-2 text-[12px] flex-wrap" style={{ color: 'var(--sem-muted)' }}>
-        <span style={{ color: 'var(--sem-good)' }}>●</span>
-        <span>Tests and queries use <b style={{ color: 'var(--sem-fg)' }}>{label}</b> ({kind}).</span>
-        <button onClick={openConnections} className="underline">Change</button>
-        <button onClick={disconnect} disabled={busy} className="underline disabled:opacity-40">Disconnect</button>
-      </div>
-    );
-  }
+  const { conn, busy, err, openConnections } = useConnection();
+  if (conn?.connected) return null;
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-        {hint ?? 'This tab runs live queries.'} {session?.modelName ? ` ${session.modelName} is open for editing${session?.source ? ` (${session.source})` : ''}, but no running model is selected for tests and queries.` : ' No model is open.'}
-        {' '}Local files remain editable without a connection, but they cannot execute queries by themselves.
-      </div>
+      <div className="text-xs" style={{ color: 'var(--sem-muted)' }}>{hint ?? 'Connect a model to run queries.'}</div>
       <div><button onClick={openConnections} disabled={busy}
         className="sem-btn sem-btn-primary">Choose test model</button></div>
-      {err && <div className="text-[12px]" style={{ color: 'var(--sem-bad)' }}>{err}</div>}
+      {err && <div className="text-xs" style={{ color: 'var(--sem-bad)' }}>{err}</div>}
     </div>
   );
 }

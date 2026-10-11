@@ -264,7 +264,7 @@ namespace Semanticus.Tests
             Assert.Contains(ConnectionHistory.List(), e => e.Kind == "switch" && e.Account == "admin@contoso.com");
         }
 
-        // ---- the human-only boundary (AccountSelectionRefusal), mirroring label_connection ----
+        // ---- the human-only boundary (AccountSelectionRefusal), mirroring the connection-label refusal ----
 
         [Fact]
         public void An_agent_is_refused_for_interactive_sign_in_make_default_and_a_signed_out_profile()
@@ -297,6 +297,42 @@ namespace Semanticus.Tests
         }
 
         // ---- item 3 (BLOCKER): an agent interactive/devicecode call with NO silently-usable account is refused BEFORE a prompt ----
+
+        // K15 follow-up (8 Oct): the person's own cold start reconnects with a token they already granted on this machine, and must
+        // never prompt. silentOnly is that promise on the OPEN: it keeps the human origin (its unsaved-work and account rules) but
+        // takes the agent's no-prompt path, so an empty cache is a plain sign-in-needed answer BEFORE any credential is built.
+        [Fact]
+        public async Task A_silent_only_open_with_no_saved_account_says_sign_in_is_needed_and_never_builds_a_credential()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            var tenant = Guid.NewGuid().ToString();
+            Assert.Null(EntraToken.ReadSavedAccount("interactive", tenant));
+            engine.OpenLiveFailureProbeForTests = () => throw new Exception("REACHED THE BUILD - the silent-only refusal did not fire");
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                engine.OpenLiveAsync("powerbi://x/silentnoacct", "DS", "interactive", null, tenant, origin: "human", silentOnly: true));
+            Assert.Contains("sign in", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("REACHED THE BUILD", ex.Message);
+            // The pure rule: only a prompting family with nothing to reuse is refused; azcli / serviceprincipal never prompt; off means off.
+            Assert.NotNull(LocalEngine.SilentOnlyRefusal(true, "interactive", tenant, null));
+            Assert.NotNull(LocalEngine.SilentOnlyRefusal(true, "devicecode", tenant, null));
+            Assert.Null(LocalEngine.SilentOnlyRefusal(true, "azcli", tenant, null));
+            Assert.Null(LocalEngine.SilentOnlyRefusal(true, "serviceprincipal", tenant, null));
+            Assert.Null(LocalEngine.SilentOnlyRefusal(false, "interactive", tenant, null));   // without the flag a person may prompt, as before
+        }
+
+        [Fact]
+        public void A_silent_only_open_reuses_a_saved_account()
+        {
+            var tenant = Guid.NewGuid().ToString();
+            var path = EntraToken.RecordPathForTests("interactive", tenant);
+            try
+            {
+                Assert.True(EntraToken.TryClaimRecordWrite(path, 1, () => RecordJsonFor("megan@contoso.com", tenant)));
+                Assert.Null(LocalEngine.SilentOnlyRefusal(true, "interactive", tenant, null));
+            }
+            finally { foreach (var f in new[] { path, path + ".lock", path + ".tmp" }) { try { if (File.Exists(f)) File.Delete(f); } catch { } } }
+        }
 
         [Fact]
         public async Task An_agent_interactive_open_with_an_empty_cache_is_refused_before_any_credential_build()

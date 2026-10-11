@@ -16,6 +16,7 @@ namespace Semanticus.Tests
     /// metadata on one real machine). The engine now owns the dir for the life of the session it backs, and prunes
     /// what earlier runs abandoned.
     /// </summary>
+    [Collection("restore-root")]   // mutates the static snapshot root, which DraftModelIdentityTests also sets
     public sealed class SnapshotCleanupTests : IDisposable
     {
         private readonly string _root;

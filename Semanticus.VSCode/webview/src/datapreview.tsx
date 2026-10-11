@@ -81,10 +81,14 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
   }
 
   return (
-    <div className="h-full flex">
+    // On the page grid (One Visual Language): the table list is a card two columns wide, the preview takes the
+    // other ten, and the result grid is the preview's card, so both edges sit on the columns.
+    <div className="sem-page xe-fill">
       {/* table list */}
-      <div className="w-56 shrink-0 overflow-auto border-r" style={{ borderColor: 'var(--sem-border)' }}>
-        <div className="px-3 py-2 text-[11px] uppercase tracking-wide font-semibold sticky top-0" style={{ color: 'var(--sem-muted)', background: 'var(--sem-bg)' }}>Tables ({tables.length})</div>
+      <div className="sem-card sem-card-flush sem-span-2 overflow-auto">
+        <div className="sem-card-head sticky top-0" style={{ background: 'var(--sem-ground)' }}>
+          <span className="sem-card-title">Tables</span><span className="sem-text-meta sem-num">{tables.length}</span>
+        </div>
         {tables.map((t) => {
           // Selecting a table always feeds the selection bus (Properties follows even offline); the live row
           // preview still needs a connection. The keyboard control (rowKeyProps = role=button) sits on the NAME
@@ -92,12 +96,14 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
           // ARIA + Enter/Space on Reveal bubbling into the row action). The row keeps the mouse onClick.
           const activate = () => { selectInProperties(t.ref); if (conn?.connected && !busy) void preview(t.name); };
           return (
-          <div key={t.ref} onClick={activate}
-            className="group w-full text-left px-3 py-1.5 text-[12px] flex items-center gap-2 cursor-pointer"
-            style={{ background: selected === t.name ? 'var(--sem-accent-soft)' : 'transparent', color: 'var(--sem-fg)', opacity: conn?.connected ? 1 : 0.6 }}>
-            <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: t.isDateTable ? 'var(--sem-warn)' : t.isCalculated ? 'var(--sem-good)' : 'var(--sem-accent)', opacity: t.isHidden ? 0.4 : 1 }} />
-            <span className="truncate flex-1" style={{ opacity: t.isHidden ? 0.55 : 1 }} {...rowKeyProps(activate, () => focusSelectInProperties(t.ref))}>{t.name}</span>
-            <span className="text-[10px] tnum group-hover:hidden group-focus-within:hidden" style={{ color: 'var(--sem-muted)' }}>{t.columns}</span>
+          <div key={t.ref} onClick={activate} aria-current={selected === t.name ? 'true' : undefined}
+            className="group sem-list-row xe-pick-row cursor-pointer"
+            style={{ color: conn?.connected ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>
+            {/* Instrument: a table's kind is a quiet word after its name, not a coloured dot. */}
+            <span className="truncate flex-1" style={{ color: t.isHidden ? 'var(--sem-muted)' : undefined }} {...rowKeyProps(activate, () => focusSelectInProperties(t.ref))}>
+              {t.name}{(t.isDateTable || t.isCalculated) && <span className="sem-text-meta"> {t.isDateTable ? 'date' : 'calculated'}</span>}
+            </span>
+            <span className="sem-text-meta sem-num group-hover:hidden group-focus-within:hidden">{t.columns}</span>
             <RevealBtn objRef={t.ref} className="hidden group-hover:inline-block group-focus-within:inline-block" />
           </div>
           );
@@ -105,27 +111,26 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
       </div>
 
       {/* preview */}
-      <div className="flex-1 min-w-0 flex flex-col sem-tool-page gap-3">
+      <div className="sem-span-10 min-h-0 flex flex-col gap-3">
         <div className="flex items-center gap-3">
-          <div className="text-[13px] font-semibold">{selected ? `Preview · ${selected}` : 'Data Preview'}</div>
+          <div className="sem-card-title">{selected ?? 'Data'}</div>
           <div className="ml-auto flex items-center gap-2">
             {conn?.connected && (
               <select value={topN} onChange={(e) => { const n = Number(e.target.value); setTopN(n); if (selected) preview(selected, n); }}
-                className="text-[12px] px-2 py-1 rounded-md outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+                aria-label="How many rows" className="sem-field">
                 {[200, 1000, 5000, 20000].map((n) => <option key={n} value={n}>{n.toLocaleString()} rows</option>)}
               </select>
             )}
           </div>
         </div>
-        <ConnectBar hint="Row preview runs a live top-N query (the table list is available offline)." />
+        <ConnectBar hint="Connect a model that holds data to see rows." />
         {/* The preview runs against the published model — flag when unsaved edits mean the rows omit your staged work. */}
         <QueryStalenessChip />
         {err && (
-          <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>
-            <div>{err}</div>
+          <div className="sem-stack">
+            <div className="xe-error" role="alert">{err}</div>
             {isSignInError(err) && session?.liveEndpoint && (
-              <button type="button" data-testid="signin-again" disabled={connBusy} className="mt-2 text-[12px] px-2 py-1 rounded-md"
-                style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', border: 'none', cursor: connBusy ? 'default' : 'pointer' }}
+              <button type="button" data-testid="signin-again" disabled={connBusy} className="sem-btn sem-btn-sm sem-btn-primary self-start"
                 onClick={() => {
                   void connectXmla(session.liveEndpoint!, session.liveDatabase ?? '', 'interactive', session.currentTenant ?? null)
                     .then((r) => { if (r.ok && selected) void preview(selected); else if (r.message) setErr(r.message); });
@@ -136,13 +141,12 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
         {claudeEvent && <ClaudeRanBanner event={claudeEvent} onClear={() => setClaudeEvent(null)} />}
         {res ? (
           <>
-            <div className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{res.rowCount} rows{res.truncated ? ' (truncated)' : ''} · {res.columns.length} cols · {res.elapsedMs} ms</div>
-            <div className="flex-1 min-h-0"><ResultGrid columns={res.columns.map((c) => ({ ...c, name: fieldName(c.name) }))} rows={res.rows} height="100%" /></div>
+            {/* One count line: the grid's own "N rows" beside its filter, plus "More rows exist." when cut at the top-N. */}
+            <div className="flex-1 min-h-0"><ResultGrid columns={res.columns.map((c) => ({ ...c, name: fieldName(c.name) }))} rows={res.rows} height="100%" truncated={res.truncated} /></div>
           </>
         ) : (
-          <div className="flex-1 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-            {conn?.connected ? 'Pick a table to preview its rows.' : 'Connect, then pick a table.'}
-          </div>
+          // Offline, the connect line above already says it; connected, say what to do next.
+          conn?.connected && <div className="flex-1 flex items-center justify-center sem-text-meta">Pick a table to preview its rows.</div>
         )}
       </div>
     </div>

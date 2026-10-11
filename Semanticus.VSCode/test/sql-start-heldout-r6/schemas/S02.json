@@ -1,0 +1,177 @@
+{
+  "Server": "s02-sql.example.invalid",
+  "Database": "FleetRuns",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_day",
+      "KeyColumns": [
+        "DAY_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_ID",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DAY_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "WEEK_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_vehicle",
+      "KeyColumns": [
+        "VEHICLE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "VEHICLE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "VEHICLE_CLASS",
+          "DataType": "String"
+        },
+        {
+          "Name": "ACTIVE",
+          "DataType": "Boolean"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_route",
+      "KeyColumns": [
+        "ROUTE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ROUTE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ROUTE_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "DISTANCE_KM",
+          "DataType": "Double"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_trip",
+      "KeyColumns": [
+        "TRIP_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "TRIP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_ID",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "VEHICLE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ROUTE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "LOAD_TONNES",
+          "DataType": "Decimal"
+        },
+        {
+          "Name": "TRAVEL_KM",
+          "DataType": "Double"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_fuel",
+      "KeyColumns": [
+        "FUEL_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "FUEL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_ID",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "VEHICLE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "LITRES",
+          "DataType": "Double"
+        },
+        {
+          "Name": "FUEL_COST",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trip",
+      "FromColumn": "DAY_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_day",
+      "ToColumn": "DAY_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trip",
+      "FromColumn": "VEHICLE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_vehicle",
+      "ToColumn": "VEHICLE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trip",
+      "FromColumn": "ROUTE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_route",
+      "ToColumn": "ROUTE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_fuel",
+      "FromColumn": "DAY_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_day",
+      "ToColumn": "DAY_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_fuel",
+      "FromColumn": "VEHICLE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_vehicle",
+      "ToColumn": "VEHICLE_ID"
+    }
+  ]
+}

@@ -59,7 +59,7 @@ namespace Semanticus.Engine
             }
         }
 
-        public async Task<DeployReport> DeployLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null)
+        public async Task<DeployReport> DeployLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool commit, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null, string expectedEndpoint = null, string expectedDatabase = null)
         {
             // Push the OPEN SESSION's metadata back to the live model (metadata-only, LineageTag-matched). We
             // serialize the edited session to a temp .bim WITHOUT resetting the undo checkpoint (deploying is not
@@ -74,7 +74,14 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(endpoint))
             {
                 var src = s.LiveOrigin;
-                if (src != null)
+                // connection_context is the ONE resolver of "where does this model publish" (join 10, J4). A model opened live whose record links
+                // another destination publishes THERE, as the page and the assistant's context say; only when context names nothing else does a live
+                // model go back to the live model it was opened from. Two resolvers used to disagree, and a publish with no target went to the live
+                // origin under the linked destination's name.
+                var publish = (await ConnectionContextAsync())?.Publishing;
+                var named = publish != null && publish.Available && !string.IsNullOrWhiteSpace(publish.Endpoint) && !string.IsNullOrWhiteSpace(publish.Database);
+                var linkedElsewhere = src != null && named && ShownDestinationRefusal(publish.Endpoint, publish.Database, src.Endpoint, src.Database) != null;
+                if (src != null && !linkedElsewhere)
                 {
                     endpoint = src.Endpoint;
                     database = src.Database;
@@ -87,9 +94,7 @@ namespace Semanticus.Engine
                 }
                 else
                 {
-                    var publish = (await ConnectionContextAsync())?.Publishing;
-                    if (publish == null || !publish.Available || string.IsNullOrWhiteSpace(publish.Endpoint)
-                        || string.IsNullOrWhiteSpace(publish.Database))
+                    if (!named)
                         throw new InvalidOperationException(
                             "The model is not connected to a publish destination. Open a live model, choose a publish destination, or pass an endpoint and database explicitly.");
                     endpoint = publish.Endpoint;
@@ -111,6 +116,12 @@ namespace Semanticus.Engine
             if (unsafeCoordinate != null) throw new ArgumentException(unsafeCoordinate, nameof(endpoint));
             endpoint = coords.Endpoint;
             database = coords.Database;
+            // The destination the page SHOWED the person. Studio sends no target (the engine resolves the live origin or the
+            // linked publish destination), so a destination changed since the page was drawn (the assistant's
+            // set_publish_destination, another window) would otherwise be previewed and pushed under a name the person
+            // never saw. A mismatch refuses, preview and commit alike, and writes nothing.
+            var shownMismatch = ShownDestinationRefusal(expectedEndpoint, expectedDatabase, endpoint, database);
+            if (shownMismatch != null) throw new InvalidOperationException(shownMismatch);
             if (string.IsNullOrWhiteSpace(database))
                 throw new InvalidOperationException(
                     "deploy_live: a database (dataset) name is required when you pass an explicit endpoint (only deploy-to-source with an empty endpoint can infer it).");
@@ -166,21 +177,13 @@ namespace Semanticus.Engine
                             + ") and clearing a red readiness gate is HUMAN-only. An agent cannot override it. The permission "
                             + "to deploy does not authorize clearing a failed readiness gate. Fix the blockers (apply_safe_fixes "
                             + "/ apply_fix, then re-run ai_readiness_scan), or ask the user to run deploy_live with overrideReason themselves.");
-                    if (string.IsNullOrWhiteSpace(overrideReason))
-                    {
-                        var extra = gate.OlderWarnings > 0
-                            ? " The model also has " + Semanticus.Analysis.GateBlockerCopy.OlderPhrase(gate.OlderWarnings)
-                              + " this change did not cause. See them on AI Readiness."
-                            : "";
-                        throw new InvalidOperationException(
-                            "deploy_live: blocked by the deploy gate: " + string.Join("; ", gate.Blockers)
-                            + extra
-                            + ". Fix the problems this change introduced, or pass overrideReason to ship anyway (the override is recorded in the model's audit trail).");
-                    }
+                    // A person is never asked for a reason (Kane 8 Oct). The red check goes on the audit chain as
+                    // "Published with warnings", with the reason only when the person wrote one.
+                    var hasReason = !string.IsNullOrWhiteSpace(overrideReason);
                     await RecordVerifiedEditAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "deploy_live",   // 0: a deploy is not a model mutation
-                        Verdict = "overridden", OverrideReason = overrideReason.Trim(),
+                        Verdict = "overridden", OverrideReason = hasReason ? overrideReason.Trim() : null,
                         // The one line a PERSON reads off this record, on both doors. It used to open "gate RED
                         // (…): override accepted to deploy to …" — three pieces of engine vocabulary in the
                         // sentence a non-technical owner has to understand, and the thing that made Kane ask what
@@ -189,7 +192,9 @@ namespace Semanticus.Engine
                         // and where it went. NO full stop after the destination: an endpoint is an address a
                         // person may copy, and a period glued to it changes it. The machine-readable fields below
                         // are untouched.
-                        Summary = $"Red safety check ({string.Join("; ", gate.Blockers)}). Published anyway with a written reason, to {endpoint}/{database}",
+                        Summary = hasReason
+                            ? $"Red safety check ({string.Join("; ", gate.Blockers)}). Published anyway with a written reason, to {endpoint}/{database}"
+                            : $"Published with warnings ({string.Join("; ", gate.Blockers)}), to {endpoint}/{database}",
                         Evidence = System.Text.Json.JsonSerializer.Serialize(new { gate.Grade, gate.BpaViolations, gate.BpaBlocking, gate.Blockers }),
                     });
                 }
@@ -316,6 +321,20 @@ namespace Semanticus.Engine
         internal Func<string, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget>, DeployReport> WorkspacePushHook;
         // Whole-model publish path (deploy_live / Save to Live). Tests point this at an in-memory recorded target so a
         // commit is recorded without opening TOM.Server. Null (production) = the real live path.
+        /// <summary>The closing sentence of a preview note. The assistant is told which flag to pass; a person has a button on
+        /// the page, and the flag is not a word they should ever read (UAT-J9-S10d-003).</summary>
+        internal static string CommitHint(string origin, string verb) => DeployGuard.IsAgent(origin) ? $" Pass commit=true to {verb}." : "";
+
+        /// <summary>Null when nothing was named or the named destination is the one in force. Otherwise the refusal in plain words.</summary>
+        internal static string ShownDestinationRefusal(string shownEndpoint, string shownDatabase, string endpoint, string database)
+        {
+            if (string.IsNullOrWhiteSpace(shownEndpoint) && string.IsNullOrWhiteSpace(shownDatabase)) return null;
+            static string E(string v) => (v ?? "").Trim().TrimEnd('/', '\\').ToLowerInvariant();
+            static string D(string v) => (v ?? "").Trim().ToLowerInvariant();
+            if (E(shownEndpoint) == E(endpoint) && D(shownDatabase) == D(database)) return null;
+            return $"The publish destination is now {database} on {endpoint}, but the page showed {shownDatabase} on {shownEndpoint}. Nothing was published. Check the destination on the page, then review the changes again.";
+        }
+
         internal Func<string, string, string, bool, System.Collections.Generic.IReadOnlyCollection<string>, DeployReport> DeployLiveSyncHook;
         // Pre-delete snapshot of the fake live model, used only when DeployLiveSyncHook is set. Null in production.
         internal Func<string> DeployLiveSnapshotHook;
@@ -369,7 +388,7 @@ namespace Semanticus.Engine
 
                 if (!commit)
                 {
-                    var note = $"Preview: {pushRefs.Length} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + " Pass commit=true to push.";
+                    var note = $"Preview: {pushRefs.Length} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + CommitHint(origin, "push");
                     return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs, Target = tlabel, Note = note };
                 }
 
@@ -417,8 +436,7 @@ namespace Semanticus.Engine
 
                 if (driftRefs.Length > 0 && string.IsNullOrWhiteSpace(overrideReason))
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
-                        Error = "Drift guard: the target changed under you since the diff: " + string.Join(", ", driftRefs)
-                            + " differ on the live model now. Nothing was pushed. Re-run to diff against the current state, or pass overrideReason to push anyway (the override is recorded in the audit trail)." };
+                        Error = DriftRefusal(origin, right.Database, driftRefs) };
 
                 // CORRECTNESS: merge into snapshot B (the CURRENT live), NEVER the stale A. SyncSessionToLive diffs the
                 // pushed model against the current live and syncs EVERY difference (it is selection-unaware), so pushing
@@ -668,6 +686,16 @@ namespace Semanticus.Engine
             finally { CleanupAll(); }
         }
 
+        /// <summary>The words for a push the drift guard refused. A person is told in plain words and is never asked for a
+        /// reason (Kane 8 Oct): Studio compares again and the person presses Publish again. The assistant gets the teaching
+        /// version: it names the objects and the way past (overrideReason). Only an exact "human" is a person; anything else
+        /// fails closed.</summary>
+        internal static string DriftRefusal(string origin, string database, string[] driftRefs) =>
+            AgentPolicyGuard.IsHuman(origin)
+                ? $"{database} changed while you were publishing. Nothing was written. The list is updated, press Publish again."
+                : "Drift guard: the target changed under you since the diff: " + string.Join(", ", driftRefs)
+                  + " differ on the live model now. Nothing was pushed. Re-run to diff against the current state, or pass overrideReason to push anyway (the override is recorded in the audit trail).";
+
         // The deploy gate (Semanticus's wedge): BPA + AI-readiness + (optionally) the pending-change count vs a
         // target. Read-only. Findings this change introduces or touches can block. Whole-model leftovers become
         // OlderWarnings (a count with a pointer to AI Readiness), never a block of their own (D-005).
@@ -675,8 +703,12 @@ namespace Semanticus.Engine
         {
             var session = _sessions.Require();
             var changed = SnapshotDeployGateTouched(session.Id);
-            var wholeModel = DeployGateScope.IsWholeModelSession(session.SourcePath, session.LiveOrigin)
-                || DeployGateScope.ForcesWholeModel(changed);
+            // With no change set to scope to (no edits yet, a model-wide edit, or nothing saved or published to compare
+            // with) the gate judges the whole model on purpose: the publish then sends the whole model and nothing says
+            // the target already holds it. UAT-S08-1-001 asked whether that was a defect. The verdict is not; the old
+            // "Checks on this change" wording for it was, so the reason now opens the check line.
+            var wholeModelReason = DeployGateScope.WholeModelReason(session.SourcePath, session.LiveOrigin, changed);
+            var wholeModel = wholeModelReason != null;
             var bpa = await BpaScanAsync();
             var card = await AiReadinessScanAsync();
             var blockers = new System.Collections.Generic.List<string>();
@@ -701,12 +733,16 @@ namespace Semanticus.Engine
             // Deriving the copy from the list the count came from is what stops the number and the message drifting.
             // The predicate itself is UNCHANGED: severity 2 still blocks, and GateBlockerCopy filters nothing.
             // D-005 scopes the set to objects this change introduces or touches; the rest become OlderWarnings.
-            var blockingSet = bpa.Violations?.Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.Waived).ToList()
+            // FORMAT ADVICE never blocks: a format finding whose fix the format fill rule withholds is a choice for the
+            // person, not a fault (BpaViolation.Advice). Before the rule its fix was offered, so it never blocked; a model
+            // that carries its own severity-2 format rules would otherwise be refused on advice the engine calls advice. The exception is
+            // the model's own severity 3 rule: that is its policy, an error, and it blocks whether or not its fix is withheld.
+            var blockingSet = bpa.Violations?.Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.IsAdviceTheGateSkips() && !v.IsAccepted()).ToList()
                               ?? new System.Collections.Generic.List<Semanticus.Analysis.BpaViolation>();
             var scopedBlocking = blockingSet.Where(v => DeployGateScope.Touches(v.ObjectRef, changed, wholeModel)).ToList();
             older += blockingSet.Count - scopedBlocking.Count;
             var blocking = scopedBlocking.Count;
-            var waived = bpa.Violations?.Count(v => v.Severity >= 2 && !v.CanAutoFix && v.Waived) ?? 0;
+            var waived = bpa.Violations?.Count(v => v.Severity >= 2 && !v.CanAutoFix && !v.IsAdviceTheGateSkips() && v.IsAccepted() && !v.NoLongerFires && !v.WholeRuleRow) ?? 0;   // a row that only shows an acceptance whose finding stopped firing is not a finding the gate looked at
             if (blocking > 0) blockers.Add(Semanticus.Analysis.GateBlockerCopy.ForBlockingViolations(scopedBlocking));
             // A rule the scan could NOT evaluate is not a clean rule. Its evaluation aborted part way through a scope,
             // so the violations listed for it are a prefix and the rest of that scope is unknown — passing the gate on
@@ -752,7 +788,8 @@ namespace Semanticus.Engine
                 BpaUnknownBlocking = unknownBlocking,
                 Blockers = blockers.ToArray(),
                 OlderWarnings = older,
-                CheckLine = Semanticus.Analysis.GateBlockerCopy.CheckLine(blockers, older),
+                WholeModel = wholeModel,
+                CheckLine = Semanticus.Analysis.GateBlockerCopy.CheckLine(blockers, older, wholeModelReason),
                 Changes = changes,
                 Interview = interview,
                 // The waived sentence said "error-severity BPA finding(s)", which was wrong twice over: "BPA" is engine

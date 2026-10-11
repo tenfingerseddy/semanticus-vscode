@@ -40,6 +40,7 @@ namespace Semanticus.Tests
             {
                 using var engine = new LocalEngine(new SessionManager(), new Pro());
                 await engine.OpenAsync(bim);
+                await FrozenStarter.UseAsync(engine, "check-blast-radius");   // lane l9-finish: the guided gates, from the frozen guided file
                 var check = await engine.CheckWorkflowAsync("check-blast-radius");
                 Assert.True(check.Ok, string.Join(" | ", check.Findings.Select(x => x.Message)));
 
@@ -64,6 +65,7 @@ namespace Semanticus.Tests
             {
                 using var engine = new LocalEngine(new SessionManager(), new Pro());
                 await engine.OpenAsync(bim);
+                await FrozenStarter.UseAsync(engine, "check-blast-radius");   // lane l9-finish: the guided gates, from the frozen guided file
                 var target = (await engine.ListMeasuresAsync()).First().Ref;
                 var started = await engine.StartWorkflowAsync("check-blast-radius", "human");
                 var step2 = await engine.SubmitWorkflowStepAsync(started.RunId, "step-1", Step1Answers(target), "human");
@@ -87,6 +89,7 @@ namespace Semanticus.Tests
             {
                 using var engine = new LocalEngine(new SessionManager(), new Pro());
                 await engine.OpenAsync(bim);
+                await FrozenStarter.UseAsync(engine, "check-blast-radius");   // lane l9-finish: the guided gates, from the frozen guided file
                 var target = (await engine.ListMeasuresAsync()).First().Ref;
                 var run = await engine.StartWorkflowAsync("check-blast-radius", "human");
                 run = await engine.SubmitWorkflowStepAsync(run.RunId, "step-1", Step1Answers(target), "human");

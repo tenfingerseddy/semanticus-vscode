@@ -59,6 +59,65 @@ namespace Semanticus.Engine
         public WorkflowEditMapEntry[] Provenance { get; set; } = Array.Empty<WorkflowEditMapEntry>();
         public WorkflowEditSlot[] Slots { get; set; } = Array.Empty<WorkflowEditSlot>();
         public WorkflowEditStep[] Steps { get; set; } = Array.Empty<WorkflowEditStep>();
+        // ---- format 3 (composer contract 1.2, 10.5; lane author-gaps, B7). Null and empty on a v1 or v2 file.
+        /// <summary>"Notes for your assistant".</summary>
+        public string AssistantNotes { get; set; }
+        /// <summary>"Inputs asked each run".</summary>
+        public WorkflowEditQuestion[] Inputs { get; set; } = Array.Empty<WorkflowEditQuestion>();
+    }
+
+    /// <summary>A format-3 question (composer contract 1.4), on a step or among the inputs.</summary>
+    public sealed class WorkflowEditQuestion
+    {
+        public string Name { get; set; }
+        public string Question { get; set; }
+        public string Type { get; set; }
+        public string Required { get; set; }
+        public string By { get; set; }
+        public string[] Values { get; set; } = Array.Empty<string>();
+        public string From { get; set; }
+        public string Jev { get; set; }
+        public string Default { get; set; }
+    }
+
+    /// <summary>A format-3 blank (composer contract 1.5).</summary>
+    public sealed class WorkflowEditBlank
+    {
+        public string Name { get; set; }
+        public string Kind { get; set; }
+        public string Fills { get; set; }
+        public string By { get; set; }
+        public string[] DependsOn { get; set; } = Array.Empty<string>();
+        public int? MaxChars { get; set; }
+        public string Choices { get; set; }
+        public string Generator { get; set; }
+    }
+
+    /// <summary>A format-3 check with its phase (composer contract 1.7).</summary>
+    public sealed class WorkflowEditCheck
+    {
+        public string Kind { get; set; }
+        public string Phase { get; set; }
+        public string Target { get; set; }
+        public string Min { get; set; }
+        public string Max { get; set; }
+        public string[] Of { get; set; } = Array.Empty<string>();
+        public string When { get; set; }
+    }
+
+    /// <summary>A format-3 action: the op Semanticus runs and its arguments in file order.</summary>
+    public sealed class WorkflowEditAction
+    {
+        public string Op { get; set; }
+        public WorkflowEditArgument[] Args { get; set; } = Array.Empty<WorkflowEditArgument>();
+    }
+
+    public sealed class WorkflowEditArgument
+    {
+        public string Name { get; set; }
+        public string Value { get; set; }
+        /// <summary>Set for an argument written as a list; <see cref="Value"/> is then null.</summary>
+        public string[] Values { get; set; }
     }
 
     public sealed class WorkflowEditMapEntry
@@ -96,6 +155,17 @@ namespace Semanticus.Engine
         public WorkflowEditForEach ForEach { get; set; }
         public WorkflowEditCall Call { get; set; }
         public WorkflowEditGate Gate { get; set; }
+        // ---- format 3 (lane author-gaps, B7). Null and empty on a v1 or v2 step.
+        /// <summary>semanticus, assistant or person.</summary>
+        public string Performer { get; set; }
+        /// <summary>The phase as the file WRITES it (change or after), or null when it follows from the op.</summary>
+        public string Phase { get; set; }
+        public WorkflowEditAction Action { get; set; }
+        public WorkflowEditQuestion[] Questions { get; set; } = Array.Empty<WorkflowEditQuestion>();
+        public WorkflowEditBlank[] Blanks { get; set; } = Array.Empty<WorkflowEditBlank>();
+        /// <summary>"Brief for your assistant", the step fence's instructions key. Not the step body.</summary>
+        public string Brief { get; set; }
+        public WorkflowEditCheck[] Checks { get; set; } = Array.Empty<WorkflowEditCheck>();
     }
 
     public sealed class WorkflowEditForEach
@@ -177,6 +247,22 @@ namespace Semanticus.Engine
         public string[] VerifyIntents { get; set; } = { "change", "rename", "remove", "restructure" };
         public string[] ShapeIds { get; set; } = { "grand_total", "cross", "axis:<column>" };
         public string[] OpenMismatch { get; set; } = { "countersign" };
+        // ---- format 3 (lane author-gaps, B7): the closed values Author's v3 fields offer.
+        public string[] Performers { get; set; } = WorkflowPerformers.All;
+        public string[] Phases { get; set; } = { "change", "after" };
+        public string[] QuestionTypes { get; set; } = { "text", "enum", "number", "objectRef" };
+        public string[] QuestionBy { get; set; } = { "you", "assistant", "semanticus" };
+        public string[] BlankKinds { get; set; } = { "dax", "description", "m", "name", "choice" };
+        public string[] BlankBy { get; set; } = { "assistant", "you" };
+        /// <summary>The check kinds a draft runs, by the phase each runs in (before, written, after).</summary>
+        public System.Collections.Generic.Dictionary<string, string[]> CheckKinds { get; set; } = new System.Collections.Generic.Dictionary<string, string[]>
+        {
+            ["before"] = System.Linq.Enumerable.ToArray(Composer.DraftCheckKinds.Before),
+            ["written"] = System.Linq.Enumerable.ToArray(Composer.DraftCheckKinds.Written),
+            ["after"] = System.Linq.Enumerable.ToArray(Composer.DraftCheckKinds.After),
+        };
+        /// <summary>The ops a step Semanticus runs may name (OpParameterKinds.Executable).</summary>
+        public string[] ExecutableOps { get; set; } = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.OrderBy(OpParameterKinds.Executable.Keys, x => x, StringComparer.Ordinal));
         public int DefaultMaxIterations { get; set; } = ForEachSpec.DefaultMaxIterations;
         public int MaxIterations { get; set; } = ForEachSpec.MaxMaxIterations;
     }

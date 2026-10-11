@@ -1,0 +1,75 @@
+/* The Plan's tour, What changed card and the "?" on the Plan header (plan-guide.tsx, help.tsx). Tokens only.
+   The step card is a fixed child of the zoomed Studio root; plan-guide.tsx writes its left and top in that root's
+   own pixels. Its outline is the foreground colour, as in the mockup: it has to read as "look here" over a page
+   that is already all hairlines. */
+
+.plan-tour {
+  position: fixed; z-index: 40; box-sizing: border-box; width: min(400px, calc(100vw - var(--sem-space-8)));
+  display: grid; gap: var(--sem-space-2); padding: var(--sem-card-pad);
+  background: var(--sem-bg); color: var(--sem-fg); border-radius: var(--sem-radius-card);
+  box-shadow: inset 0 0 0 var(--sem-hairline) var(--sem-fg), var(--sem-shadow-pop);
+  transition: top .35s cubic-bezier(.2,.7,.2,1), left .35s cubic-bezier(.2,.7,.2,1);
+}
+.plan-tour-head { display: flex; align-items: center; gap: var(--sem-space-2); font-size: var(--sem-text-label); line-height: var(--sem-lh-label); color: var(--sem-muted); }
+.plan-tour-pips { display: flex; gap: var(--sem-space-1); }
+.plan-tour-pips i { display: block; width: 14px; height: 2px; background: var(--sem-rule); }
+.plan-tour-pips i.is-on { background: var(--sem-fg); }
+.plan-tour-count { font-variant-numeric: tabular-nums; }
+.plan-tour-close { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); cursor: pointer; }
+.plan-tour-close:hover { color: var(--sem-fg); text-decoration: underline; }
+.plan-tour-title { margin: 0; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
+.plan-tour-body { margin: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.plan-tour-how { display: grid; gap: var(--sem-space-1); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.plan-tour-how > span { display: grid; grid-template-columns: 12px minmax(0, 1fr); align-items: start; gap: var(--sem-space-2); }
+/* 16 tall like the line it sits on; the 12px glyph is centred inside it by the viewBox. */
+.plan-tour-mark { color: var(--sem-fg); }
+.plan-tour-foot { display: flex; align-items: center; gap: var(--sem-space-2); padding-top: var(--sem-space-1); }
+.plan-tour-note { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.plan-tour-acts { margin-left: auto; display: flex; gap: var(--sem-space-2); }
+.plan-tour-ring {
+  position: fixed; z-index: 39; pointer-events: none; border-radius: var(--sem-radius-card);
+  box-shadow: 0 0 0 2px var(--sem-fg);
+  transition: left .35s cubic-bezier(.2,.7,.2,1), top .35s cubic-bezier(.2,.7,.2,1), width .35s cubic-bezier(.2,.7,.2,1), height .35s cubic-bezier(.2,.7,.2,1);
+}
+body.vscode-high-contrast .plan-tour-ring, body.vscode-high-contrast-light .plan-tour-ring { box-shadow: 0 0 0 2px var(--sem-strong-border); }
+@media (prefers-reduced-motion: reduce) { .plan-tour, .plan-tour-ring { transition: none; } }
+body.vscode-reduce-motion .plan-tour, body.vscode-reduce-motion .plan-tour-ring { transition: none; }
+
+/* What changed: a quiet card in the page's own flow, above the strip. Two columns of lines, the two buttons on
+   the right, as in the mockup's "After an update" frame. It is a card, so it takes the card's colour one step off
+   the page like the Next list right under it (option B); painting the page colour left it flush and invisible as
+   a box. tokens.css names it in the lifted rule, so its own marks and rules are drawn against it. */
+.plan-wc {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sem-space-2) var(--sem-space-6); align-items: start;
+  padding: var(--sem-inset-pad) var(--sem-card-pad); border-radius: var(--sem-radius-card);
+  box-shadow: inset 0 0 0 var(--sem-hairline) var(--sem-border); background: var(--sem-surface);
+}
+.plan-wc-title { grid-column: 1; margin: 0; display: flex; gap: var(--sem-space-2); align-items: baseline; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
+.plan-wc-sub { font-weight: var(--sem-weight); font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.plan-wc-list { grid-column: 1; margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sem-space-1) var(--sem-space-8); }
+.plan-wc-list li { display: flex; gap: var(--sem-space-2); align-items: baseline; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.plan-wc-list li::before { content: ""; flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--sem-muted); transform: translateY(-2px); }
+.plan-wc-acts { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: var(--sem-space-2); align-items: center; }
+@media (max-width: 720px) {
+  .plan-wc { grid-template-columns: minmax(0, 1fr); }
+  .plan-wc-list { grid-template-columns: minmax(0, 1fr); }
+  .plan-wc-acts { grid-column: 1; grid-row: auto; }
+}
+
+/* The Plan header's "?": opens Help at the Plan. The same size as the page-notes mark, square like a control. */
+.plan-help-mark {
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; flex: none;
+  width: var(--sem-control-h-sm); height: var(--sem-control-h-sm); padding: 0; border-radius: var(--sem-radius-control);
+  border: var(--sem-hairline) solid var(--sem-border); background: transparent; color: var(--sem-muted);
+  font-size: var(--sem-text-meta); line-height: 1; font-weight: var(--sem-weight-strong); cursor: pointer;
+}
+.plan-help-mark:hover { color: var(--sem-fg); background: var(--sem-hover); }
+
+/* Help's slide-over, on the Plan: the way back into the tour and the card, at the top. */
+.plan-guide-reopen { display: grid; gap: var(--sem-space-2); padding: var(--sem-space-3) 0; margin-bottom: var(--sem-space-3); box-shadow: inset 0 -1px 0 var(--sem-rule); }
+.plan-guide-reopen-lead { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.plan-guide-reopen-acts { display: flex; gap: var(--sem-space-3); align-items: center; }
+
+/* The Help menu sizes to its rows. It is anchored to a narrow header button, so without this it sat at the chip
+   menu's minimum width and a long page name ("Model quality (BPA)") squeezed "Help for this page" onto four lines. */
+.studio-help-menu { width: max-content; max-width: min(360px, 92vw); }

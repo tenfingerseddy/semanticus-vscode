@@ -1,0 +1,165 @@
+{
+  "Server": "s03-sql.example.invalid",
+  "Database": "CareVisits",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_visit_date",
+      "KeyColumns": [
+        "DATE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_ID",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "VISIT_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_clinic",
+      "KeyColumns": [
+        "CLINIC_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CLINIC_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CLINIC_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "AREA",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_supply",
+      "KeyColumns": [
+        "SUPPLY_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SUPPLY_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SUPPLY_TYPE",
+          "DataType": "String"
+        },
+        {
+          "Name": "UNIT_COST",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_visit",
+      "KeyColumns": [
+        "VISIT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "VISIT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_ID",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CLINIC_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "VISIT_COUNT",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "FEE_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_supply_issue",
+      "KeyColumns": [
+        "ISSUE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ISSUE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CLINIC_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SUPPLY_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "EXT_COST",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_visit",
+      "FromColumn": "DATE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_visit_date",
+      "ToColumn": "DATE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_visit",
+      "FromColumn": "CLINIC_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_clinic",
+      "ToColumn": "CLINIC_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_supply_issue",
+      "FromColumn": "CLINIC_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_clinic",
+      "ToColumn": "CLINIC_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_supply_issue",
+      "FromColumn": "SUPPLY_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_supply",
+      "ToColumn": "SUPPLY_ID"
+    }
+  ]
+}

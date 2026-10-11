@@ -118,16 +118,76 @@ namespace Semanticus.Tests
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());
-                await engine.SaveAsync(tmdl, "TMDL");
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
                 var before = Snapshot(tmdl);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "9 + 9", "human");
                 engine.FailFolderSaveBeforeSwapForTest = new IOException("forced mid-save failure");
 
-                var ex = await Assert.ThrowsAsync<IOException>(() => engine.SaveAsync(null, "TMDL"));
+                var ex = await Assert.ThrowsAsync<IOException>(() => engine.SaveAsync(null, "TMDL", false, "human"));
                 Assert.Contains("forced mid-save failure", ex.Message, StringComparison.Ordinal);
                 Assert.Equal(before, Snapshot(tmdl));
                 Assert.DoesNotContain("9 + 9", Snapshot(tmdl), StringComparison.Ordinal);
+                Assert.True((await engine.SessionInfoAsync()).HasUnsavedChanges);
+            }
+            finally { Delete(root); }
+        }
+
+        [Fact]
+        public async Task A_folder_save_whose_directory_move_hits_a_sharing_violation_tries_again_and_lands_whole()
+        {
+            var root = Scratch("wsv-");
+            var tmdl = Path.Combine(root, "model");
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+            try
+            {
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                var measure = (await engine.ListMeasuresAsync()).First();
+                await engine.SetDaxAsync(measure.Ref, "7 + 7", "human");
+                var tries = 0;
+                engine.DirectoryMoveRetryDelaysForTest = new[] { 1, 1, 1, 1, 1, 1 };
+                engine.DirectoryMoveHookForTest = (_, _) =>
+                {
+                    if (++tries <= 2) throw new IOException("The process cannot access the file because it is being used by another process.");
+                };
+
+                await engine.SaveAsync(null, "TMDL", false, "human");
+
+                Assert.True(tries > 2, "the move was never tried again");
+                Assert.Contains("7 + 7", Snapshot(tmdl), StringComparison.Ordinal);
+                Assert.False((await engine.SessionInfoAsync()).HasUnsavedChanges);
+                Assert.Empty(Directory.GetDirectories(root).Where(d => d.Contains(".semanticus-")));
+            }
+            finally { Delete(root); }
+        }
+
+        [Fact]
+        public async Task A_folder_save_whose_directory_move_never_lands_puts_the_original_tree_back_and_says_why()
+        {
+            var root = Scratch("wsf-");
+            var tmdl = Path.Combine(root, "model");
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+            try
+            {
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                var before = Snapshot(tmdl);
+                var measure = (await engine.ListMeasuresAsync()).First();
+                await engine.SetDaxAsync(measure.Ref, "8 + 8", "human");
+                engine.DirectoryMoveRetryDelaysForTest = new[] { 1, 1, 1 };
+                // Only the move that puts the new tree in place fails, every time; the move that puts the old tree back is allowed.
+                engine.DirectoryMoveHookForTest = (from, _) =>
+                {
+                    if (Path.GetFileName(from).StartsWith(".semanticus-save-", StringComparison.Ordinal))
+                        throw new IOException("The process cannot access the file because it is being used by another process.");
+                };
+
+                var ex = await Assert.ThrowsAsync<IOException>(() => engine.SaveAsync(null, "TMDL", false, "human"));
+
+                Assert.Contains("being used by another process", ex.Message, StringComparison.Ordinal);
+                Assert.Equal(before, Snapshot(tmdl));
+                Assert.DoesNotContain("8 + 8", Snapshot(tmdl), StringComparison.Ordinal);
                 Assert.True((await engine.SessionInfoAsync()).HasUnsavedChanges);
             }
             finally { Delete(root); }
@@ -153,7 +213,7 @@ namespace Semanticus.Tests
                 sessions.Bus.Changed += handler;
                 try
                 {
-                    await engine.SaveAsync(null, "TMDL");
+                    await engine.SaveAsync(null, "TMDL", false, "human");
                 }
                 finally { sessions.Bus.Changed -= handler; }
 
@@ -192,7 +252,7 @@ namespace Semanticus.Tests
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());
-                await engine.SaveAsync(first, "TMDL");
+                await engine.SaveAsync(first, "TMDL", false, "human");
                 var primer = PrimerMarkdown("Travel with the model.");
                 var savedPrimer = await engine.SetPrimerAsync(primer, "human");
                 Assert.True(savedPrimer.Exists);
@@ -207,7 +267,7 @@ Read the model.
 Finish up.
 ", "human");
 
-                await engine.SaveAsync(second, "TMDL");
+                await engine.SaveAsync(second, "TMDL", false, "human");
                 await engine.OpenAsync(second);
 
                 var moved = await engine.GetPrimerAsync();
@@ -216,6 +276,34 @@ Finish up.
                 Assert.StartsWith(second, moved.FilePath, StringComparison.OrdinalIgnoreCase);
                 var workflows = await engine.ListWorkflowsAsync();
                 Assert.Contains(workflows, w => w.Name == "uat-review");
+            }
+            finally { Delete(root); }
+        }
+
+        // Kane 8 Oct: a blank commit message is never a refusal. A default is filled in, on both doors, so saving a
+        // version never stops at a text box.
+        [Theory]
+        [InlineData("human", "")]
+        [InlineData("agent", "   ")]
+        public async Task A_blank_commit_message_gets_a_default_and_commits(string origin, string message)
+        {
+            var root = Scratch("blankmsg-");
+            var bim = Path.Combine(root, "model.bim");
+            File.Copy(TestModels.FindBim(), bim);
+            InitRepo(root);
+            Git(root, "add", "--", "model.bim");
+            Git(root, "commit", "-q", "-m", "initial");
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+            try
+            {
+                await engine.OpenAsync(bim);
+                var measure = (await engine.ListMeasuresAsync()).First();
+                await engine.SetDaxAsync(measure.Ref, "5 + 5", "human");
+
+                var committed = await engine.GitCommitAsync(message, null, commit: true, origin);
+
+                Assert.True(committed.Committed, committed.Error);
+                Assert.Equal("Saved from Semanticus", Git(root, "log", "-1", "--format=%s").Trim());
             }
             finally { Delete(root); }
         }
@@ -261,7 +349,7 @@ Finish up.
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());
-                await engine.SaveAsync(tmdl, "TMDL");
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
                 InitRepo(root);
                 Git(root, "add", "-A", "--", "LaneA.SemanticModel/definition");
                 Git(root, "commit", "-q", "-m", "initial");
@@ -283,6 +371,132 @@ Finish up.
                     Assert.True(listed.IndexOf("roles", StringComparison.OrdinalIgnoreCase) >= 0, listed);
                 if (onDisk.IndexOf("perspective", StringComparison.OrdinalIgnoreCase) >= 0)
                     Assert.True(listed.IndexOf("perspective", StringComparison.OrdinalIgnoreCase) >= 0, listed);
+            }
+            finally { Delete(root); }
+        }
+
+        /// <summary>CicdSmoke's "git_diff: clean working tree after the commit" failed about one run in two (verify-askdata,
+        /// 26 Sep, on the base and the head alike): git_diff found ".semanticus/.gitignore" not yet committed. An edit
+        /// schedules the History's write in the background (EditLedger), and that write is what first creates the
+        /// sidecar and its .gitignore. git_commit staged the model while the write was still under way, so the file
+        /// landed a moment after the commit. The write is held back here (EditLedger.WriteDelayMsForTest, before it takes
+        /// any lock) so the race always goes the wrong way; a commit must settle the engine's own pending writes before
+        /// it stages anything.</summary>
+        [Fact]
+        public async Task A_commit_waits_for_the_history_write_so_the_tree_is_clean_after_it()
+        {
+            var root = Scratch("commit-settles-");
+            var model = Path.Combine(root, "Sales.SemanticModel");
+            var ignore = Path.Combine(model, ".semanticus", ".gitignore");
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, new Pro());
+            try
+            {
+                InitRepo(root);
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(model, "TMDL", false, "human");
+                var first = await engine.GitCommitAsync("initial model", null, commit: true, "agent");
+                Assert.True(first.Committed, first.Error ?? first.Note);
+                await sessions.Ledger.FlushAsync();
+                // Whether the first save already left a sidecar behind differs by machine (it did on one fleet laptop
+                // and not on this one), so the edit always starts from none: the History's next write makes it again.
+                var sidecar = Path.GetDirectoryName(ignore);
+                if (Directory.Exists(sidecar))
+                {
+                    Directory.Delete(sidecar, true);
+                    if (Git(root, "status", "--porcelain").Length > 0) { Git(root, "add", "-A"); Git(root, "commit", "-q", "-m", "start with no sidecar"); }
+                }
+                Assert.False(File.Exists(ignore), "the sidecar existed before the edit, so this test proves nothing");
+
+                EditLedger.WriteDelayMsForTest = 1500;
+                var measure = (await engine.ListMeasuresAsync()).First();
+                await engine.SetDescriptionAsync(measure.Ref, "Edited for the commit race.", "agent");
+                var second = await engine.GitCommitAsync("describe a measure", null, commit: true, "agent");
+                Assert.True(second.Committed, second.Error ?? second.Note);
+
+                // Read the tree once the engine's own writes have landed, the way the smoke's next call did.
+                await sessions.Ledger.FlushAsync();
+                Assert.True(File.Exists(ignore), "the edit's History write made no sidecar, so the race was not forced");
+                var diff = await engine.GitDiffAsync(null, false);
+                Assert.True(diff.Empty, "the working tree is not clean after the commit:\n" + diff.Text);
+            }
+            finally
+            {
+                EditLedger.WriteDelayMsForTest = 0;
+                engine.Dispose();
+                Delete(root);
+            }
+        }
+
+        /// <summary>UAT-S08-2-004. A PBIP model opens at its definition folder, but its notes and plan memory live one
+        /// level up in the .SemanticModel folder. git_commit's preview listed the modified plan memory, then the commit
+        /// staged only the definition folder and answered "working tree clean" with the file still modified and no
+        /// commit made. The commit must take what the preview listed.</summary>
+        [Fact]
+        public async Task UAT_S08_2_004_git_commit_commits_the_model_notes_its_preview_listed()
+        {
+            var root = Scratch("uat-s08-2-004-");
+            var tmdl = Path.Combine(root, "Contoso.SemanticModel", "definition");
+            var memory = Path.Combine(root, "Contoso.SemanticModel", ".semanticus", "plan-memory.json");
+            using var engine = new LocalEngine(new SessionManager(), new Pro());
+            try
+            {
+                await engine.OpenAsync(TestModels.FindBim());
+                await engine.SaveAsync(tmdl, "TMDL", false, "human");
+                await engine.OpenAsync(tmdl);
+                Directory.CreateDirectory(Path.GetDirectoryName(memory));
+                File.WriteAllText(memory, "{\"version\":1}\n");
+                InitRepo(root);
+                Git(root, "add", "-A");
+                Git(root, "commit", "-q", "-m", "baseline");
+                File.WriteAllText(memory, "{\"version\":1,\"skipped\":[\"item\"]}\n");
+
+                var preview = await engine.GitCommitAsync("plan memory", null, commit: false, "agent");
+                Assert.Contains(preview.Files, f => f.Replace('\\', '/').EndsWith(".semanticus/plan-memory.json", StringComparison.Ordinal));
+
+                var committed = await engine.GitCommitAsync("plan memory", null, commit: true, "agent");
+                Assert.True(committed.Committed, committed.Note ?? committed.Error);
+                Assert.Contains(committed.Files, f => f.Replace('\\', '/').EndsWith(".semanticus/plan-memory.json", StringComparison.Ordinal));
+                Assert.Equal("", Git(root, "status", "--porcelain", "--", "Contoso.SemanticModel/.semanticus/plan-memory.json").Trim());
+                Assert.Equal("2", Git(root, "rev-list", "--count", "HEAD").Trim());
+            }
+            finally { Delete(root); }
+        }
+
+        /// <summary>UAT-S11-2-004, a variant of UAT-S08-2-004 (Sol's retest on 0ee45add). git_commit with commit=false and
+        /// one explicit file listed every changed file, an untracked insights file included, although the commit stages
+        /// only the files it was given. The preview must name exactly what that commit would take.</summary>
+        [Fact]
+        public async Task UAT_S11_2_004_git_commit_preview_honours_the_explicit_files()
+        {
+            var root = Scratch("uat-s11-2-004-");
+            var bim = Path.Combine(root, "model.bim");
+            var memory = Path.Combine(root, ".semanticus", "plan-memory.json");
+            var insights = Path.Combine(root, ".semanticus", "knowledge", "insights.jsonl");
+            File.Copy(TestModels.FindBim(), bim);
+            Directory.CreateDirectory(Path.GetDirectoryName(memory));
+            File.WriteAllText(memory, "{\"version\":1}\n");
+            InitRepo(root);
+            Git(root, "add", "-A");
+            Git(root, "commit", "-q", "-m", "baseline");
+            using var engine = new LocalEngine(new SessionManager(), new Pro());
+            try
+            {
+                await engine.OpenAsync(bim);
+                // Sol's state: the plan memory is modified and an insights file is new and untracked.
+                File.WriteAllText(memory, "{\"version\":1,\"skipped\":[\"item\"]}\n");
+                Directory.CreateDirectory(Path.GetDirectoryName(insights));
+                File.WriteAllText(insights, "{\"op\":\"add\"}\n");
+
+                var only = new[] { ".semanticus/plan-memory.json" };
+                var preview = await McpTools.GitCommit(engine, "plan memory", only, commit: false);
+                Assert.Null(preview.Error);
+                Assert.Equal(only, preview.Files.Select(f => f.Replace('\\', '/')).ToArray());
+
+                var committed = await McpTools.GitCommit(engine, "plan memory", only, commit: true);
+                Assert.True(committed.Committed, committed.Note ?? committed.Error);
+                Assert.Equal(preview.Files, committed.Files);   // the preview named exactly what the commit took
+                Assert.Contains("insights.jsonl", Git(root, "status", "--porcelain", "--untracked-files=all"));
             }
             finally { Delete(root); }
         }
@@ -394,7 +608,7 @@ Finish up.
             using (var seed = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
             {
                 await seed.OpenAsync(bim);
-                await seed.SaveAsync(def, "TMDL");
+                await seed.SaveAsync(def, "TMDL", false, "human");
             }
             File.WriteAllText(Path.Combine(sem, "definition.pbism"), "{\"version\":\"1.0\",\"settings\":{}}");
             var pbip = Path.Combine(proj, "Model.pbip");
@@ -424,11 +638,11 @@ Finish up.
                 File.WriteAllText(Path.Combine(def, "diagramLayout.json"), "{\"version\":2,\"edited\":\"outside\"}");
 
                 Assert.True((await engine.SessionInfoAsync()).DiskDiverged);
-                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "TMDL"));
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "TMDL", false, "human"));
                 Assert.Contains("files on disk changed", ex.Message, StringComparison.OrdinalIgnoreCase);
                 Assert.Contains("\"edited\"", File.ReadAllText(Path.Combine(def, "diagramLayout.json")), StringComparison.Ordinal);
 
-                var saved = await engine.SaveAsync(null, "TMDL", overwrite: true);
+                var saved = await engine.SaveAsync(null, "TMDL", true, "human");
                 Assert.Equal(def, saved.Path);
             }
             finally { Delete(root); }
@@ -454,7 +668,7 @@ Finish up.
                 await engine.OpenAsync(pbip);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "2 + 2", "human");
-                await engine.SaveAsync(null, "TMDL", overwrite: true);
+                await engine.SaveAsync(null, "TMDL", true, "human");
 
                 Assert.True(File.Exists(keep));
                 Assert.Equal("hand written, not mine to delete", File.ReadAllText(keep));
@@ -482,7 +696,7 @@ Finish up.
             try
             {
                 await engine.OpenAsync(bim);
-                await engine.SaveAsync(folder, "TMDL");
+                await engine.SaveAsync(folder, "TMDL", false, "human");
                 var measure = (await engine.ListMeasuresAsync()).First();
                 var unreadable = Path.Combine(folder, "notes", "missing.txt");
                 Directory.CreateDirectory(Path.GetDirectoryName(unreadable));
@@ -490,7 +704,7 @@ Finish up.
                 var before = SnapshotTmdl(folder);
 
                 await engine.SetDaxAsync(measure.Ref, "11 + 11", "human");
-                var ex = await Assert.ThrowsAsync<IOException>(() => engine.SaveAsync(null, "TMDL", overwrite: true));
+                var ex = await Assert.ThrowsAsync<IOException>(() => engine.SaveAsync(null, "TMDL", true, "human"));
 
                 Assert.Contains("preserve", ex.Message, StringComparison.OrdinalIgnoreCase);
                 Assert.Equal(before, SnapshotTmdl(folder));
@@ -516,7 +730,7 @@ Finish up.
             try
             {
                 await engine.OpenAsync(bim);
-                await engine.SaveAsync(folder, format);
+                await engine.SaveAsync(folder, format, false, "human");
                 var sidecar = LayoutStore.DirFor(folder);
                 LayoutStore.Write(folder, new[] { new LayoutStore.Entry { Name = "Sales", X = 17, Y = 29 } });
                 Directory.CreateDirectory(Path.Combine(sidecar, "primers"));
@@ -531,7 +745,7 @@ Finish up.
                 await engine.OpenAsync(folder);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "12 + 12", "human");
-                await engine.SaveAsync(folder, format, overwrite: true);
+                await engine.SaveAsync(folder, format, true, "human");
 
                 Assert.Equal(beforeHead, Git(folder, "rev-parse", "HEAD"));
                 Assert.Equal(Path.GetFullPath(folder), Path.GetFullPath(Git(folder, "rev-parse", "--show-toplevel")));
@@ -568,7 +782,7 @@ Finish up.
                     await skipEngine.OpenAsync(skipBim);
                     var m = (await skipEngine.ListMeasuresAsync()).First();
                     await skipEngine.SetDaxAsync(m.Ref, "4 + 4", "human");
-                    await skipEngine.SaveAsync(null, "BIM");
+                    await skipEngine.SaveAsync(null, "BIM", false, "human");
                     Assert.NotEqual(before.Length, new FileInfo(skipBim).Length);   // the save did land
                 }
                 finally { Delete(skipRoot); }
@@ -589,7 +803,7 @@ Finish up.
                 Exception failure = null;
                 using (WriteSizeLimit.Cap(400 * 1024))
                 {
-                    try { await engine.SaveAsync(null, "BIM"); }
+                    try { await engine.SaveAsync(null, "BIM", false, "human"); }
                     catch (Exception ex) { failure = ex; }
                 }
 
@@ -616,7 +830,7 @@ Finish up.
                 await engine.OpenAsync(bim);
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "6 * 7", "human");
-                await engine.SaveAsync(null, "BIM");
+                await engine.SaveAsync(null, "BIM", false, "human");
                 Assert.False((await engine.SessionInfoAsync()).HasUnsavedChanges);
 
                 using var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
@@ -672,7 +886,7 @@ Finish up.
             using (var seed = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
             {
                 await seed.OpenAsync(bim);
-                await seed.SaveAsync(folder, "TMDL");
+                await seed.SaveAsync(folder, "TMDL", false, "human");
             }
             try
             {
@@ -721,7 +935,7 @@ Finish up.
             {
                 await engine.OpenAsync(bim);
                 await engine.SetCompatibilityLevelAsync(1604, "human");   // refresh policies need 1450 or higher
-                await engine.SaveAsync(null, "BIM");                      // clean baseline: nothing unsaved but the policy
+                await engine.SaveAsync(null, "BIM", false, "human");                      // clean baseline: nothing unsaved but the policy
                 var table = (await engine.ListTreeAsync(null)).First(n => n.Kind == "table").Ref;
 
                 // The pure check first: a store window millions of years wide plainly covers a 10 day refresh
@@ -779,8 +993,11 @@ Finish up.
             [DllImport("libc")] private static extern IntPtr signal(int signum, IntPtr handler);
         }
 
+        // The edit ledger's file (.semanticus/history.json, Plan-heart E4) is left out: it is this machine's record of
+        // edits, rewritten after every edit and git-ignored, not part of the saved model these tests compare.
         private static string Snapshot(string dir) => string.Join("\n",
             Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
+                .Where(p => !Path.GetFileName(p).StartsWith(EditLedger.FileName, StringComparison.Ordinal))
                 .OrderBy(p => p, StringComparer.Ordinal)
                 .Select(p => Path.GetRelativePath(dir, p).Replace('\\', '/') + ":" + File.ReadAllText(p)));
 

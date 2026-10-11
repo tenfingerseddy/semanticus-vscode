@@ -1,0 +1,116 @@
+{
+  "Server": "s04-sql.example.invalid",
+  "Database": "ForgeRuns",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_date",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CAL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_machine",
+      "KeyColumns": [
+        "MACHINE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "MACHINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MACHINE_CLASS",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_material",
+      "KeyColumns": [
+        "MATERIAL_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "MATERIAL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MATERIAL_GRADE",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_run",
+      "KeyColumns": [
+        "RUN_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "RUN_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MACHINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MATERIAL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "RUN_STARTED_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "GOOD_UNITS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "SCRAP_UNITS",
+          "DataType": "Int64"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_run",
+      "FromColumn": "MACHINE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_machine",
+      "ToColumn": "MACHINE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_run",
+      "FromColumn": "MATERIAL_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_material",
+      "ToColumn": "MATERIAL_ID"
+    }
+  ]
+}

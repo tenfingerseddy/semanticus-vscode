@@ -30,7 +30,6 @@ namespace Semanticus.Engine
 
         public async Task<ReconcileMappingReview> ReviewReconcileMappingAsync(ReconcileMappingRequest req, string origin = "human")
         {
-            RequireProFeature();
             if (req == null) return new ReconcileMappingReview { Error = "No mapping request supplied." };
             var s = _sessions.Current;
             if (s == null) return new ReconcileMappingReview { Error = "No open model. Use open_model, connect_local or connect_xmla first." };
@@ -87,9 +86,35 @@ namespace Semanticus.Engine
             return review;
         }
 
-        public async Task<ReconcileRunResult> ReconcileMeasureAsync(ReconcileRequest req, string origin = "human")
+        public Task<ReconcileRunResult> ReconcileMeasureAsync(ReconcileRequest req, string origin = "human") =>
+            ReconcileMeasureCoreAsync(req, origin, resolvedSource: null);
+
+        /// <summary>The measure a SAVED check is bound to, carried as its identity and never as a ref string that is parsed again: <see cref="ObjectRefs.Resolve"/> splits a
+        /// ref at the first '/', so a table named 'Sales/EU' and a measure 'EU/Revenue' on a table 'Sales' read the same, and the check would run the other one (join 11 solui,
+        /// round 2, U3). A binding is the lineage tag, or, for a model without tags, the table and measure name the identity index recorded. It resolves to one measure or to
+        /// nothing, and nothing is reported as such: it never falls back to a name that could be another measure.</summary>
+        internal sealed class ReconcileBinding
         {
-            RequireProFeature();
+            public string Tag;
+            public string TableName;
+            public string MeasureName;
+            public static ReconcileBinding ForTag(string tag) => new ReconcileBinding { Tag = tag };
+            public static ReconcileBinding ForNames(string table, string measure) => new ReconcileBinding { TableName = table, MeasureName = measure };
+            public Measure Find(Model m)
+            {
+                if (!string.IsNullOrEmpty(Tag)) return m.Tables.SelectMany(t => t.Measures).FirstOrDefault(x => x.LineageTag == Tag);
+                var table = m.Tables.FirstOrDefault(t => string.Equals(t.Name, TableName, StringComparison.Ordinal));
+                return table?.Measures.FirstOrDefault(x => string.Equals(x.Name, MeasureName, StringComparison.Ordinal));
+            }
+        }
+
+        /// <summary>The reconciliation itself. <paramref name="resolvedSource"/> is where a SAVED check's run already
+        /// decided the SQL is read (its own choice, the model's endpoint, or, for a check the upgrade pinned, nothing,
+        /// which means the model's own partitions). When it is given, this never resolves a second time: resolving again
+        /// here would apply the model's endpoint to a pinned check and query a different place than the run reported.
+        /// A direct reconcile_measure call passes null and is resolved here, once.</summary>
+        private async Task<ReconcileRunResult> ReconcileMeasureCoreAsync(ReconcileRequest req, string origin, SqlSourceResolution resolvedSource, ReconcileBinding bound = null)
+        {
             if (req == null)
                 return ReconcileRunResult.Fail("No request supplied.", ReconcileStatus.InputError);
 
@@ -125,19 +150,23 @@ namespace Semanticus.Engine
             // SQL coordinates in ONE model read (pure, no mutation). Done BEFORE the live check so a bad ref / injection
             // attempt is a clean InputError, not masked by "not connected".
             var s = _sessions.Require();
-            var probe = await s.ReadAsync(m => ResolveMeasureAndSource(m, req.MeasureRef, groupBy));
+            var probe = await s.ReadAsync(m => ResolveMeasureAndSource(m, req.MeasureRef, groupBy, bound));
             if (probe.Error != null)
                 return ReconcileRunResult.Fail(probe.Error, ReconcileStatus.InputError, next: "list_measures / list_columns");
 
             // A NAMED SQL source wins over the inline coordinates here too, so sqlSourceId means the same thing
             // whether a saved check carries it or a direct reconcile_measure call passes it. A field that exists
-            // and is silently ignored on one path is its own defect. Apply() is idempotent: a saved check has
-            // already resolved by the time it reaches here, and resolving the same id again lands on the same
-            // coordinates.
-            var namedSqlSource = SqlSources.Apply(req);
+            // and is silently ignored on one path is its own defect. A saved check arrives already resolved and is
+            // NOT resolved again: a check the upgrade pinned to the partitions resolves to nothing on purpose, and a
+            // second pass here would hand it the model's endpoint (Sol 6, slice C).
+            // A request that names no place of its own reads the model's SQL endpoint next (contract 19.3), before the
+            // old fallback of deriving one from the model's partitions below.
+            var namedSqlSource = resolvedSource ?? SqlSources.Apply(req, await ModelSqlEndpointIdAsync(s));
             if (namedSqlSource.Error != null)
                 return ReconcileRunResult.Fail(
-                    "This reconciliation is set to use a SQL source that is no longer saved. Open Connections, pick a SQL source, then try again.",
+                    namedSqlSource.FromModelEndpoint
+                        ? "This model's SQL endpoint is no longer saved. Open Connections and choose the model's SQL endpoint again, then try again."
+                        : "This reconciliation is set to use a SQL source that is no longer saved. Open Connections, pick a SQL source, then try again.",
                     ReconcileStatus.InputError, next: "list_sql_sources");
 
             var server = string.IsNullOrWhiteSpace(req.Server) ? probe.Server : req.Server.Trim();
@@ -176,7 +205,7 @@ namespace Semanticus.Engine
                 return ReconcileRunResult.Fail(xmlaGate, ReconcileStatus.InputError, refused: true, approvalId: xmlaApprovalId);
 
             string token;
-            try { token = await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
+            try { token = ReconcileSqlForTests != null ? null : await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
             catch (Exception ex) { return ReconcileRunResult.Fail("Could not acquire a SQL token: " + ScrubSchemaError(ex.Message), ReconcileStatus.InsufficientCoverage); }
 
             var maxRows = req.MaxRows <= 0 ? 100000 : req.MaxRows;
@@ -208,7 +237,7 @@ namespace Semanticus.Engine
                 result.DaxElapsedMs = daxRs.ElapsedMs;
 
                 result.SqlExecutedAtUtc = DateTime.UtcNow;
-                var sqlRs = await FabricSqlQuery.ExecuteAsync(server, database, token, req.Sql, maxRows, 120, CancellationToken.None).ConfigureAwait(false);
+                var sqlRs = await ReconcileSqlAsync(server, database, token, req.Sql, maxRows).ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(sqlRs.Error)) return QueryFail("SQL member query", sqlRs.Error, result.DaxQuery);
                 result.SqlElapsedMs = sqlRs.ElapsedMs;
                 if (sqlRs.Columns.Length < groupBy.Length + 1)
@@ -358,6 +387,19 @@ namespace Semanticus.Engine
             return string.IsNullOrEmpty(t) ? null : t;
         }
 
+        /// <summary>Test seam at the one place a reconciliation's ground-truth SQL meets a connection: it receives the
+        /// server and database the query runs against, exactly as execution would, and answers in place of the endpoint
+        /// (no token is acquired while it is set). A test that asserts here proves where the query ran, not what a
+        /// label said.</summary>
+        internal Func<string, string, string, ResultSet> ReconcileSqlForTests;
+
+        private Task<ResultSet> ReconcileSqlAsync(string server, string database, string token, string sql, int maxRows)
+        {
+            var seam = ReconcileSqlForTests;
+            if (seam != null) return Task.FromResult(seam(server, database, sql) ?? new ResultSet());
+            return FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, CancellationToken.None);
+        }
+
         private async Task<GrandTotalOutcome> BuildGrandTotalCellAsync(
             LiveConnection live, string measureName, string server, string database, string token, string sql,
             string filterDax = null)
@@ -372,7 +414,7 @@ namespace Semanticus.Engine
                 return GrandTotalOutcome.Failed("DAX grand-total query", $"expected exactly one total row/value but got {daxRs.Rows.Length} row(s), {daxRs.Columns.Length} column(s).");
 
             var sqlAt = DateTime.UtcNow;
-            var sqlRs = await FabricSqlQuery.ExecuteAsync(server, database, token, sql, 10, 120, CancellationToken.None).ConfigureAwait(false);
+            var sqlRs = await ReconcileSqlAsync(server, database, token, sql, 10).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(sqlRs.Error)) return GrandTotalOutcome.Failed("SQL grand-total query", sqlRs.Error);
             // (P1-5) A grand total must be exactly ONE row with a value column. ZERO rows is NOT a present NULL — that
             // would fabricate a judgeable total and could green a run under BlankIsNull. It is a malformed total query
@@ -426,12 +468,36 @@ namespace Semanticus.Engine
         }
 
         // ---- model read: resolve the measure + the grouping columns + the Fabric SQL coordinates ------
-        private static MeasureSourceProbe ResolveMeasureAndSource(Model m, string measureRef, string[] groupBy)
+        /// <summary>A measure ref ('measure:Table/Name') or the bare measure NAME the error text promises, for a DIRECT call that has only what the caller typed
+        /// (<see cref="ObjectRefs.Resolve"/> reads a bare name as a TABLE, so a real measure read "is not a measure", UAT-J9-S10b-001; a measure name is unique in a model).
+        /// A SAVED check never comes through here: it is found by its <see cref="ReconcileBinding"/>, because a ref splits at its first '/' and can read as another measure.</summary>
+        private static Measure ResolveMeasureByRefOrName(Model m, string measureRef)
         {
-            if (string.IsNullOrWhiteSpace(measureRef))
-                return new MeasureSourceProbe { Error = "A measure ref is required (a name or 'measure:Name'); run list_measures to see them." };
-            if (!(ObjectRefs.Resolve(m, measureRef) is Measure meas))
-                return new MeasureSourceProbe { Error = $"{measureRef} is not a measure: pass a measure ref (a name or 'measure:Name'); run list_measures to see them." };
+            if (string.IsNullOrWhiteSpace(measureRef)) return null;
+            if (ObjectRefs.Resolve(m, measureRef) is Measure exact) return exact;
+            var name = measureRef.StartsWith("measure:", StringComparison.OrdinalIgnoreCase) ? measureRef.Substring("measure:".Length) : measureRef;
+            var named = m.Tables.SelectMany(t => t.Measures).Where(x => string.Equals(x.Name, name, StringComparison.Ordinal)).Take(2).ToArray();
+            return named.Length == 1 ? named[0] : null;
+        }
+
+        private static MeasureSourceProbe ResolveMeasureAndSource(Model m, string measureRef, string[] groupBy, ReconcileBinding bound = null)
+        {
+            Measure meas;
+            if (bound != null)
+            {
+                // A saved check runs the measure it is bound to, found by identity; the request's ref is only what the page shows.
+                meas = bound.Find(m);
+                if (meas == null)
+                    return new MeasureSourceProbe { Error = "The measure this check was saved for is not in the model now (it was deleted, or recreated with a new identity). Re-bind or delete the check." };
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(measureRef))
+                    return new MeasureSourceProbe { Error = "A measure ref is required (a name or 'measure:Name'); run list_measures to see them." };
+                meas = ResolveMeasureByRefOrName(m, measureRef);
+                if (meas == null)
+                    return new MeasureSourceProbe { Error = $"{measureRef} is not a measure: pass a measure ref (a name or 'measure:Name'); run list_measures to see them." };
+            }
 
             // (P1-3) Resolve every grouping entry to a REAL model column and emit an engine-constructed DAX ref. Raw
             // caller text is never spliced into the DAX query — that is how one array element could smuggle extra
@@ -446,7 +512,7 @@ namespace Semanticus.Engine
             }
 
             var probe = new MeasureSourceProbe { MeasureName = meas.Name, GroupByRefs = refs };
-            var mapping = BuildReconcileMappingReview(m, ObjectRefs.For(meas));
+            var mapping = BuildReconcileMappingReviewFor(m, meas);
             probe.Server = mapping.DetectedServer;
             probe.Database = mapping.DetectedDatabase;
             return probe;
@@ -456,9 +522,15 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrWhiteSpace(measureRef))
                 return new ReconcileMappingReview { Error = "A measure ref is required; run list_measures to see them." };
-            if (!(ObjectRefs.Resolve(m, measureRef) is Measure measure))
+            var measure = ResolveMeasureByRefOrName(m, measureRef);
+            if (measure == null)
                 return new ReconcileMappingReview { MeasureRef = measureRef, Error = $"{measureRef} is not a measure; run list_measures to see them." };
+            return BuildReconcileMappingReviewFor(m, measure);
+        }
 
+        /// <summary>The mapping review of a measure already resolved: nothing here reads a ref back.</summary>
+        private static ReconcileMappingReview BuildReconcileMappingReviewFor(Model m, Measure measure)
+        {
             var related = new HashSet<Table>();
             var seen = new HashSet<Measure>();
             var queue = new Queue<Measure>();

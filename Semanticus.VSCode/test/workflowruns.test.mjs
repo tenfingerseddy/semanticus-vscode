@@ -248,7 +248,9 @@ const run = (runId, over = {}) => ({
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (f) => readFileSync(resolve(root, f), 'utf8');
 const app = read('webview/src/App.tsx');
-const workflows = read('webview/src/workflows.tsx');
+// A run is a Plan row now (lane W2, R3): its view lives in workflow-run.tsx, the shared shapes and styles in
+// workflow-ui.tsx, and the page in workflows.tsx. The guards below read the three as one.
+const workflows = ['webview/src/workflows.tsx', 'webview/src/workflow-ui.tsx', 'webview/src/workflow-run.tsx'].map(read).join('\n');
 const mcpTools = read('../Semanticus.Engine/McpTools.cs');
 assert.match(app, /onWorkflowChange\(\(v\) => foldRun\(v as WorkflowRunView, \{ sessionId: sid \}\)\)/, 'App holds the always-alive run subscription and stamps each live broadcast with the current session (survives leaving the Workflows tab; generation-guarded)');
 assert.match(app, /setRuns\(emptyRuns\(sid\)\); ownRunIds\.current = new Set\(\);\s*if \(!sid\) return;/, 'App resets the run map (stamped with the new session) + ownership on ANY sessionId change, then reseeds (HIGH 3 + finding 4: a model swap must not carry the prior run map)');
@@ -268,7 +270,11 @@ assert.match(workflows, /const done = [^;]*result\.status === 'not_applicable'/,
 // Acceptance 13b: every visible total stays honest while an authored loop template remains unexpanded.
 assert.match(workflows, /totalStepsProvisional\?: boolean \| null/, 'the TypeScript run contract carries the optional provisional-total flag');
 assert.match(workflows, /function totalStepsText\(run: WorkflowRunView\)[\s\S]*run\.totalStepsProvisional \? `at least \$\{run\.totalSteps\} steps` : `\$\{run\.totalSteps\} steps`/, 'the one Studio formatter says at least N steps only for provisional totals');
-assert.equal((workflows.match(/totalStepsText\(/g) ?? []).length, 6, 'all five visible Studio step-total phrases use the shared honest formatter');
+// One visible total is left (the run row's head): the live banner and the Runs switcher went with the Runs list (R3),
+// and the rail now counts its steps by what they are (runTally, F14), so the formatter's definition plus one use is two.
+// runTally keeps the same honesty: a provisional total says "at least N to go".
+assert.equal((workflows.match(/totalStepsText\(/g) ?? []).length, 2, 'the visible Studio step-total phrase uses the shared honest formatter');
+assert.match(workflows, /run\.totalStepsProvisional \? `at least \$\{left\} to go` : `\$\{left\} to go`/, 'the rail\'s count of what is left stays a floor while the total is provisional');
 assert.doesNotMatch(workflows, /\{run\.totalSteps\}[^\n]*(?:passed|started)|\$\{r\.totalSteps\}/, 'no visible run phrase bypasses the provisional-total formatter and states a final count');
 assert.match(mcpTools, /r\.TotalStepsProvisional == true\s*\? \$"at least \{r\.TotalSteps\} steps"\s*:\s*\$"\{r\.TotalSteps\} steps"/, 'the MCP start activity says at least N steps for a provisional total');
 {
@@ -369,6 +375,18 @@ assert.match(mcpTools, /r\.TotalStepsProvisional == true\s*\? \$"at least \{r\.T
   assert.equal(refreshed.declined.note, false);
   assert.equal(refreshed.reasons.note, '');
   assert.equal(initial.vals.table, 'Sales', 'draft updates leave the prior form snapshot alone');
+}
+
+{
+  // Lane l9-finish (found in lane e): a draft's guided sub-run counts the draft's gated steps only ("step 2 of 4" beside
+  // a draft of 5 steps) and has no run row to open. It is part of the draft, whose Plan row carries it, so the header
+  // chip and the live count leave it out.
+  let state = emptyRuns();
+  state = reduceRuns(state, { runId: 'wfr-sub', status: 'active', startedUtc: '2026-09-26T00:00:00Z', stepIndex: 1, totalSteps: 4, draftId: 'dr-0000abcd' });
+  assert.equal(liveRuns(state).length, 0, 'a draft\'s sub-run is not a live run of its own');
+  assert.equal(mostRecentLive(state), null);
+  state = reduceRuns(state, { runId: 'wfr-own', status: 'active', startedUtc: '2026-09-26T00:01:00Z', stepIndex: 0, totalSteps: 3 });
+  assert.equal(mostRecentLive(state)?.runId, 'wfr-own');
 }
 
 console.log('workflow run-map reducer tests passed');

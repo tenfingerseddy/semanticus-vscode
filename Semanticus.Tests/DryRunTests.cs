@@ -108,6 +108,7 @@ namespace Semanticus.Tests
         }
 
         // 4) set_description on an existing object — the deltas name the object ref + the changed property.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_set_description_deltas_name_the_object_and_property()
         {
@@ -130,6 +131,7 @@ namespace Semanticus.Tests
         }
 
         // 5) No scope leak: the SAME op applied for real right after a rehearsal actually mutates.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_does_not_leak_the_scope_to_the_next_real_op()
         {
@@ -147,6 +149,7 @@ namespace Semanticus.Tests
 
         // 6) Audit suppression: with Verified Mode ON, a rehearsed update_measure leaves the audit chain unchanged
         //    (a rolled-back rehearsal must never mint an append-only record).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_under_verified_mode_records_no_audit_edit()
         {

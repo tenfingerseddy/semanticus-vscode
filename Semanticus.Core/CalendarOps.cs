@@ -62,10 +62,10 @@ namespace TabularEditor.TOMWrapper.Utils
             catch
             {
                 try { TmdlApplier.ApplyDoc(tomModel, path, before); } catch { /* best-effort revert */ }
-                model.Reinit();
+                DependencyMaintenance.Reload(model);
                 throw;
             }
-            model.Reinit();   // rebuild the wrapper view (it reuses existing wrappers; calendars stay raw-only)
+            DependencyMaintenance.Reload(model);   // rebuild the wrapper view (it reuses existing wrappers; calendars stay raw-only)
             model.Handler.UndoManager.Add(new TmdlApplyUndoAction(model, path, before, after));
         }
 
@@ -96,7 +96,7 @@ namespace TabularEditor.TOMWrapper.Utils
             {
                 tomModel.Tables.Add(table);
                 mutate(table);
-                model.Reinit();
+                DependencyMaintenance.Reload(model);
                 var after = TmdlApplier.CaptureDoc(model, path)
                     ?? throw new InvalidOperationException($"Calendar table '{tableName}' was created but could not be scripted for undo.");
                 model.Handler.UndoManager.Add(new TmdlCreateTableUndoAction(model, tableName, lineageTag, after));
@@ -107,7 +107,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 if (added != null && string.Equals(added.LineageTag, lineageTag, StringComparison.Ordinal))
                     tomModel.Tables.Remove(added);
                 model.Handler.WrapperLookup[tomModel] = model;
-                model.Reinit();
+                DependencyMaintenance.Reload(model);
                 throw;
             }
         }
@@ -137,7 +137,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 throw new InvalidOperationException($"Cannot undo calendar table creation: '{_tableName}' now has a different identity.");
             tom.Tables.Remove(table);
             _model.Handler.WrapperLookup[tom] = _model;
-            _model.Reinit();
+            DependencyMaintenance.Reload(_model);
         }
 
         public void Redo()
@@ -148,7 +148,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 throw new InvalidOperationException($"Cannot redo calendar table creation: '{_tableName}' already exists.");
             TmdlApplier.ApplyDoc(tom, "./tables/" + _tableName, _after);
             _model.Handler.WrapperLookup[tom] = _model;
-            _model.Reinit();
+            DependencyMaintenance.Reload(_model);
         }
     }
 }

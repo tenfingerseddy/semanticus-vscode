@@ -35,3 +35,10 @@ daxpkg.bin
 
 # readiness-corpus local clones
 tools/readiness-corpus/work/
+
+# jev-replay generated fixtures (derived from docs/redesign/jev-pilot/verdict.json by
+# `node tools/jev-replay/replay.mjs ci`, regenerated on every run; ~3.9M, never committed)
+tools/jev-replay/.work/
+
+# Headless driver and visual-check output (uishot drivers write here); run output, never source.
+Semanticus.VSCode/shots/

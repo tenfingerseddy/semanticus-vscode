@@ -1,0 +1,11 @@
+{
+ "point": "relationship.join",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "proposal": "A proposal is a line that arrives KEPT (sure or likely), exactly what Approve or Run the plan would add. An unsure line arrives dropped and is not a proposal.",
+ "exact": "A proposal matches a label when the from column, the to column, the active flag, the filter direction and the cardinality are all the same.",
+ "rule": "Jev decides relationships for Pro (RelationshipFamily.JevDecides = true) only when ALL hold over the whole labelled set: Jev's exact F1 is at least exactF1Min; Jev's join precision (from and to columns right, among its proposals) is at least joinPrecisionMin; and Jev's exact F1 is STRICTLY above the name rule's exact F1 on the same stripped models (Jev decides only where it beats the rule). Otherwise the rule stays and nobody is asked.",
+ "exactF1Min": 0.85,
+ "joinPrecisionMin": 0.9,
+ "mustBeatRule": true
+}

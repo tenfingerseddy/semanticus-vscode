@@ -34,12 +34,9 @@ namespace Semanticus.Engine
             return sidecar == null ? null : Path.Combine(sidecar, InterviewStore.DirName);
         }
 
-        private static string GlobalInterviewDir()
-        {
-            var home = Environment.GetEnvironmentVariable("USERPROFILE");
-            if (string.IsNullOrEmpty(home)) home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, LayoutStore.DirName, InterviewStore.DirName);
-        }
+        // The global pack lives in the one per-user home every store resolves through (SemanticusHome:
+        // SEMANTICUS_HOME, else ~/.semanticus), so a test run's scratch home keeps it out of the real one (F-232).
+        internal static string GlobalInterviewDir() => Path.Combine(SemanticusHome.Root(), InterviewStore.DirName);
 
         private string InterviewScopeFile(string scope)
         {
@@ -124,8 +121,8 @@ namespace Semanticus.Engine
         /// on-disk model PATH, not the folder, so two models in one folder differ, P1-2); else the ATTACHED live
         /// connection (a connect_xmla IS working on that live model). Returns null when there is NO durable anchor
         /// (an unsaved, unconnected model, or nothing open): such a model CANNOT own a persisted pack. A per-process
-        /// session counter is NOT used as an identity — Session.Id is "s"+Interlocked-counter reset to 0 each launch,
-        /// so the first scratch model of every process is sess:s1 and packs would collide across launches.</summary>
+        /// session counter is NOT used as an identity — Session.Id is a per-launch handle ("s" + a fresh GUID,
+        /// SessionManager.MintSessionId), made to be unique, not to name a model across launches: it is not a durable anchor a pack could bind to.</summary>
         private static string PaneIdentity(Session s, LiveConnection live)
         {
             if (s != null)
@@ -134,6 +131,96 @@ namespace Semanticus.Engine
                 if (!ExperienceStore.IsEphemeralAnchor(s.SourcePath)) return "disk:" + Sha8(CanonAnchor(s.SourcePath));
             }
             return live != null ? LiveIdentityFor(live) : null;   // an attached live connection is the only durable anchor left; else none
+        }
+
+        /// <summary>Which MODEL a session is, for the words a person typed and has not saved (join 11, drafts round 3): ONE pure function the
+        /// clients read verbatim, so no client derives it from fields that do not mean identity (a snapshot path rotates on every open, a session
+        /// id is a per-launch handle and names no model, a Desktop port and database GUID change on every Desktop start). In priority:
+        /// a Desktop model with a captured window stem is <c>desktop:&lt;stem&gt;</c>; any other live origin is <c>live:&lt;endpoint&gt;|&lt;database&gt;</c>;
+        /// a file that is the cached snapshot of a published model (<paramref name="snapshotOf"/>, from the snapshot folder's marker) is the SAME
+        /// two rules, so a cold start finds the words typed while the model was open live; a file is <c>file:&lt;canonical path&gt;</c>; a model with
+        /// none of these is <c>unsaved:&lt;instanceKey&gt;</c>. Endpoint, database and stem are trimmed, stripped of a trailing slash and lower-cased
+        /// (NormLivePart), so an accepted spelling of the same address is one key. Unlike <see cref="PaneIdentity"/> (which hashes, and drops an unsaved
+        /// model) this never returns null for an open model: words typed into an unsaved model are still the person's.</summary>
+        internal static string ModelIdentityOf(LiveOrigin origin, LiveModelExport.SnapshotOrigin snapshotOf, string sourcePath, string instanceKey, Func<string, string> canon = null)
+        {
+            // A Desktop model is its window stem AND the instance it runs in (endpoint and database). The stem alone is the file's NAME, and two different
+            // files can share it (West/Sales.pbix and East/Sales.pbix both read "sales"), so a stem is never enough to say a draft belongs to this model.
+            // The instance changes when Desktop starts again: words typed before that are kept, but read-only, until the person copies or drops them.
+            static string Published(string endpoint, string database, string localName)
+                => !string.IsNullOrWhiteSpace(localName) ? "desktop:" + NormLivePart(localName) + "|" + NormLivePart(endpoint) + "|" + NormLivePart(database)
+                 : "live:" + NormLivePart(endpoint) + "|" + NormLivePart(database);
+            if (origin != null) return Published(origin.Endpoint, origin.Database, origin.LocalName);
+            if (snapshotOf != null) return Published(snapshotOf.Endpoint, snapshotOf.Database, snapshotOf.LocalName);
+            if (!string.IsNullOrWhiteSpace(sourcePath)) return "file:" + (canon ?? CanonAnchor)(sourcePath);
+            return "unsaved:" + instanceKey;
+        }
+
+        /// <summary>R-A, the engine's half: a write that words typed in an editor produce names the model it was typed for, and is refused when the open model is another.
+        /// The editor can unmount after a model switch and write on its way out; a client check cannot see that, so the engine decides, inside the write, on the session it
+        /// is writing. Null or empty means no fence (the assistant's door and every older caller). The words are never lost by this refusal: the editor keeps them.</summary>
+        internal static void FenceModelIdentity(Session s, string expectedIdentity)
+        {
+            if (string.IsNullOrEmpty(expectedIdentity)) return;
+            if (IdentityNames(s, expectedIdentity)) return;
+            throw new InvalidOperationException("These words were typed for another model than the one open now, so nothing was written. Your words are kept.");
+        }
+
+        /// <summary>True when <paramref name="identity"/> names this session: the identity it has now, or one it had a moment ago. An unsaved model is
+        /// <c>unsaved:&lt;instanceKey&gt;</c> until its first Save, and a page that was showing it still names it. A Desktop model reads <c>live:</c> before its window title is known and
+        /// <c>desktop:</c> after. The same session either way, so a write for it is not a write into another model.</summary>
+        internal static bool IdentityNames(Session s, string identity)
+        {
+            if (s == null || string.IsNullOrEmpty(identity)) return false;
+            if (string.Equals(ModelIdentityOf(s), identity, StringComparison.Ordinal)) return true;
+            if (string.Equals("unsaved:" + s.InstanceKey, identity, StringComparison.Ordinal)) return true;
+            // A model that a Save As moved is still the same model for a page that was showing it a moment before (round 3): the identities it had are kept.
+            foreach (var former in s.FormerIdentities) if (string.Equals(former, identity, StringComparison.Ordinal)) return true;
+            // A Desktop model is `desktop:<stem>|<endpoint>|<database>` once its window title is known and `live:<endpoint>|<database>` before: the same instance, so the same model.
+            // (Only from the live origin: the snapshot marker is read by the two identity functions and nothing else, VerifyDraftIdentityRound3Tests.)
+            return s.LiveOrigin != null && string.Equals("live:" + NormLivePart(s.LiveOrigin.Endpoint) + "|" + NormLivePart(s.LiveOrigin.Database), identity, StringComparison.Ordinal);
+        }
+
+        /// <summary>True when the model that is open now is the one <paramref name="identity"/> names (the person-door fence, <see cref="PersonFence"/>).</summary>
+        internal bool IsModelIdentity(string identity) => IdentityNames(_sessions.Current, identity);
+
+        /// <summary>True when any model is open (the strict rule of <see cref="PersonFence"/>).</summary>
+        internal bool HasOpenModel => _sessions.Current != null;
+
+        /// <summary>The identity of a session, with the path's canonical form (which reads the disk) cached per session and per path.</summary>
+        internal static string ModelIdentityOf(Session s)
+        {
+            if (s == null) return null;
+            return ModelIdentityOf(s.LiveOrigin, s.SnapshotOf, s.SourcePath, s.InstanceKey, p =>
+            {
+                var cache = s.CanonCache;
+                if (cache.Path == p && cache.Canon != null) return cache.Canon;
+                var canon = CanonAnchor(p);
+                s.CanonCache = (p, canon);
+                return canon;
+            });
+        }
+
+        /// <summary>A name a person can read for the model a held draft belongs to (display only, never a key).</summary>
+        internal static string ModelLabelOf(Session s, string modelName)
+        {
+            if (s == null) return null;
+            string pick(params string[] names) => names.Select(n => n?.Trim().TrimEnd('/', '\\')).FirstOrDefault(n => !string.IsNullOrWhiteSpace(n));
+            if (s.LiveOrigin != null) return pick(s.LiveOrigin.LocalName, s.LiveOrigin.Database, modelName);
+            if (s.SnapshotOf != null) return pick(s.SnapshotOf.LocalName, s.SnapshotOf.Database, modelName);
+            if (!string.IsNullOrWhiteSpace(s.SourcePath)) return pick(FileModelName(s.SourcePath), modelName);
+            return pick(modelName);
+        }
+
+        /// <summary>The name a person gave a model on disk: the file's name, or for a TMDL folder (a model saved as <c>Northstar.SemanticModel/definition</c>, whose own folder is always
+        /// called <c>definition</c>) the folder that holds it, without the <c>.SemanticModel</c> or <c>.Dataset</c> suffix. Display only.</summary>
+        internal static string FileModelName(string sourcePath)
+        {
+            var trimmed = sourcePath.TrimEnd('\\', '/');
+            var stem = Path.GetFileNameWithoutExtension(trimmed);
+            if (!string.Equals(stem, "definition", StringComparison.OrdinalIgnoreCase)) return stem;
+            var parent = Path.GetFileName(Path.GetDirectoryName(trimmed) ?? "");
+            return string.IsNullOrWhiteSpace(parent) ? stem : Path.GetFileNameWithoutExtension(parent);
         }
 
         private string OpenModelIdentity()
@@ -292,6 +379,13 @@ namespace Semanticus.Engine
             throw new InvalidOperationException($"Interview question '{id}' not found (it may have been deleted; list_interview_questions shows the saved pack).");
         }
 
+        /// <summary>The live question of this id in one scope's file, or null.</summary>
+        private InterviewQuestion StoredInterviewQuestion(string scope, string id)
+        {
+            var file = InterviewScopeFile(scope);
+            return file == null ? null : InterviewStore.Materialize(file, scope).Item1.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.Ordinal));
+        }
+
         // ---- reads (free) --------------------------------------------------------------------------------
 
         public Task<InterviewListResult> ListInterviewQuestionsAsync(string scope)
@@ -346,8 +440,9 @@ namespace Semanticus.Engine
         public async Task<InterviewQuestion> AddInterviewQuestionAsync(
             string question, string tier, string query, string scalarExpr, string paraphraseExpr,
             string[] groupBy, string[] filters, string expectedValue, string expectedMatrixJson,
-            bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin, string id = null)
+            bool expectRefusal, string fixRuleId, string seedSource, string scope, string origin, string id = null, string replacesJson = null)
         {
+            GuardOutsideWrite(origin);
             var q = new InterviewQuestion
             {
                 Question = (question ?? "").Trim(),
@@ -402,6 +497,11 @@ namespace Semanticus.Engine
                 var replacing = replaceId != null && liveBefore.Any(r => string.Equals(r.Id, replaceId, StringComparison.Ordinal));
                 if (replaceId != null && !replacing)
                     throw new InvalidOperationException("No saved question has that id, so it was not replaced. Save without an id to create one.");
+                // the question this edit replaces, as it was when the person was asked (an answer they rewrote since is theirs)
+                if (replacing) RequireApprovedBasis(nameof(AddInterviewQuestionAsync), InterviewQuestionBasis(liveBefore.First(r => string.Equals(r.Id, replaceId, StringComparison.Ordinal))), "question");
+                // The pin form names the question it was opened on. A replacement the person typed for that question must not land on another one the assistant
+                // wrote in its place meanwhile, and a single answer must not erase a trusted table answer another writer added (Sol join 12, A8-2).
+                if (replacing && replacesJson != null) RequirePinnedQuestionUnchanged(liveBefore.First(r => string.Equals(r.Id, replaceId, StringComparison.Ordinal)), replacesJson, q);
                 id = replacing ? replaceId : InterviewStore.NewId();
                 // Fail-loud, as promised: Append is best-effort by contract (the run-record paths need that),
                 // so the SAVE path must check it — returning a "saved" question that never hit disk would be
@@ -427,14 +527,52 @@ namespace Semanticus.Engine
             return live.FirstOrDefault(r => r.Id == id);
         }
 
+        /// <summary>The question and query a person's answer was typed against, with absent and empty alike and edges trimmed, so a shape the page sent compares with the stored one.</summary>
+        private static string InterviewPinShape(string question, string tier, string query, string scalarExpr, string paraphraseExpr, IEnumerable<string> groupBy, IEnumerable<string> filters,
+            string expectedValue, IEnumerable<IEnumerable<string>> expectedMatrix)
+        {
+            static string T(string v) => (v ?? "").Trim();
+            // the answer the form opened with is part of what the person saw (join 13, J-I1): another writer's different value on the same question refuses the pin
+            return string.Join("\u001e", T(question), InterviewScoring.NormalizeTier(tier), T(query), T(scalarExpr), T(paraphraseExpr),
+                string.Join("\u001f", (groupBy ?? Array.Empty<string>()).Select(T)), string.Join("\u001f", (filters ?? Array.Empty<string>()).Select(T)),
+                T(expectedValue), string.Join("\u001d", (expectedMatrix ?? Array.Empty<string[]>()).Select(row => string.Join("\u001f", (row ?? Array.Empty<string>()).Select(T)))));
+        }
+
+        /// <summary>Refuses a pin when the stored question is no longer the one the form was opened on (its question, query or saved answer changed), or when it holds a trusted table answer the pin would remove.</summary>
+        private static void RequirePinnedQuestionUnchanged(InterviewQuestion stored, string replacesJson, InterviewQuestion replacement)
+        {
+            string seen;
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(replacesJson);
+                var r = doc.RootElement;
+                string Str(string name) => r.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+                string[] Arr(string name) => r.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Array
+                    ? v.EnumerateArray().Select(x => x.ValueKind == System.Text.Json.JsonValueKind.String ? x.GetString() : null).ToArray() : Array.Empty<string>();
+                string[][] Rows(string name) => r.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.Array
+                    ? v.EnumerateArray().Select(row => row.ValueKind == System.Text.Json.JsonValueKind.Array
+                        ? row.EnumerateArray().Select(c => c.ValueKind == System.Text.Json.JsonValueKind.String ? c.GetString() : null).ToArray() : Array.Empty<string>()).ToArray()
+                    : Array.Empty<string[]>();
+                seen = InterviewPinShape(Str("question"), Str("tier"), Str("query"), Str("scalarExpr"), Str("paraphraseExpr"), Arr("groupBy"), Arr("filters"), Str("expectedValue"), Rows("expectedMatrix"));
+            }
+            catch (System.Text.Json.JsonException) { throw new InvalidOperationException("The question the answer was typed for could not be read, so nothing was saved."); }
+            if (seen != InterviewPinShape(stored.Question, stored.Tier, stored.Query, stored.ScalarExpr, stored.ParaphraseExpr, stored.GroupBy, stored.Filters, stored.ExpectedValue, stored.ExpectedMatrix))
+                throw new InvalidOperationException("This question changed while you were typing the answer, so nothing was saved. Read it again before you pin an answer.");
+            if (stored.ExpectedMatrix is { Length: > 0 } && !(replacement.ExpectedMatrix is { Length: > 0 }))
+                throw new InvalidOperationException("This question has a trusted answer with several rows, and one answer would remove it, so nothing was saved.");
+        }
+
         /// <summary>Tombstone a saved question (delta append; the JSONL is never rewritten). Free — it is the
         /// user's own data, and a pack you can't prune is a pack you stop trusting.</summary>
         public async Task<SetResult> DeleteInterviewQuestionAsync(string id, string origin)
         {
+            GuardOutsideWrite(origin);
             await _interviewGate.WaitAsync();
             try
             {
-                var (file, _, _) = LocateInterviewQuestion(id);   // throws instructively if it isn't live
+                var (file, _, located) = LocateInterviewQuestion(id);   // throws instructively if it isn't live
+                // the question this delete tombstones, as it was when the person was asked (words they rewrote since are theirs)
+                RequireApprovedBasis(nameof(DeleteInterviewQuestionAsync), InterviewQuestionBasis(located), "question");
                 // Same fail-loud contract as the save path: a tombstone that never hit disk would leave the
                 // question alive while this op claims Changed=true.
                 if (!InterviewStore.TryAppend(file, new InterviewStore.Delta { Op = "delete", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent" }, out var why))
@@ -452,6 +590,7 @@ namespace Semanticus.Engine
         /// a saved question gets a best-effort record-run delta so the Studio card shows the latest outcome.</summary>
         public async Task<InterviewRunResult> RunInterviewAsync(string questionId, string inlineJson, bool abstained, string attemptDax, string origin)
         {
+            GuardOutsideWrite(origin);
             InterviewQuestion q;
             string file = null, scope = null;
             // Capture the session + live connection ONCE (P1-3): the whole op — classify, execute, grade — is judged
@@ -465,6 +604,8 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(questionId))
             {
                 (file, scope, q) = LocateInterviewQuestion(questionId.Trim());
+                // the question the person was asked about: its query and its trusted answer live in the store, not in the model or the call
+                RequireApprovedBasis(nameof(RunInterviewAsync), InterviewQuestionBasis(q), "question");
                 // GATE 1 (pane): never OFFER another model's (or an unattributed) question for the open model. Its DAX
                 // and oracle were authored against a DIFFERENT model. Fail closed with a teaching message; the question
                 // is still visible (list surfaces it under its own bucket) and deletable.

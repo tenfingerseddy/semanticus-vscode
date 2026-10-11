@@ -13,8 +13,7 @@ namespace Semanticus.Engine
     /// </summary>
     internal static class HomeFile
     {
-        internal static string Root(string rootOverride) => rootOverride
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".semanticus");
+        internal static string Root(string rootOverride) => rootOverride ?? SemanticusHome.Root();
 
         private static readonly JsonSerializerOptions Json = new()
         {

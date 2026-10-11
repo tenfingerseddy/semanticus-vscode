@@ -1,0 +1,11 @@
+relationship c65c2b67-fe36-5b1d-88a2-007205572f94
+	fromColumn: Journal.'Posting Date Key'
+	toColumn: FiscalCalendar.'Date Key'
+
+relationship 5bb5a487-5095-54ad-9104-8b3b72c456b2
+	fromColumn: Journal.'Account Key'
+	toColumn: Accounts.'Account Key'
+
+relationship 0f029476-7a3e-5b10-895c-6f2e7205852b
+	fromColumn: Journal.'Department Key'
+	toColumn: Department.'Department Key'

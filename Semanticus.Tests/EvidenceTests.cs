@@ -370,7 +370,9 @@ namespace Semanticus.Tests
         [Fact]
         public void Golden_html_pins_the_output()
         {
-            var html = EvidenceRenderer.Render(FullDoc());
+            // Times are drawn in the reader's zone (EvidenceTime); the golden pins UTC so it does not depend on where
+            // the suite runs.
+            var html = EvidenceRenderer.Render(FullDoc(), TimeZoneInfo.Utc);
             var goldenPath = GoldenPath();
             Assert.True(File.Exists(goldenPath), "golden file missing at " + goldenPath);
             var golden = File.ReadAllText(goldenPath).Replace("\r\n", "\n");

@@ -6,6 +6,8 @@ using Semanticus.Analysis;
 
 if (args.Length == 0) { Console.Error.WriteLine("usage: probe <model path>"); return 1; }
 var path = args[0];
+// A probe is a throwaway run: its open must not be saved into the person's real ~/.semanticus (27 Sep).
+SemanticusHome.IsolateForTestRun("reviewprobe");
 var sessions = new SessionManager();
 var engine = new LocalEngine(sessions);
 Console.WriteLine("Opening: " + path);

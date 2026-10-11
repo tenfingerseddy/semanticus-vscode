@@ -9,7 +9,16 @@ THIRD-PARTY-NOTICES.md
 # Generated bundles (built by npm run build / build:webview, never committed):
 media/studio/studio.js
 media/studio/studio-mcode.js
+media/studio/studio-spec.js
 out/extension.js
 out/extension.js.map
+out/unsavedGuard.js
+out/unsavedGuard.js.map
 out/assistantSkills.js
 out/assistantSkills.js.map
+out/draftKey.js
+out/draftKey.js.map
+out/propSet.js
+out/propSet.js.map
+out/modelFence.js
+out/modelFence.js.map

@@ -67,6 +67,10 @@ namespace Semanticus.Engine
         public ExplainContributorRow[] Rows { get; set; } = Array.Empty<ExplainContributorRow>();
         public bool Truncated { get; set; }         // the member scan hit its cap — parts are incomplete
         public string Note { get; set; }
+        /// <summary>For a number whose parts do not add up (a ratio, an average): the value of each member of the dimension, the highest
+        /// first and then the lowest, so a person can see where it is high and where it is low. Not shares and never a sum. Empty when
+        /// the parts do add up (Rows holds them) or there is nothing to compare.</summary>
+        public ExplainContributorRow[] Spread { get; set; } = Array.Empty<ExplainContributorRow>();
     }
 
     /// <summary>One check of the why-is-this-blank checklist. Result vocabulary:
@@ -96,6 +100,15 @@ namespace Semanticus.Engine
         public TablePermissionInfo[] Filters { get; set; } = Array.Empty<TablePermissionInfo>();
     }
 
+    /// <summary>One number this measure is built from (a measure it uses directly), worked out in the same cell. Format is that measure's
+    /// own format string, so a page shows it as the model does.</summary>
+    public sealed class ExplainDriver
+    {
+        public string Name { get; set; }
+        public string Value { get; set; }       // DaxBench.Fmt, like the dossier's Value
+        public string Format { get; set; }
+    }
+
     /// <summary>Optional live evidence (server timings for the cell's query). Absent/Available=false
     /// offline or when the endpoint refuses a trace — the dossier renders fully without it.</summary>
     public sealed class ExplainEvidence
@@ -122,6 +135,8 @@ namespace Semanticus.Engine
         public string Value { get; set; }           // formatted; null when not evaluated
         public bool? IsBlank { get; set; }          // null when not evaluated
         public string Summary { get; set; }         // the plain-language lead sentence (the UI headline)
+        public string Format { get; set; }          // the measure's own format string (null when it has none), so a page shows Value as the model does
+        public ExplainDriver[] Drivers { get; set; } = Array.Empty<ExplainDriver>();   // the measures it is built from, in this cell (empty when it uses none)
         public ExplainChainNode[] Chain { get; set; } = Array.Empty<ExplainChainNode>();
         public bool ChainTruncated { get; set; }
         public ExplainLineageEntry[] Lineage { get; set; } = Array.Empty<ExplainLineageEntry>();
@@ -289,15 +304,15 @@ namespace Semanticus.Engine
             if (truncated)
             {
                 c.Additive = false;
-                c.Note = "This column has too many values to check that the parts add up to the total, so no breakdown is shown. Try a column with fewer values (pass decomposeBy).";
+                c.Note = "This column has too many values to check that the parts add up to the total, so no breakdown is shown. Try a column with fewer values.";
                 return c;
             }
             var sum = memberValues.Sum(kv => kv.Value);
             if (!SumMatchesTotal(sum, total))
             {
                 c.Additive = false;
-                c.Note = "The parts do not add up to the total for this measure (" + DaxBench.Fmt(sum) + " vs " + DaxBench.Fmt(total) + "). "
-                       + "That is normal for distinct counts, ratios, min/max, and opening/closing balances. A top-contributors list would be misleading here, so none is shown.";
+                c.Note = "The parts do not add up to this number. That is normal for a ratio, an average, a count of different things, a smallest or largest value, or a closing balance. "
+                       + "A list of top parts would mislead here, so none is shown.";
                 return c;
             }
             c.Additive = true;
@@ -323,6 +338,15 @@ namespace Semanticus.Engine
             c.Rows = rows.ToArray();
             c.Note = $"The largest parts of this number, split by {dimension}. The parts add up to the total.";
             return c;
+        }
+
+        /// <summary>The members of a non-additive number, three highest then two lowest (all of them when there are five or fewer), as plain values.</summary>
+        public static ExplainContributorRow[] Spread(IReadOnlyList<KeyValuePair<string, double>> memberValues)
+        {
+            if (memberValues == null || memberValues.Count < 2) return Array.Empty<ExplainContributorRow>();
+            var ordered = memberValues.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal).ToList();
+            var pick = ordered.Count <= 5 ? ordered : ordered.Take(3).Concat(ordered.Skip(ordered.Count - 2)).ToList();
+            return pick.Select(kv => new ExplainContributorRow { Member = kv.Key, Value = DaxBench.Fmt(kv.Value) }).ToArray();
         }
 
         /// <summary>Static blank-by-construction signals in the chain's DAX bodies (DIVIDE / ISBLANK /

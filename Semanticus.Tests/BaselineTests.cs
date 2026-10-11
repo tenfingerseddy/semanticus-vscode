@@ -37,11 +37,11 @@ namespace Semanticus.Tests
 
         // ---- the tier line + structured refusals ----
 
-        // Both ops belong to the Tests feature now, so the entitled caller still gets the HONEST structured
-        // refusal offline (no-connection / not-found) and the free caller is turned away at the entry with the
-        // one refusal sentence. A gate throw on the entitled side would mean the gate leaked past its feature.
+        // Both ops belonged to the Tests feature until 22 September 2026, when Validation became free. A free
+        // caller now gets the SAME honest structured refusal offline (no-connection / not-found) as a paying one,
+        // and an entitlement throw on either side would mean a gate that was removed is still firing.
         [Fact]
-        public async Task Both_ops_are_pro_and_still_refuse_honestly_offline()
+        public async Task Both_ops_refuse_honestly_offline_on_either_tier()
         {
             using var e = await OpenAsync();
             var cap = await e.CaptureBaselineAsync("measure:Date/Days In Current Quarter", null, null, true, 25, 2000, null, "human");
@@ -50,11 +50,10 @@ namespace Semanticus.Tests
             Assert.Equal("not-found", cmp.Status);
 
             using var free = await OpenAsync(pro: false);
-            var capRefusal = await Assert.ThrowsAsync<EntitlementException>(() =>
-                free.CaptureBaselineAsync("measure:Date/Days In Current Quarter", null, null, true, 25, 2000, null, "human"));
-            Assert.Contains("Tests is a Semanticus Pro feature.", capRefusal.Message);
-            var cmpRefusal = await Assert.ThrowsAsync<EntitlementException>(() => free.CompareBaselineAsync(null, null, "human"));
-            Assert.Contains("Tests is a Semanticus Pro feature.", cmpRefusal.Message);
+            var freeCap = await free.CaptureBaselineAsync("measure:Date/Days In Current Quarter", null, null, true, 25, 2000, null, "human");
+            Assert.Equal("no-connection", freeCap.Status);
+            var freeCmp = await free.CompareBaselineAsync(null, null, "human");
+            Assert.Equal("not-found", freeCmp.Status);
         }
 
         [Fact]

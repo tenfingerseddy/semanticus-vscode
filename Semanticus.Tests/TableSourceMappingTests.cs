@@ -46,7 +46,7 @@ namespace Semanticus.Tests
             await engine.CreateModelAsync("Rows", 1604);
             await engine.CreateImportTableAsync("Sales", partitionM, "human");
             // A mapping needs an on-disk home, the same rule a saved check follows.
-            await engine.SaveAsync(_modelDir, "TMDL");
+            await engine.SaveAsync(_modelDir, "TMDL", false, "human");
             return engine;
         }
 

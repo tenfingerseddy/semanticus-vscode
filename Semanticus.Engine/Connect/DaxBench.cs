@@ -638,15 +638,43 @@ namespace Semanticus.Engine
 
         // A slicer over a column, membership form (the honest shape TREATAS gives — set of selected members).
         // Members are DAX literals: a numeric member is emitted bare, anything else is a quoted string ("" escapes ").
-        public static string CompileMemberFilter(string column, string[] members)
+        /// <summary>The member filter of a clicked cell. A member of a DATE column is sent as a date: the grid hands over the cell's text ("2018-06-25T00:00:00"),
+        /// and a text literal against a Date column is refused by the engine ("Cannot convert value ... of type Text to type Date"). A member that is not a date
+        /// stays the text or number it is.</summary>
+        public static string CompileMemberFilter(string column, string[] members, bool dateColumn = false)
         {
             var lits = (members ?? Array.Empty<string>()).Where(m => m != null).Select(m =>
             {
                 var t = m.Trim();
+                if (dateColumn && DateLiteral(t) is { } d) return d;
                 return double.TryParse(t, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out _)
                     ? t : "\"" + t.Replace("\"", "\"\"") + "\"";
             }).ToArray();
             return "TREATAS ( { " + string.Join(", ", lits) + " }, " + column.Trim() + " )";
+        }
+
+        private static readonly System.DateTime OaEpoch = new(1899, 12, 30);
+        private static readonly System.DateTime DaxDateStart = new(1900, 3, 1);
+
+        private static string DateLiteral(string text)
+        {
+            if (!System.DateTime.TryParse(text, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out var d)) return null;
+            if (d.TimeOfDay == System.TimeSpan.Zero) return $"DATE ( {d.Year}, {d.Month}, {d.Day} )";
+            var whole = $"DATE ( {d.Year}, {d.Month}, {d.Day} ) + TIME ( {d.Hour}, {d.Minute}, {d.Second} )";   // DAX has no DATETIME function (live Northstar, 4 Oct)
+            var ticks = d.Ticks % System.TimeSpan.TicksPerSecond;
+            // DAX dates start at 1 March 1900 (Microsoft's data types page). From there a whole-second member takes the same one-division form a fractional one does:
+            // DATE + TIME adds two rounded terms and lands one bit from ToOADate for 192 of the 86,399 seconds of 1900-07-11, so TREATAS matched no row (sola3 check, J-S1).
+            if (ticks == 0 && d >= DaxDateStart) return $"DATE ( 1899, 12, 30 ) + TIME ( 0, 0, 0 ) + {(d - OaEpoch).Ticks / System.TimeSpan.TicksPerMillisecond} / 86400000";
+            if (ticks == 0) return whole;
+            // A stored member is DateTime.ToOADate: the whole milliseconds since 1899-12-30, divided once by 86,400,000. DATE + TIME + a fraction adds three rounded terms and
+            // lands one bit away from it for about a quarter of the members, so TREATAS would match no row. DATE and TIME are exact zeros here, and the one division is
+            // the whole member. (A date before 1899-12-30 has no such form: ToOADate mirrors its fraction, so those keep the sum.)
+            if (d >= OaEpoch && ticks % System.TimeSpan.TicksPerMillisecond == 0)
+                return $"DATE ( 1899, 12, 30 ) + TIME ( 0, 0, 0 ) + {(d - OaEpoch).Ticks / System.TimeSpan.TicksPerMillisecond} / 86400000";
+            // Finer than a millisecond ToOADate cannot hold it: the rest of the second is added as ticks (100 ns) over 864,000,000,000.
+            return ticks % System.TimeSpan.TicksPerMillisecond == 0
+                ? $"{whole} + {ticks / System.TimeSpan.TicksPerMillisecond} / 86400000"
+                : $"{whole} + {ticks} / 864000000000";
         }
 
         // The empty-selection context (measure should BLANK, not ERROR). TREATAS({},…) is invalid, so use FILTER(ALL,FALSE()).

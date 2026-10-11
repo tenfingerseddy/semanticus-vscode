@@ -15,8 +15,9 @@ namespace Semanticus.Tests
     {
         private static WorkflowDef NewMeasureSeed()
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "new-measure.md");
-            Assert.True(File.Exists(path), $"stock workflow was not copied beside the test binary: {path}");
+            // new-measure parked (contract 21.2, lane W3); its last shipped bytes are the compat freeze.
+            var path = WorkflowSeedLibraryTests.ParkedFreeze("new-measure");
+            Assert.True(File.Exists(path), $"frozen new-measure was not copied beside the test binary: {path}");
             var def = WorkflowParser.ParseFile(path, "stock");
             Assert.Null(def.Error);
             return def;

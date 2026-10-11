@@ -1,40 +1,40 @@
 {
-  "version": "1.2.0",
+  "version": "1.3.0",
   "skills": [
     {
       "name": "semanticus",
       "path": "plugins/semanticus/skills/semanticus/SKILL.md",
-      "sha256": "7b282d33b297e6a5170e9ba2179d2964f990e1a5e36fe620b82aa6b502d10ee4"
+      "sha256": "4f984b7107d7d13f4f2d30e04f69b1afb295755622b58a8d4af6fbd23f8af188"
     },
     {
       "name": "semanticus-optimize-dax",
       "path": "plugins/semanticus/skills/semanticus-optimize-dax/SKILL.md",
-      "sha256": "e6c94b22512c1c1906db8fa9590e64a62b2e5af82932a07852515b75cf1baa48"
+      "sha256": "a423b7fe64b0fd904841ae5562d16f15f1118adb76713e39f17352c23166d358"
     },
     {
       "name": "semanticus-ai-ready",
       "path": "plugins/semanticus/skills/semanticus-ai-ready/SKILL.md",
-      "sha256": "e8f041df86d3e8ad926f6dd71845661dfd6e4fc8de0272a8909e6e71904b72bc"
+      "sha256": "48d3cffb210d5d6a669f542b42e72e200af4133c57c3f65e1dad34387a396ae9"
     },
     {
       "name": "semanticus-interview-model",
       "path": "plugins/semanticus/skills/semanticus-interview-model/SKILL.md",
-      "sha256": "42af459e82cde0660ed1612f816262a3f0d46dcdb7f6024ea10db3e36a5e42c7"
+      "sha256": "8453a0373d74275af5d962d3c3d2750b2fca9a7df394ffee1f28b9f131d9fc75"
     },
     {
       "name": "semanticus-model-pr",
       "path": "plugins/semanticus/skills/semanticus-model-pr/SKILL.md",
-      "sha256": "6a75d7ef73c13ad99b6c2838cf07d3f97ed3be20bfc875c52bff7e7be35d8b5d"
+      "sha256": "cb090279a12dd0c9f0c8621078cba9ba606786288ae0d46447cfd5244af44efc"
     },
     {
       "name": "semanticus-distill-workflow",
       "path": "plugins/semanticus/skills/semanticus-distill-workflow/SKILL.md",
-      "sha256": "50a74c5edb1513818be599af631260a92794e7063b201134bb882a5be01e7cf9"
+      "sha256": "7f04646d7a748bbba1e39dd33a80ba91bbe80e7923430926c00e6e6f65f8f25d"
     },
     {
       "name": "semanticus-curate-knowledge",
       "path": "plugins/semanticus/skills/semanticus-curate-knowledge/SKILL.md",
-      "sha256": "f32820e93e6a5548830bb925fa15624962f6052848ebb093f76e1aa2142b82fc"
+      "sha256": "60977665f7c13b2e79cd8af83f5fca96577467d9ac805a89f69610a434959fd8"
     }
   ]
 }

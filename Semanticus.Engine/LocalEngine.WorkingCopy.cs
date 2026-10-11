@@ -11,10 +11,21 @@ namespace Semanticus.Engine
     {
         internal Func<ModelConnectionRecord, Task> WorkingCopyConnectForTests;
 
-        public async Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent")
+        public async Task<ConnectionContext> SetPublishDestinationAsync(string connectionId, string origin = "agent", bool clear = false)
         {
+            GuardOutsideWrite(origin);
             origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
+            if (clear)
+            {
+                if (!string.IsNullOrWhiteSpace(connectionId))
+                    throw new ArgumentException("Pass a destination to set, or clear=true to let go of the current one, not both.", nameof(connectionId));
+                using var clearGuard = GuardRegistry(nameof(SetPublishDestinationAsync), "connections", ConnectionRegistry.StatePath());
+                return await ClearPublishDestinationAsync(origin);
+            }
+            if (string.IsNullOrWhiteSpace(connectionId))
+                throw new ArgumentException("Name the XMLA connection to publish to (list_connections), or pass clear=true to let go of the current one.", nameof(connectionId));
             var session = _sessions.Require();
+            using var registryGuard = GuardRegistry(nameof(SetPublishDestinationAsync), "connections", ConnectionRegistry.StatePath());
             var publish = ConnectionRegistry.Find(connectionId)
                 ?? throw new InvalidOperationException("The selected publish connection no longer exists. Choose it again.");
             EnsureRemoteXmlaPublish(publish);
@@ -50,18 +61,73 @@ namespace Semanticus.Engine
             return await ConnectionContextAsync();
         }
 
+        /// <summary>
+        /// Let go of the open model's publish destination (contract 19.2). Recorded in the connection history against
+        /// the destination that was let go, like a set. Nothing is deployed, deleted or written to the model.
+        ///
+        /// A model open LIVE from a workspace is refused: saving goes straight back to that model (deploy_live's
+        /// default target is the live origin, not this setting), so "Not set" would be a statement the engine does
+        /// not honour. The honest route there is a local copy.
+        /// </summary>
+        private async Task<ConnectionContext> ClearPublishDestinationAsync(string origin)
+        {
+            var session = _sessions.Require();
+            if (session.LiveOrigin != null && !LiveDeploy.IsLocalEndpoint(session.LiveOrigin.Endpoint))
+                throw new InvalidOperationException("This model is open live from its workspace, so saving goes straight back to it and its publish destination cannot be cleared. Work on a local copy to publish somewhere else, or nowhere.");
+
+            var before = await ConnectionContextAsync();
+            var editing = ConnectionContextBuilder.FindEditingRecord(session);
+            if (!before.Publishing.Available || editing == null)
+            {
+                before.Note = "No publish destination was set, so nothing changed.";
+                return before;
+            }
+
+            var released = ConnectionRegistry.Find(before.Publishing.ConnectionId);
+            ConnectionRegistry.ClearPublish(editing.Id);
+            RecordConnectionHistory(released, "role", released?.LastAccount, before.Publishing.Endpoint, before.Publishing.Database,
+                released?.TenantId, ok: true, detail: "cleared as the publish destination");
+            var modelName = before.Editing?.ModelName ?? "the open model";
+            await PublishActivityAsync(new ActivityEvent
+            {
+                Kind = "set_publish_destination", Origin = origin,
+                Label = $"Cleared the publish destination of {modelName}",
+                Target = released?.Id, Ok = true
+            });
+            var after = await ConnectionContextAsync();
+            after.Note = $"{modelName} no longer has a publish destination. Nothing was deployed or deleted.";
+            return after;
+        }
+
         public async Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent")
         {
+            if (commit) GuardOutsideWrite(origin);
             origin = string.IsNullOrWhiteSpace(origin) ? "agent" : origin;
             var sourceRecord = ConnectionRegistry.Find(connectionId);
             var result = WorkingCopyPlanner.Plan(sourceRecord, parentFolder);
             var queryRecord = string.IsNullOrWhiteSpace(queryConnectionId) ? sourceRecord : ConnectionRegistry.Find(queryConnectionId)
                 ?? throw new InvalidOperationException("The selected test/query connection no longer exists. Choose it again.");
-            var publishRecord = string.IsNullOrWhiteSpace(publishConnectionId)
-                ? (string.Equals(sourceRecord.Kind, "xmla", StringComparison.OrdinalIgnoreCase) ? sourceRecord : null)
-                : ConnectionRegistry.Find(publishConnectionId)
+            // A destination named on this call is a choice and always wins. With none named, the XMLA default (a copy
+            // publishes back to the model it came from) applies ONLY when the copy is first created, and not after the
+            // person let go of the destination (contract 19.2). A reopen is not a choice, so it keeps whatever is stored:
+            // a destination set on purpose, a clear, or nothing (Sol 6, slice C: a reopen overwrote both).
+            ModelConnectionRecord publishRecord;
+            if (!string.IsNullOrWhiteSpace(publishConnectionId))
+            {
+                publishRecord = ConnectionRegistry.Find(publishConnectionId)
                     ?? throw new InvalidOperationException("The selected publish connection no longer exists. Choose it again.");
-            EnsureRemoteXmlaPublish(publishRecord);
+                EnsureRemoteXmlaPublish(publishRecord);
+            }
+            else if (result.Action == "create")
+            {
+                publishRecord = string.Equals(sourceRecord.Kind, "xmla", StringComparison.OrdinalIgnoreCase) && sourceRecord.PublishCleared != true
+                    ? sourceRecord : null;
+                EnsureRemoteXmlaPublish(publishRecord);
+            }
+            else
+                // Kept as stored, unjudged here: the connection context already treats a legacy loopback row as inert,
+                // and refusing it would make reopening the copy fail over a choice this call did not make.
+                publishRecord = ConnectionRegistry.Find(sourceRecord.PublishConnectionId);
             ExplainDestinations(result, sourceRecord, queryRecord, publishRecord);
             result.CommitRequested = commit;
             if (!commit || !result.CanCommit) return result;
@@ -72,10 +138,15 @@ namespace Semanticus.Engine
             // Link only after a complete, owned model exists. Reopening never writes model files, which protects local
             // edits and makes reconnect a safe one-click action rather than an implicit refresh.
             ConnectionRegistry.SetWorkingCopy(sourceRecord.Id, result.TargetFolder, publishRecord?.Id);
+            OpenResult opened;
             try
             {
-                await OpenAsync(result.TargetFolder);
+                opened = await OpenCoreAsync(result.TargetFolder);
                 result.Opened = true;
+                // The copy is its own model on disk with its own identity, and starts with the SQL endpoint of the
+                // model it came from (contract 19.3). A copy that already has one of its own keeps it.
+                ModelSqlEndpointRegistry.CopyIfAbsent(IdentityForRecord(sourceRecord), PaneIdentity(_sessions.Current, null),
+                    sourceRecord.ModelName ?? sourceRecord.Database, null);
             }
             catch (Exception ex)
             {
@@ -106,6 +177,9 @@ namespace Semanticus.Engine
                 result.NextAction = $"Keep editing locally, or reconnect the {queryRole}. No local files were changed by the failed connection.";
             }
 
+            // Announced once the query model is attached (or failed to), so the window reads the finished pairing.
+            opened.LiveConnected = result.QueryConnected;
+            PublishSessionSwap(opened, "working_copy");
             result.Context = await ConnectionContextAsync();
             if (result.QueryConnected)
             {
@@ -117,11 +191,9 @@ namespace Semanticus.Engine
 
         private static void EnsureRemoteXmlaPublish(ModelConnectionRecord publish)
         {
-            if (publish == null) return;
-            if (!string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("The final publish destination must be an XMLA connection.");
-            if (LiveDeploy.IsLocalEndpoint(publish.Endpoint))
-                throw new InvalidOperationException("A loopback address cannot be a publish destination. Choose a published XMLA connection.");
+            // The same sentence list_connections shows beside a struck-out model (ConnectionJobs, contract 19.1).
+            var refusal = ConnectionJobs.PublishRefusal(publish);
+            if (refusal != null) throw new InvalidOperationException(refusal);
         }
 
         private static void ExplainDestinations(WorkingCopyResult result, ModelConnectionRecord source, ModelConnectionRecord query, ModelConnectionRecord publish)

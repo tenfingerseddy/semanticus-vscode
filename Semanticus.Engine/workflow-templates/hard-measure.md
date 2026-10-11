@@ -1,10 +1,11 @@
 ---
+schemaVersion: 3
 kind: template
 name: hard-measure
-title: Author "{{measure_goal}}" and reconcile it against the requirement at every grain
-description: Set up the same requirement-anchored verified-authoring playbook as the built-in Author a hard DAX measure workflow. It pins conventions only from the requirement's own words, locks expected values from raw rows before authoring, reconciles one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicates disagreements cell-by-cell, and never lets a speed pick or an invented convention overwrite a correct answer.
-whenToUse: "One measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves. For a straightforward measure checked against one trusted number, use new-measure."
-version: 5
+title: "Author \"{{measure_goal}}\" and reconcile it against the requirement at every grain"
+description: "Set up the same requirement-anchored verified-authoring workflow as the built-in Author a hard DAX measure workflow. It pins conventions only from the requirement's own words, locks expected values from raw rows before authoring, reconciles one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicates disagreements cell-by-cell, and never lets a speed pick or an invented convention overwrite a correct answer."
+whenToUse: "One measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves. For a straightforward measure checked against one trusted number, describe the task in words on the Plan instead."
+version: 6
 strictness: hard
 slots:
   - name: measure_goal
@@ -21,6 +22,10 @@ slots:
 ---
 
 ## Step 1: Fix the specification. The requirement text is the only source
+```yaml step
+id: step-1
+performer: assistant
+```
 
 The requested metric is {{measure_goal}}. The likely pattern is {{measure_pattern}}. Restate the
 metric and its grain. Classify additivity PER DIMENSION, not globally (e.g. "snapshot over Date;
@@ -73,6 +78,10 @@ inputs:
 ```
 
 ## Step 2: Lock the expected values before any candidate exists
+```yaml step
+id: step-2
+performer: assistant
+```
 
 Test-first: choose two or three DISCRIMINATING contexts and compute the expected value at each
 from RAW ROWS ONLY: `run_dax` a plain row-level FILTER extract and aggregate it with arithmetic
@@ -121,6 +130,10 @@ inputs:
 ```
 
 ## Step 3: Author ONE canonical candidate
+```yaml step
+id: step-3
+performer: assistant
+```
 
 Draft a SINGLE production candidate for {{measure_goal}} using {{measure_pattern}}: the clearest
 correct expression for the Step-1 specification, composed from verified building-block measures
@@ -149,6 +162,10 @@ inputs:
 ```
 
 ## Step 4: Lock the witness
+```yaml step
+id: step-4
+performer: assistant
+```
 
 Build and submit the raw-row WITNESS. Nothing else happens in this step, so the witness is on
 the record BEFORE any comparison runs. It is a deliberately dumb scalar computation over raw rows
@@ -167,6 +184,10 @@ inputs:
 ```
 
 ## Step 5: The battery. Adjudicate, don't auto-fix
+```yaml step
+id: step-5
+performer: assistant
+```
 
 Probe candidate AND witness across the battery: every ledger context, plus two named layouts
 where the second REMOVES a grouping column so a leaf becomes a bare subtotal (a reshuffle that
@@ -207,6 +228,10 @@ inputs:
 ```
 
 ## Step 6: HARD gate. Equality where the bugs live, on PINNED shapes only
+```yaml step
+id: step-6
+performer: assistant
+```
 
 The engine proves candidate-vs-witness equality over the grid axes you name, evaluating the full
 cross, each bare single-axis subtotal, and the grand total. Set `equivalenceGrid` to the metric's
@@ -250,6 +275,10 @@ verify:
 ```
 
 ## Step 7: Performance when attested, then finalize for production
+```yaml step
+id: step-7
+performer: assistant
+```
 
 Report the SLOWEST battery/equivalence query observed (context + elapsed). If it exceeded ~5
 seconds, or the measure targets a large-fact hot path, run the performance pass; otherwise
@@ -260,7 +289,7 @@ When you run it, the v1 record shows the exact trap: among candidates a blind gr
 work; that is why it is wrong), and a perf tie-breaker without the diverging shape actively
 selects it. So: benchmark in the measure-faithful shape only, `DEFINE MEASURE 'Sales'[__cand] =
 ( <expr> )` timed via `EVALUATE SUMMARIZECOLUMNS ( <natural axes>, "v", [__cand] )` with
-`benchmark_dax_coldwarm`, never as an inline extension column (inline executes with cheaper
+`benchmark_dax` with mode='coldWarm', never as an inline extension column (inline executes with cheaper
 semantics and inverts rankings); serially, never concurrently; treat any 0-storage-engine cold
 reading as INVALID (the formula-engine result cache serves identical query text, a fake
 fastest), cross-checking sub-ms readings against a full-drain `run_dax` wall clock. Apply a
@@ -292,3 +321,16 @@ verify:
     probe: witnessDax
     openShapesFrom: openShapes
 ```
+
+## Step 8: Save the measure's record
+```yaml step
+id: step-8
+performer: semanticus
+phase: after
+action:
+  op: save_evidence
+  source: workflow
+```
+
+Semanticus saves the record of the checked steps with the model: the ledger, the locked values, the
+witness, every gate result and the certificate. Nothing here runs if a check before it stopped the draft.

@@ -130,7 +130,13 @@ namespace Semanticus.Engine
             return r.Ok ? r.Stdout.Trim() : null;
         }
 
-        // `git status --porcelain=v2 --branch` — machine-parseable status + branch/upstream/ahead/behind.
+        // `git status --porcelain=v2 --branch -z`: machine-parseable status + branch/upstream/ahead/behind. File paths
+        // come back relative to `dir` (a caller comparing them with repo-relative keys passes the root as `dir`).
+        // -z because without it git quotes any path with a byte above 0x7F as octal escapes ("Caf\303\251.bim",
+        // core.quotePath), which then matches no key. -z also names every path from the repository root, whatever
+        // the working directory, so ToDirRelative puts back the folder-relative form the Git panel's diff and commit
+        // pathspecs expect. One limit remains: RunAsync reads stdout by lines, so a path holding a CR or LF itself
+        // comes back with that break normalised to the platform newline.
         internal static async Task<GitStatus> StatusAsync(string dir)
         {
             var st = new GitStatus { WorkingDir = dir };
@@ -138,13 +144,17 @@ namespace Semanticus.Engine
             st.IsRepo = true;
             st.RepoRoot = await RepoRootAsync(dir);
 
-            var r = await RunAsync(dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all");
+            var r = await RunAsync(dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z");
             if (!r.Ok) { st.Note = Error(r); return st; }
+            var prefix = await RunAsync(dir, "rev-parse", "--show-prefix");
+            if (!prefix.Ok) { st.Note = Error(prefix); return st; }
+            var here = prefix.Stdout.Trim('\r', '\n');
 
             var files = new List<GitFileChange>();
-            foreach (var line in r.Stdout.Replace("\r\n", "\n").Split('\n'))
+            var entries = NulFields(r.Stdout);
+            for (var i = 0; i < entries.Length; i++)
             {
-                if (line.Length == 0) continue;
+                var line = entries[i];
                 if (line.StartsWith("# branch.head ")) { var h = line.Substring("# branch.head ".Length).Trim(); if (h == "(detached)") st.Detached = true; else st.Branch = h; }
                 else if (line.StartsWith("# branch.upstream ")) st.Upstream = line.Substring("# branch.upstream ".Length).Trim();
                 else if (line.StartsWith("# branch.ab "))
@@ -157,30 +167,65 @@ namespace Semanticus.Engine
                         else if (part.StartsWith("-") && int.TryParse(part.Substring(1), out var b)) st.Behind = b;
                     }
                 }
-                else if (line[0] == '1' || line[0] == '2')
+                else if (line[0] == '1')
                 {
-                    // Changed/renamed tracked entry: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"
+                    // Changed tracked entry: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"
                     var cols = line.Split(' ', 9, StringSplitOptions.None);
                     if (cols.Length < 9) continue;
                     var xy = cols[1];
-                    var path = cols[8];
-                    if (line[0] == '2')   // rename/copy: "...<path><TAB><origPath>" in the last field
-                        path = path.Split('\t')[0];
-                    files.Add(new GitFileChange { Path = path, Status = StatusLetter(xy), Staged = xy[0] != '.', Worktree = xy[1] != '.' });
+                    files.Add(new GitFileChange { Path = ToDirRelative(cols[8], here), Status = StatusLetter(xy), Staged = xy[0] != '.', Worktree = xy[1] != '.' });
+                }
+                else if (line[0] == '2')
+                {
+                    // Renamed or copied entry: "2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>", one field more
+                    // than a plain change (the score, such as R98), and under -z the original path is the NEXT entry.
+                    var cols = line.Split(' ', 10, StringSplitOptions.None);
+                    var orig = i + 1 < entries.Length ? entries[++i] : null;
+                    if (cols.Length < 10) continue;
+                    var xy = cols[1];
+                    files.Add(new GitFileChange
+                    {
+                        Path = ToDirRelative(cols[9], here), OrigPath = orig == null ? null : ToDirRelative(orig, here),
+                        Status = StatusLetter(xy), Staged = xy[0] != '.', Worktree = xy[1] != '.',
+                    });
                 }
                 else if (line[0] == '?')
                 {
-                    files.Add(new GitFileChange { Path = line.Substring(2), Status = "??", Staged = false, Worktree = true });
+                    files.Add(new GitFileChange { Path = ToDirRelative(line.Substring(2), here), Status = "??", Staged = false, Worktree = true });
                 }
                 // '#' header lines other than the branch ones, and 'u' (unmerged) — fold unmerged into a U file:
                 else if (line[0] == 'u')
                 {
+                    // "u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>"
                     var cols = line.Split(' ', 11, StringSplitOptions.None);
-                    if (cols.Length >= 11) files.Add(new GitFileChange { Path = cols[10], Status = "U", Staged = false, Worktree = true });
+                    if (cols.Length >= 11) files.Add(new GitFileChange { Path = ToDirRelative(cols[10], here), Status = "U", Staged = false, Worktree = true });
                 }
             }
             st.Files = files.ToArray();
             return st;
+        }
+
+        /// <summary>The entries of a `-z` output. RunAsync reads stdout by lines, so the NUL-terminated stream arrives
+        /// with one line break appended after the last NUL; that break is not an entry.</summary>
+        internal static string[] NulFields(string stdout)
+        {
+            var text = stdout ?? "";
+            if (text.EndsWith("\r\n", StringComparison.Ordinal)) text = text.Substring(0, text.Length - 2);
+            else if (text.EndsWith("\n", StringComparison.Ordinal)) text = text.Substring(0, text.Length - 1);
+            return text.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        }
+
+        // A repo-relative path as git names it from the folder `prefix` (git rev-parse --show-prefix, "" at the root,
+        // else "a/b/"): the same form git status prints without -z, with "../" for anything outside that folder.
+        internal static string ToDirRelative(string repoPath, string prefix)
+        {
+            if (string.IsNullOrEmpty(prefix) || repoPath == null) return repoPath;
+            if (repoPath.StartsWith(prefix, StringComparison.Ordinal)) return repoPath.Substring(prefix.Length);
+            var here = prefix.TrimEnd('/').Split('/');
+            var there = repoPath.Split('/');
+            var common = 0;
+            while (common < here.Length && common < there.Length - 1 && string.Equals(here[common], there[common], StringComparison.Ordinal)) common++;
+            return string.Concat(Enumerable.Repeat("../", here.Length - common)) + string.Join("/", there.Skip(common));
         }
 
         private static string StatusLetter(string xy)

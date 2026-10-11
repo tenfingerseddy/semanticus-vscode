@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, Handle, Position, ConnectionMode,
-  NodeToolbar, useNodesState, useEdgesState, useReactFlow, useUpdateNodeInternals,
+  NodeToolbar, useNodesState, useEdgesState, useReactFlow, useUpdateNodeInternals, useStoreApi, getViewportForBounds,
   type Node, type Edge, type NodeProps, type Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
 import { rpc, onDidChange, onLayoutChange, loadState, saveState, requestDropTables, type LayoutData } from './bridge';
-import { edgeTypes, RelConnectionLine } from './diagramedges';
+import { edgeTypes, RelConnectionLine, BusRoutes, runInSlices } from './diagramedges';
 import { RelationshipsView } from './relationships';
-import { CANVAS_CHIP_MIN_H, CanvasChip, RowLabel, RowMenu, RowSep, ToolRow, canvasInsetStyle, useCanvasBox, useToolRow } from './toolrow';
+import { CANVAS_CHIP_MIN_H, CanvasChip, RowMenu, RowSep, ToolRow, canvasInsetStyle, useCanvasBox, useToolRow } from './toolrow';
 import type { ColumnRow } from './wire';
 import { uiLabel } from './copy';
+import { NODE_W, NODE_H, sizeForAnchors, classifyRoles, baryOrder, roleOf, computeAnchors, busMatrixPositions, type Anchor, type Side } from './diagramlayout.mjs';
+import { reflowCards, clearDropped, roomSteps, keepBeside, linesBySide, CARD_GAP, changedPositions, toggleExpansion, setExpansionFor, layoutBox, boxChanges, sizesToCompare, changeReloadsDiagram, isLayoutChange, isArrangeChange, spreadStart, spreadKey, savedAfterDrag, savedSpots, filterHeldHeight, recordsHeight, readableFirstView, type FitSize, type SideLines } from './diagramfit.mjs';
 
 // The page's own how-to sentences. They used to sit on the toolbar as a long grey line, which cost the canvas a
 // whole row on every screen for something you read once. They live here as named constants so the tooltip of the
@@ -46,14 +48,7 @@ function plainRelType(t: string): string {
   }
 }
 
-const NODE_W = 190;   // minimum node width (collapsed)
-const NODE_H = 92;    // minimum node height (collapsed)
 const GRID = 20;   // snap-to-grid step (matches the Background dot gap)
-// Dynamic node sizing: a node grows on the axis its relationship anchors run along, so many incident
-// relationships spread into their own orthogonal lanes instead of bundling on a short fixed edge (the
-// "collapsed lines" near a busy node). With frac=(i+1)/(n+1), n anchors on a side need (n+1)*SLOT of length
-// to stay SLOT apart — so WIDTH grows with the Top/Bottom anchor count, HEIGHT with the Left/Right count.
-const SLOT = 30;
 
 // --- Saved diagrams ---------------------------------------------------------------------------
 // A diagram is a named, curated subset of the model with remembered node positions. "All tables"
@@ -65,7 +60,11 @@ type XY = { x: number; y: number };
 type Size = { w: number; h: number };
 type SizeOf = (name: string) => Size;   // a node's dynamic box, derived from its anchors for the active layout
 type LayoutMode = 'free' | 'hierarchy' | 'busmatrix' | 'layered';
-interface SavedDiagram { id: string; name: string; all: boolean; tables: string[]; positions: Record<string, XY>; layout?: LayoutMode; expanded?: Record<string, boolean>; }
+// `expanded` is legacy: expansion used to live per diagram and was thrown away by every arrange. It is now one
+// per-table map for the whole canvas (diagramExpanded), and this field is only read once, to seed that map.
+// `keep`: the cards the person (a put-back) or their assistant (save_layout's keep) asked to leave where they are when
+// the Diagram makes room for the lines. The All-tables diagram mirrors the engine layout's keep marks; a move clears one.
+interface SavedDiagram { id: string; name: string; all: boolean; tables: string[]; positions: Record<string, XY>; layout?: LayoutMode; expanded?: Record<string, boolean>; keep?: Record<string, true>; }
 
 const ALL_ID = 'all';
 const DEFAULT_DIAGRAM: SavedDiagram = { id: ALL_ID, name: 'All tables', all: true, tables: [], positions: {} };
@@ -73,31 +72,14 @@ const uniq = (xs: string[]) => Array.from(new Set(xs));
 
 // A relationship end's connection point on a node side. `frac` evenly spreads the K ends sharing a side into K
 // distinct anchors so no two edges enter/exit at the same point. `rel` matches the edge's sourceHandle/targetHandle.
-type Anchor = { rel: string; kind: 'source' | 'target'; side: Position; frac: number };
 type Toast = { text: string; tone: 'ok' | 'error'; action?: { label: string; run: () => void | Promise<void> } };
 const EMPTY_SET = new Set<string>();          // stable identities so a table with no related/anchor data doesn't churn
 const EMPTY_ANCHORS: Anchor[] = [];
 
-// The box a node needs so its anchors stay SLOT apart: width from the busier of its Top/Bottom edges, height
-// from the busier of its Left/Right edges. A node with few/no relationships stays at the NODE_W×NODE_H minimum.
-// Anchor sides depend on the layout (see computeAnchors), so size is always derived from THAT layout's anchors —
-// keeping the rendered node, its handle spread, and the layout spacing in perfect agreement.
-function sizeForAnchors(anchors: Anchor[]): Size {
-  let top = 0, bottom = 0, left = 0, right = 0;
-  for (const a of anchors) {
-    if (a.side === Position.Top) top++;
-    else if (a.side === Position.Bottom) bottom++;
-    else if (a.side === Position.Left) left++;
-    else right++;
-  }
-  const horiz = Math.max(top, bottom);   // anchors along a horizontal edge → need WIDTH to separate
-  const vert = Math.max(left, right);    // anchors along a vertical edge → need HEIGHT to separate
-  return { w: Math.max(NODE_W, (horiz + 1) * SLOT), h: Math.max(NODE_H, (vert + 1) * SLOT) };
-}
-
 type GraphCardData = {
   t: GraphTable; rels: number; curated: boolean;
   anchors: Anchor[]; w: number; h: number;   // dynamic size: grows with incident-relationship count per side
+  layout: LayoutMode;            // the layout this card's anchors and box were made for (an arrange lands before the rebuild does)
   expanded: boolean;
   columns: ColumnRow[] | null;   // the table's columns, only when expanded (for drag-to-create)
   related: Set<string>;          // column names already in a relationship — sorted to the top, above a divider
@@ -107,17 +89,23 @@ type GraphCardData = {
 };
 
 // Position an (invisible) relationship anchor handle along its node side: frac runs the long axis of the side.
-function anchorStyle(side: Position, frac: number): React.CSSProperties {
+function anchorStyle(side: Side, frac: number): React.CSSProperties {
   const base: React.CSSProperties = { width: 8, height: 8, opacity: 0, border: 'none', background: 'transparent' };
-  return side === Position.Top || side === Position.Bottom ? { ...base, left: `${frac * 100}%` } : { ...base, top: `${frac * 100}%` };
+  return side === 'top' || side === 'bottom' ? { ...base, left: `${frac * 100}%` } : { ...base, top: `${frac * 100}%` };
 }
+
+// An opened card lifts off the canvas with a shadow (the dialogs' shadow) and sits above its neighbours (OPEN_CARD_Z). While
+// the page works out where the cards go to make space for it (the spread, below) it can still cover a neighbour for a moment.
+const OPEN_CARD_SHADOW = '0 8px 24px rgba(0,0,0,.28)';
+const OPEN_CARD_Z = 5;
 
 function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
   const t = data.t;
-  // Colour tables by role so the map reads at a glance: connected = Signal green, date = amber, field parameter =
-  // muted violet, calculated = teal, isolated (no relationships) = blue (informational, not alarming — avoids a
-  // red/green clash). A field parameter IS a calc table, so it must be tested before the plain-calc branch.
-  const accent = t.isDateTable ? 'var(--sem-warn)' : t.isFieldParameter ? FIELD_PARAM_VIOLET : t.isCalculated ? '#17B3A3' : data.rels === 0 ? '#2E7BD0' : 'var(--sem-accent)';
+  // Instrument (23 September): a table's role is a quiet word in its header (date, field parameter, calculated,
+  // hidden), not a coloured wash and a coloured pill. The lines between tables keep their colours, because those
+  // are the diagram's data. A field parameter IS a calc table, so it must be tested before the plain-calc branch.
+  // Kane's field-parameter identity (violet plus an FP marker) stays, as a dot and a word.
+  const dot = t.isDateTable ? 'var(--sem-warn)' : t.isFieldParameter ? FIELD_PARAM_VIOLET : t.isCalculated ? 'var(--sem-muted)' : null;
 
   // Expanded column list: key + already-related columns first, then a divider, then the rest. Search filters across all.
   const cols = useMemo(() => {
@@ -129,11 +117,20 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
     return { primary: matched.filter(isPrimary).sort(byName), rest: matched.filter((c) => !isPrimary(c)).sort(byName) };
   }, [data.expanded, data.columns, data.filter, data.related]);
 
+  // Hold the card's height while its column filter is active, so typing never moves another card (diagramfit.mjs).
+  // offsetHeight is in layout pixels, unaffected by the canvas zoom.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const heldH = useRef<number | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (recordsHeight(data.expanded, data.filter) && cardRef.current) heldH.current = cardRef.current.offsetHeight;
+  });
+  const hold = filterHeldHeight(data.expanded, data.filter, heldH.current);
+
   return (
-    <div className="rounded-lg border text-[11px] flex flex-col" style={{
-      width: data.w, minHeight: data.h, background: 'var(--sem-surface)',
-      borderColor: selected ? 'var(--sem-accent)' : 'var(--sem-border)',
-      boxShadow: selected ? '0 0 0 1px var(--sem-accent)' : '0 1px 3px rgba(0,0,0,0.25)',
+    <div ref={cardRef} className="rounded-(--sem-radius-card) border text-(length:--sem-text-label) flex flex-col" style={{
+      width: data.w, minHeight: Math.max(data.h, hold ?? 0), background: 'var(--sem-surface)',
+      borderColor: selected ? 'var(--sem-strong-border)' : 'var(--sem-border)',
+      boxShadow: [selected && '0 0 0 1px var(--sem-fg)', data.expanded && OPEN_CARD_SHADOW].filter(Boolean).join(', ') || 'var(--sem-elev)',
     }}>
       {data.curated && (
         <NodeToolbar isVisible={selected} position={Position.Top} className="flex gap-1">
@@ -143,45 +140,44 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
       )}
       {/* Relationship anchor handles — one per incident relationship end, invisible, pure routing geometry (not connectable). */}
       {data.anchors.map((a) => (
-        <Handle key={a.rel + ':' + a.kind} id={a.rel + ':' + a.kind} type={a.kind} position={a.side} isConnectable={false} style={anchorStyle(a.side, a.frac)} />
+        <Handle key={a.rel + ':' + a.kind} id={a.rel + ':' + a.kind} type={a.kind} position={a.side as Position} isConnectable={false} style={anchorStyle(a.side, a.frac)} />
       ))}
-      <div className="px-2.5 py-1.5 rounded-t-lg flex items-center gap-1.5" style={{ borderBottom: '1px solid var(--sem-border)', background: 'color-mix(in srgb,' + accent + ' 16%, transparent)' }}>
+      <div className="px-3 py-1 flex items-center gap-2" style={{ borderBottom: '1px solid var(--sem-rule)' }}>
         <button className="nodrag" onClick={() => data.onToggleExpand(t.name)} title={data.expanded ? 'Hide columns' : 'Show columns to connect'}
-          style={{ background: 'transparent', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer', padding: 0, fontSize: 10, width: 12 }}>{data.expanded ? '▾' : '▸'}</button>
-        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: accent }} />
+          aria-label={data.expanded ? `Hide the columns of ${t.name}` : `Show the columns of ${t.name}`}
+          style={{ background: 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer', padding: 0, fontSize: 'var(--sem-text-label)', width: 12 }}>{data.expanded ? '▾' : '▸'}</button>
         <span className="font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{t.name}</span>
-        <span className="ml-auto flex items-center gap-1 shrink-0">
-          {t.isHidden && <span className="text-[9px] px-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }} title="Hidden from report view">hidden</span>}
-          {t.isDateTable && <span className="text-[9px] px-1 rounded" style={{ background: 'var(--sem-warn)', color: '#000' }}>DATE</span>}
-          {/* A field parameter is a calc table — show the more specific FP marker instead of CALC, never both. */}
-          {t.isFieldParameter
-            ? <span className="text-[9px] px-1 rounded" style={{ background: FIELD_PARAM_VIOLET, color: '#000' }} title="Field parameter">FP</span>
-            : t.isCalculated && <span className="text-[9px] px-1 rounded" style={{ background: '#17B3A3', color: '#000' }}>CALC</span>}
+        <span className="ml-auto flex items-center gap-1 shrink-0" style={{ color: 'var(--sem-muted)' }}>
+          {t.isHidden && <span title="Hidden from report view">hidden</span>}
+          {dot && <span className="w-1 h-1 rounded-full shrink-0" style={{ background: dot }} />}
+          {/* A field parameter is a calc table: show the more specific FP marker instead of calculated, never both. */}
+          {t.isDateTable ? <span>date</span>
+            : t.isFieldParameter ? <span title="Field parameter">FP</span>
+            : t.isCalculated && <span>calculated</span>}
         </span>
       </div>
       {!data.expanded ? (
-        <div className="px-2.5 py-1.5 flex flex-col gap-0.5" style={{ color: 'var(--sem-muted)' }}>
-          <div className="flex gap-3 tnum">
-            <span>{t.columns} cols</span>
-            <span>{t.measures} msr</span>
-            {data.rels === 0 && <span style={{ color: '#2E7BD0' }}>isolated</span>}
+        <div className="px-3 py-1 flex flex-col gap-1" style={{ color: 'var(--sem-muted)' }}>
+          <div className="flex gap-3">
+            <span><span className="sem-num">{t.columns}</span> cols</span>
+            {/* A zero says nothing and "isolated" repeats the "not linked" chip, so neither is drawn. */}
+            {t.measures > 0 && <span><span className="sem-num">{t.measures}</span> msr</span>}
           </div>
           {t.keyColumns.length > 0 && (
-            <div className="truncate" style={{ color: 'var(--sem-accent)' }} title={t.keyColumns.join(', ')}>key: {t.keyColumns.join(', ')}</div>
+            <div className="truncate" title={t.keyColumns.join(', ')}>key: <span style={{ color: 'var(--sem-fg)' }}>{t.keyColumns.join(', ')}</span></div>
           )}
-          {!t.hasDescription && !t.isHidden && <div style={{ color: 'var(--sem-warn)' }}>no description</div>}
         </div>
       ) : (
-        <div className="py-1.5">
+        <div className="py-1">
           <input className="nodrag" value={data.filter} onChange={(e) => data.onFilter(t.name, e.target.value)} placeholder="filter columns…"
-            style={{ width: 'calc(100% - 16px)', margin: '0 8px 6px', padding: '2px 6px', fontSize: 10, background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 4 }} />
+            style={{ width: 'calc(100% - 16px)', margin: '0 var(--sem-space-2) var(--sem-space-2)', padding: 'var(--sem-space-1) var(--sem-space-2)', fontSize: 'var(--sem-text-label)', background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)' }} />
           <div className="nowheel" style={{ maxHeight: 220, overflowY: 'auto', overflowX: 'hidden' }}>
             {cols && cols.primary.map((c) => <ColRow key={c.name} c={c} />)}
-            {cols && cols.primary.length > 0 && cols.rest.length > 0 && <div style={{ height: 1, background: 'var(--sem-border)', margin: '3px 8px' }} />}
+            {cols && cols.primary.length > 0 && cols.rest.length > 0 && <div style={{ height: 1, background: 'var(--sem-border)', margin: 'var(--sem-space-1) var(--sem-space-2)' }} />}
             {cols && cols.rest.map((c) => <ColRow key={c.name} c={c} />)}
-            {cols && cols.primary.length + cols.rest.length === 0 && <div style={{ color: 'var(--sem-muted)', padding: '2px 10px' }}>no matching columns</div>}
+            {cols && cols.primary.length + cols.rest.length === 0 && <div style={{ color: 'var(--sem-muted)', padding: 'var(--sem-space-1) var(--sem-space-3)' }}>no matching columns</div>}
           </div>
-          <div style={{ color: 'var(--sem-muted)', fontSize: 9, padding: '4px 10px 0' }}>drag a column → another table's column to relate</div>
+          <div style={{ color: 'var(--sem-muted)', fontSize: 'var(--sem-text-label)', padding: 'var(--sem-space-1) var(--sem-space-3) 0' }}>drag a column → another table's column to relate</div>
         </div>
       )}
     </div>
@@ -196,24 +192,30 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
 // the table by its HEADER; drag a column to relate.
 function ColRow({ c }: { c: ColumnRow }) {
   return (
-    <div className="nodrag relative flex items-center gap-1 sem-colrow" style={{ padding: '2px 10px', fontSize: 10.5, cursor: 'crosshair' }}
+    <div className="nodrag relative flex items-center gap-1 sem-colrow" style={{ padding: 'var(--sem-space-1) var(--sem-space-3)', fontSize: 'var(--sem-text-label)', cursor: 'crosshair' }}
       title="Drag this column onto another table's column to create a relationship">
       <Handle type="source" id={`col:${c.name}:right`} position={Position.Right}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'none', borderRadius: 0, background: 'transparent', border: 'none', zIndex: 1 }} />
-      {c.isKey && <span style={{ color: 'var(--sem-accent)' }}>key</span>}
+      {c.isKey && <span>key</span>}
       <span className="truncate" style={{ color: c.isHidden ? 'var(--sem-muted)' : 'var(--sem-fg)' }}>{c.name}</span>
-      <span className="ml-auto shrink-0 text-[9px]" style={{ color: 'var(--sem-muted)' }}>{c.dataType}</span>
-      <span className="shrink-0" style={{ color: 'var(--sem-accent)', opacity: 0.55, fontSize: 11, lineHeight: 1, zIndex: 2 }} aria-hidden>⇄</span>
+      <span className="ml-auto shrink-0 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{c.dataType}</span>
+      <span className="shrink-0" style={{ opacity: 0.55, fontSize: 'var(--sem-text-label)', lineHeight: 1, zIndex: 2 }} aria-hidden>⇄</span>
     </div>
   );
 }
 
 const tbBtn: React.CSSProperties = {
   background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)',
-  borderRadius: 4, fontSize: 10, padding: '2px 6px', cursor: 'pointer',
+  borderRadius: 'var(--sem-radius-card)', fontSize: 'var(--sem-text-label)', padding: 'var(--sem-space-1) var(--sem-space-2)', cursor: 'pointer',
 };
 
 const nodeTypes = { table: TableNode };
+// React Flow's fit margin: a fraction of the viewport left around the fitted graph, not a CSS length.
+const FIT_MARGIN = 0.2;
+// Screen px left clear at the edge a readable first frame starts from (the page margin, --sem-page-margin).
+const FIRST_FRAME_PAD = 24;
+// The canvas's own zoom floor, shared by the ReactFlow prop and the first-frame fit sum.
+const MIN_ZOOM = 0.15;
 
 // dagre positions (top-left coords) for a set of tables + the relationships among them. `sizeOf` gives each node
 // its dynamic box so dagre spaces variable-sized nodes without overlap (busy nodes are taller for their Left/Right
@@ -231,41 +233,6 @@ function dagrePositions(tables: GraphTable[], rels: GraphRelationship[], sizeOf:
   const m = new Map<string, XY>();
   tables.forEach((t) => { const p = g.node(t.name); const s = sizeOf(t.name); m.set(t.name, { x: (p?.x ?? 0) - s.w / 2, y: (p?.y ?? 0) - s.h / 2 }); });
   return m;
-}
-
-// Classify each table by its Kimball role from the relationships: a table referenced as a "one" end is a
-// DIMENSION, a pure "many" end is a FACT, and one with no relationships is ISOLATED. Also returns each table's
-// neighbour set (used to order ranks so related tables line up). Shared by the bus-matrix + layered layouts and
-// computeAnchors so handle sides always agree with the placement.
-function classifyRoles(tables: GraphTable[], rels: GraphRelationship[]) {
-  const names = new Set(tables.map((t) => t.name));
-  const isOne = new Set<string>(), isMany = new Set<string>();
-  const nbr = new Map<string, Set<string>>();
-  const link = (a: string, b: string) => { let s = nbr.get(a); if (!s) nbr.set(a, s = new Set()); s.add(b); };
-  for (const r of rels) {
-    if (!names.has(r.fromTable) || !names.has(r.toTable)) continue;
-    const { manyT, oneT } = roleOf(r);
-    isMany.add(manyT); isOne.add(oneT);
-    link(r.fromTable, r.toTable); link(r.toTable, r.fromTable);
-  }
-  const dims: string[] = [], facts: string[] = [], iso: string[] = [];
-  for (const t of tables) {
-    if (isOne.has(t.name)) dims.push(t.name);          // dimension — referenced by something (incl. snowflake outriggers)
-    else if (isMany.has(t.name)) facts.push(t.name);   // pure fact — only ever the many side
-    else iso.push(t.name);                             // isolated — no relationships
-  }
-  return { dims, facts, iso, neighbors: (n: string) => nbr.get(n) ?? new Set<string>() };
-}
-
-// Order one rank so each node sits under/over the mean position of its neighbours in the other rank (the classic
-// barycenter heuristic) — the single biggest reducer of edge crossings, so relationship lines fan out cleanly
-// instead of tangling. Nodes with no placed neighbour fall to the end, in their original order.
-function baryOrder(rank: string[], otherIndex: Map<string, number>, neighbors: (n: string) => Set<string>): string[] {
-  const key = (n: string) => {
-    const ix = [...neighbors(n)].map((m) => otherIndex.get(m)).filter((v): v is number => v != null);
-    return ix.length ? ix.reduce((a, b) => a + b, 0) / ix.length : Number.MAX_SAFE_INTEGER;
-  };
-  return rank.map((n, i) => ({ n, i, k: key(n) })).sort((a, b) => (a.k - b.k) || (a.i - b.i)).map((x) => x.n);
 }
 
 // Assign each table a LAYER by its depth from the facts in the many→one DAG: a pure fact = 0, a dimension referenced
@@ -365,32 +332,6 @@ function hierarchyPositions(tables: GraphTable[], rels: GraphRelationship[], siz
   for (const n of iso) { m.set(n, { x: isoX, y: iy }); iy += sizeOf(n).h + GAP; }
   return m;
 }
-// Bus matrix (Kimball): DIMENSIONS across the TOP (connecting from their BOTTOM edge), FACTS down the LEFT (joining on
-// their RIGHT edge). Facts are barycenter-ordered beside the dims they use; dims hubs-first. Each node is laid by its
-// DYNAMIC box (cumulative), so a fact with many relationships is TALLER (its right-edge anchors spread into distinct
-// horizontal lanes) and a dim used by many facts is WIDER (its bottom-edge anchors spread) — the fix for "collapsed"
-// lines at a busy node. The lines are orthogonal L-routes (fact-right → up → dim-bottom).
-function busMatrixPositions(tables: GraphTable[], rels: GraphRelationship[], sizeOf: SizeOf): Map<string, XY> {
-  const { dims, facts, iso, neighbors } = classifyRoles(tables, rels);
-  const GAP = 72;
-  const dimOrder = [...dims].sort((a, b) => neighbors(b).size - neighbors(a).size);
-  const factOrder = baryOrder(facts, new Map(dimOrder.map((n, i) => [n, i])), neighbors);
-  // The fact column / dim row must each clear the other so the L-routes never run behind a table.
-  const factColW = Math.max(NODE_W, ...factOrder.map((n) => sizeOf(n).w));
-  const dimRowH = Math.max(NODE_H, ...dimOrder.map((n) => sizeOf(n).h));
-  const dimStartX = factColW + GAP * 1.5;
-  const factStartY = dimRowH + GAP * 1.5;
-  const m = new Map<string, XY>();
-  let x = dimStartX;
-  for (const n of dimOrder) { m.set(n, { x, y: 0 }); x += sizeOf(n).w + GAP; }   // dims across the top
-  let y = factStartY;
-  for (const n of factOrder) { m.set(n, { x: 0, y }); y += sizeOf(n).h + GAP; }  // facts down the left
-  const rightX = x + 60;
-  let iy = 0;
-  for (const n of iso) { m.set(n, { x: rightX, y: iy }); iy += sizeOf(n).h + GAP; }   // isolated on the far right
-  return m;
-}
-
 // Resolve positions for the shown tables: keep any KNOWN position (a prior drag or saved layout),
 // and only place the UNKNOWN ones — full dagre when the diagram is fresh, else stacked to the right
 // of the existing layout so adding tables never disturbs what you've already arranged.
@@ -407,76 +348,6 @@ function placePositions(membership: GraphTable[], rels: GraphRelationship[], kno
   return result;
 }
 
-// Many/One role of a relationship's two ends — mirrors busMatrixPositions's classification so handle sides agree.
-function roleOf(r: GraphRelationship): { manyT: string; oneT: string } {
-  if (r.fromCardinality === 'Many') return { manyT: r.fromTable, oneT: r.toTable };
-  if (r.toCardinality === 'Many') return { manyT: r.toTable, oneT: r.fromTable };
-  return { manyT: r.fromTable, oneT: r.toTable };
-}
-
-// Per-table relationship anchor slots. Each relationship end gets a DISTINCT point on a node side (frac), so two
-// edges never enter/exit at the same midpoint. In bus-matrix the one-side (dimension) end drops from the BOTTOM and
-// the many-side end leaves the TOP (dims sit above facts); otherwise source=Right / target=Left (the LR layout).
-// Order an edge's anchors along its side by the DIRECTION to the connected table — oriented so the key increases
-// with the side's frac (Top/Bottom run left→right; Left/Right run top→bottom). This makes a fan of lines stay
-// crossing-free and the slot order mirror the connected tables' on-screen order. Verified to give the bus-matrix
-// rule: the LEFTMOST dim attaches at the TOP of a fact's right edge, and the TOPMOST fact at the LEFT of a dim's
-// bottom edge (and the mirror at every other side). Position-driven, so it re-sorts when a table moves.
-function anchorKey(side: Position, centers: Map<string, XY>, table: string, other: string): number {
-  const a = centers.get(table), b = centers.get(other);
-  if (!a || !b) return 0;
-  const dx = b.x - a.x, dy = b.y - a.y;
-  if (side === Position.Top) return Math.atan2(dx, -dy);     // left → right along the top edge
-  if (side === Position.Bottom) return Math.atan2(dx, dy);   // left → right along the bottom edge
-  if (side === Position.Right) return Math.atan2(dy, dx);    // top → bottom down the right edge
-  return Math.atan2(dy, -dx);                                // top → bottom down the left edge
-}
-
-function computeAnchors(members: GraphTable[], rels: GraphRelationship[], layout: LayoutMode, centers?: Map<string, XY>): Map<string, Anchor[]> {
-  const names = new Set(members.map((t) => t.name));
-  const ends: { table: string; other: string; rel: string; kind: 'source' | 'target'; side: Position }[] = [];
-  for (const r of rels) {
-    if (!names.has(r.fromTable) || !names.has(r.toTable)) continue;
-    let fromSide: Position, toSide: Position;
-    if (layout === 'layered') {
-      // Vertical ranks (facts below, dims above): the one-side (dimension) faces DOWN toward the facts, the many-side
-      // (fact) faces UP toward the dims — clean vertical lanes between adjacent ranks.
-      const { oneT } = roleOf(r);
-      fromSide = r.fromTable === oneT ? Position.Bottom : Position.Top;
-      toSide = r.toTable === oneT ? Position.Bottom : Position.Top;
-    } else if (layout === 'busmatrix') {
-      // Bus matrix (dims top, facts left): the fact (many-side) joins on its RIGHT, the dimension (one-side) connects
-      // from its BOTTOM — an orthogonal L-route between the left fact column and the top dim row.
-      const { oneT } = roleOf(r);
-      fromSide = r.fromTable === oneT ? Position.Bottom : Position.Right;
-      toSide = r.toTable === oneT ? Position.Bottom : Position.Right;
-    } else if (layout === 'hierarchy') {
-      // Vertical (layered rotated 90°: facts left, dims right): the many-side (fact) leaves its RIGHT, the
-      // one-side (dimension) connects on its LEFT — horizontal lanes with a single vertical crossbar (mirrors layered).
-      const { oneT } = roleOf(r);
-      fromSide = r.fromTable === oneT ? Position.Left : Position.Right;
-      toSide = r.toTable === oneT ? Position.Left : Position.Right;
-    } else {
-      fromSide = Position.Right; toSide = Position.Left;
-    }
-    ends.push({ table: r.fromTable, other: r.toTable, rel: r.name, kind: 'source', side: fromSide });
-    ends.push({ table: r.toTable, other: r.fromTable, rel: r.name, kind: 'target', side: toSide });
-  }
-  const groups = new Map<string, typeof ends>();
-  for (const e of ends) { const k = e.table + '|' + e.side; const g = groups.get(k); if (g) g.push(e); else groups.set(k, [e]); }
-  const out = new Map<string, Anchor[]>();
-  for (const g of groups.values()) {
-    // Sort the ends sharing this edge by the angle to their connected table (when positions are known), so the
-    // attach points run sequentially along the edge instead of in arbitrary relationship order.
-    if (centers) g.sort((a, b) => anchorKey(a.side, centers, a.table, a.other) - anchorKey(b.side, centers, b.table, b.other));
-    g.forEach((e, i) => {
-      const a: Anchor = { rel: e.rel, kind: e.kind, side: e.side, frac: (i + 1) / (g.length + 1) };
-      const arr = out.get(e.table); if (arr) arr.push(a); else out.set(e.table, [a]);
-    });
-  }
-  return out;
-}
-
 // Each relationship END's ORDER (0-based) along the node side it sits on + that fan's size, derived from the
 // POSITION-sorted anchors. The elbow offset uses this so a fan's lines turn on distinct, SEQUENTIAL lanes — e.g. in
 // the layered view each dim's vertical drop length grows with its sequence, staggering the horizontal segments so
@@ -484,7 +355,7 @@ function computeAnchors(members: GraphTable[], rels: GraphRelationship[], layout
 function anchorSeqIndex(anchors: Map<string, Anchor[]>): Map<string, { i: number; n: number }> {
   const out = new Map<string, { i: number; n: number }>();
   for (const [table, arr] of anchors) {
-    const bySide = new Map<Position, Anchor[]>();
+    const bySide = new Map<Side, Anchor[]>();
     for (const a of arr) { const g = bySide.get(a.side); if (g) g.push(a); else bySide.set(a.side, [a]); }
     for (const g of bySide.values()) {
       g.sort((x, y) => x.frac - y.frac);   // along-the-edge order (already the angle-sorted order)
@@ -613,8 +484,18 @@ const layoutToPositions = (tables: { name: string; x: number; y: number }[] | un
   for (const t of tables ?? []) if (t.name) p[t.name] = { x: t.x, y: t.y };
   return p;
 };
-const positionsToLayoutNodes = (pos: Record<string, XY>) =>
-  Object.entries(pos).map(([name, p]) => ({ name, x: p.x, y: p.y }));
+const layoutToKeep = (tables: { name: string; keep?: boolean }[] | undefined): Record<string, true> => {
+  const k: Record<string, true> = {};
+  for (const t of tables ?? []) if (t.name && t.keep) k[t.name] = true;
+  return k;
+};
+const positionsToLayoutNodes = (pos: Record<string, XY>, keep = false) =>
+  Object.entries(pos).map(([name, p]) => (keep ? { name, x: p.x, y: p.y, keep: true } : { name, x: p.x, y: p.y }));
+// Every card's box as the reflow and make-room helpers take it (only measured cards: an unmeasured one has no size yet).
+const cardsOf = (nodes: Node[]) => nodes.filter((n) => n.measured?.width && n.measured?.height)
+  .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: n.measured!.width!, h: n.measured!.height! }));
+// How many lines leave each card by each side, from its anchors: the room makeRoom keeps beside that side.
+const linesOf = (nodes: Node[]) => new Map<string, SideLines>(nodes.map((n) => [n.id, linesBySide((n.data as { anchors?: { side: string }[] }).anchors)]));
 
 // Highest add-request nonce already consumed — module-level so it survives DiagramInner remounts (the canvas
 // unmounts when you leave the tab), preventing a stale request from re-firing (and re-creating a diagram) on return.
@@ -640,10 +521,22 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   const [focusedEdge, setFocusedEdge] = useState<string | null>(null);   // single-click: highlight one relationship, fade the rest
   const [toast, setToast] = useState<Toast | null>(null);                // create-relationship feedback
   const [filters, setFilters] = useState<Record<string, string>>({});    // per-table column search (transient)
+  // Which tables are open, per TABLE and for the whole canvas: it survives a layout change and a switch between
+  // saved diagrams (Kane, 25 Sep). The person's current expansion always wins; a saved diagram does not carry its
+  // own. The first load seeds it from the active diagram's legacy per-diagram map so nobody's open cards vanish.
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
+    const saved = loadState<Record<string, boolean> | null>('diagramExpanded', null);
+    if (saved) return saved;
+    const id = loadState<string>('activeDiagramId', ALL_ID);
+    return loadState<SavedDiagram[]>('diagrams', [DEFAULT_DIAGRAM]).find((d) => d.id === id)?.expanded ?? {};
+  });
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<GraphCardData>>([]);
   const [edges, setEdges] = useEdgesState<Edge>([]);
   const rf = useReactFlow();
+  const flowStore = useStoreApi();
+  // The canvas's shape (width over height). The bus matrix passes it on but no longer wraps its row to it (Kane, 8 Oct).
+  const canvasAspect = useCallback(() => { const { width, height } = flowStore.getState(); return width > 0 && height > 0 ? width / height : undefined; }, [flowStore]);
   const updateNodeInternals = useUpdateNodeInternals();
 
   // --- viewport framing (NOT a layout write: fitView only moves the camera, saved positions are untouched) ---
@@ -652,7 +545,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   const interactedSinceFit = useRef(false);
   const didFirstFit = useRef(false);
   const doFit = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
-    try { rf.fitView(opts ?? { padding: 0.2, duration: 300 }); } catch { /* not mounted */ }
+    try { rf.fitView(opts ?? { padding: FIT_MARGIN, duration: 300 }); } catch { /* not mounted */ }
     interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
   }, [rf]);
   // Fit only once the nodes have been MEASURED. React Flow fills `node.measured` on a render pass AFTER the nodes are
@@ -660,16 +553,29 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   // before that frames a box built from unmeasured/stale sizes, which is what left the graph parked in the lower
   // third of an otherwise empty canvas on first open at 1440x900. Poll a few frames, then fit anyway so a node that
   // never reports a size cannot mean no fit at all.
-  const fitWhenMeasured = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+  // The FIRST frame keeps the cards readable (journey m11 F17): a whole bus matrix fitted into a narrow Studio drew its
+  // text at 3 to 4 screen px. When the full fit would go below a readable zoom, the frame holds that zoom from the
+  // diagram's top-left instead (diagramfit.mjs readableFirstView). Fit on the row still shows the whole diagram.
+  const readableFit = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
+    const { width, height } = flowStore.getState();
+    const ns = rf.getNodes();
+    const bounds = ns.length ? rf.getNodesBounds(ns) : null;
+    const full = bounds && width > 0 && height > 0 ? getViewportForBounds(bounds, width, height, MIN_ZOOM, 2, FIT_MARGIN) : null;
+    const view = bounds && full ? readableFirstView(bounds, width, height, full.zoom, FIRST_FRAME_PAD) : null;
+    if (!view) { doFit(opts); return; }
+    try { void rf.setViewport(view); } catch { /* not mounted */ }
+    interactedSinceFit.current = false;
+  }, [rf, flowStore, doFit]);
+  const fitWhenMeasured = useCallback((opts?: Parameters<typeof rf.fitView>[0], readable = false) => {
     let tries = 0;
     const tick = () => {
       const ns = rf.getNodes();
       const ready = ns.length > 0 && ns.every((n) => (n.measured?.width ?? 0) > 0 && (n.measured?.height ?? 0) > 0);
-      if (ready || tries++ > 30) { doFit(opts); return; }
+      if (ready || tries++ > 30) { if (readable) readableFit(opts); else doFit(opts); return; }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
-  }, [rf, doFit]);
+  }, [rf, doFit, readableFit]);
 
   const active = useMemo(() => diagrams.find((d) => d.id === activeId) ?? diagrams[0] ?? DEFAULT_DIAGRAM, [diagrams, activeId]);
   // Tracks whether the All-tables diagram is active, readable from the once-mounted layout/didChange handler
@@ -713,7 +619,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   // Stable identity of the shown set — drives a relayout when membership OR the kind filters change (NOT on drag).
   const membershipKey = (active.all ? 'ALL' : members.map((t) => t.name).join('|')) + `#${showData ? 1 : 0}${showCalc ? 1 : 0}${showFp ? 1 : 0}`;
   const layout: LayoutMode = active.layout ?? 'free';
-  const expandedKey = JSON.stringify(active.expanded ?? {});
+  const expandedKey = JSON.stringify(expanded);
 
   // Column data for the expand-to-connect feature + the relationship-direction heuristic.
   const colsByTable = useMemo(() => {
@@ -734,6 +640,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   useEffect(() => { saveState('diagrams', diagrams); }, [diagrams]);
   useEffect(() => { saveState('activeDiagramId', activeId); }, [activeId]);
   useEffect(() => { saveState('diagramSnap', snap); }, [snap]);
+  useEffect(() => { saveState('diagramExpanded', expanded); }, [expanded]);
   useEffect(() => { saveState('diagramKindData', showData); }, [showData]);
   useEffect(() => { saveState('diagramKindCalc', showCalc); }, [showCalc]);
   useEffect(() => { saveState('diagramKindFp', showFp); }, [showFp]);
@@ -751,7 +658,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
       ]);
       const pos = layoutToPositions(lay?.tables);
       if (Object.keys(pos).length)
-        setDiagrams((ds) => ds.map((d) => (d.id === ALL_ID ? { ...d, positions: { ...d.positions, ...pos } } : d)));
+        setDiagrams((ds) => ds.map((d) => (d.id === ALL_ID ? { ...d, positions: { ...d.positions, ...pos }, keep: layoutToKeep(lay?.tables) } : d)));
       setGraph(g); setColumns(cols); setErr(null);
     } catch (e) { setErr(String((e as Error).message ?? e)); }
   }
@@ -759,7 +666,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     void load();
     let timer: number | undefined;
     const off = onDidChange((n) => {
-      if (n.deltas?.some((d) => d.kind === 'structure' || d.kind === 'add' || d.kind === 'remove') ?? true) {
+      if (changeReloadsDiagram(n)) {
         window.clearTimeout(timer);
         timer = window.setTimeout(() => void load(), 300);
       }
@@ -771,8 +678,18 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
       if (v.origin === ENGINE_LAYOUT_ORIGIN) return;
       const pos = layoutToPositions(v.tables);
       if (!Object.keys(pos).length) return;
-      setDiagrams((ds) => ds.map((d) => (d.id === ALL_ID ? { ...d, positions: { ...d.positions, ...pos } } : d)));
-      if (allActiveRef.current) setNodes((nds) => nds.map((n) => (pos[n.id] ? { ...n, position: pos[n.id] } : n)));
+      // The broadcast carries every stored entry, so its keep marks replace ours.
+      setDiagrams((ds) => ds.map((d) => (d.id === ALL_ID ? { ...d, positions: { ...d.positions, ...pos }, keep: layoutToKeep(v.tables) } : d)));
+      if (allActiveRef.current) {
+        // The assistant's layout may leave cards on top of each other or too close for their lines: once the moved
+        // cards are measured, the settle pass below makes room, as it does after a drop (Kane, 28 Sep).
+        // Round 9: the layout it saved ends the spread first (every card back on its saved spot, the assistant's on top), and
+        // the make-room then runs at once, as it did, before the spread is drawn again for the cards still open.
+        roomUndo.current = null; setPutBack(0);
+        const was = endSpread(); dropRoom();
+        settleAll.current = true; settleNow.current = true;
+        setNodes((nds) => nds.map((n) => { const p = pos[n.id] ?? was?.[n.id]; return p ? { ...n, position: p } : n; }));
+      }
     });
     return () => { off(); offLayout(); window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -805,16 +722,32 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   }, [graph, addTables]);
 
   // --- expand-to-connect ---
-  const onToggleExpand = useCallback((name: string) =>
-    editActive((d) => ({ ...d, expanded: { ...(d.expanded ?? {}), [name]: !(d.expanded ?? {})[name] } })), [editActive]);
+  const onToggleExpand = useCallback((name: string) => setExpanded((e) => toggleExpansion(e, name)), []);
   const onFilter = useCallback((name: string, q: string) => setFilters((f) => ({ ...f, [name]: q })), []);
   const setExpandAll = useCallback((on: boolean) =>
-    editActive((d) => ({ ...d, expanded: on ? Object.fromEntries(members.map((t) => [t.name, true])) : {} })), [editActive, members]);
+    setExpanded((e) => setExpansionFor(e, members.map((t) => t.name), on)), [members]);
 
   // Reconcile the canvas whenever the graph reloads, the diagram switches, or membership changes.
   // Keeps live (un-saved) drag positions on a graph reload of the SAME diagram; uses the diagram's
   // saved positions on a switch. New tables are placed without disturbing the existing layout.
   const prevActive = useRef(activeId);
+  // The spread (Kane, 29 Sep, "Slide down"): while any card is open, the cards are DRAWN where the layout would put them to make
+  // space for the open ones, and nothing of that is the layout. `drawn` is where each card is drawn now, `key` what the picture was
+  // worked out from (spreadKey), `done` false while the lines' room is still being worked out. The flow store holds the drawn
+  // spots, so the SAVED ones are held apart, in `held` (round 11, R10-1: round 10 kept them inside the spread, one of the spread's
+  // own guards cleared them, and the rebuild that followed saved the drawn spots as the layout). Every path that saves or reads a
+  // card's saved spot goes through `held` (persistPositions refuses a drawn one). Nothing the spread does can clear it: only a
+  // page-level event that puts every card back on its saved spot does, through endSpread.
+  type Spread = { drawn: Record<string, XY>; key: string; done: boolean };
+  const spread = useRef<Spread | null>(null);
+  const held = useRef(savedSpots()).current;
+  // The spread is over: the caller puts every card on the saved spots it returns (null when no spread was drawn).
+  const endSpread = () => { spread.current = null; return held.release(); };
+  const spreadWorking = useRef(false);   // the spread's room for the lines is running on roomStop
+  const anyOpenRef = useRef(false);      // some card is open as of the last render (a spread's late result checks it before it is drawn)
+  const settleNow = useRef(false);       // the make-room runs at once even with cards open (an arrange, the assistant's save, tables added)
+  const [spreadTick, setSpreadTick] = useState(0);   // bumped when a make-room ends, so the spread is worked out again
+  const lastRebuild = useRef<{ graph: unknown; activeId: string; membershipKey: string; layout: string } | null>(null);
   useEffect(() => {
     if (!graph) return;
     const switched = prevActive.current !== activeId;
@@ -822,10 +755,13 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     if (switched) didFirstFit.current = false;   // a switched-to diagram is a first open of ITS layout, so frame it too
     const counts = relCounts(graph.relationships);
     const memberNames = new Set(members.map((t) => t.name));
-    const expanded = active.expanded ?? {};
     // Current positions: keep live drags on a same-diagram reload; a switch resets to the saved layout. Computed
     // outside setNodes so the SAME ordered anchors drive the nodes' handles AND the edges' elbow lanes (edgesFor).
-    const live = switched ? new Map<string, XY>() : new Map(rf.getNodes().map((n) => [n.id, n.position as XY]));
+    // While a spread is drawn the flow store holds DRAWN spots, so the saved ones are read from the spread instead.
+    const live = switched ? new Map<string, XY>() : held.peek() ? new Map(Object.entries(held.peek()!)) : new Map(rf.getNodes().map((n) => [n.id, n.position as XY]));
+    // Carry each card's last measured size into the rebuilt node, so the reflow below compares a toggled card's
+    // new size with its old one instead of waiting on every card to be measured from nothing again.
+    const measuredOf = new Map(rf.getNodes().map((n) => [n.id, n.measured]));
     const known: Record<string, XY> = {};
     for (const t of members) { const p = live.get(t.name) ?? active.positions[t.name]; if (p) known[t.name] = p; }
 
@@ -839,21 +775,30 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // slot ORDER is then computed below from the placed positions (the angle sort), so a fan attaches sequentially.
     const sides = computeAnchors(members, graph.relationships, effLayout);
     const sizeOf: SizeOf = (n) => sizeForAnchors(sides.get(n) ?? EMPTY_ANCHORS);
+    // A layout reserves each card's REAL box (an open card is taller than its anchor box), so it starts clear.
+    const boxOf: SizeOf = (n) => layoutBox(sizeOf(n), measuredOf.get(n));
     const placed = arranging
-      ? busMatrixPositions(members, graph.relationships, sizeOf)        // fresh All-tables → default bus matrix
-      : placePositions(members, graph.relationships, known, sizeOf);    // else keep saved/dragged positions
+      ? busMatrixPositions(members, graph.relationships, boxOf, canvasAspect())   // fresh All-tables → default bus matrix
+      : placePositions(members, graph.relationships, known, boxOf);     // else keep saved/dragged positions
     // Order each table's anchor slots by the now-known positions (centre = position + half size) — the angle sort.
     const centers = new Map<string, XY>();
     for (const t of members) { const p = placed.get(t.name); if (p) { const s = sizeOf(t.name); centers.set(t.name, { x: p.x + s.w / 2, y: p.y + s.h / 2 }); } }
     const anchors = computeAnchors(members, graph.relationships, effLayout, centers);
+    // The cards below are at their saved spots; the spread (effect below) is drawn again from them. A spread still being worked
+    // out is stopped here too (round 10): its result was computed for the open cards and the graph of a moment ago, and drawn
+    // late it would put the cards on spots no saved layout has (every card closed meanwhile, or a model that changed).
+    endSpread();
+    if (spreadWorking.current) dropRoom();
     setNodes(members.map((t) => {
       const sz = sizeOf(t.name);
       return {
         id: t.name, type: 'table',
+        zIndex: expanded[t.name] ? OPEN_CARD_Z : undefined,
         position: placed.get(t.name) ?? { x: 0, y: 0 },
+        measured: measuredOf.get(t.name),
         data: {
           t, rels: counts.get(t.name) ?? 0, curated: !active.all,
-          anchors: anchors.get(t.name) ?? EMPTY_ANCHORS, w: sz.w, h: sz.h,
+          anchors: anchors.get(t.name) ?? EMPTY_ANCHORS, w: sz.w, h: sz.h, layout,
           expanded: !!expanded[t.name],
           columns: expanded[t.name] ? (colsByTable.get(t.name) ?? []) : null,
           related: relatedByTable.get(t.name) ?? EMPTY_SET,
@@ -863,13 +808,26 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
       };
     }));
     setEdges(edgesFor(graph.relationships, memberNames, anchors, centers));
+    // Saved positions may predate a card's current size: run the overlap pass once measured. Only for a change of the LAYOUT
+    // (review round 8): opening or closing a card rebuilds the cards too, to show or hide its columns, and looking is not a
+    // layout change, so it settles nothing, saves nothing and offers nothing.
+    const now = { graph, activeId, membershipKey, layout };
+    lastSizes.current = sizesToCompare(lastRebuild.current, now, lastSizes.current);   // an arrange placed the cards with their new boxes already
+    if (isLayoutChange(lastRebuild.current, now)) {
+      settleAll.current = true;
+      // Round 9: with cards open the make-room for a reloaded model alone (a link) waits until the spread ends; the others run now.
+      if (isArrangeChange(lastRebuild.current, now)) settleNow.current = true;
+    }
+    lastRebuild.current = now;
     // Persist the default arrangement once so it sticks (a later drag then keeps bus-matrix anchor sides, not free),
     // and frame it (the mount-time fitView fires before the async graph load, so the fresh arrange needs its own fit).
     if (arranging) {
       editActive((d) => ({ ...d, layout: effLayout, positions: { ...d.positions, ...Object.fromEntries(placed) } }));
     }
-    // anchors re-sided / columns shown-or-hidden change a node's handle geometry → tell React Flow to re-measure
-    window.setTimeout(() => members.forEach((t) => updateNodeInternals(t.name)), 0);
+    // anchors re-sided / columns shown-or-hidden change a node's handle geometry → tell React Flow to re-measure.
+    // One call for every card: a call per card is a store update per card, and every line and the bus matrix
+    // routing then re-read the whole diagram once per card (an 80-card Expand all froze for seconds).
+    window.setTimeout(() => updateNodeInternals(members.map((t) => t.name)), 0);
     // FIRST OPEN: frame the diagram once the graph has actually arrived. The <ReactFlow fitView> prop only fits at
     // initialisation — which happens while `nodes` is still empty, because the graph loads async — so a diagram that
     // opens from SAVED positions (the common case; `arranging` is false whenever a layout was already persisted)
@@ -877,7 +835,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // moved the view while it loaded.
     if (!didFirstFit.current && members.length > 0 && !interactedSinceFit.current) {
       didFirstFit.current = true;
-      fitWhenMeasured({ padding: 0.2 });
+      fitWhenMeasured({ padding: FIT_MARGIN }, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, activeId, membershipKey, layout, expandedKey, columns]);
@@ -890,8 +848,8 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
 
   // Persist the All-tables positions to the engine sidecar (fire-and-forget, best-effort). Custom diagrams stay
   // client-side; only the All-tables layout is engine-owned (the shared, cross-machine, agent-visible one).
-  const saveEngineLayout = useCallback((pos: Record<string, XY>) => {
-    void rpc('saveLayout', positionsToLayoutNodes(pos), ENGINE_LAYOUT_ORIGIN).catch(() => { /* best-effort */ });
+  const saveEngineLayout = useCallback((pos: Record<string, XY>, keep = false) => {
+    void rpc('saveLayout', positionsToLayoutNodes(pos, keep), ENGINE_LAYOUT_ORIGIN).catch(() => { /* best-effort */ });
   }, []);
 
   // Re-sort every table's anchor slots + the edge elbow lanes from the CURRENT node positions (the angle sort), so
@@ -905,7 +863,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     const anchors = computeAnchors(members, graph.relationships, layout, centers);
     setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, anchors: anchors.get(n.id) ?? EMPTY_ANCHORS } })));
     setEdges(edgesFor(graph.relationships, new Set(members.map((t) => t.name)), anchors, centers));
-    members.forEach((t) => updateNodeInternals(t.name));
+    updateNodeInternals(members.map((t) => t.name));   // one re-measure for every card, as above
   }, [graph, members, layout, rf, setNodes, setEdges, updateNodeInternals]);
 
   // Live (position-driven) re-sort while dragging — rAF-throttled to at most one recompute per frame so the attach
@@ -916,17 +874,290 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     dragRaf.current = requestAnimationFrame(() => { dragRaf.current = 0; restyleFromPositions(); });
   }, [restyleFromPositions]);
 
-  // commit current node positions into the active diagram (so they survive a reload) + the engine (for All-tables)
-  const commitPositions = useCallback(() => {
-    if (dragRaf.current) { cancelAnimationFrame(dragRaf.current); dragRaf.current = 0; }
-    restyleFromPositions();   // final crisp re-sort on drop
-    const pos = nodesToPositions(rf.getNodes());
-    editActive((d) => ({ ...d, positions: { ...d.positions, ...pos } }));
-    if (active.all) saveEngineLayout(pos);
-  }, [rf, editActive, active.all, saveEngineLayout, restyleFromPositions]);
+  // Store positions in the active diagram (so they survive a reload) + the engine (for All-tables). A drag and a
+  // reflow after a card opens or closes both land here, so a moved card persists the same way whichever moved it.
+  // Callers pass ONLY the cards that moved: every other table keeps its stored position (UAT-S11-1-004).
+  // A card saved this way loses its keep mark (it moved), unless `keep` is set (a put-back), which marks it.
+  const persistPositions = useCallback((positions: Record<string, XY>, keep = false) => {
+    // Nothing a spread drew is ever saved (round 9): a spot equal to a card's DRAWN spot and not to its saved one is refused.
+    let pos = positions;
+    const sp = spread.current;
+    if (sp) {
+      pos = {};
+      for (const [id, p] of Object.entries(positions)) {
+        const d = sp.drawn[id], v = held.peek()?.[id];
+        const isDrawn = d && Math.abs(p.x - d.x) < 0.5 && Math.abs(p.y - d.y) < 0.5, isSaved = v && Math.abs(p.x - v.x) < 0.5 && Math.abs(p.y - v.y) < 0.5;
+        if (isDrawn && !isSaved) console.error(`Diagram: refused to save ${id} at a spot only the spread drew`);
+        else pos[id] = p;
+      }
+    }
+    if (!Object.keys(pos).length) return;
+    editActive((d) => {
+      const kept = { ...d.keep };
+      for (const id of Object.keys(pos)) { if (keep) kept[id] = true; else delete kept[id]; }
+      return { ...d, positions: { ...d.positions, ...pos }, keep: kept };
+    });
+    if (active.all) saveEngineLayout(pos, keep);
+  }, [editActive, active.all, saveEngineLayout]);
 
-  // Apply a layout function to the shown tables, record the layout mode (so handle sides re-side), collapse all
-  // (the fixed-NODE_H dagre/matrix math assumes collapsed nodes), persist positions, and fit the view.
+  // Making room for the lines (Kane, 28 Sep): when a layout leaves cards on top of each other or too close for the
+  // lines between them, the page moves cards apart just enough and saves the moved spots, and the assistant reads them
+  // on its next get_layout. One Undo (the toast's, or the row's Put back while the toast is gone) puts back the cards
+  // the page last moved and marks them kept, so the page leaves them there from then on, whichever door asks. A kept
+  // mark is saved with the layout, so it outlasts a tab switch and a reload and the assistant sees it (get_layout's
+  // keep); moving the card, by hand or by save_layout without keep, clears it. Ctrl+Z stays the model's undo (the
+  // timeline both doors share, shortcuts.tsx hostCommandForKey): layout is not on that timeline.
+  const roomUndo = useRef<{ diagram: string; from: Record<string, XY>; to: Record<string, XY> } | null>(null);
+  const [putBack, setPutBack] = useState(0);   // how many cards the live put-back would move, for the row's button
+  const notePageMove = useCallback((from: Record<string, XY>, to: Record<string, XY>, more = false) => {
+    if (!Object.keys(to).length) return;
+    // A further round of the same make-room joins the Undo already offered: one Undo still puts everything back.
+    const rec = more && roomUndo.current?.diagram === activeId ? roomUndo.current : { diagram: activeId, from: {}, to: {} };
+    for (const id of Object.keys(to)) { if (!(id in rec.from)) rec.from[id] = from[id]; rec.to[id] = to[id]; }
+    roomUndo.current = rec;
+    const n = Object.keys(rec.to).length;
+    setPutBack(n);
+    setToast({ text: `Moved ${n} table${n > 1 ? 's' : ''} so the lines have room.`, tone: 'ok', action: { label: 'Undo', run: () => undoRoomRef.current() } });
+  }, [activeId]);
+  const undoRoom = useCallback(() => {
+    if (spread.current) return;   // hidden while spread (round 9); it is offered again when the cards close
+    const rec = roomUndo.current;
+    roomUndo.current = null; setPutBack(0);
+    if (!rec || rec.diagram !== activeId) return;
+    // Only a card still where the page left it goes back: one moved since (by the person or their assistant) stays.
+    const at = new Map(rf.getNodes().map((n) => [n.id, n.position]));
+    const back: Record<string, XY> = {};
+    for (const [id, p] of Object.entries(rec.to)) { const q = at.get(id); if (q && Math.abs(q.x - p.x) < 0.5 && Math.abs(q.y - p.y) < 0.5) back[id] = rec.from[id]; }
+    if (!Object.keys(back).length) return;
+    setNodes((ns) => ns.map((n) => (back[n.id] ? { ...n, position: back[n.id] } : n)));
+    persistPositions(back, true);
+    // A Put back stays put (review round 7): the settle pass below keeps, where they are, the cards it would still move
+    // now these are kept, so a fresh page on this layout moves nothing.
+    putBackPass.current = true; settleAll.current = true;
+    requestAnimationFrame(() => restyleFromPositions());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, rf, setNodes, persistPositions]);
+  const undoRoomRef = useRef(undoRoom);
+  undoRoomRef.current = undoRoom;
+  // Making room runs a few ms at a time (roomSteps, runInSlices) and moves the cards once, when it is done; meanwhile the
+  // lines are held (BusRoutes hold), since routing a layout about to change is wasted. A newer change, a drag, another
+  // diagram or leaving the Diagram drops it (review round 5: the page made room and routed again up to five times, on
+  // the main thread, and froze for 40 s at a time on a 300-table grid).
+  const roomStop = useRef<(() => void) | null>(null);
+  const [roomBusy, setRoomBusy] = useState(false);
+  const dropRoom = useCallback(() => { roomStop.current?.(); roomStop.current = null; spreadWorking.current = false; setRoomBusy(false); }, []);
+  useEffect(() => dropRoom, [dropRoom]);
+  useEffect(() => { roomUndo.current = null; setPutBack(0); dropRoom(); }, [activeId, dropRoom]);   // a put-back belongs to its own diagram
+  // The person's own drag starts something new: the page's last move is no longer the thing an Undo takes back. A
+  // make-room it drops starts again once the card is down (its result was worked out without the drag).
+  const roomAgain = useRef(false);
+  const onNodeDragStart = useCallback(() => { roomUndo.current = null; setPutBack(0); if (roomStop.current) roomAgain.current = true; dropRoom(); }, [dropRoom]);
+
+  // React Flow hands the drop the dragged nodes (one, or a multi-selection); only they are saved.
+  const commitPositions = useCallback((_e: unknown, _node: Node, dragged: Node[]) => {
+    if (dragRaf.current) { cancelAnimationFrame(dragRaf.current); dragRaf.current = 0; }
+    // A card dropped on another, or closer to one than the lines between them need (the routed bus matrix), moves to
+    // the nearest clear spot (clearDropped): two stacked cards hide a handle, and its line then runs behind the card on
+    // top. Only the dropped cards move, so only they are saved; one Undo puts them where they were dropped.
+    // The drop's own spots, not the flow store's: after a quick drag (two pointer moves, or a busy page's coalesced
+    // ones) or a Snap step the store still holds the card where it last rendered, clear of everything, while the drag
+    // hands over where it was let go (review round 5: such drops were left on other cards and saved there).
+    const at = new Map(dragged.map((n) => [n.id, n.position]));
+    const all = rf.getNodes().map((n) => (at.has(n.id) ? { ...n, position: at.get(n.id)! } : n));
+    // A spot the person can see is preferred: the part of the canvas on screen, in flow px.
+    const { width, height, transform: [tx, ty, zoom] } = flowStore.getState();
+    const view = width > 0 && height > 0 && zoom > 0 ? { x: -tx / zoom, y: -ty / zoom, w: width / zoom, h: height / zoom } : null;
+    const clear = clearDropped(cardsOf(all), dragged.map((n) => n.id), CARD_GAP, snap ? GRID : 0, layout === 'busmatrix' ? linesOf(all) : null, view);
+    const sp = spread.current;
+    if (sp) {
+      // A drag while spread (round 9): the card's SAVED spot moves by the distance it was dragged and only it is saved (its keep
+      // mark clears, as any drag does). Round 10 (L1, L2): that spot is then put on the grid when Snap is on and moved to the
+      // nearest clear spot of the SAVED layout (the closed boxes), as a drop with every card closed is, so the make-room at the
+      // end of the spread has nothing to move: no other card changes because of this drag, and no toast or Put back is offered.
+      // It is DRAWN at the nearest clear spot of the spread, and every other card keeps its place in the spread.
+      const saved: Record<string, XY> = {}, drawn: Record<string, XY> = {};
+      const near = (v: number) => (snap ? Math.round(v / GRID) * GRID : v);
+      for (const n of dragged) {
+        const from = sp.drawn[n.id], was = held.peek()?.[n.id];
+        const to = from && was ? savedAfterDrag(was, from, n.position) : { x: n.position.x, y: n.position.y };
+        saved[n.id] = { x: near(to.x), y: near(to.y) };
+        drawn[n.id] = clear[n.id] ?? { x: n.position.x, y: n.position.y };
+      }
+      const closedBoxes = all.map((n) => ({ id: n.id, x: (saved[n.id] ?? held.peek()?.[n.id] ?? n.position).x, y: (saved[n.id] ?? held.peek()?.[n.id] ?? n.position).y, w: (n.data as { w: number }).w, h: (n.data as { h: number }).h }));
+      const clearSaved = clearDropped(closedBoxes, dragged.map((n) => n.id), CARD_GAP, snap ? GRID : 0, layout === 'busmatrix' ? linesOf(all) : null, view);
+      for (const [id, p] of Object.entries(clearSaved)) saved[id] = p;
+      held.amend(saved);
+      spread.current = { ...sp, drawn: { ...sp.drawn, ...drawn }, key: sp.done ? sp.key : '' };
+      if (Object.keys(clear).length) setNodes((ns) => ns.map((n) => (clear[n.id] ? { ...n, position: clear[n.id] } : n)));
+      restyleFromPositions();
+      if (Object.keys(clear).length) requestAnimationFrame(() => restyleFromPositions());
+      persistPositions(saved);
+      roomAgain.current = false;
+      return;
+    }
+    if (Object.keys(clear).length) {
+      setNodes((ns) => ns.map((n) => (clear[n.id] ? { ...n, position: clear[n.id] } : n)));
+      notePageMove(Object.fromEntries(dragged.filter((n) => clear[n.id]).map((n) => [n.id, { x: n.position.x, y: n.position.y }])), clear);
+    }
+    restyleFromPositions();   // final crisp re-sort on drop
+    if (Object.keys(clear).length) requestAnimationFrame(() => restyleFromPositions());   // and again on the cleared spots
+    dragged = dragged.map((n) => (clear[n.id] ? { ...n, position: clear[n.id] } : n));
+    persistPositions(nodesToPositions(dragged));
+    if (roomAgain.current) { roomAgain.current = false; settleAll.current = true; }   // the re-sort above re-runs the settle pass
+  }, [persistPositions, restyleFromPositions, rf, flowStore, setNodes, snap, layout, notePageMove]);
+
+  // Keep cards clear of each other when the LAYOUT changes (Kane, 25 Sep; review rounds 8 and 9). A card that needs a bigger box
+  // for its lines moves the cards below it in its column by exactly that change, both ways; any overlap left after that is
+  // pushed clear, and the routed bus matrix gets room for its lines (diagramfit.mjs). Looking is not a layout change: opening
+  // or closing a card, one or all, saves nothing and offers nothing. The cards slide apart on screen while a card is open (the
+  // spread, below); this pass never sees an open card's height, it settles by each card's closed box. `settleAll` asks for the
+  // overlap pass after a rebuild or an arrange even when no box changed, since saved positions may predate a card's box.
+  const lastSizes = useRef(new Map<string, FitSize>());
+  const settleAll = useRef(false);
+  const putBackPass = useRef(false);   // the next settle pass follows a Put back: it keeps cards instead of moving them
+  // Moves the cards to `next`, saves the ones that moved from `from` (where they were drawn) and offers the page's own
+  // moves (`page`: the positions they are measured from) to one Undo.
+  const land = (next: Record<string, XY>, from: Record<string, XY>, page: Record<string, XY>, more = false) => {
+    const moved = changedPositions(from, next);
+    if (!Object.keys(moved).length) return;
+    setNodes((ns) => ns.map((n) => (moved[n.id] ? { ...n, position: moved[n.id] } : n)));
+    persistPositions(changedPositions(from, next));   // the cards the reflow or the room moved, no others
+    const pageMoved = changedPositions(page, next);
+    notePageMove(Object.fromEntries(Object.keys(pageMoved).map((id) => [id, page[id]])), pageMoved, more);
+    requestAnimationFrame(() => restyleFromPositions());   // the lines re-sort their attach points on the new spots
+  };
+  // The links roomSteps takes, from where the cards stand (their ends re-sort on the centers).
+  const linksOf = (boxes: { id: string; x: number; y: number; w: number; h: number }[]) => {
+    const centers = new Map(boxes.map((b) => [b.id, { x: b.x + b.w / 2, y: b.y + b.h / 2 }]));
+    const ends = new Map<string, { id: string; side: string; frac: number }>();
+    for (const [table, list] of computeAnchors(members, graph!.relationships, layout, centers)) for (const a of list) ends.set(a.rel + ':' + a.kind, { id: table, side: a.side, frac: a.frac });
+    return graph!.relationships.flatMap((r) => { const from = ends.get(r.name + ':source'), to = ends.get(r.name + ':target'); return from && to ? [{ id: r.name, from, to }] : []; });
+  };
+  const spreadAgain = () => setSpreadTick((t) => t + 1);
+  useEffect(() => {
+    if (!nodes.length || nodes.some((n) => !n.measured?.width || !n.measured?.height)) return;
+    if (nodes.some((n) => n.data.layout !== layout)) return;   // an arrange moved the cards before the rebuild gave them the new layout's boxes: settle then
+    // Round 9: while a card is open the page draws a spread instead (the effect below), and this make-room waits, with `lastSizes`
+    // and `settleAll` as they are, until the last card closes. Only a change that asks to run now (settleNow) goes ahead.
+    if (!settleNow.current && nodes.some((n) => n.data.expanded)) return;
+    // The cards are settled by their CLOSED boxes, whether they are open or not (review round 8: looking is not a layout
+    // change). An opened card's measured size would turn every look into growth; the spread draws that growth, unsaved.
+    const cur = new Map(nodes.map((n) => [n.id, { w: n.data.w, h: n.data.h }]));
+    const { prev, changed } = boxChanges(nodes.map((n) => ({ id: n.id, ...cur.get(n.id)! })), lastSizes.current);
+    lastSizes.current = cur;
+    if (!changed && !settleAll.current) { if (settleNow.current) { settleNow.current = false; spreadAgain(); } return; }
+    settleAll.current = false; settleNow.current = false;
+    dropRoom();   // this change replaces a make-room still working
+    const keep = new Set(Object.keys(active.keep ?? {}));
+    const afterPutBack = putBackPass.current && !changed;   // a card opened in the same beat is an ordinary pass
+    putBackPass.current = false;
+    if (afterPutBack) {
+      // Nothing moves and nothing is offered: the cards the pass would move are kept where they are (saved with the keep
+      // mark, so the assistant reads them too) until a fresh page has nothing to move. Lines are held meanwhile.
+      const at = nodesToPositions(nodes);
+      let finished = false;
+      const finish = (added: Set<string>) => {
+        finished = true; roomStop.current = null; setRoomBusy(false);
+        if (added.size) persistPositions(Object.fromEntries([...added].map((id) => [id, at[id]])), true);
+        spreadAgain();
+      };
+      const cards = nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, ...cur.get(n.id)! }));
+      if (layout !== 'busmatrix' || !graph) {   // only the overlap pass runs here
+        const grownOnly = reflowCards(cards, prev, CARD_GAP, keep);
+        finish(new Set(Object.keys(changedPositions(at, grownOnly)).filter((id) => !keep.has(id))));
+        return;
+      }
+      const stop = runInSlices(keepBeside(cards, linksOf, linesOf(nodes), snap ? GRID : 0, keep), finish);
+      if (!finished) { roomStop.current = stop; setRoomBusy(true); }
+      return;
+    }
+    const grown = reflowCards(nodes.map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, ...cur.get(n.id)! })), prev, CARD_GAP, keep);
+    const before = nodesToPositions(nodes);
+    // What an Undo puts back is the page's own moves, not a card following the one that grew above it (closing that
+    // card moves it back). A pass with no size change moved every card it moved to make room, so all of those count.
+    const page = changed ? grown : before;
+    if (layout !== 'busmatrix' || !graph) { land(grown, before, page); spreadAgain(); return; }
+    // Then room for the lines (the routed bus matrix only): no card on another, and every gap wide enough for its lines.
+    const boxes = nodes.map((n) => ({ id: n.id, ...grown[n.id], ...cur.get(n.id)! }));
+    const links = linksOf(boxes);
+    let now: Record<string, XY> | null = null, later: ((room: Record<string, XY>) => void) | null = null;
+    const stop = runInSlices(roomSteps(boxes, links, linesOf(nodes), snap ? GRID : 0, keep), (room) => (later ? later(room) : (now = room)));
+    if (now) { land({ ...grown, ...(now as Record<string, XY>) }, before, page); spreadAgain(); return; }   // done in its first slice
+    // Still working: a size change moves its cards now; the room lands when it is done, joining the same Undo.
+    roomStop.current = stop; setRoomBusy(true);
+    if (changed) land(grown, before, page);
+    const from = changed ? grown : before;
+    later = (room) => { roomStop.current = null; setRoomBusy(false); land({ ...grown, ...room }, from, page, changed); spreadAgain(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes]);
+
+  // The spread (Kane, 29 Sep, "Slide down"). While any card is open the cards are DRAWN where the layout would put them to make
+  // space for the open ones: the cards below an open card move down by its growth, then apart until no card covers another and
+  // the lines have room (the pass the page ran before round 8: spreadStart, then roomSteps). It is worked out from the SAVED
+  // layout plus the set of open cards, so the same open cards always draw the same spread, and it is a view only: nothing is
+  // saved, toasted, offered as a Put back or marked kept, and closing the last card puts every card back on its saved spot
+  // (the rebuild that closes it reads the saved spots, never the drawn ones). A layout change that happens meanwhile (a link)
+  // has its make-room run once, when the spread ends.
+  const spreadCache = useRef(new Map<string, Record<string, XY>>());
+  useLayoutEffect(() => {
+    if (!graph || !nodes.length || nodes.some((n) => !n.measured?.width || !n.measured?.height || n.dragging)) return;
+    if (!nodes.some((n) => n.data.expanded)) {
+      // Nothing is open: there is no spread. One still being worked out is stopped, or its result is drawn over the saved layout
+      // when it lands (round 10, R9-1: every card left on the spread's spots, and the next save stored them). Any card still on a
+      // spot the spread drew goes back to its saved spot (round 11: the store is never left on the drawn spots with no card open).
+      const was = endSpread();
+      if (spreadWorking.current) dropRoom();
+      if (was) setNodes((ns) => ns.map((n) => (was[n.id] ? { ...n, position: was[n.id] } : n)));
+      return;
+    }
+    if (settleNow.current) return;   // the make-room that asked to run now goes first, then the spread is drawn from what it saved
+    if (roomStop.current && !spreadWorking.current) return;   // a make-room is working; its end asks for the spread again
+    const s = spread.current;
+    const keep = new Set(Object.keys(active.keep ?? {}));
+    const sizes = nodes.map((n) => ({ id: n.id, w: n.measured!.width!, h: n.measured!.height!, open: !!n.data.expanded }));
+    // What the picture depends on: the open cards and the sizes they are drawn at, and the layout mode. Not Snap (the spread is a
+    // view, so it keeps no grid) and not the kept cards (a drag while spread clears one, which must not redraw the others).
+    const key = spreadKey(sizes, layout);
+    if (s && s.key === key) return;   // this picture is already drawn (or being worked out)
+    const savedNow = held.peek() ?? nodesToPositions(nodes);
+    dropRoom();   // replaces a spread still being worked out
+    const draw = (to: Record<string, XY>, done: boolean) => {
+      // The open set can change while the work runs; a spread is only ever drawn for cards that are open now. Nothing is cleared
+      // here: the saved spots are `held`, and the rebuild that closed the cards puts every card back on them.
+      if (!anyOpenRef.current) return;
+      held.hold(savedNow);
+      spread.current = { drawn: to, key, done };
+      setNodes((ns) => ns.map((n) => { const p = to[n.id]; return p && (Math.abs(p.x - n.position.x) > 0.001 || Math.abs(p.y - n.position.y) > 0.001) ? { ...n, position: p } : n; }));
+      requestAnimationFrame(() => restyleFromPositions());   // the lines re-sort their attach points on the drawn spots
+    };
+    const { needed, grown } = spreadStart(nodes.map((n, i) => ({ id: n.id, x: (savedNow[n.id] ?? n.position).x, y: (savedNow[n.id] ?? n.position).y, w: sizes[i].w, h: sizes[i].h, bw: n.data.w, bh: n.data.h, open: sizes[i].open })), keep);
+    if (!needed) {   // nothing is drawn bigger than its closed box: the saved spots are what is drawn
+      const was = endSpread();
+      if (was) setNodes((ns) => ns.map((n) => (was[n.id] ? { ...n, position: was[n.id] } : n)));
+      return;
+    }
+    const memo = key + '#' + [...keep].sort().join(',') + '#' + JSON.stringify(Object.values(savedNow).map((p) => [Math.round(p.x * 10), Math.round(p.y * 10)]));
+    const hit = spreadCache.current.get(memo);
+    if (hit) { draw(hit, true); return; }
+    const done = (to: Record<string, XY>) => {
+      spreadCache.current.set(memo, to);
+      if (spreadCache.current.size > 8) spreadCache.current.delete(spreadCache.current.keys().next().value!);
+      draw(to, true);
+    };
+    if (layout !== 'busmatrix') { done(grown); return; }
+    const boxes = nodes.map((n, i) => ({ id: n.id, ...grown[n.id], w: sizes[i].w, h: sizes[i].h }));
+    let now: Record<string, XY> | null = null, later: ((room: Record<string, XY>) => void) | null = null;
+    const stop = runInSlices(roomSteps(boxes, linksOf(boxes), linesOf(nodes), 0, keep), (room) => (later ? later(room) : (now = room)));
+    if (now) { done({ ...grown, ...(now as Record<string, XY>) }); return; }   // done in its first slice
+    // Still working: the cards below an open one slide down now, and the room for the lines lands when it is done.
+    roomStop.current = stop; spreadWorking.current = true; setRoomBusy(true);
+    draw(grown, false);
+    later = (room) => { roomStop.current = null; spreadWorking.current = false; setRoomBusy(false); done({ ...grown, ...room }); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, spreadTick]);
+
+  // Apply a layout function to the shown tables, record the layout mode (so handle sides re-side), persist
+  // positions, and fit the view. Open cards stay open: the layout reserves each card's measured box instead.
   const arrangeWith = useCallback((layoutFn: (m: GraphTable[], r: GraphRelationship[], sizeOf: SizeOf) => Map<string, XY>, mode: LayoutMode) => {
     if (!graph) return;
     // Arrange the FULL diagram scope (baseMembers), never the kind-filtered view: the filters hide tables, they
@@ -937,17 +1168,23 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // Size each node from the anchors of the TARGET layout (handle sides differ per layout), so spacing matches
     // exactly the box the node will render at — busy nodes get their own wider/taller footprint.
     const anchors = computeAnchors(baseMembers, graph.relationships, mode);
-    const sizeOf: SizeOf = (n) => sizeForAnchors(anchors.get(n) ?? EMPTY_ANCHORS);
+    const sizeOf: SizeOf = (n) => layoutBox(sizeForAnchors(anchors.get(n) ?? EMPTY_ANCHORS), rf.getInternalNode(n)?.measured, !!expanded[n]);
     const placed = layoutFn(baseMembers, graph.relationships, sizeOf);
-    setNodes((ns) => ns.map((n) => ({ ...n, position: placed.get(n.id) ?? n.position })));
-    editActive((d) => ({ ...d, positions: Object.fromEntries(placed), layout: mode, expanded: {} }));
+    // Round 9: an arrange ends the spread first (every card back on its saved spot); the spread is drawn again from the new
+    // layout for the cards still open, once the make-room below has run.
+    const was = endSpread(); dropRoom();
+    setNodes((ns) => ns.map((n) => ({ ...n, position: placed.get(n.id) ?? was?.[n.id] ?? n.position })));
+    editActive((d) => ({ ...d, positions: Object.fromEntries(placed), layout: mode }));
+    settleAll.current = true; settleNow.current = true;
     if (active.all) saveEngineLayout(Object.fromEntries(placed));
     // A layout change is an explicit command ("show me the bus matrix"), so this fit is unconditional — the
     // interaction guard exists to protect a view the person chose, not to suppress the arrangement they just asked for.
-    fitWhenMeasured({ padding: 0.2, duration: 300 });
-  }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout, fitWhenMeasured]);
+    // It frames READABLY, as the first open does: a full fit after Vertical or Layered drew the text at about 4px in a
+    // narrow Studio (journey m11-2, F17). Fit on the row still shows the whole diagram.
+    fitWhenMeasured({ padding: FIT_MARGIN, duration: 300 }, true);
+  }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout, fitWhenMeasured, dropRoom, expanded]);
   const autoArrange = useCallback(() => arrangeWith(hierarchyPositions, 'hierarchy'), [arrangeWith]);
-  const busMatrix = useCallback(() => arrangeWith(busMatrixPositions, 'busmatrix'), [arrangeWith]);
+  const busMatrix = useCallback(() => arrangeWith((m, r, sz) => busMatrixPositions(m, r, sz, canvasAspect()), 'busmatrix'), [arrangeWith, canvasAspect]);
   const layered = useCallback(() => arrangeWith(layeredPositions, 'layered'), [arrangeWith]);
 
   // --- drop tables onto the canvas ---
@@ -1119,6 +1356,11 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
 
   // auto-dismiss a success toast
   useEffect(() => { if (toast?.tone === 'ok') { const id = window.setTimeout(() => setToast(null), 3500); return () => window.clearTimeout(id); } }, [toast]);
+  // While a card is open the Put back is hidden (round 9: the cards drawn are a spread, not the layout the Put back is about), and
+  // so is the make-room toast's Undo; the row's Put back comes back when the cards close.
+  const anyOpen = members.some((t) => expanded[t.name]);
+  anyOpenRef.current = anyOpen;
+  useEffect(() => { if (anyOpen && toast?.action?.label === 'Undo') setToast(null); }, [anyOpen, toast]);
 
   // --- diagram management ---
   const newDiagram = useCallback(() => {
@@ -1176,6 +1418,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
       <button className="sem-btn sem-btn-sm" onClick={busMatrix} aria-pressed={layout === 'busmatrix'} title="Bus matrix, the usual one: facts down the left, lookup tables across the top, unlinked tables on the right">Bus matrix</button>
       <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(true)} title="Open every table so you can see its columns and drag one column onto another to link them">Expand all</button>
       <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(false)} title="Close every table">Collapse all</button>
+      <button className="sem-btn sem-btn-sm" onClick={() => setSnap((s) => !s)} aria-pressed={snap} title="Line dragged tables up on a grid, so a layout you arrange by hand stays tidy">Snap to grid</button>
     </>
   );
   const kindChips = (
@@ -1186,8 +1429,8 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     </>
   );
 
-  if (err) return <div className="p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
-  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading model graph…</div>;
+  if (err) return <div className="p-4"><div className="rounded-(--sem-radius-card) px-3 py-2 text-xs" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
+  if (!graph) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Loading model graph…</div>;
 
   return (
     <div className="h-full flex flex-col">
@@ -1221,39 +1464,43 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
           </select>
         )}
         <RowSep />
-        {row.level >= 2 ? <RowMenu label="Arrange" title="Lay the tables out, and open or close them all">{arrangeControls}</RowMenu> : arrangeControls}
+        {/* Always one menu: five layout buttons and Snap said the same thing the canvas already shows. Fit is the zoom
+            stack's own button at the canvas corner. */}
+        <RowMenu label="Arrange" closeOnPick title="Lay the tables out, open or close them all, or snap to a grid">{arrangeControls}</RowMenu>
+        {putBack > 0 && !anyOpen && <button className="sem-btn sem-btn-sm" onClick={() => undoRoomRef.current()} title={`Put the ${putBack} table${putBack > 1 ? 's' : ''} the Diagram just moved back where ${putBack > 1 ? 'they were' : 'it was'}, and leave ${putBack > 1 ? 'them' : 'it'} there`}>Put back</button>}
         <RowSep />
-        <button className="sem-btn sem-btn-sm" onClick={() => setSnap((s) => !s)} aria-pressed={snap} title="Line dragged tables up on a grid, so a layout you arrange by hand stays tidy">Snap</button>
-        <button className="sem-btn sem-btn-sm" onClick={() => doFit()} title="Fit the whole diagram in view">Fit</button>
-        <RowSep />
-        {row.narrow ? <RowMenu label="Show" title="Choose which kinds of table to show" align="end">{kindChips}</RowMenu> : <><RowLabel>Show</RowLabel>{kindChips}</>}
+        <RowMenu label="Show" title="Choose which kinds of table to show" align="end" badge={[showData, showCalc, showFp].filter((v) => !v).length}>{kindChips}</RowMenu>
       </ToolRow>
       <CardinalityMarkers />
       {/* The canvas is ALWAYS mounted (even when empty) so it's a live drop target for tables dragged from the Model
           tree; the empty-state hint is an overlay on top (pointer-events:none so it never blocks a drop). */}
-      <div className="flex-1 min-h-0 relative" ref={canvasRef} style={canvasInsetStyle(canvasBox.bottomInset)} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}>
+      <div className="flex-1 min-h-0 relative xe-canvas" ref={canvasRef} style={canvasInsetStyle(canvasBox.bottomInset)} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}
+        data-making-room={roomBusy ? 'true' : undefined /* while the cards' new spots are worked out: nothing on screen shows it */}>
         {!active.all && absent.length > 0 && <TablePalette tables={absent} onAdd={(n) => addTables([n])} />}
         {selRel && <RelPropsPanel rel={selRel} onClose={() => setSelectedRel(null)} onChanged={load} onDelete={deleteRelationship} />}
         {toast && (
-          <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2 rounded-md border px-3 py-1.5 text-[11px] shadow-lg"
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-3 z-10 flex items-center gap-2 rounded-(--sem-radius-control) border px-3 py-1 text-(length:--sem-text-label) shadow-lg"
             style={{ background: 'var(--sem-surface)', borderColor: toast.tone === 'ok' ? 'var(--sem-good)' : 'var(--sem-bad)', color: 'var(--sem-fg)' }}>
             <span>{toast.text}</span>
             {toast.action && <button onClick={() => { const a = toast.action!; setToast(null); void a.run(); }} style={tbBtn}>{toast.action.label}</button>}
             <button onClick={() => setToast(null)} style={{ background: 'transparent', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer' }}>✕</button>
           </div>
         )}
-        <ReactFlow
+        {/* Bus matrix lines route round the cards, all in one pass per geometry change; each takes its own track. */}
+        <BusRoutes on={layout === 'busmatrix'} hold={roomBusy}>
+        <ReactFlow className="xe-flow"
           nodes={displayNodes} edges={displayEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange} onNodeDrag={onNodeDrag} onNodeDragStop={commitPositions}
+          onNodesChange={onNodesChange} onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={commitPositions}
           onConnect={onConnect} onEdgeClick={onEdgeClick} onEdgeDoubleClick={onEdgeDoubleClick} onPaneClick={clearFocus}
           onMove={(evt) => { if (evt) interactedSinceFit.current = true; }}   // evt is null for our own programmatic fitView, non-null for a real drag/wheel
           connectionMode={ConnectionMode.Loose} connectionLineComponent={RelConnectionLine}
           snapToGrid={snap} snapGrid={[GRID, GRID]}
-          fitView minZoom={0.15} proOptions={{ hideAttribution: true }}
+          fitView minZoom={MIN_ZOOM} proOptions={{ hideAttribution: true }}
         >
           <Background color="var(--sem-border)" gap={20} />
           <Controls showInteractive={false} />
         </ReactFlow>
+        </BusRoutes>
         {/* The counts and the legend, which used to be a 34px row of their own above the canvas. As chips they
             cost the canvas nothing, and they sit clear of the zoom controls React Flow pins to the bottom-left.
             On a canvas too short for two chips the legend folds into the counts chip's tooltip rather than
@@ -1265,10 +1512,10 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
             title={canvasH >= CANVAS_CHIP_MIN_H ? undefined : legendText}>
             <span><b>{audit.tables}</b> tables</span>
             <span><b>{audit.rels}</b> links</span>
-            {audit.bidi > 0 && <span><b style={{ color: 'var(--sem-warn)' }}>{audit.bidi}</b> filter both ways</span>}
+            {audit.bidi > 0 && <span><b>{audit.bidi}</b> filter both ways</span>}
             {audit.inactive > 0 && <span><b>{audit.inactive}</b> switched off</span>}
-            {audit.isolated > 0 && <span><b style={{ color: 'var(--sem-warn)' }}>{audit.isolated}</b> not linked</span>}
-            <span>{members.length} shown</span>
+            {audit.isolated > 0 && <span><b>{audit.isolated}</b> not linked</span>}
+            {members.length !== audit.tables && <span>{members.length} of {audit.tables} shown</span>}
           </CanvasChip>
         )}
         {audit && canvasH >= CANVAS_CHIP_MIN_H && (
@@ -1282,7 +1529,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
           </CanvasChip>
         )}
         {members.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px] pointer-events-none px-6 text-center" style={{ color: 'var(--sem-muted)' }}>
+          <div className="absolute inset-0 flex items-center justify-center text-xs pointer-events-none px-6 text-center" style={{ color: 'var(--sem-muted)' }}>
             {baseMembers.length > 0
               ? 'Every table is hidden by a filter. Switch one back on under Show.'
               : 'This diagram is empty. Drag a table from the Add tables list onto the canvas, pick one under ＋ Add table, or select a table and choose ＋ related.'}
@@ -1295,7 +1542,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
 
 const tbInput: React.CSSProperties = {
   background: 'var(--sem-input-bg, var(--sem-surface-2))', color: 'var(--sem-fg)',
-  border: '1px solid var(--sem-border)', borderRadius: 4, fontSize: 11, padding: '2px 6px', maxWidth: 220,
+  border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)', fontSize: 'var(--sem-text-label)', padding: 'var(--sem-space-1) var(--sem-space-2)', maxWidth: 220,
 };
 
 // The Diagram tab hosts two views of the model's relationships: the interactive ER Canvas and a sortable
@@ -1335,7 +1582,7 @@ export function DiagramView({ addTables, focusRelationship, onNavConsumed }: {
 function KindChip({ on, onClick, color, label, count, title }: { on: boolean; onClick: () => void; color: string; label: string; count: number; title: string }) {
   return (
     <button className="sem-btn sem-btn-sm" onClick={onClick} title={title} aria-pressed={on} style={{ opacity: on ? 1 : 0.6 }}>
-      <span style={{ width: 8, height: 8, borderRadius: 2, background: on ? color : 'transparent', border: `1px solid ${color}` }} />
+      <span style={{ width: 8, height: 8, borderRadius: 'var(--sem-radius-chip)', background: on ? color : 'transparent', border: `1px solid ${color}` }} />
       {label}<span className="tnum" style={{ color: 'var(--sem-muted)' }}>{count}</span>
     </button>
   );
@@ -1368,13 +1615,13 @@ function RelPropsPanel({ rel, onClose, onChanged, onDelete }: { rel: GraphRelati
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="absolute top-2 right-2 z-10 rounded-lg border shadow-lg text-[11px]" style={{ width: 264, background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+    <div className="absolute top-2 right-2 z-10 rounded-(--sem-radius-card) border shadow-lg text-(length:--sem-text-label)" style={{ width: 264, background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
       <div className="flex items-center gap-2 px-3 py-2 border-b" style={{ borderColor: 'var(--sem-border)' }}>
         <span className="font-semibold">Relationship</span>
         <button className="ml-auto" onClick={onClose} style={tbBtn} title="Close (Esc)">✕</button>
       </div>
       <div className="px-3 py-2 flex flex-col gap-2">
-        <div className="font-mono" style={{ color: 'var(--sem-muted)', fontSize: 10.5 }}>{rel.fromTable}[{rel.fromColumn}] → {rel.toTable}[{rel.toColumn}]</div>
+        <div className="font-mono" style={{ color: 'var(--sem-muted)', fontSize: 'var(--sem-text-label)' }}>{rel.fromTable}[{rel.fromColumn}] → {rel.toTable}[{rel.toColumn}]</div>
         <PropRow label="Cardinality">
           <select value={`${rel.fromCardinality}|${rel.toCardinality}`} disabled={busy} style={{ ...tbInput, maxWidth: 150 }}
             onChange={(e) => { const [f, t] = e.target.value.split('|'); run(() => rpc('setRelationshipCardinality', rel.name, f, t)); }}>
@@ -1393,8 +1640,8 @@ function RelPropsPanel({ rel, onClose, onChanged, onDelete }: { rel: GraphRelati
         </PropRow>
         <label className="flex items-center gap-2"><input type="checkbox" checked={rel.isActive} disabled={busy} onChange={(e) => run(() => rpc('setRelationship', rel.name, null, e.target.checked))} /> Active</label>
         <button onClick={() => { onClose(); onDelete(rel.name); }} disabled={busy}
-          style={{ ...tbBtn, color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)', marginTop: 2 }}>Delete relationship</button>
-        {error && <div style={{ color: 'var(--sem-bad)', fontSize: 10.5 }}>{error}</div>}
+          style={{ ...tbBtn, color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)', marginTop: 'var(--sem-space-1)' }}>Delete relationship</button>
+        {error && <div className="xe-dot xe-dot-bad" style={{ fontSize: 'var(--sem-text-label)' }}>{error}</div>}
       </div>
     </div>
   );
@@ -1409,26 +1656,26 @@ function TablePalette({ tables, onAdd }: { tables: string[]; onAdd: (name: strin
   const [open, setOpen] = useState(true);
   const shown = useMemo(() => { const s = q.trim().toLowerCase(); return s ? tables.filter((t) => t.toLowerCase().includes(s)) : tables; }, [tables, q]);
   return (
-    <div className="absolute top-2 left-2 z-10 rounded-lg border shadow-lg text-[11px] flex flex-col" style={{ width: 184, maxHeight: 'calc(100% - 16px)', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 px-2.5 py-1.5"
+    <div className="absolute top-2 left-2 z-10 rounded-(--sem-radius-card) border shadow-lg text-(length:--sem-text-label) flex flex-col" style={{ width: 184, maxHeight: 'calc(100% - 16px)', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+      <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 px-3 py-1"
         style={{ borderBottom: open ? '1px solid var(--sem-border)' : 'none', background: 'transparent', color: 'var(--sem-fg)', cursor: 'pointer' }} title="Drag a table onto the canvas to add it">
-        <span style={{ fontSize: 10, width: 10 }}>{open ? '▾' : '▸'}</span>
+        <span style={{ fontSize: 'var(--sem-text-label)', width: 10 }}>{open ? '▾' : '▸'}</span>
         <span className="font-semibold">Add tables</span>
         <span className="ml-auto" style={{ color: 'var(--sem-muted)' }}>{tables.length}</span>
       </button>
       {open && (
         <>
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="filter tables…"
-            style={{ ...tbInput, margin: '6px 6px 4px', maxWidth: 'unset' }} />
-          <div className="nowheel" style={{ overflowY: 'auto', overflowX: 'hidden', padding: '0 6px 6px' }}>
+            style={{ ...tbInput, margin: 'var(--sem-space-2) var(--sem-space-2) var(--sem-space-1)', maxWidth: 'unset' }} />
+          <div className="nowheel" style={{ overflowY: 'auto', overflowX: 'hidden', padding: '0 var(--sem-space-2) var(--sem-space-2)' }}>
             {shown.map((t) => (
               <div key={t} draggable onDragStart={(e) => { e.dataTransfer.setData('application/x-semanticus-table', t); e.dataTransfer.effectAllowed = 'copy'; }}
                 onDoubleClick={() => onAdd(t)} title="Drag onto the canvas (or double-click to add)" className="truncate flex items-center gap-1"
-                style={{ padding: '3px 7px', marginBottom: 3, borderRadius: 4, cursor: 'grab', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>
-                <span aria-hidden style={{ color: 'var(--sem-muted)', fontSize: 9 }}>⠿</span><span className="truncate">{t}</span>
+                style={{ padding: 'var(--sem-space-1) var(--sem-space-2)', marginBottom: 'var(--sem-space-1)', borderRadius: 'var(--sem-radius-card)', cursor: 'grab', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>
+                <span aria-hidden style={{ color: 'var(--sem-muted)', fontSize: 'var(--sem-text-label)' }}>⠿</span><span className="truncate">{t}</span>
               </div>
             ))}
-            {shown.length === 0 && <div style={{ color: 'var(--sem-muted)', padding: '2px 4px' }}>no matches</div>}
+            {shown.length === 0 && <div style={{ color: 'var(--sem-muted)', padding: 'var(--sem-space-1) var(--sem-space-1)' }}>no matches</div>}
           </div>
         </>
       )}

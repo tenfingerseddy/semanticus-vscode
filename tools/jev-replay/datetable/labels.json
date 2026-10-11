@@ -1,0 +1,2057 @@
+{
+ "version": 1,
+ "point": "date.table",
+ "note": "Reviewer-written labels for the date.table replay (T268, M4 point 3). Each item is one model: its tables (name, columns as Name:Type, a CALENDAR formula when it is a calculated table), relationships (many>one), measures (Table|Name|DAX), an optional calculation group, and the derived facts a live model would measure ('day' one row per day with none missing, 'repeats' a date on more than one row, 'gaps' no repeats but a day missing; absent means not measured, as a model opened from files). The label is what a model author should decide: a table name, 'generate' or 'none', and whether to mark it; alsoOk lists another acceptable answer. Shapes come from the UAT fixtures Northstar and ContosoMini, an AdventureWorks-style sample and synthetic Contoso-style cases. No real model, tenant or person names. Labels were written before any rule or Jev answer was seen.",
+ "items": [
+  {
+   "id": "ns-1",
+   "source": "northstar",
+   "note": "Northstar with data and its time intelligence group: the Date table on Date.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Date/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats",
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats"
+   },
+   "label": {
+    "table": "Date",
+    "mark": true
+   },
+   "calculationGroup": {
+    "name": "Time Intelligence",
+    "items": [
+     [
+      "YTD",
+      "CALCULATE ( SELECTEDMEASURE (), DATESYTD ( 'Date'[Date] ) )"
+     ],
+     [
+      "PY",
+      "CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( 'Date'[Date] ) )"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "ns-2",
+   "source": "northstar",
+   "note": "Northstar opened from files, no data: the time intelligence group reads Date[Date].",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Date/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   },
+   "calculationGroup": {
+    "name": "Time Intelligence",
+    "items": [
+     [
+      "YTD",
+      "CALCULATE ( SELECTEDMEASURE (), DATESYTD ( 'Date'[Date] ) )"
+     ],
+     [
+      "PY",
+      "CALCULATE ( SELECTEDMEASURE (), SAMEPERIODLASTYEAR ( 'Date'[Date] ) )"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "ns-3",
+   "source": "northstar",
+   "note": "Northstar with data, no time intelligence yet: the Date dimension is still the date table to mark.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Date/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats",
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats"
+   },
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "ns-4",
+   "source": "northstar",
+   "note": "Northstar from files, no time intelligence: two date columns on Date and nothing names the key (unanswerable without data).",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Date/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "ns-5",
+   "source": "northstar",
+   "note": "Northstar without its Date table: orders are dated only by an integer key, customers and stores carry their own dates. A date table is needed.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "ns-6",
+   "source": "northstar",
+   "note": "Northstar without its Date table, from files: Customer's one date column is offered, and is not a date table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "ns-7",
+   "source": "northstar",
+   "note": "Northstar with the date dimension called Period, with data.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Period",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Period/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )"
+   ],
+   "facts": {
+    "Period/Date": "day",
+    "Period/MonthStart": "repeats"
+   },
+   "label": {
+    "table": "Period",
+    "mark": true
+   }
+  },
+  {
+   "id": "ns-8",
+   "source": "northstar",
+   "note": "Northstar with the date dimension called Period, from files, with time intelligence over Period[Date].",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SalesLineKey:Int64",
+      "OrderNumber:String",
+      "OrderDateKey:Int64",
+      "ProductKey:Int64",
+      "CustomerKey:Int64",
+      "StoreKey:Int64",
+      "Quantity:Int64",
+      "NetSalesAmount:Double",
+      "CostAmount:Double",
+      "IsReturn:Int64"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "SKU:String",
+      "ProductName:String",
+      "Category:String",
+      "ListPrice:Double"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "CustomerName:String",
+      "Segment:String",
+      "City:String",
+      "JoinDate:DateTime"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "StoreName:String",
+      "Region:String",
+      "OpenDate:DateTime",
+      "CloseDate:DateTime"
+     ]
+    },
+    {
+     "name": "Period",
+     "cols": [
+      "DateKey:Int64",
+      "Date:DateTime",
+      "Year:Int64",
+      "Quarter:String",
+      "MonthNumber:Int64",
+      "MonthName:String",
+      "YearMonth:String",
+      "MonthStart:DateTime",
+      "DayOfWeek:String",
+      "IsWeekend:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDateKey>Period/DateKey",
+    "Sales/ProductKey>Product/ProductKey",
+    "Sales/CustomerKey>Customer/CustomerKey",
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Net Sales|SUM ( Sales[NetSalesAmount] )",
+    "Sales|Units|SUM ( Sales[Quantity] )",
+    "Sales|Net Sales YTD|TOTALYTD ( [Net Sales], 'Period'[Date] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Period",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-1",
+   "source": "contoso-mini",
+   "note": "ContosoMini with its CALENDAR table unmarked, from files.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "MonthNumber:Int64",
+      "MonthName:String"
+     ],
+     "calendar": "ADDCOLUMNS ( CALENDAR ( DATE ( 2023, 1, 1 ), DATE ( 2025, 12, 31 ) ), \"Year\", YEAR ( [Date] ) )"
+    }
+   ],
+   "relationships": [
+    "Sales/Date>Date/Date",
+    "Sales/Product>Product/Product",
+    "Sales/Customer>Customer/Customer"
+   ],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-2",
+   "source": "contoso-mini",
+   "note": "ContosoMini unmarked with no relationships at all: the CALENDAR table is still the date table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "MonthNumber:Int64",
+      "MonthName:String"
+     ],
+     "calendar": "ADDCOLUMNS ( CALENDAR ( DATE ( 2023, 1, 1 ), DATE ( 2025, 12, 31 ) ), \"Year\", YEAR ( [Date] ) )"
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-3",
+   "source": "contoso-mini",
+   "note": "ContosoMini without a date table, with data: sales are dated, so a date table is needed.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/Product>Product/Product",
+    "Sales/Customer>Customer/Customer"
+   ],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )"
+   ],
+   "facts": {
+    "Sales/Date": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-4",
+   "source": "contoso-mini",
+   "note": "ContosoMini without a date table, from files, and no relationships: the Sales table is offered and is a fact, not a date table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-5",
+   "source": "contoso-mini",
+   "note": "ContosoMini with the calendar named Calendar Table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    },
+    {
+     "name": "Calendar Table",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "MonthNumber:Int64",
+      "MonthName:String"
+     ],
+     "calendar": "ADDCOLUMNS ( CALENDAR ( DATE ( 2023, 1, 1 ), DATE ( 2025, 12, 31 ) ), \"Year\", YEAR ( [Date] ) )"
+    }
+   ],
+   "relationships": [
+    "Sales/Date>Calendar Table/Date",
+    "Sales/Product>Product/Product",
+    "Sales/Customer>Customer/Customer"
+   ],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Calendar Table",
+    "mark": true
+   }
+  },
+  {
+   "id": "cm-6",
+   "source": "contoso-mini",
+   "note": "ContosoMini with the calendar named Days and time intelligence over it.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "Order:Int64",
+      "Date:DateTime",
+      "Product:String",
+      "Customer:String",
+      "Quantity:Int64",
+      "UnitPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "Product:String",
+      "Name:String",
+      "Category:String"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "Customer:String",
+      "Region:String"
+     ]
+    },
+    {
+     "name": "Days",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "MonthNumber:Int64",
+      "MonthName:String"
+     ],
+     "calendar": "ADDCOLUMNS ( CALENDAR ( DATE ( 2023, 1, 1 ), DATE ( 2025, 12, 31 ) ), \"Year\", YEAR ( [Date] ) )"
+    }
+   ],
+   "relationships": [
+    "Sales/Date>Days/Date",
+    "Sales/Product>Product/Product",
+    "Sales/Customer>Customer/Customer"
+   ],
+   "measures": [
+    "Sales|Revenue|SUMX ( Sales, Sales[Quantity] * Sales[UnitPrice] )",
+    "Sales|Orders|COUNTROWS ( Sales )",
+    "Sales|Revenue PY|CALCULATE ( [Revenue], SAMEPERIODLASTYEAR ( Days[Date] ) )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Days",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-1",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style with data: Date is the date table.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "DateFirstPurchase:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "DateKey:Int64",
+      "Calendar Year:Int64",
+      "Month Name:String",
+      "Fiscal Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/OrderDate>Date/Date",
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )",
+    "Internet Sales|Sales YTD|TOTALYTD ( [Sales Amount], 'Date'[Date] )"
+   ],
+   "facts": {
+    "Date/Date": "day",
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Customer/DateFirstPurchase": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats"
+   },
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-2",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style from files.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "DateFirstPurchase:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "DateKey:Int64",
+      "Calendar Year:Int64",
+      "Month Name:String",
+      "Fiscal Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/OrderDate>Date/Date",
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )",
+    "Internet Sales|Sales YTD|TOTALYTD ( [Sales Amount], 'Date'[Date] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-3",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style from files where Customer has one date column, so it is offered beside Date.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "DateKey:Int64",
+      "Calendar Year:Int64",
+      "Month Name:String",
+      "Fiscal Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/OrderDate>Date/Date",
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )",
+    "Internet Sales|Sales YTD|TOTALYTD ( [Sales Amount], 'Date'[Date] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-4",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style with the date table named Time Period, from files.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    },
+    {
+     "name": "Time Period",
+     "cols": [
+      "Date:DateTime",
+      "DateKey:Int64",
+      "Calendar Year:Int64",
+      "Month Name:String",
+      "Fiscal Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/OrderDate>Time Period/Date",
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )",
+    "Internet Sales|Sales YTD|TOTALYTD ( [Sales Amount], 'Time Period'[Date] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Time Period",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-5",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style without a date table: the sales dates need one.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "DateFirstPurchase:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )",
+    "Internet Sales|Sales YTD|TOTALYTD ( [Sales Amount], 'Internet Sales'[OrderDate] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "aw-6",
+   "source": "adventureworks",
+   "note": "AdventureWorks-style without a date table, from files: Customer (one date column) is offered and is not a date table.",
+   "tables": [
+    {
+     "name": "Internet Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "DueDate:DateTime",
+      "ShipDate:DateTime",
+      "CustomerKey:Int64",
+      "ProductKey:Int64",
+      "PromotionKey:Int64",
+      "SalesAmount:Decimal"
+     ]
+    },
+    {
+     "name": "Customer",
+     "cols": [
+      "CustomerKey:Int64",
+      "FirstName:String",
+      "BirthDate:DateTime",
+      "YearlyIncome:Decimal"
+     ]
+    },
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "ProductName:String",
+      "StartDate:DateTime",
+      "EndDate:DateTime",
+      "ListPrice:Decimal"
+     ]
+    },
+    {
+     "name": "Promotion",
+     "cols": [
+      "PromotionKey:Int64",
+      "PromotionName:String",
+      "DiscountPct:Double"
+     ]
+    },
+    {
+     "name": "Currency",
+     "cols": [
+      "CurrencyKey:Int64",
+      "CurrencyName:String"
+     ]
+    },
+    {
+     "name": "Scenario",
+     "cols": [
+      "ScenarioKey:Int64",
+      "ScenarioName:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Internet Sales/CustomerKey>Customer/CustomerKey",
+    "Internet Sales/ProductKey>Product/ProductKey",
+    "Internet Sales/PromotionKey>Promotion/PromotionKey"
+   ],
+   "measures": [
+    "Internet Sales|Sales Amount|SUM ( 'Internet Sales'[SalesAmount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-1",
+   "source": "synthetic",
+   "note": "A calendar table with a trading-days calendar measured with gaps: it cannot be marked, so a new one is needed.",
+   "tables": [
+    {
+     "name": "Trades",
+     "cols": [
+      "TradeDate:DateTime",
+      "SymbolKey:Int64",
+      "Volume:Int64"
+     ]
+    },
+    {
+     "name": "Symbol",
+     "cols": [
+      "SymbolKey:Int64",
+      "Ticker:String"
+     ]
+    },
+    {
+     "name": "Calendar",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Trades/SymbolKey>Symbol/SymbolKey",
+    "Trades/TradeDate>Calendar/Date"
+   ],
+   "measures": [
+    "Trades|Volume|SUM ( Trades[Volume] )"
+   ],
+   "facts": {
+    "Calendar/Date": "gaps",
+    "Trades/TradeDate": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-2",
+   "source": "synthetic",
+   "note": "A single flat Orders table from files, one date column: Orders is offered and is a fact.",
+   "tables": [
+    {
+     "name": "Orders",
+     "cols": [
+      "OrderID:Int64",
+      "OrderDate:DateTime",
+      "Customer:String",
+      "Amount:Double"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Orders|Total Amount|SUM ( Orders[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-3",
+   "source": "synthetic",
+   "note": "A single flat Orders table with two date columns and time intelligence over one of them.",
+   "tables": [
+    {
+     "name": "Orders",
+     "cols": [
+      "OrderID:Int64",
+      "OrderDate:DateTime",
+      "ShipDate:DateTime",
+      "Amount:Double"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Orders|Total Amount|SUM ( Orders[Amount] )",
+    "Orders|Amount YTD|TOTALYTD ( [Total Amount], Orders[OrderDate] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-4",
+   "source": "synthetic",
+   "note": "One flat table and time intelligence over its date, from files: the rule would mark the fact.",
+   "tables": [
+    {
+     "name": "Orders",
+     "cols": [
+      "OrderID:Int64",
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [
+    "Orders|Total Amount|SUM ( Orders[Amount] )",
+    "Orders|Amount PY|CALCULATE ( [Total Amount], SAMEPERIODLASTYEAR ( Orders[OrderDate] ) )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-5",
+   "source": "synthetic",
+   "note": "A product catalogue with launch dates and no facts: nobody reports by date here.",
+   "tables": [
+    {
+     "name": "Product",
+     "cols": [
+      "ProductKey:Int64",
+      "Name:String",
+      "LaunchDate:DateTime",
+      "CategoryKey:Int64"
+     ]
+    },
+    {
+     "name": "Category",
+     "cols": [
+      "CategoryKey:Int64",
+      "Category:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Product/CategoryKey>Category/CategoryKey"
+   ],
+   "measures": [],
+   "facts": {},
+   "label": {
+    "table": "none",
+    "mark": true,
+    "alsoOk": [
+     "generate"
+    ]
+   }
+  },
+  {
+   "id": "s-6",
+   "source": "synthetic",
+   "note": "A people list with hire and birth dates and no facts.",
+   "tables": [
+    {
+     "name": "Employee",
+     "cols": [
+      "EmployeeKey:Int64",
+      "Name:String",
+      "HireDate:DateTime",
+      "BirthDate:DateTime",
+      "DepartmentKey:Int64"
+     ]
+    },
+    {
+     "name": "Department",
+     "cols": [
+      "DepartmentKey:Int64",
+      "Department:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Employee/DepartmentKey>Department/DepartmentKey"
+   ],
+   "measures": [
+    "Employee|Headcount|COUNTROWS ( Employee )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "none",
+    "mark": true,
+    "alsoOk": [
+     "generate"
+    ]
+   }
+  },
+  {
+   "id": "s-7",
+   "source": "synthetic",
+   "note": "A proper Date table plus a one-row Report Date parameter table, both with data.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "Month:String"
+     ]
+    },
+    {
+     "name": "Report Date",
+     "cols": [
+      "Report Date:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDate>Date/Date"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )"
+   ],
+   "facts": {
+    "Date/Date": "day",
+    "Report Date/Report Date": "day",
+    "Sales/OrderDate": "repeats"
+   },
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-8",
+   "source": "synthetic",
+   "note": "A Date table and a Fiscal Calendar, time intelligence over Date.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ]
+    },
+    {
+     "name": "Fiscal Calendar",
+     "cols": [
+      "Fiscal Date:DateTime",
+      "Fiscal Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDate>Date/Date"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )",
+    "Sales|Total YTD|TOTALYTD ( [Total], 'Date'[Date] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-9",
+   "source": "synthetic",
+   "note": "A Dim Period table on the one side of a budget and a sales fact, from files.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "PeriodDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Budget",
+     "cols": [
+      "PeriodDate:DateTime",
+      "Budget:Double"
+     ]
+    },
+    {
+     "name": "Dim Period",
+     "cols": [
+      "Period Date:DateTime",
+      "Period Name:String",
+      "Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/PeriodDate>Dim Period/Period Date",
+    "Budget/PeriodDate>Dim Period/Period Date"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Dim Period",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-10",
+   "source": "synthetic",
+   "note": "A holiday list measured with gaps beside a sales fact with no date table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SaleDate:DateTime",
+      "StoreKey:Int64",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "Store:String"
+     ]
+    },
+    {
+     "name": "Holidays",
+     "cols": [
+      "Date:DateTime",
+      "Holiday:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )"
+   ],
+   "facts": {
+    "Holidays/Date": "gaps",
+    "Sales/SaleDate": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-11",
+   "source": "synthetic",
+   "note": "A holiday list from files beside a sales fact with no date table: Holidays is offered and is not a date table.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "SaleDate:DateTime",
+      "StoreKey:Int64",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Store",
+     "cols": [
+      "StoreKey:Int64",
+      "Store:String"
+     ]
+    },
+    {
+     "name": "Holidays",
+     "cols": [
+      "Date:DateTime",
+      "Holiday:String"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/StoreKey>Store/StoreKey"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-12",
+   "source": "synthetic",
+   "note": "Sensor readings with timestamps on a device dimension, no date table.",
+   "tables": [
+    {
+     "name": "Readings",
+     "cols": [
+      "Timestamp:DateTime",
+      "DeviceKey:Int64",
+      "Value:Double"
+     ]
+    },
+    {
+     "name": "Device",
+     "cols": [
+      "DeviceKey:Int64",
+      "Device:String",
+      "InstalledOn:DateTime"
+     ]
+    }
+   ],
+   "relationships": [
+    "Readings/DeviceKey>Device/DeviceKey"
+   ],
+   "measures": [
+    "Readings|Average Value|AVERAGE ( Readings[Value] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-13",
+   "source": "synthetic",
+   "note": "A DimDate with an integer key and a FullDate column, from files.",
+   "tables": [
+    {
+     "name": "FactSales",
+     "cols": [
+      "DateKey:Int64",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "DimDate",
+     "cols": [
+      "DateKey:Int64",
+      "FullDate:DateTime",
+      "CalendarYear:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "FactSales/DateKey>DimDate/DateKey"
+   ],
+   "measures": [
+    "FactSales|Total|SUM ( FactSales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "DimDate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-14",
+   "source": "synthetic",
+   "note": "A model that is only a Calendar table so far.",
+   "tables": [
+    {
+     "name": "Calendar",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64",
+      "Month:String",
+      "Day:Int64"
+     ]
+    }
+   ],
+   "relationships": [],
+   "measures": [],
+   "facts": {},
+   "label": {
+    "table": "Calendar",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-15",
+   "source": "synthetic",
+   "note": "A Date table measured with gaps, used by time intelligence: it cannot be marked as it is.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDate>Date/Date"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )",
+    "Sales|Total YTD|TOTALYTD ( [Total], 'Date'[Date] )"
+   ],
+   "facts": {
+    "Date/Date": "gaps",
+    "Sales/OrderDate": "repeats"
+   },
+   "label": {
+    "table": "generate",
+    "mark": true
+   }
+  },
+  {
+   "id": "s-16",
+   "source": "synthetic",
+   "note": "An Update Log table with a timestamp beside a proper Date table, from files.",
+   "tables": [
+    {
+     "name": "Sales",
+     "cols": [
+      "OrderDate:DateTime",
+      "Amount:Double"
+     ]
+    },
+    {
+     "name": "Date",
+     "cols": [
+      "Date:DateTime",
+      "Year:Int64"
+     ]
+    },
+    {
+     "name": "Update Log",
+     "cols": [
+      "Updated At:DateTime",
+      "Rows Loaded:Int64"
+     ]
+    }
+   ],
+   "relationships": [
+    "Sales/OrderDate>Date/Date"
+   ],
+   "measures": [
+    "Sales|Total|SUM ( Sales[Amount] )"
+   ],
+   "facts": {},
+   "label": {
+    "table": "Date",
+    "mark": true
+   }
+  }
+ ]
+}

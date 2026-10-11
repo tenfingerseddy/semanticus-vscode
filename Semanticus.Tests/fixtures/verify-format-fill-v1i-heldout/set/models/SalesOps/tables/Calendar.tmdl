@@ -1,0 +1,40 @@
+table Calendar
+	/// YYYYMMDD join key
+	column 'Date Key'
+		dataType: int64
+		sourceColumn: DateKey
+		summarizeBy: none
+
+	/// full calendar date
+	column Date
+		dataType: dateTime
+		sourceColumn: Date
+		summarizeBy: none
+		formatString: yyyy-MM-dd
+
+	/// calendar year stored as integer
+	column 'Calendar Year'
+		dataType: int64
+		sourceColumn: CalendarYear
+		summarizeBy: none
+		formatString: 0
+
+	/// fiscal year stored as integer
+	column 'Fiscal Year'
+		dataType: int64
+		sourceColumn: FiscalYear
+		summarizeBy: none
+
+	/// fiscal period number 1 through 12
+	column 'Fiscal Period'
+		dataType: int64
+		sourceColumn: FiscalPeriod
+		summarizeBy: none
+
+	partition Calendar = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [DateKey = Int64.Type, Date = type date, CalendarYear = Int64.Type, FiscalYear = Int64.Type, FiscalPeriod = Int64.Type], {})
+			in
+				Source

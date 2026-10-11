@@ -22,18 +22,31 @@ namespace Semanticus.Analysis
             public string Inner;  // the CONTENT of a Name/String (unescaped) — for identity checks only, never keyword matching
             public char Delim;    // '[' bracketed name, '\'' quoted table name, '"' string, '\0' otherwise
             public int Depth;     // paren/brace nesting depth AT this token (top level = 0)
+            public int Start, End;   // [Start, End) offsets in the source text, so a caller can say where a token is and whether two tokens touch
         }
+
+        // Where a // or -- comment ends. The DAX lexer (SINGLE_LINE_COMMENT is InputCharacter*) stops at all five line
+        // breaks, so a formula whose comment ends at a carriage return or a Unicode line break has live code after it.
+        private static bool IsLineEnd(char c) => c is '\n' or '\r' or '\u0085' or '\u2028' or '\u2029';
 
         /// <summary>Tokenize DAX, dropping comments and collapsing strings / bracketed [names] / 'quoted' names to a
         /// single opaque token (so a function/operator inside them can never match a rule). The delimited content is
         /// preserved in <see cref="Tok.Inner"/> for IDENTITY checks (same column? a real table name?) only.</summary>
-        public static List<Tok> Tokenize(string dax)
+        public static List<Tok> Tokenize(string dax) => Tokenize(dax, out _);
+
+        /// <summary>Tokenize, and say whether the text ENDS inside a // or -- comment that no line break closes. Such a
+        /// comment hides everything after its marker, and a line break lost on the way (the TOM wrapper strips every
+        /// carriage return from an expression it sets) can be what swallowed live code, so a proof that needs to know the
+        /// whole formula must not trust a formula that ends this way.</summary>
+        public static List<Tok> Tokenize(string dax, out bool endsInLineComment)
         {
+            endsInLineComment = false;
             var toks = new List<Tok>();
             if (string.IsNullOrEmpty(dax)) return toks;
             int i = 0, n = dax.Length, depth = 0;
+            var tokStart = 0;
             void Add(Kind k, string t, string inner = null, char delim = '\0') =>
-                toks.Add(new Tok { Kind = k, Text = t, Inner = inner, Delim = delim, Depth = depth });
+                toks.Add(new Tok { Kind = k, Text = t, Inner = inner, Delim = delim, Depth = depth, Start = tokStart, End = Math.Max(i, tokStart + t.Length) });
             // Reads to the closing delimiter, unescaping the doubled form ("" '' ]]); returns the content.
             string Delimited(char close)
             {
@@ -52,11 +65,12 @@ namespace Semanticus.Analysis
             while (i < n)
             {
                 char c = dax[i];
+                tokStart = i;
                 // whitespace
                 if (char.IsWhiteSpace(c)) { i++; continue; }
                 // line comments // and --
                 if ((c == '/' && i + 1 < n && dax[i + 1] == '/') || (c == '-' && i + 1 < n && dax[i + 1] == '-'))
-                { i += 2; while (i < n && dax[i] != '\n') i++; continue; }
+                { i += 2; while (i < n && !IsLineEnd(dax[i])) i++; if (i >= n) endsInLineComment = true; continue; }
                 // block comment /* */
                 if (c == '/' && i + 1 < n && dax[i + 1] == '*')
                 { i += 2; while (i + 1 < n && !(dax[i] == '*' && dax[i + 1] == '/')) i++; i = Math.Min(n, i + 2); continue; }

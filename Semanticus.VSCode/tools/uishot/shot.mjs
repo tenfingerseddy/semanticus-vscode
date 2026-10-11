@@ -6,7 +6,7 @@
 // Targets:
 //   studio   — the React Studio webview (media/studio). Variant = tab label (default Diagram).
 //   propgrid — the Properties grid webview (media/propgrid). Variant = scenario
-//              (model | measure | multi | column | formatexpr | lowcl | staledraft | error | empty).
+//              (model | measure | multi | column | formatexpr | lowcl | staledraft | fxmoved | draftkept | draftmoved | error | empty).
 //
 // Usage:
 //   node shot.mjs                       # studio Diagram -> shots/studio-diagram.png
@@ -18,6 +18,7 @@
 //   UISHOT_COMPARE=1 node shot.mjs Deploy     # the Compare Target picker opened on the remembered-model registry list
 // Chromium via SEMANTICUS_BROWSER, else the NEWEST cached chrome-headless-shell, else Edge/Chrome.
 // Needs Node 22.12 or newer (puppeteer-core 25's own floor); browser.mjs says why and checks it.
+import { applyTheme } from './themes.mjs';
 import { findBrowser, requireSupportedNode } from './browser.mjs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, isAbsolute, extname, normalize } from 'node:path';
@@ -39,12 +40,12 @@ const webRoot = resolve(__dir, '..', '..');          // Semanticus.VSCode/ (so /
 // Keep this in the same reading order as App.tsx: intent groups first, then the three standalone
 // surfaces. `all` is the product-wide visual gate, so an omitted/renamed tab would be a silent coverage hole.
 const STUDIO_TABS = [
-  'Overview', 'Diagram', 'Lineage', 'Find and replace', 'Data', 'Size by table',
-  'Model Spec', 'Advanced Modelling', 'Power Query', 'Docs', 'Model notes',
-  'DAX Lab', 'Tests', 'Model quality', 'AI understanding', 'Results',
-  'Proposed', 'History', 'Published', 'Workflows', 'Permissions',
+  'Plan', 'Diagram', 'Lineage', 'Find and replace', 'Data', 'Size by table',
+  'Model Spec', 'Advanced Modelling', 'Power Query', 'Docs', 'AI instructions',
+  'DAX Lab', 'Validation', 'Model quality', 'AI readiness', 'Reports',
+  'Pending changes', 'History', 'Published', 'Workflows', 'Permissions',
 ];
-const PROPGRID_SCENARIOS = ['model', 'measure', 'multi', 'column', 'formatexpr', 'lowcl', 'staledraft', 'error', 'empty'];
+const PROPGRID_SCENARIOS = ['model', 'measure', 'multi', 'column', 'formatexpr', 'lowcl', 'staledraft', 'fxmoved', 'draftkept', 'draftmoved', 'keptlist', 'keptopen', 'error', 'empty'];
 // The Connections HUB inventory: the four sections, Work locally, the signed-out (stale) identity, the shared
 // account-switch consequences dialog, and the SAME hub hosted full-page as the standalone panel (?view=connections).
 const CONNECTION_HUB_STATES = [
@@ -118,7 +119,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       await page.setViewport({ width: vw, height: vh, deviceScaleFactor: 2 });
       const url = `http://127.0.0.1:${port}/tools/uishot/harness.html?view=connections&conn=1`;
       await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
-      await page.waitForFunction(() => (document.body.textContent || '').includes('Open a model'), { timeout: 15000 });
+      await page.waitForSelector('[data-testid="hub-now-change"]', { timeout: 15000 });   // the one-page hub's Jobs button (the Now strip left in r1 min4)
       await new Promise((r) => setTimeout(r, 800));
       await page.screenshot({ path: out, fullPage: !!process.env.UISHOT_FULL });
     } else {
@@ -148,7 +149,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       if (process.env.UISHOT_CAL) params.set('cal', process.env.UISHOT_CAL);   // Calendars: 'off' → below-1701 CL-upgrade gate state
       if (process.env.UISHOT_DEPLOY) params.set('deploy', process.env.UISHOT_DEPLOY);   // Deploy: rollback, promote, advanced, dataagent, or publish drives the requested decision surface
       if (process.env.UISHOT_LIVE) params.set('live', '1');   // live-bound session so the Publish control is enabled
-      if (process.env.UISHOT_PERM) params.set('perm', process.env.UISHOT_PERM);   // Permissions: 'free' → Free-tier read-only variant · 'off' → guardrail turned off (dimmed cells) · 'loading' → reads never answer · 'error' → reads fail (error + retry); default = Pro (editable)
+      if (process.env.UISHOT_PERM) params.set('perm', process.env.UISHOT_PERM);   // Permissions: 'locked' → the Locked preset with three held local requests · 'free' → Free-tier read-only variant · 'off' → guardrail turned off (dimmed cells) · 'loading' → reads never answer · 'error' → reads fail (error + retry); default = Pro (editable)
       if (process.env.UISHOT_FR) params.set('fr', process.env.UISHOT_FR);   // Find & Replace: 'empty' -> a 0-item plan + note (the honest Replace-all empty state on Optimize)
       if (process.env.UISHOT_EXPLAIN) params.set('explain', process.env.UISHOT_EXPLAIN);   // Explain This Number: 'blank' → the why-is-this-blank dossier fixture
       if (process.env.UISHOT_SPEC) params.set('spec', process.env.UISHOT_SPEC);   // Spec inline editor: 'measureless' | 'measuregroup' | 'norel' edge-state fixtures
@@ -193,39 +194,44 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
         await page.click('[data-testid="connections-editing"]');
         await page.waitForSelector('[role="dialog"][aria-label="Connections"]', { timeout: 15000 });
         await new Promise((r) => setTimeout(r, 500));
-        const clickNav = async (section, expect) => {
-          const ok = await page.evaluate((s) => { const b = document.querySelector(`[data-hubnav="${s}"]`); if (b) b.click(); return !!b; }, section);
-          if (!ok) throw new Error(`Connections hub could not find the ${section} section`);
+        // The one-page hub (slice C, lane C2): no section rail. A place is reached by its control: the Now strip's
+        // Change, the header account button, or a row's menu.
+        const clickTestid = async (testid, expect) => {
+          const ok = await page.evaluate((t) => { const b = document.querySelector(`[data-testid="${t}"]`); if (b) b.click(); return !!b; }, testid);
+          if (!ok) throw new Error(`Connections hub could not find ${testid}`);
           await page.waitForFunction((t) => (document.body.textContent || '').includes(t), { timeout: 15000 }, expect);
+        };
+        const rowMenu = async (name, item, expect) => {
+          const ok = await page.evaluate((n) => { const row = [...document.querySelectorAll('.hub-row')].find((x) => (x.querySelector('[data-testid="hub-model-row"]')?.textContent || '').includes(n)); const b = row?.querySelector('[data-testid="hub-row-overflow"]'); if (b) b.click(); return !!b; }, name);
+          if (!ok) throw new Error(`Connections hub could not find the ${name} row menu`);
+          await new Promise((r) => setTimeout(r, 250));
+          const hit = await page.evaluate((t) => { const b = [...document.querySelectorAll('[data-hub-menu] [role="menuitem"]')].find((x) => (x.textContent || '').trim().startsWith(t)); if (b) b.click(); return !!b; }, item);
+          if (!hit) throw new Error(`Connections hub could not find "${item}" in the ${name} row menu`);
+          if (expect) await page.waitForFunction((t) => (document.body.textContent || '').includes(t), { timeout: 15000 }, expect);
         };
         const clickText = async (text, expect) => {
           const ok = await page.evaluate((t) => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').trim() === t); if (b) b.click(); return !!b; }, text);
           if (!ok) throw new Error(`Connections hub could not find the "${text}" action`);
           if (expect) await page.waitForFunction((t) => (document.body.textContent || '').includes(t), { timeout: 15000 }, expect);
         };
-        if (hub === 'setup') await clickNav('setup', 'Current setup');
-        else if (hub === 'accounts') await clickNav('accounts', 'Other authentication methods');
-        else if (hub === 'history') await clickNav('history', 'All activity');
+        if (hub === 'setup') await clickTestid('hub-now-change', 'Which model does which job');
+        else if (hub === 'accounts') await clickTestid('hub-account-button', 'Kept on this device, no passwords');
+        else if (hub === 'history') await rowMenu('Finance', 'History', 'Models and sign-ins, kept on this device');
         else if (hub === 'work') {
-          // The "Work locally" outcome (a self-explaining OutcomeButton in the detail; its label carries microcopy, so
-          // match on inclusion) opens the Work-locally view.
-          const ok = await page.evaluate(() => { const b = [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').includes('Work locally')); if (b) b.click(); return !!b; });
-          if (!ok) throw new Error('Connections hub could not find the Work locally outcome');
-          await page.waitForFunction(() => (document.body.textContent || '').includes('Work locally from'), { timeout: 15000 });
+          // "Work on a local copy" in a row menu opens the short form (the harness answers the folder pick).
+          await rowMenu('Finance', 'Work on a local copy', 'Work on a local copy of');
         }
         else if (hub === 'stale') {
-          // Select the signed-out published row (Sandbox) so the detail pane shows the "Sign-in required" status.
-          const ok = await page.evaluate(() => { const b = [...document.querySelectorAll('[data-testid="hub-model-row"]')].find((x) => (x.textContent || '').includes('Sandbox')); if (b) b.click(); return !!b; });
-          if (!ok) throw new Error('Connections hub could not find the signed-out (Sandbox) row');
-          await page.waitForFunction(() => (document.body.textContent || '').includes('Signed out'), { timeout: 15000 });
+          // The signed-out published row (Sandbox) says who it last opened as, on its own row.
+          await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="hub-model-row"]')].some((x) => (x.textContent || '').includes('Sandbox') && (x.textContent || '').includes('last opened as')), { timeout: 15000 });
         } else if (hub === 'switch') {
-          // Open the shared Phase 2 account-choice dialog (saved profiles + Use for this open) from the detail's
-          // "Choose account for this open" control.
-          await clickText('Choose account for this open', 'This choice applies to this open');
+          // Open the shared Phase 2 account-choice dialog (saved profiles + Use for this open) from a row menu's
+          // "Open as another account".
+          await rowMenu('Finance', 'Open as another account', 'This choice applies to this open');
         } else if (hub === 'create') {
-          // Open the guarded Create-model surface (?dirty=1 makes the unsaved-changes consent state render).
-          const ok = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').includes('Create blank model')); if (b) b.click(); return !!b; });
-          if (!ok) throw new Error('Connections hub could not find the Create blank model card');
+          // Open the guarded New blank model surface (?dirty=1 makes the unsaved-changes consent state render).
+          const ok = await page.evaluate(() => { const b = document.querySelector('[data-testid="hub-add-blank"]'); if (b) b.click(); return !!b; });
+          if (!ok) throw new Error('Connections hub could not find New blank model');
           await page.waitForFunction(() => (document.body.textContent || '').includes('replaces the open model, which has unsaved changes'), { timeout: 15000 });
         } else if (hub === 'open-unsaved') {
           const ok = await page.evaluate(() => { const b = document.querySelector('[data-testid="hub-row-open"]'); if (b) b.click(); return !!b; });
@@ -235,18 +241,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
           // A real remembered XMLA Query action fails once through the RPC seam. The component must retain the target
           // and query purpose, show the saved-account choice, and retry with the selected profile without changing the
           // tenant default or the dirty editing session. Capture the failure before the explicit retry.
-          const row = await page.evaluate(() => {
-            const b = [...document.querySelectorAll('[data-testid="hub-model-row"]')].find((x) => (x.textContent || '').includes('Finance'));
-            if (b) b.click();
-            return !!b;
-          });
-          if (!row) throw new Error('Connections recovery could not find the Finance remembered model');
-          const query = await page.evaluate(() => {
-            const b = [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'));
-            if (b) b.click();
-            return !!b;
-          });
-          if (!query) throw new Error('Connections recovery could not find Query this model');
+          await rowMenu('Finance', 'Use for tests and queries');
           await page.waitForSelector('[data-testid="hub-account-dialog"][data-purpose="query"]', { timeout: 15000 });
           await page.waitForSelector('[data-testid="hub-account-recovery"]', { timeout: 15000 });
           await page.waitForSelector('[data-testid="hub-sign-in-again"]', { timeout: 15000 });
@@ -278,18 +273,7 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
         } else if (hub === 'local-failure') {
           // A local desktop Query failure is ordinary operational feedback. It must keep the selected target and its
           // Query action available for retry, without opening the Microsoft account chooser.
-          const row = await page.evaluate(() => {
-            const b = [...document.querySelectorAll('[data-testid="hub-model-row"]')].find((x) => (x.textContent || '').includes('Contoso local test'));
-            if (b) b.click();
-            return !!b;
-          });
-          if (!row) throw new Error('Connections local-failure case could not find the local model');
-          const query = await page.evaluate(() => {
-            const b = [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'));
-            if (b) b.click();
-            return !!b;
-          });
-          if (!query) throw new Error('Connections local-failure case could not find Query this model');
+          await rowMenu('Contoso local test', 'Use for tests and queries');
           await page.waitForFunction(() => (document.body.textContent || '').includes('The local model at localhost:51000 is not ready.'), { timeout: 15000 });
           await page.screenshot({ path: out.replace(/\.png$/u, '-failure.png'), fullPage: false });
           const assert = (await import('node:assert/strict')).default;
@@ -297,16 +281,16 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
           assert.equal(failed.calls.length, 1, 'the local Query attempt must fail once');
           assert.equal(failed.calls[0][0], 'localhost:51000', 'the local failure must retain the local target');
           assert.equal(await page.$('[data-testid="hub-account-dialog"]'), null, 'a local failure must not open Microsoft account recovery');
-          assert.ok(await page.$('[data-testid="hub-outcome"]'), 'the selected local target must retain its retry action');
-          await page.evaluate(() => [...document.querySelectorAll('[data-testid="hub-outcome"]')].find((x) => (x.textContent || '').trim().startsWith('Query this model'))?.click());
+          assert.ok(await page.$('[data-testid="hub-row-error"]'), 'the failure is said on the row that failed, with its retry');
+          await page.evaluate(() => [...document.querySelectorAll('[data-testid="hub-row-error"] button')].find((x) => (x.textContent || '').trim() === 'Try again')?.click());
           await page.waitForFunction(() => window.__uishotLocalFailure.calls.length === 2, { timeout: 15000 });
           assert.equal(await page.$('[data-testid="hub-account-dialog"]'), null, 'a local retry must stay outside Microsoft account recovery');
-          console.log('  Local failure: target stayed selected, cause stayed readable, and Query remained retryable');
+          console.log('  Local failure: said on its own row, cause stayed readable, and Try again stayed available');
         } else if (hub === 'add') {
-          // Open "Add a published model" and select Service identity so the tenant field + the live setup preflight render.
-          const ok = await page.evaluate(() => { const b = [...document.querySelectorAll('button')].find((x) => (x.textContent || '').includes('Published model') && (x.textContent || '').includes('XMLA endpoint once')); if (b) b.click(); return !!b; });
-          if (!ok) throw new Error('Connections hub could not find the Published model card');
-          await page.waitForFunction(() => (document.body.textContent || '').includes('Add a published model'), { timeout: 15000 });
+          // The account menu's "Other ways to sign in" opens the address form; select Service identity so the tenant
+          // field + the live setup preflight render.
+          await clickTestid('hub-account-button', 'Other ways to sign in');
+          await clickTestid('hub-other-sign-in', 'Add a model by its address');
           const set = await page.evaluate(() => { const sel = document.querySelector('[data-testid="hub-authmode-select"]'); if (!sel) return false; const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; setter.call(sel, 'serviceprincipal'); sel.dispatchEvent(new Event('change', { bubbles: true })); return true; });
           if (!set) throw new Error('Add view could not find the sign-in method select');
           await page.waitForFunction(() => (document.body.textContent || '').includes('Service identity setup'), { timeout: 15000 });
@@ -1011,6 +995,8 @@ async function capture(browser, port, { target, variant, out, hub, vw: jobVw, vh
       }
       // UISHOT_FULL=1 → capture the whole scrolled page (long content like an expanded audit trail),
       // not just the 1000px viewport.
+      // UISHOT_THEME=dark|light|hc puts the page in that VS Code theme (themes.mjs) before the capture.
+      if (process.env.UISHOT_THEME) { await applyTheme(page, process.env.UISHOT_THEME); await new Promise((r) => setTimeout(r, 300)); }
       await page.screenshot({ path: out, fullPage: !!process.env.UISHOT_FULL });
     }
     console.log(`  ✓ ${target}/${hub ? `Connections:${hub}` : variant} -> ${out} (${statSync(out).size} b)`

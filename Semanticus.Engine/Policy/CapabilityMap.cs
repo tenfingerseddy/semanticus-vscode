@@ -47,6 +47,7 @@ namespace Semanticus.Engine
             ["deploy_stage"] = AgentCapability.DeployLive,
             ["cicd_publish"] = AgentCapability.DeployLive,
             ["publish_data_agent"] = AgentCapability.DeployLive,
+            ["publish_new_model"] = AgentCapability.DeployLive,
             ["fabric_git_commit"] = AgentCapability.DeployLive,
             ["fabric_git_update"] = AgentCapability.DeployLive,
 
@@ -58,6 +59,7 @@ namespace Semanticus.Engine
             ["pivot_measure"] = AgentCapability.QueryData,      // SUMMARIZECOLUMNS rows by construction — always a data read
             ["evaluate_and_log"] = AgentCapability.QueryData,   // the EVALUATEANDLOG log channel samples arbitrary table rows regardless of the outer query shape
             ["reconcile_measure"] = AgentCapability.QueryData,  // Tests-tab reconciler runner — returns source-row aggregates by group (wired at the call site, consumeGrant:false)
+            ["get_model_facts"] = AgentCapability.QueryData,    // derived facts, never rows: refused only on an explicit Deny, never asks (call site)
             ["run_sql"] = AgentCapability.QueryData,            // planned standalone op — forward-declared (the reconciler runs SQL internally via FabricSqlQuery)
             ["get_source_schema"] = AgentCapability.Read,        // column names/types over TDS — metadata, not rows
             ["run_dmv"] = AgentCapability.Read,                  // DMV metadata/statistics, not source rows
@@ -69,7 +71,6 @@ namespace Semanticus.Engine
 
             // --- governance: never the agent's ---
             ["set_agent_policy"] = AgentCapability.Governance,
-            ["label_connection"] = AgentCapability.Governance,
             ["approve_agent_action"] = AgentCapability.Governance,
 
             // --- writing a model to disk ---

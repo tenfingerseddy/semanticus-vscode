@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as echarts from 'echarts';
-import { EChart } from './echart';
+import { EChart, tokenPx } from './echart';
 import { KIND_COLOR, KIND_GLYPH, KIND_LABEL, fieldFacetOptions, makeScope, rankNodeMatches, resolveColor, tableFacetOptions, useFillHeight, type LineageResult } from './lineagetypes';
 import { MultiSelect } from './lineageslicer';
 import { CANVAS_CHIP_MIN_H, CanvasChip, CanvasChipStack, RowMenu, RowSep, ToolRow, canvasInsetStyle, useToolRow, visibleBottomInset } from './toolrow';
@@ -59,10 +59,12 @@ export interface GraphViewProps {
   modeSwitch?: React.ReactNode;
   counts?: string | null;
   caveat?: string | null;
+  /** Opens Impact with the Choose reports drawer, the one fix for the caveat above. */
+  onCheckReports?: () => void;
   error?: string | null;
 }
 
-export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, caveat, error }: GraphViewProps) {
+export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, caveat, error, onCheckReports }: GraphViewProps) {
   const [layout, setLayout] = useState<Layout>(DEFAULT_LAYOUT);
   const [selected, setSelected] = useState<{ ref: string; name: string; kind: string; table?: string } | null>(null);
   const [focusRef, setFocusRef] = useState<string | null>(null);   // the node the local view centres on
@@ -110,9 +112,9 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
   // Fill the viewport height (remeasure when the control rows above can change height: scope toggles the depth slider,
   // the edge-key row appears once edges load).
   const [fillRef, chartH] = useFillHeight(440, [scope, edgeKindsPresent.length]);
-  // The row folds in priority order when it runs out of room: slicers first, then the layout and scope
-  // cluster, and only then the view switcher. Fit and Reset never fold.
-  const row = useToolRow(3);
+  // The row holds the view switcher, the search, the scope switch and two menus (Layout, Filter). Only the view
+  // switcher folds, when the row runs out of room.
+  const row = useToolRow(1);
   // How far the chart runs behind the page's bottom bar, so the in-canvas chips sit clear of the strip nobody
   // can see (see toolrow.tsx).
   const [chartInset, setChartInset] = useState(0);
@@ -176,7 +178,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
       backgroundColor: 'transparent',
       // No ECharts legend — the kind-filter chips in the toolbar are the colour key AND the (hard) type filter.
       tooltip: {
-        confine: true, backgroundColor: surface, borderColor: border, borderWidth: 1, textStyle: { color: fg, fontSize: 12 },
+        confine: true, backgroundColor: surface, borderColor: border, borderWidth: 1, textStyle: { color: fg, fontSize: tokenPx('--sem-text-meta') },
         formatter: (p: any) => {
           if (p.dataType === 'edge') return `<span style="color:${muted}">${esc(p.data._kind ?? 'depends on')}</span>`;
           const d = p.data;
@@ -193,7 +195,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
         // SETTLED positions immediately, so the position-freeze below can never capture an unsettled initial scatter.
         force: { repulsion: 240, edgeLength: [60, 170], gravity: 0.05, friction: 0.6, layoutAnimation: false },
         circular: { rotateLabel: true },
-        label: { show: showLabels, position: 'right', color: fg, fontSize: 10, formatter: (p: any) => p.data?.name ?? '' },
+        label: { show: showLabels, position: 'right', color: fg, fontSize: tokenPx('--sem-text-label'), formatter: (p: any) => p.data?.name ?? '' },
         labelLayout: { hideOverlap: true },
         lineStyle: { color: muted, width: 1, opacity: 0.5 },
         emphasis: { focus: 'adjacency', blurScope: 'coordinateSystem', scale: 1.08, label: { show: true }, itemStyle: { shadowBlur: 6, shadowColor: accent }, lineStyle: { width: 2, opacity: 0.95 } },
@@ -391,8 +393,8 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
   };
   const toggleKind = (k: string) => setDisabled((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
-  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the lineage graph…</div>;
-  if (total === 0) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Nothing to draw yet. Open a model first.</div>;
+  if (!graph) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Loading the lineage graph…</div>;
+  if (total === 0) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Nothing to draw yet. Open a model first.</div>;
 
   const nodeCount = shown < total ? `${shown} of ${total} things` : `${total} things`;
   const walkHint = 'Click a thing to see what it connects to. Click another to walk there. Click empty space to clear. Scroll or drag to move around.';
@@ -403,13 +405,13 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
         onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) focusOn(matches[0].ref, matches[0].name, matches[0].kind, matches[0].table); else if (e.key === 'Escape') setSearch(''); }}
         className="sem-toolrow-input" style={{ width: 196 }} />
       {matches.length > 0 && (
-        <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width: 260, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
+        <div className="absolute z-20 mt-1 rounded-(--sem-radius-control) overflow-hidden" style={{ width: 260, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
           {matches.map((m) => (
             <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); focusOn(m.ref, m.name, m.kind, m.table); }}
-              className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
-              <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
+              className="flex items-center gap-2 w-full text-left px-2 py-1 text-xs hover:bg-[var(--sem-hover)]">
+              <span style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
               <span className="truncate flex-1">{m.name}</span>
-              {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{m.table}</span>}
+              {m.table && <span className="text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{m.table}</span>}
             </button>
           ))}
         </div>
@@ -423,40 +425,51 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
       {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }}>Clear</ToolBtn>}
     </>
   );
-  const viewControls = (
+  // Whole model / Focused is the one choice that changes what the picture holds, so it is a switch on the row.
+  // The layout, the dot size and the view resets fold behind one Layout menu.
+  const scopeControls = (
     <>
-      <ToolBtn active={scope === 'all'} onClick={() => setScope('all')}>Whole model</ToolBtn>
-      <ToolBtn active={scope === 'focus'} onClick={() => { if (selected && !focusRef) setFocusRef(selected.ref); setScope('focus'); }}>Focused</ToolBtn>
+      <div className="sem-seg" role="group" aria-label="How much to draw">
+        <button className="sem-seg-item" aria-pressed={scope === 'all'} onClick={() => setScope('all')}>Whole model</button>
+        <button className="sem-seg-item" aria-pressed={scope === 'focus'} onClick={() => { if (selected && !focusRef) setFocusRef(selected.ref); setScope('focus'); }}>Focused</button>
+      </div>
       {scope === 'focus' && (
-        <label className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }} title="How many steps out from the chosen thing to show">
+        <label className="flex items-center gap-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }} title="How many steps out from the chosen thing to show">
           steps
           <input type="range" min={1} max={4} value={depth} onChange={(e) => setDepth(Number(e.target.value))} style={{ width: 72, accentColor: 'var(--sem-accent)' }} />
           <span className="tnum w-3">{depth}</span>
         </label>
       )}
-      <ToolBtn active={layout === 'force'} onClick={() => setLayout('force')}>Force</ToolBtn>
-      <ToolBtn active={layout === 'circular'} onClick={() => setLayout('circular')}>Circular</ToolBtn>
-      <label className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--sem-muted)' }} title="How big the dots are">
-        size
-        <input type="range" min={0.4} max={2} step={0.05} value={sizeScale} onChange={(e) => onSizeChange(Number(e.target.value))} style={{ width: 56, accentColor: 'var(--sem-accent)' }} />
-      </label>
     </>
   );
-  // The kinds are a list a model decides the length of, so they are ALWAYS one menu. Spelling eight of them
-  // out is what used to push this tool's controls onto a third row.
-  const kindMenu = (
-    <RowMenu label="Show" align="end" badge={disabled.size || undefined} title="Choose which kinds of thing the picture shows">
+  const layoutControls = (
+    <>
+      <ToolBtn active={layout === 'force'} onClick={() => setLayout('force')}>Force</ToolBtn>
+      <ToolBtn active={layout === 'circular'} onClick={() => setLayout('circular')}>Circular</ToolBtn>
+      <label className="flex items-center gap-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }} title="How big the dots are">
+        size
+        <input type="range" min={0.4} max={2} step={0.05} value={sizeScale} onChange={(e) => onSizeChange(Number(e.target.value))} style={{ width: 96, accentColor: 'var(--sem-accent)' }} />
+      </label>
+      {/* This chart has no zoom stack of its own, so Fit lives here rather than going. */}
+      <ToolBtn onClick={fitToView}>Fit</ToolBtn>
+      <ToolBtn onClick={resetView}>Reset</ToolBtn>
+    </>
+  );
+  // The kinds are a list a model decides the length of, so they sit in the one Filter menu beside the slicers.
+  const kindControls = (
+    <>
       {kindsPresent.map((k) => {
         const on = !disabled.has(k);
         return (
           <button key={k} className="sem-btn sem-btn-sm" aria-pressed={on} onClick={() => toggleKind(k)}
-            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)} style={{ opacity: on ? 1 : 0.55 }}>
-            <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
+            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)}>
+            {/* The picture colours each kind, so this list is its key: a dot in that colour, not coloured text. */}
+            <span className="w-2 h-2 rounded-full shrink-0" style={{ background: resolveColor(KIND_COLOR[k], '#9aa0aa') }} />
             {KIND_LABEL[k] ?? k}
           </button>
         );
       })}
-    </RowMenu>
+    </>
   );
 
   return (
@@ -465,30 +478,22 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
           controls strip, and an edge-colour key. The count, the key and the model-only caveat are chips inside
           the picture now, and the hint is the search box's tooltip and a line in LINEAGE_NOTES. */}
       <ToolRow rowRef={row.ref}>
-        {row.level >= 3
+        {row.level >= 1
           ? <RowMenu label="Graph" title="Switch to another view of lineage">{modeSwitch}</RowMenu>
           : modeSwitch}
         <RowSep />
         {searchBox}
         <RowSep />
-        {row.level >= 2
-          ? <RowMenu label="View" title="How much of the model to draw, and how">{viewControls}</RowMenu>
-          : viewControls}
-        <RowSep />
-        <ToolBtn onClick={fitToView}>Fit</ToolBtn>
-        <ToolBtn onClick={resetView}>Reset</ToolBtn>
-        <RowSep />
-        {row.level >= 1
-          ? <RowMenu label="Slice" align="end" badge={(selTables.size + selFields.size) || undefined} title="Cut the picture down to part of the model">{sliceControls}</RowMenu>
-          : sliceControls}
-        {kindMenu}
+        {scopeControls}
+        <RowMenu label="Layout" title="How the picture is laid out, how big the dots are, and how to reset it">{layoutControls}</RowMenu>
+        <RowMenu label="Filter" align="end" badge={(selTables.size + selFields.size + disabled.size) || undefined} title="Cut the picture down to part of the model">{sliceControls}{kindControls}</RowMenu>
       </ToolRow>
 
       {/* data-own-zoom: this graph has roam:true, so Ctrl+wheel is ITS gesture, not Studio's. Saying so is the
           contract; relying on which events ZRender happens to consume is not. Astra measured it, 2026-09-14, at
           1000x768: a Ctrl+wheel at x=70,y=450 (canvas, no graph under the pointer) took Studio to 110% while the
           same gesture at x=700,y=400 did nothing, so the behaviour depended on where the pointer was. */}
-      <div ref={(el) => { fillRef(el); containerElRef.current = el; }} className="lineage-graph-canvas" data-own-zoom
+      <div ref={(el) => { fillRef(el); containerElRef.current = el; }} className="lineage-graph-canvas xe-canvas" data-own-zoom
         style={{ position: 'relative', ...canvasInsetStyle(chartInset) }}>
         <EChart option={option} height={chartH}
           onChartReady={(c) => {
@@ -532,20 +537,25 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
             });
           }} />
         {shown === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>
+          <div className="absolute inset-0 flex items-center justify-center text-xs" style={{ color: 'var(--sem-muted)' }}>
             {scope === 'focus' && !focusRef ? 'Click something, or search for it, to see just its corner of the model.' : 'Nothing matches the filters you have set.'}
           </div>
         )}
         {/* The honesty caveat keeps its own words and its own room: truncating a warning into a tooltip would
             hide the very thing it exists to say. */}
         {error && <CanvasChip at="top" tone="bad" note>{error}</CanvasChip>}
-        {!error && caveat && <CanvasChip at="top" tone="warn" note>{caveat}</CanvasChip>}
+        {!error && caveat && (
+          <CanvasChip at="top" tone="warn" note>
+            <span>{caveat}</span>
+            {onCheckReports && <button className="sem-btn sem-btn-sm" onClick={onCheckReports}>Check reports</button>}
+          </CanvasChip>
+        )}
         {scope === 'focus' && !focusRef && <CanvasChip at="top" tone="warn">Click something, or search for it, to pick the centre</CanvasChip>}
         {/* Bottom-left: the selection card, with the counts under it. Both used to be text on a row. */}
         <CanvasChipStack at="start">
           {selected && (
             <CanvasChip data-sem-selected={selected.name}>
-              <span className="shrink-0" style={{ color: resolveColor(KIND_COLOR[selected.kind], '#9aa0aa') }}>{KIND_GLYPH[selected.kind] ?? '•'}</span>
+              <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[selected.kind] ?? '•'}</span>
               <span className="font-medium truncate" style={{ maxWidth: 200, color: 'var(--sem-fg)' }}>{selected.name}</span>
               {selected.table && <span className="truncate">· {selected.table}</span>}
               {scope === 'all' && <button className="sem-btn sem-btn-sm" onClick={() => { setFocusRef(selected.ref); setScope('focus'); }}>Focus here</button>}

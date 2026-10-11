@@ -23,6 +23,17 @@ namespace Semanticus.Engine
             return false;
         }
 
+        /// <summary>Why the gate judged the whole model, as the one sentence the check line opens with; null when it
+        /// scored a change set. Same three cases as the wholeModel flag the gate computes.</summary>
+        internal static string WholeModelReason(string sourcePath, object liveOrigin, IReadOnlyCollection<string> changed)
+        {
+            if (IsWholeModelSession(sourcePath, liveOrigin))
+                return "This model has no saved or published copy yet, so the whole model was checked.";
+            if (changed == null || changed.Count == 0)
+                return "No edits in this session yet, so the whole model was checked.";
+            return ForcesWholeModel(changed) ? "An edit in this session changed the whole model, so the whole model was checked." : null;
+        }
+
         internal static bool IsModelLevel(string objectRef)
         {
             if (string.IsNullOrEmpty(objectRef)) return true;
@@ -83,7 +94,7 @@ namespace Semanticus.Engine
             for (var i = 0; i < findings.Count; i++)
             {
                 var f = findings[i];
-                if (f == null || f.Waived) continue;
+                if (f == null || f.IsAccepted()) continue;
                 if (!string.Equals(f.RuleId, ruleId, StringComparison.OrdinalIgnoreCase)) continue;
                 if (Touches(f.ObjectRef, changed, wholeModel)) return true;
             }

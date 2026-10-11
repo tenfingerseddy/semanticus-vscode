@@ -7,7 +7,17 @@ namespace Semanticus.Engine.Evidence
     /// <summary>Projects one terminal workflow state into the same sealed document Tests and later sharing use.</summary>
     public static class WorkflowEvidenceRenderer
     {
-        public static EvidenceDoc Build(WorkflowRunState run)
+        /// <summary>What WorkflowEvidenceRenderer appends to the workflow's title for the document title. The renderer
+        /// strips it again to name the workflow in the header, so the two never drift.</summary>
+        public const string TitleSuffix = " evidence";
+
+        public static EvidenceDoc Build(WorkflowRunState run) => Build(run, null);
+
+        /// <summary>The words a person reads are plain (F16): the workflow's own title and version, strictness as
+        /// "Checks must pass", step states in words, and times in <paramref name="zone"/> (the machine's own zone
+        /// when null). The machine facts stay exact where a program reads them: the run id, CreatedUtc in ISO UTC,
+        /// the producer's workflow name, and the recorded answers and check details.</summary>
+        public static EvidenceDoc Build(WorkflowRunState run, TimeZoneInfo zone)
         {
             if (run == null) throw new ArgumentNullException(nameof(run));
             var multipleOwners = run.OwnerClosure.Definitions.Count > 1;
@@ -29,7 +39,7 @@ namespace Semanticus.Engine.Evidence
             {
                 Id = run.RunId,
                 Kind = "workflow-run",
-                Title = (string.IsNullOrWhiteSpace(run.Def.Title) ? run.Def.Name : run.Def.Title) + " evidence",
+                Title = DisplayName(run.Def) + TitleSuffix,
                 CreatedUtc = run.FinishedUtc ?? run.StartedUtc,
                 Producer = run.Def.Name,
                 ProducerVersion = run.Def.Version.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -55,36 +65,36 @@ namespace Semanticus.Engine.Evidence
                 Title = "Run outcome",
                 Paragraphs = new[]
                 {
-                    $"Workflow {run.Def.Name} version {run.Def.Version} finished with status {run.Status}.",
-                    $"{stepVerdicts.Count(x => x == Verdict.Verified)} of {stepVerdicts.Length} steps completed without an unknown, failed, or overridden result.",
+                    $"{Named(run.Def)}, {OutcomeWords(run.Status)}.",
+                    StepCountSentence(applicableResults),
                 }.Concat(run.Certificate == null
                     ? Array.Empty<string>()
-                    : new[] { $"The folded certificate level is {run.Certificate.Level}." }).ToList(),
+                    : new[] { $"The certificate level is {run.Certificate.Level}." }).ToList(),
             });
             doc.Sections.Add(new KeyValueSection
             {
                 Title = "Run context",
                 Pairs = new List<KeyValuePairRow>
                 {
+                    Pair("Workflow", Named(run.Def)),
                     Pair("Run", run.RunId),
-                    Pair("Started", run.StartedUtc ?? "Not recorded"),
-                    Pair("Finished", run.FinishedUtc ?? "Not recorded"),
-                    Pair("Status", run.Status),
-                    Pair("Workflow version", run.Def.Version.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                    Pair("Definition strictness", run.Def.Strictness ?? "hard (default)"),
+                    Pair("Started", Evidence.EvidenceTime.Readable(run.StartedUtc, zone)),
+                    Pair("Finished", Evidence.EvidenceTime.Readable(run.FinishedUtc, zone)),
+                    Pair("Outcome", Capital(OutcomeWords(run.Status))),
+                    Pair("Checks", ChecksWords(run.Def.Strictness ?? "hard")),
                 },
             });
             if (multipleOwners)
                 foreach (var owner in run.OwnerClosure.Definitions)
                     doc.Sections.Add(new KeyValueSection
                     {
-                        Title = "Workflow definition: " + owner.Name,
+                        Title = "Workflow definition: " + DisplayName(owner),
                         Pairs = new List<KeyValuePairRow>
                         {
-                            Pair("Workflow", owner.Name),
-                            Pair("Version", owner.Version.ToString(System.Globalization.CultureInfo.InvariantCulture)),
-                            Pair("Definition strictness", owner.Strictness ?? "hard (default)"),
-                            Pair("Settings strictness", run.OwnerClosure.SettingsStrictness(owner) ?? "No override"),
+                            Pair("Workflow", DisplayName(owner)),
+                            Pair("Version", VersionWords(owner.Version)),
+                            Pair("Checks", ChecksWords(owner.Strictness ?? "hard")),
+                            Pair("Checks, as set in Settings", run.OwnerClosure.SettingsStrictness(owner) is string set ? ChecksWords(set) : "Not changed in Settings"),
                         },
                     });
             if (run.Certificate != null)
@@ -113,20 +123,21 @@ namespace Semanticus.Engine.Evidence
                 var definition = run.Plan[i].Step;
                 var pairs = new List<KeyValuePairRow>
                 {
-                    Pair("Status", result.Status),
+                    Pair("Outcome", StepWords(result.Status)),
                     Pair("Instructions", definition?.Instructions ?? "Not recorded"),
                     Pair("Actions", definition?.Ops == null || definition.Ops.Length == 0 ? "None declared" : string.Join(", ", definition.Ops)),
-                    Pair("Effective strictness", result.EffectiveStrictness ?? "No gate"),
+                    Pair("Checks", result.EffectiveStrictness == null ? "This step has no checks" : ChecksWords(result.EffectiveStrictness)),
                 };
                 if (multipleOwners)
                 {
                     var owner = run.RequireCoherentRow(run.Plan[i]);
                     pairs.Insert(0, Pair("Step", run.Plan[i].InstanceId));
-                    pairs.Insert(1, Pair("Workflow", owner.Name));
-                    pairs.Insert(2, Pair("Workflow version", owner.Version.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-                    pairs.Insert(3, Pair("Definition strictness", owner.Strictness ?? "hard (default)"));
+                    pairs.Insert(1, Pair("Workflow", DisplayName(owner)));
+                    pairs.Insert(2, Pair("Version", VersionWords(owner.Version)));
+                    pairs.Insert(3, Pair("Checks", ChecksWords(owner.Strictness ?? "hard")));
                 }
-                if (!string.IsNullOrWhiteSpace(result.Note)) pairs.Add(Pair("Recorded note", result.Note));
+                if (SkipReason(result) is string why) pairs.Add(Pair("Why it was skipped", why));
+                else if (!string.IsNullOrWhiteSpace(result.Note)) pairs.Add(Pair("Recorded note", result.Note));
                 foreach (var answer in result.Answers.OrderBy(x => x.Key, StringComparer.Ordinal))
                     pairs.Add(Pair("Answer: " + answer.Key, Answer(answer.Value)));
                 doc.Sections.Add(new KeyValueSection { Title = $"Step {i + 1}: {result.Title}", Pairs = pairs });
@@ -283,12 +294,80 @@ namespace Semanticus.Engine.Evidence
 
         private static string StepNote(StepResult step)
         {
-            var bits = new List<string> { "Status: " + step.Status };
-            if (!string.IsNullOrWhiteSpace(step.EffectiveStrictness)) bits.Add("Gate: " + step.EffectiveStrictness);
-            if (!string.IsNullOrWhiteSpace(step.Note)) bits.Add(step.Note);
-            if (step.Answers.Count > 0) bits.Add(step.Answers.Count + " answer(s) recorded");
-            if (step.VerifyResults.Length > 0) bits.Add(step.VerifyResults.Length + " verification result(s)");
+            var why = SkipReason(step);
+            var bits = new List<string> { why != null ? "Skipped: " + why.TrimEnd('.') : StepWords(step.Status) };
+            if (!string.IsNullOrWhiteSpace(step.EffectiveStrictness)) bits.Add(ChecksWords(step.EffectiveStrictness));
+            if (why == null && !string.IsNullOrWhiteSpace(step.Note)) bits.Add(step.Note.TrimEnd('.'));
+            if (step.Answers.Count > 0) bits.Add(step.Answers.Count == 1 ? "1 answer recorded" : step.Answers.Count + " answers recorded");
+            if (step.VerifyResults.Length > 0) bits.Add(step.VerifyResults.Length == 1 ? "1 check result" : step.VerifyResults.Length + " check results");
             return string.Join(". ", bits) + ".";
+        }
+
+        // ---- the person's words (F16; docs/product-copy-style.md) ----
+
+        /// <summary>The reason a person gave for a skip, without the runner's "skipped: " marker (WorkflowRunner).</summary>
+        private static string SkipReason(StepResult step)
+        {
+            const string marker = "skipped: ";
+            if (step?.Status != "skipped" || string.IsNullOrWhiteSpace(step.Note)) return null;
+            return step.Note.StartsWith(marker, StringComparison.Ordinal) ? step.Note.Substring(marker.Length).Trim() : step.Note.Trim();
+        }
+
+        private static string DisplayName(WorkflowDef def) => string.IsNullOrWhiteSpace(def?.Title) ? def?.Name ?? "workflow" : def.Title.Trim();
+        private static string VersionWords(int version) => "Version " + version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        /// <summary>"Test a complex measure, version 7".</summary>
+        internal static string Named(WorkflowDef def) => DisplayName(def) + ", version " + def.Version.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        private static string Capital(string s) => string.IsNullOrEmpty(s) ? s : char.ToUpperInvariant(s[0]) + s.Substring(1);
+
+        private static string OutcomeWords(string status) => status switch
+        {
+            "completed" => "finished",
+            "aborted" => "was stopped",
+            "active" => "is still running",
+            _ => "ended",
+        };
+
+        /// <summary>The same words the Studio uses for strictness (workflow-run.tsx).</summary>
+        private static string ChecksWords(string strictness) => strictness switch
+        {
+            "hard" => "Checks must pass",
+            "warn" => "Checks warn only",
+            "off" => "Checks are off",
+            _ => "Checks as the workflow says",
+        };
+
+        private static string StepWords(string status) => status switch
+        {
+            "passed" => "Passed its checks",
+            "done" => "Done, with nothing to check",
+            "skipped" => "Skipped",
+            "failed" => "Failed a check",
+            "not_applicable" => "Did not apply",
+            "in_progress" => "In progress",
+            "pending" => "Not reached",
+            _ => Capital(status ?? "Not recorded"),
+        };
+
+        /// <summary>"0 of 4 steps passed their checks. 1 was done with nothing to check, and 3 were skipped." Every
+        /// applicable step is counted once, in the same words the steps list uses.</summary>
+        private static string StepCountSentence(StepResult[] steps)
+        {
+            string Num(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var passed = steps.Count(x => x.Status == "passed");
+            var done = steps.Count(x => x.Status == "done");
+            var skipped = steps.Count(x => x.Status == "skipped");
+            var failed = steps.Count(x => x.Status == "failed");
+            var open = steps.Length - passed - done - skipped - failed;
+            var head = $"{Num(passed)} of {Num(steps.Length)} {(steps.Length == 1 ? "step" : "steps")} passed {(steps.Length == 1 ? "its" : "their")} checks.";
+            var rest = new List<string>();
+            string Was(int n) => n == 1 ? "was" : "were";
+            if (done > 0) rest.Add($"{Num(done)} {Was(done)} done with nothing to check");
+            if (failed > 0) rest.Add($"{Num(failed)} failed a check");
+            if (skipped > 0) rest.Add($"{Num(skipped)} {Was(skipped)} skipped");
+            if (open > 0) rest.Add($"{Num(open)} {Was(open)} not reached");
+            if (rest.Count == 0) return head;
+            var tail = rest.Count == 1 ? rest[0] : string.Join(", ", rest.Take(rest.Count - 1)) + ", and " + rest[rest.Count - 1];
+            return head + " " + Capital(tail) + ".";
         }
 
         private static string Answer(AnswerValue value)

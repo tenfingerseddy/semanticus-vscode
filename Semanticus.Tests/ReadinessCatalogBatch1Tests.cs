@@ -15,8 +15,11 @@ namespace Semanticus.Tests
     /// path) and scan with ai_readiness_scan. Presence-design rules stay DORMANT on a clean model (never inflate a
     /// category to an always-pass 100); advisory rules (Applicable=0) surface a finding but never score.
     /// </summary>
-    public sealed class ReadinessCatalogBatch1Tests
+    public sealed class ReadinessCatalogBatch1Tests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public ReadinessCatalogBatch1Tests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro { get; }
@@ -25,16 +28,19 @@ namespace Semanticus.Tests
         }
 
         // A clean base model: one fact table with clean, well-typed, business-named columns — trips NONE of the batch.
-        private static async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
+        private async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(true));
+            return (await _copies.OpenAsync("base", BuildBaseModelAsync, new Fake(true), sessions), sessions);
+        }
+
+        private static async Task BuildBaseModelAsync(LocalEngine engine)
+        {
             await engine.CreateModelAsync("Batch1", 1604);
             var t = await engine.CreateTableAsync("Sales", "human");
             await engine.CreateColumnAsync(t, "Sales Amount", "Decimal", "Sales Amount", "human");
             await engine.CreateColumnAsync(t, "Customer Name", "String", "Customer Name", "human");
             await engine.CreateMeasureAsync(t, "Total Sales", "SUM ( Sales[Sales Amount] )", "human");
-            return (engine, sessions);
         }
 
         private static bool Fires(Scorecard c, string ruleId) => c.Findings.Any(f => f.RuleId == ruleId);
@@ -206,16 +212,15 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- MODE-DIRECTLAKE-QNA + CFG-PREP-MODE (advisory: Applicable=0, never scores) ----------------------------
+        // ---- CFG-PREP-MODE (advisory: Applicable=0, never scores; MODE-DIRECTLAKE-QNA retired with Q&A) ----------
 
         [Fact]
-        public async Task DirectLake_advisories_fire_on_a_direct_lake_partition_and_are_dormant_on_import()
+        public async Task DirectLake_advisory_fires_on_a_direct_lake_partition_and_is_dormant_on_import()
         {
             var (import, _) = await BaseModelAsync();
             using (import)
             {
                 var c = await import.AiReadinessScanAsync();
-                Assert.False(Fires(c, "MODE-DIRECTLAKE-QNA"));
                 Assert.False(Fires(c, "CFG-PREP-MODE"));
             }
 
@@ -224,10 +229,10 @@ namespace Semanticus.Tests
             await dl.CreateModelAsync("DL", 1604);
             await dl.CreateDirectLakeTableAsync("LakeSales", "sales", null, null, "human");
             var scan = await dl.AiReadinessScanAsync();
-            Assert.True(Fires(scan, "MODE-DIRECTLAKE-QNA"));
+            Assert.False(Fires(scan, "MODE-DIRECTLAKE-QNA"));   // the Q&A-only teaching advisory is retired
             Assert.True(Fires(scan, "CFG-PREP-MODE"));
-            // Advisory contract: the finding surfaces but carries a non-scoring affordance (None advisory).
-            Assert.Equal(nameof(FixKind.None), scan.Findings.First(f => f.RuleId == "MODE-DIRECTLAKE-QNA").Fix);
+            // Advisory contract: the finding surfaces but never scores.
+            Assert.DoesNotContain(scan.Findings, f => f.RuleId == "CFG-PREP-MODE" && f.Fix == nameof(FixKind.SafeFix));
         }
 
         // ---- DESC-ECHO-OBJECT --------------------------------------------------------------------------------------

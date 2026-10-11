@@ -200,15 +200,15 @@ namespace Semanticus.Analysis
             try { defs = Parse(json); }
             catch (Exception ex)
             {
-                errors?.Add($"The model's custom readiness rules are unparseable ({ex.Message}); none were evaluated. Reload them with load_readiness_rules or clear them with reset_readiness_rules.");
+                errors?.Add($"The model's custom readiness rules are unparseable ({ex.Message}); none were evaluated. Reload them with load_rules or clear them with reset_rules (system='air').");
                 return result;
             }
             foreach (var def in defs)
             {
                 if (IsBuiltinId(def.ID))
-                { errors?.Add($"Custom rule '{def.ID}' collides with a built-in readiness rule id and was skipped; built-ins cannot be overridden. Rename it and reload with load_readiness_rules."); continue; }
+                { errors?.Add($"Custom rule '{def.ID}' collides with a built-in readiness rule id and was skipped; built-ins cannot be overridden. Rename it and reload with load_rules (system='air')."); continue; }
                 if (!TryParseCategory(def.Category, out var cat))
-                { errors?.Add($"Custom rule '{def.ID}': category '{def.Category}' is not a readiness category ({CategoryList}); the rule was skipped. Fix it and reload with load_readiness_rules."); continue; }
+                { errors?.Add($"Custom rule '{def.ID}': category '{def.Category}' is not a readiness category ({CategoryList}); the rule was skipped. Fix it and reload with load_rules (system='air')."); continue; }
                 TryParseSeverity(def.Severity, out var sev);            // unrecognised → the Medium default (load validates strictly; this is the hand-edited path)
                 TryParseFix(def.FixKind, out var fix);
                 if (fix == FixKind.SafeFix) fix = FixKind.None;          // never let a hand-edited rule claim the deterministic-fix affordance
@@ -252,7 +252,7 @@ namespace Semanticus.Analysis
             {
                 var collection = BpaAnalyzer.GetCollection(model, scope);
                 if (collection == null)
-                { ev.Errors.Add($"Custom rule '{Id}': scope '{scope}' is not supported ({string.Join(", ", BpaAnalyzer.SupportedScopeNames)}). Fix it and reload with load_readiness_rules."); continue; }
+                { ev.Errors.Add($"Custom rule '{Id}': scope '{scope}' is not supported ({string.Join(", ", BpaAnalyzer.SupportedScopeNames)}). Fix it and reload with load_rules (system='air')."); continue; }
                 try
                 {
                     var pop = string.IsNullOrWhiteSpace(_def.AppliesTo) ? collection : collection.Where(_def.AppliesTo);
@@ -268,7 +268,7 @@ namespace Semanticus.Analysis
                 }
                 catch (Exception ex)
                 {
-                    ev.Errors.Add($"Custom rule '{Id}' failed to evaluate on scope {scope}: {ex.Message}. Fix the expression (validate_rule previews it) and reload with load_readiness_rules.");
+                    ev.Errors.Add($"Custom rule '{Id}' failed to evaluate on scope {scope}: {ex.Message}. Fix the expression (validate_rule previews it) and reload with load_rules (system='air').");
                 }
             }
             // Scoring integrity: a broken rule contributes NOTHING. The population loop may have counted
@@ -357,7 +357,7 @@ namespace Semanticus.Analysis
                         else if (check.Note == null)
                             check.Note = $"Test run only; nothing saved. Would evaluate {check.Applicable} object(s) and flag {check.Violations}."
                                          + (!string.IsNullOrWhiteSpace(rule.FixExpression) && !BpaAnalyzer.CanAutoFix(rule.FixExpression)
-                                            ? " Note: the FixExpression is not deterministically applicable (only Property = literal is); bpa_fix will not auto-apply it."
+                                            ? " Note: the FixExpression is not deterministically applicable (only Property = literal is); apply_fix (system='bpa') will not auto-apply it."
                                             : "");
                     }
                 }

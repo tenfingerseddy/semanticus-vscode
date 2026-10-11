@@ -27,6 +27,7 @@ namespace Semanticus.Tests
             return (new LocalEngine(sessions, new ProTier(), root), sessions, root, model);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Default_scope_never_turns_missing_report_coverage_green()
         {
@@ -75,6 +76,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rename_and_remove_classify_the_same_transitive_blast_radius_honestly()
         {
@@ -101,6 +103,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Supplied_report_usage_is_joined_to_the_transitive_model_impact_but_remains_scoped()
         {
@@ -140,6 +143,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Relevant_saved_tests_are_scheduled_by_their_bound_target_without_guessing()
         {
@@ -164,6 +168,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_assessment_leaves_the_interview_alone_and_never_promises_a_security_check()
         {
@@ -196,6 +201,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_summary_names_what_uses_it_and_a_removal_says_what_it_would_break()
         {
@@ -241,6 +247,115 @@ namespace Semanticus.Tests
                     Assert.Contains("change, rename, remove, or restructure", badIntent.Message);
                     var mixed = await Assert.ThrowsAsync<ArgumentException>(() => x.Engine.ImpactAssessmentAsync(new ImpactAssessmentRequest { ObjectRef = "model:", Scope = "model", ReportPaths = new[] { "x" } }));
                     Assert.Contains("modelAndReports", mixed.Message);
+                }
+            }
+            finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
+        }
+
+        // A PBIR report whose ONLY reference to the measure sits in report.json - a report-level filter, the
+        // shape a bookmark or a page-level setting also takes. Nothing on any page shows it.
+        private static string WriteReportLevelOnly(string root, string folder, string table, string measure)
+        {
+            var entity = table.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            var reportJson = "{ \"filterConfig\": { \"filters\": [ { \"field\": { \"Measure\": { " +
+                "\"Expression\": { \"SourceRef\": { \"Entity\": \"" + entity + "\" } }, \"Property\": \"" + measure + "\" } } } ] } }";
+            var def = Path.Combine(root, folder, "R.Report", "definition");
+            Directory.CreateDirectory(def);
+            File.WriteAllText(Path.Combine(def, "report.json"), reportJson);
+            return Path.Combine(root, folder);
+        }
+
+        // A PBIR report with `count` card visuals, every one of them showing the measure.
+        private static string WriteBusyReport(string root, string folder, string table, string measure, int count)
+        {
+            var entity = table.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            var visual = "{ \"visual\": { \"visualType\": \"card\", \"query\": { \"queryState\": { \"Values\": { \"projections\": [ " +
+                "{ \"field\": { \"Measure\": { \"Expression\": { \"SourceRef\": { \"Entity\": \"" + entity + "\" } }, \"Property\": \"" + measure + "\" } } } ] } } } } }";
+            var def = Path.Combine(root, folder, "R.Report", "definition");
+            Directory.CreateDirectory(def);
+            File.WriteAllText(Path.Combine(def, "report.json"), "{}");
+            for (var i = 1; i <= count; i++)
+            {
+                var dir = Path.Combine(def, "pages", "Sheet", "visuals", "Tile" + i.ToString("D4"));
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, "visual.json"), visual);
+            }
+            return Path.Combine(root, folder);
+        }
+
+        /// <summary>
+        /// A report that uses the field only at report level - a filter, a bookmark, a page-level setting - is a
+        /// HIT with no page-stamped visual behind it. Both doors have to say so: the report summary counts it as a
+        /// report the field appears in, and the hit itself carries zero visuals and no details, which is what tells
+        /// a surface to say "used, but not on any page" rather than "no use found in this report".
+        /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task A_report_level_only_use_is_a_hit_with_no_visuals_behind_it()
+        {
+            var x = Make();
+            try
+            {
+                using (x.Engine)
+                {
+                    await x.Engine.OpenAsync(x.Model);
+                    var table = (await x.Engine.ListMeasuresAsync()).First().Table;
+                    var root = await x.Engine.CreateMeasureAsync("table:" + table, "Bookmark Only", "1", "human");
+                    var path = WriteReportLevelOnly(x.Root, "BookmarkOnly", table, "Bookmark Only");
+                    await x.Engine.SetReportScopeAsync(new[] { new ReportScopeChoice { Kind = "local", Name = "Bookmark only", Path = path } }, "human");
+                    await x.Engine.CheckReportsAsync(null, true, null, null, null, "human");
+
+                    var ui = await new EngineRpcTarget(x.Engine).impactAssessment(new ImpactAssessmentRequest { ObjectRef = root });
+                    var agent = await McpToolsImpactAssessment.ImpactAssessment(x.Engine, root);
+
+                    foreach (var door in new[] { ui, agent })
+                    {
+                        var hit = Assert.Single(door.ReportImpact);
+                        Assert.Contains(root, hit.UsedRefs);
+                        Assert.Equal(0, hit.Visuals);
+                        Assert.Empty(hit.Details);
+                        Assert.Equal(0, hit.DetailsOmitted);
+                        Assert.Equal(1, door.ReportsImpacted);
+                        // The summary says the field turns up in the report, so a surface that then says nothing
+                        // was found in that same report is contradicting the answer above it.
+                        Assert.Contains("appears in 1 checked report", door.ReportSummary);
+                    }
+                }
+            }
+            finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
+        }
+
+        /// <summary>
+        /// A report with more matching visuals than one answer may carry says how many it left out. The detail
+        /// list is capped at 200; the count was the full 201 and the cap was silent, so a surface paging through
+        /// the details ran out at 200 with nothing to tell a person the rest existed.
+        /// </summary>
+        [Fact]
+        public async Task A_report_past_the_detail_cap_says_how_many_matches_are_not_listed()
+        {
+            var x = Make();
+            try
+            {
+                using (x.Engine)
+                {
+                    await x.Engine.OpenAsync(x.Model);
+                    var table = (await x.Engine.ListMeasuresAsync()).First().Table;
+                    var root = await x.Engine.CreateMeasureAsync("table:" + table, "Busy Tile", "1", "human");
+                    var path = WriteBusyReport(x.Root, "Busy", table, "Busy Tile", 201);
+                    await x.Engine.SetReportScopeAsync(new[] { new ReportScopeChoice { Kind = "local", Name = "Busy", Path = path } }, "human");
+                    await x.Engine.CheckReportsAsync(null, true, null, null, null, "human");
+
+                    var ui = await new EngineRpcTarget(x.Engine).impactAssessment(new ImpactAssessmentRequest { ObjectRef = root });
+                    var agent = await McpToolsImpactAssessment.ImpactAssessment(x.Engine, root);
+
+                    foreach (var door in new[] { ui, agent })
+                    {
+                        var hit = Assert.Single(door.ReportImpact);
+                        Assert.Equal(201, hit.Visuals);
+                        Assert.Equal(200, hit.Details.Length);
+                        Assert.Equal(1, hit.DetailsOmitted);
+                        Assert.Equal(hit.Visuals, hit.Details.Length + hit.DetailsOmitted);
+                    }
                 }
             }
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }

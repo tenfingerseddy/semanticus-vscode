@@ -43,6 +43,7 @@ namespace Semanticus.Tests
         private static async Task<string> HiddenAsync(LocalEngine e, string objRef)
             => (await e.GetObjectPropertiesAsync(objRef)).First(p => p.Name == "IsHidden").Value;
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Batch_sets_a_property_on_many_objects_as_one_undo_step()
         {
@@ -59,6 +60,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Batch_is_exactly_one_broadcast_and_one_batch_audit_record()
         {
@@ -102,6 +104,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Failure_at_object_k_rolls_the_whole_batch_back_and_names_it()
         {
@@ -224,6 +227,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Refs_resolve_pre_gesture_so_an_earlier_rename_cannot_stale_a_later_ref()
         {
@@ -309,6 +313,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rejected_batch_keeps_the_existing_redo_stack()
         {
@@ -336,6 +341,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_keeps_the_existing_redo_stack()
         {
@@ -357,6 +363,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_of_set_properties_rehearses_without_committing()
         {
@@ -387,7 +394,7 @@ namespace Semanticus.Tests
             var dir = Path.Combine(Path.GetTempPath(), "batchprop_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             try
             {
-                await engine.SaveAsync(dir, "TMDL");
+                await engine.SaveAsync(dir, "TMDL", false, "human");
                 return string.Concat(Directory.EnumerateFiles(dir, "*.tmdl", SearchOption.AllDirectories)
                     .OrderBy(f => f, StringComparer.Ordinal).Select(File.ReadAllText));
             }

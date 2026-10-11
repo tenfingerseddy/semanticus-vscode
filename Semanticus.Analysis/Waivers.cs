@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using TabularEditor.TOMWrapper;
 
 namespace Semanticus.Analysis
@@ -20,6 +21,25 @@ namespace Semanticus.Analysis
         public string Reason { get; set; }       // required — a waiver without a reason is a silent suppression
         public string By { get; set; }           // origin: "human" | "agent"
         public string When { get; set; }         // ISO-8601 UTC
+
+        /// <summary>The lineage tag of the object when the acceptance was written (null when the object has none, or the record is older
+        /// than this field). An acceptance belongs to the object and not to its name: <see cref="WaiverStore.Load"/> follows the tag to the
+        /// object's current ref, so a rename of the object or of its table keeps the acceptance. An older record without a tag is read by
+        /// name and gets its tag the next time the store is written.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string Tag { get; set; }
+
+        /// <summary>The rule id of the twin finding on the OTHER page that was firing on this same object when the person accepted
+        /// (see <see cref="PairedAcceptances"/>), or null. Only a twin that was shown and accepted with this record reads as accepted
+        /// by it; a twin warning that appears later was never seen, so it stays open.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string PairedWith { get; set; }
+
+        /// <summary>Read-side only, never stored: the record carries a lineage tag and no object in the model has it now (the object was
+        /// deleted, or a different object took its name). The person accepted THAT object, so the record is kept but acts on nothing: it
+        /// matches no finding and declines no change (a replacement created under the same name is a different object, Sol 4.2).</summary>
+        [JsonIgnore]
+        public bool Unresolved { get; set; }
     }
 
     /// <summary>
@@ -39,6 +59,23 @@ namespace Semanticus.Analysis
 
         public static bool IsRuleLevel(string objectRef) => string.IsNullOrWhiteSpace(objectRef) || objectRef.Trim() == "*";
 
+        /// <summary>The stable key of the model itself. A model-level finding is filed as "obj:Model/&lt;the model's name&gt;", and that
+        /// name changes when the model is renamed, which would orphan an acceptance stored under it (round 7). An acceptance of a
+        /// model-level finding is stored, matched and removed under this key, whatever the model is called now.</summary>
+        public const string ModelRef = "obj:Model";
+
+        /// <summary>The ref an acceptance is stored and matched under: the model's own refs collapse to <see cref="ModelRef"/>,
+        /// every other ref is left as it is.</summary>
+        public static string CanonicalRef(string objectRef)
+        {
+            if (string.IsNullOrWhiteSpace(objectRef)) return objectRef;
+            var t = objectRef.Trim();
+            return t.Equals(ModelRef, StringComparison.OrdinalIgnoreCase) || t.StartsWith(ModelRef + "/", StringComparison.OrdinalIgnoreCase) ? ModelRef : objectRef;
+        }
+
+        /// <summary>Whether two refs name the same object for an acceptance (case-insensitive; the model by its stable key).</summary>
+        public static bool SameRef(string a, string b) => string.Equals(CanonicalRef(a), CanonicalRef(b), StringComparison.OrdinalIgnoreCase);
+
         // ---- the Semanticus waiver store (model annotation) -----------------------------------------------------
         public static List<WaiverRecord> Load(Model m)
         {
@@ -46,7 +83,9 @@ namespace Semanticus.Analysis
             {
                 var raw = (m as IAnnotationObject)?.GetAnnotation(Annotation);
                 if (string.IsNullOrWhiteSpace(raw)) return new List<WaiverRecord>();
-                return Normalize(JsonSerializer.Deserialize<List<WaiverRecord>>(raw, JsonOpts));
+                var recs = Normalize(JsonSerializer.Deserialize<List<WaiverRecord>>(raw, JsonOpts));
+                Rekey(m, recs);
+                return recs;
             }
             catch { return new List<WaiverRecord>(); }   // a corrupt/old annotation degrades to "no waivers", never throws
         }
@@ -58,6 +97,7 @@ namespace Semanticus.Analysis
         {
             recs ??= new List<WaiverRecord>();
             recs.RemoveAll(r => r == null || string.IsNullOrWhiteSpace(r.System) || string.IsNullOrWhiteSpace(r.RuleId));
+            foreach (var r in recs) if (!IsRuleLevel(r.ObjectRef)) r.ObjectRef = CanonicalRef(r.ObjectRef);   // a record made before the stable key still names the model by its old name
             return recs;
         }
 
@@ -82,6 +122,7 @@ namespace Semanticus.Analysis
                 var before = recs.Count;
                 recs = Normalize(recs);
                 if (recs.Count != before) corruptRaw = raw;   // partially unreadable — preserve the original before Save drops the rest
+                Rekey(m, recs);
                 return recs;
             }
             catch { corruptRaw = raw; return new List<WaiverRecord>(); }   // unreadable — the caller must preserve `raw` before saving
@@ -108,7 +149,84 @@ namespace Semanticus.Analysis
         {
             if (!(m is IAnnotationObject ao)) return;
             if (recs == null || recs.Count == 0) { if (ao.HasAnnotation(Annotation)) ao.RemoveAnnotation(Annotation); return; }
+            FillTags(m, recs);
             ao.SetAnnotation(Annotation, JsonSerializer.Serialize(recs));
+        }
+
+        // ---- object identity: an acceptance belongs to the object, not to its name ---------------------------------------
+
+        /// <summary>The identity of an object, where one is kept: the lineage tag of a table, column, measure, hierarchy, level or function, or the
+        /// TOM name of a relationship; null otherwise.</summary>
+        internal static string TagOf(ITabularObject o)
+        {
+            var tag = o switch
+            {
+                Measure x => x.LineageTag,
+                Column x => x.LineageTag,
+                Table x => x.LineageTag,
+                Hierarchy x => x.LineageTag,
+                Level x => x.LineageTag,
+                Function x => x.LineageTag,
+                // A relationship has no lineage tag, and its display name is built from the table and column names it joins, so a
+                // rename of either changes it. Its ID is the TOM name: a guid that is saved with the model and never follows a rename.
+                SingleColumnRelationship x => string.IsNullOrEmpty(x.ID) ? null : "relationship-id:" + x.ID,
+                _ => null,
+            };
+            return string.IsNullOrEmpty(tag) ? null : tag;
+        }
+
+        /// <summary>The ref of every object that has a tag, both ways: ref to tag, and tag to ref.</summary>
+        private static (Dictionary<string, string> ByRef, Dictionary<string, string> ByTag) TagIndex(Model m)
+        {
+            var byRef = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var byTag = new Dictionary<string, string>(StringComparer.Ordinal);
+            void Add(ITabularObject o)
+            {
+                var tag = TagOf(o);
+                if (tag == null) return;
+                var r = CanonicalRef(Refs.For(o));
+                byRef[r] = tag;
+                byTag.TryAdd(tag, r);
+            }
+            foreach (var o in AllObjects(m)) Add(o);
+            foreach (var fn in m.Functions) Add(fn);
+            return (byRef, byTag);
+        }
+
+        /// <summary>Follow each tagged record to where its object is now. A record whose ref still names an object with the same tag is left
+        /// alone; one whose object was renamed (or whose table was) takes the object's current ref. A record whose object is gone keeps its
+        /// ref, is marked <see cref="WaiverRecord.Unresolved"/> and matches nothing: a tagged record is matched by its tag alone, so a new
+        /// object under the old name does not inherit it.</summary>
+        private static void Rekey(Model m, List<WaiverRecord> recs)
+        {
+            if (!recs.Any(r => !string.IsNullOrEmpty(r.Tag) && !IsRuleLevel(r.ObjectRef))) return;
+            var (byRef, byTag) = TagIndex(m);
+            foreach (var rec in recs)
+            {
+                if (string.IsNullOrEmpty(rec.Tag) || IsRuleLevel(rec.ObjectRef)) continue;
+                if (byRef.TryGetValue(rec.ObjectRef, out var here) && here == rec.Tag) continue;
+                if (byTag.TryGetValue(rec.Tag, out var now)) rec.ObjectRef = now;
+                else rec.Unresolved = true;
+            }
+        }
+
+        /// <summary>Record the identity of every per-object acceptance that has none yet, from the object at its ref now. This is how an
+        /// older name-keyed record is migrated: on the next write.</summary>
+        private static void FillTags(Model m, List<WaiverRecord> recs)
+        {
+            if (!recs.Any(r => string.IsNullOrEmpty(r.Tag) && !IsRuleLevel(r.ObjectRef))) return;
+            var (byRef, _) = TagIndex(m);
+            foreach (var rec in recs)
+                if (string.IsNullOrEmpty(rec.Tag) && !IsRuleLevel(rec.ObjectRef) && byRef.TryGetValue(rec.ObjectRef, out var tag)) rec.Tag = tag;
+        }
+
+        /// <summary>The object a ref names exactly as typed (no trimming), or null. A name that starts or ends with a space keeps its space.</summary>
+        public static ITabularObject FindByRef(Model m, string objectRef)
+        {
+            if (string.IsNullOrEmpty(objectRef)) return null;
+            foreach (var o in AllObjects(m)) if (string.Equals(Refs.For(o), objectRef, StringComparison.OrdinalIgnoreCase)) return o;
+            foreach (var fn in m.Functions) if (string.Equals(Refs.For(fn), objectRef, StringComparison.OrdinalIgnoreCase)) return fn;
+            return null;
         }
 
         /// <summary>The waiver covering (system, ruleId, objectRef), or null. A rule-level record (null ref) covers
@@ -118,9 +236,10 @@ namespace Semanticus.Analysis
             if (recs == null) return null;
             foreach (var r in recs)
             {
+                if (r.Unresolved) continue;   // its object is gone: a same-named newcomer is not the object the person accepted
                 if (!string.Equals(r.System, system, StringComparison.OrdinalIgnoreCase)) continue;
                 if (!string.Equals(r.RuleId, ruleId, StringComparison.OrdinalIgnoreCase)) continue;
-                if (IsRuleLevel(r.ObjectRef) || string.Equals(r.ObjectRef, objectRef, StringComparison.OrdinalIgnoreCase)) return r;
+                if (IsRuleLevel(r.ObjectRef) || SameRef(r.ObjectRef, objectRef)) return r;
             }
             return null;
         }
@@ -132,12 +251,13 @@ namespace Semanticus.Analysis
         /// recorded decision, so it is reported as its OWN state rather than dropped, migrated, or read as protection.
         /// Matching is on the rule id only: an orphan's object ref may or may not still resolve, and that is a
         /// different question from "does this rule exist".</summary>
-        public static List<WaiverRecord> Orphans(IEnumerable<WaiverRecord> recs, string system, IEnumerable<string> loadedRuleIds)
+        public static List<WaiverRecord> Orphans(IEnumerable<WaiverRecord> recs, string system, IEnumerable<string> loadedRuleIds, Model model = null)
         {
             var live = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (loadedRuleIds != null) foreach (var id in loadedRuleIds) if (!string.IsNullOrWhiteSpace(id)) live.Add(id.Trim());
             var orphans = new List<WaiverRecord>();
             if (recs == null) return orphans;
+            HashSet<string> relationshipRefs = null;
             foreach (var r in recs)
             {
                 // Normalize/Load already dropped null records and blank rule ids, but Orphans is public and callable on
@@ -145,13 +265,27 @@ namespace Semanticus.Analysis
                 if (r == null || string.IsNullOrWhiteSpace(r.RuleId)) continue;
                 if (!string.Equals(r.System, system, StringComparison.OrdinalIgnoreCase)) continue;
                 if (!live.Contains(r.RuleId.Trim())) orphans.Add(r);
+                else if (model != null && CannotFollow(model, r, ref relationshipRefs)) orphans.Add(r);
             }
             return orphans;
+        }
+
+        /// <summary>A live rule's acceptance that still acts on nothing, so it is counted with the orphans instead of reading as protection: the
+        /// object it named is gone (a tagged record no object carries now), or it names a relationship by the old table and column names and no
+        /// relationship has that name now (a record from before relationships were followed by identity, whose tables were then renamed).</summary>
+        private static bool CannotFollow(Model m, WaiverRecord r, ref HashSet<string> relationshipRefs)
+        {
+            if (IsRuleLevel(r.ObjectRef)) return false;
+            if (r.Unresolved) return true;
+            if (!string.IsNullOrEmpty(r.Tag) || !r.ObjectRef.StartsWith("relationship:", StringComparison.OrdinalIgnoreCase)) return false;
+            relationshipRefs ??= new HashSet<string>(m.Relationships.Select(x => CanonicalRef(Refs.For(x))), StringComparer.OrdinalIgnoreCase);
+            return !relationshipRefs.Contains(r.ObjectRef);
         }
 
         /// <summary>Add a waiver, replacing any existing record with the same (system, ruleId, ref) key — idempotent.</summary>
         public static void Add(List<WaiverRecord> recs, WaiverRecord rec)
         {
+            if (!IsRuleLevel(rec.ObjectRef)) rec.ObjectRef = CanonicalRef(rec.ObjectRef);
             Remove(recs, rec.System, rec.RuleId, rec.ObjectRef);
             recs.Add(rec);
         }
@@ -164,7 +298,7 @@ namespace Semanticus.Analysis
             return recs.RemoveAll(r =>
                 string.Equals(r.System, system, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(r.RuleId, ruleId, StringComparison.OrdinalIgnoreCase) &&
-                (rl ? IsRuleLevel(r.ObjectRef) : string.Equals(r.ObjectRef, objectRef, StringComparison.OrdinalIgnoreCase))) > 0;
+                (rl ? IsRuleLevel(r.ObjectRef) : SameRef(r.ObjectRef, objectRef))) > 0;
         }
 
         // ---- Tabular Editor interop (BPA only): honour + mirror BestPracticeAnalyzer_IgnoreRules ------------------
@@ -173,6 +307,43 @@ namespace Semanticus.Analysis
             var ids = ReadTeIgnore(obj);
             return ids != null && ids.Contains(ruleId);
         }
+
+        /// <summary>Every object of the model that can carry an annotation: the model, its tables, columns, measures, KPIs,
+        /// hierarchies, levels, partitions, relationships, calculation groups and items, perspectives, roles, cultures and
+        /// named expressions. One list, so a question about "any ignore on the model" cannot miss a kind.</summary>
+        public static IEnumerable<ITabularObject> AllObjects(Model m)
+        {
+            yield return m;
+            foreach (var t in m.Tables)
+            {
+                yield return t;
+                foreach (var c in t.Columns) yield return c;
+                foreach (var x in t.Measures) { yield return x; if (x.KPI != null) yield return x.KPI; }
+                foreach (var h in t.Hierarchies) { yield return h; foreach (var lv in h.Levels) yield return lv; }
+                foreach (var p in t.Partitions) yield return p;
+                if (t is CalculationGroupTable cg) foreach (var ci in cg.CalculationItems) yield return ci;
+            }
+            foreach (var r in m.Relationships) yield return r;
+            foreach (var x in m.Perspectives) yield return x;
+            foreach (var x in m.Roles) yield return x;
+            foreach (var x in m.Cultures) yield return x;
+            foreach (var x in m.Expressions) yield return x;
+        }
+
+        /// <summary>The objects that carry a Tabular Editor ignore annotation, with the rule ids each one ignores.</summary>
+        public static IEnumerable<(ITabularObject Object, HashSet<string> RuleIds)> TeIgnores(Model m)
+        {
+            foreach (var o in AllObjects(m))
+            {
+                var ids = ReadTeIgnore(o);
+                if (ids != null && ids.Count > 0) yield return (o, ids);
+            }
+        }
+
+        /// <summary>Whether any object of the model carries a Tabular Editor ignore annotation. A model with neither one of
+        /// these nor a Semanticus waiver has no accepted finding, so a caller that only needs the accepted findings can skip
+        /// its work. Covers every object kind (a calculation item, a partition, a level, a perspective, a role, a KPI too).</summary>
+        public static bool AnyTeIgnore(Model m) => TeIgnores(m).Any();
 
         public static HashSet<string> ReadTeIgnore(ITabularObject obj)
         {

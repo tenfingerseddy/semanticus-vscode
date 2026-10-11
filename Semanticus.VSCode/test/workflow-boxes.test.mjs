@@ -42,7 +42,7 @@ assert.match(design, /previewWorkflowEdit/, 'existing definitions save through e
 assert.match(design, /editWorkflowDocument/, 'reviewed exact text uses the guarded writer');
 assert.doesNotMatch(design, /emitMarkdown|defToDraft|isLossy/, 'the old whole-file emitter and loss fence are gone');
 assert.match(forms, /Runs only when/);
-assert.match(forms, /Repeats for each item of/);
+assert.match(forms, /Repeats for each item/);
 assert.match(forms, /Calls another workflow/);
 assert.match(forms, /model\.choices\.verifyKinds/, 'all engine-projected verify choices remain reachable');
 assert.match(forms, /pinnedShapes/);
@@ -94,7 +94,9 @@ test('the step form offers a browsable action picker and keeps the type-the-name
   assert.match(forms, /data-wf-op-shelf=\{shelf\.shelf\}/, 'shelves are rendered under their question');
   assert.match(forms, /data-wf-op-choice=\{op\.name\}/, 'each action is its own tick target');
   assert.match(forms, /<small>\{op\.description\}<\/small>/, 'each action shows its plain one-line description');
-  assert.match(forms, /list="sem-wf-op-list"/, 'the datalist stays as the quick path for anyone who knows the name');
+  // Contract 21.1 row 64 (lane W2): one picker, not two. The grouped picker's own filter is the quick path now.
+  assert.doesNotMatch(forms, /list="sem-wf-op-list"/, 'the second, raw-name picker is gone');
+  assert.match(forms, /data-wf-op-filter/, 'the grouped picker filters by name');
   assert.match(forms, /step\.ops\.includes\(op\) \? step\.ops\.filter/, 'ticking adds and unticking removes through the one ops field');
   assert.doesNotMatch(forms, /rpc<OpInfo\[\]>\('getOpCatalog'\)[\s\S]{0,80}\n\s*\}, \[\]\);\n\s*return/, 'the catalog is fetched once per session, not once per selected step');
   assert.match(forms, /<WordBudget text=\{step\.instructions\} \/>/, 'the soft word budget sits under the instructions field');

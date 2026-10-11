@@ -1,0 +1,29 @@
+table Accounts
+	/// account join key
+	column 'Account Key'
+		dataType: int64
+		sourceColumn: AccountKey
+		summarizeBy: none
+
+	column 'Account Code'
+		dataType: int64
+		sourceColumn: AccountCode
+		summarizeBy: none
+
+	column 'Account Type'
+		dataType: string
+		sourceColumn: AccountType
+		summarizeBy: none
+
+	column 'Account Name'
+		dataType: string
+		sourceColumn: AccountName
+		summarizeBy: none
+
+	partition Accounts = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [AccountKey = Int64.Type, AccountCode = Int64.Type, AccountType = type text, AccountName = type text], {})
+			in
+				Source

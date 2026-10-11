@@ -95,7 +95,7 @@ namespace Semanticus.Engine.Lineage
             };
         }
 
-        // ---- Forward impact (impact_of) --------------------------------------------------------------------------
+        // ---- Forward impact (the impactOf RPC; impact_assessment's modelImpact) --------------------------------
 
         public static ImpactResult Impact(Model m, string objRef)
         {
@@ -201,6 +201,27 @@ namespace Semanticus.Engine.Lineage
 
         // ---- Reverse safe-to-remove sweep (unused_objects) -------------------------------------------------------
 
+        /// <summary>ADDED ON PURPOSE (round 3 of m11/m4-columns-fair, 26 September). Semanticus marks what it adds on
+        /// purpose, a base measure the Plan wrote for a column or a time-intelligence measure it generated, with this
+        /// annotation, whose value is the plain reason. Such an object is new, so nothing uses it yet, and the sweep used
+        /// to offer it straight back for deletion ("Remove 35 unused things" became 36 on UAT lane n). It is never a
+        /// candidate: not in unused_objects, not in the Plan's cleanup row, not removed by remove_safe_objects. The mark
+        /// is set in the same undo step that adds the object, so undo takes both. A person can still delete it.</summary>
+        public const string AddedOnPurposeAnnotation = "Semanticus_AddedOnPurpose";
+
+        /// <summary>Why Semanticus added this object on purpose, or null when it did not.</summary>
+        public static string AddedOnPurpose(ITabularObject obj)
+        {
+            try { return string.IsNullOrWhiteSpace((obj as IAnnotationObject)?.GetAnnotation(AddedOnPurposeAnnotation)) ? null : ((IAnnotationObject)obj).GetAnnotation(AddedOnPurposeAnnotation); }
+            catch { return null; }
+        }
+
+        /// <summary>Mark an object as added on purpose, with the plain reason.</summary>
+        public static void MarkAddedOnPurpose(ITabularObject obj, string reason)
+        {
+            if (obj is IAnnotationObject a && !string.IsNullOrWhiteSpace(reason)) a.SetAnnotation(AddedOnPurposeAnnotation, reason);
+        }
+
         public static UnusedResult Unused(Model m) => Unused(m, null, ModelOnlyCaveat);
 
         // reportUsedRefs (optional): model object refs that published/local reports use — any candidate in this set is
@@ -224,11 +245,20 @@ namespace Semanticus.Engine.Lineage
                     if (c.SortByColumn != null) structural.Add(c.SortByColumn);
                     foreach (var v in c.Variations) if (v.DefaultColumn != null) structural.Add(v.DefaultColumn);
                     if (c.AlternateOf?.BaseColumn != null) structural.Add(c.AlternateOf.BaseColumn);
+                    // A column mapped to a base column by its OWN aggregation is structural too: the mapping is how the
+                    // aggregation table answers, and removing the column stops it answering (verify, 29 Sep, N15).
+                    if (c.AlternateOf != null) structural.Add(c);
                     if (c.GroupByColumns != null) foreach (var gbc in c.GroupByColumns) structural.Add(gbc);
                 }
                 foreach (var h in t.Hierarchies)
                     foreach (var lvl in h.Levels) if (lvl.Column != null) structural.Add(lvl.Column);
             }
+
+            // Dimension and date tables, by the same classifier the Plan's Map uses (LocalEngine.KindOf), so the two
+            // never disagree about a table. Their visible columns are what people slice and filter by, which the
+            // model never references, so "nothing uses it" is not "safe" there.
+            var dimensions = new HashSet<Table>(m.Tables.Where(t =>
+                LocalEngine.KindOf(t) is ModelPlanTableKinds.Dimension or ModelPlanTableKinds.DateTable));
 
             var items = new List<UnusedItem>();
             foreach (var t in m.Tables)
@@ -241,12 +271,17 @@ namespace Semanticus.Engine.Lineage
                 foreach (var c in t.Columns.Where(c => c.Type != ColumnType.RowNumber))
                 {
                     var v = EvaluateColumn(c, structural, reportUsedRefs);
+                    if (v != null && v.Verdict == "safe" && !c.IsHidden && !t.IsHidden && dimensions.Contains(t))
+                    {
+                        v.Verdict = "visibleAttribute";
+                        v.Reason = VisibleAttributeReason;
+                    }
                     if (v != null) items.Add(v);
                 }
             }
 
             var ordered = items
-                .OrderBy(i => i.Verdict == "safe" ? 0 : i.Verdict == "usedByUnusedOnly" ? 1 : 2)
+                .OrderBy(i => i.Verdict == "safe" ? 0 : i.Verdict == "usedByUnusedOnly" ? 1 : i.Verdict == "caution" ? 2 : 3)
                 .ThenBy(i => i.Table, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -256,12 +291,25 @@ namespace Semanticus.Engine.Lineage
                 SafeCount = ordered.Count(i => i.Verdict == "safe"),
                 UsedByUnusedOnlyCount = ordered.Count(i => i.Verdict == "usedByUnusedOnly"),
                 CautionCount = ordered.Count(i => i.Verdict == "caution"),
+                VisibleAttributeCount = ordered.Count(i => i.Verdict == "visibleAttribute"),
                 Caveat = caveat,
             };
         }
 
+        /// <summary>The verdict's own sentence. It says what the verdict MEANS — Semanticus never sweeps a visible
+        /// attribute away by itself — and it must not say the person cannot have it removed, because they can: an
+        /// approved delete_if_unused (the Impact card's Propose removal, or add_plan_item + apply_plan) removes it,
+        /// and so does delete_object. Only the sweep keeps it (dogfood round 2, D3). The old sentence said "not
+        /// offered for removal" while sitting beside an enabled Propose removal button, and the apply then blamed a
+        /// safety check that had not failed.</summary>
+        internal const string VisibleAttributeReason =
+            "Visible attribute, no model reference. People filter and group by columns like this in reports, Q&A and Copilot, so Semanticus never removes it on its own. Ask the people who use the model, or hide it first. If you decide it should go, propose its removal and approve that change.";
+
         private static UnusedItem EvaluateMeasure(Measure ms, ISet<string> reportUsedRefs)
         {
+            // Only what TOM can delete on its own is ever a candidate (see EvaluateColumn).
+            if (!ms.CanDelete()) return null;
+            if (AddedOnPurpose(ms) != null) return null;   // Semanticus added it on purpose; nothing uses it YET
             if (reportUsedRefs != null && reportUsedRefs.Contains(ObjectRefs.For(ms))) return null;   // a report uses it
             var rb = ms.ReferencedBy;
             var deep = rb.Count == 0 ? null : rb.Deep();
@@ -274,6 +322,18 @@ namespace Semanticus.Engine.Lineage
 
         private static UnusedItem EvaluateColumn(Column c, HashSet<Column> structural, ISet<string> reportUsedRefs)
         {
+            // ONLY WHAT TOM CAN DELETE ON ITS OWN IS A CANDIDATE. A column its table's formula makes (a calculated
+            // table's, a field parameter's) cannot be deleted alone: TOM says CanDelete false and DeleteResolvedObject
+            // refuses it. Offering one put a line on the Plan's cleanup that could never apply, and approving the set
+            // put the whole set back (m11 M4 lane n). The remedy is the formula, which is not a removal.
+            if (!c.CanDelete()) return null;
+            if (AddedOnPurpose(c) != null) return null;   // Semanticus added it on purpose; nothing uses it YET
+            // A CALCULATION GROUP'S OWN COLUMNS ARE THE GROUP'S INTERFACE, not data. The visible one is how a person
+            // picks a calculation and the hidden Ordinal one is what sorts them; nothing in the model references
+            // either by name, which is true and entirely beside the point. Calling the picker "safe" let the sweep
+            // delete it, leaving a calculation group that exists and that nothing can filter by, and the model saved
+            // that way (verifier, dogfood round 2). Structural, like a relationship key or a hierarchy level.
+            if (c.Table is CalculationGroupTable) return null;
             // Hard STRUCTURAL use (independent of DAX): relationship key / sort-by / hierarchy / variation default /
             // aggregation base / grouping member. Any of these means the column is in use regardless of references.
             if (structural.Contains(c)) return null;
@@ -326,14 +386,25 @@ namespace Semanticus.Engine.Lineage
         // getDefinition blocked by an encrypted sensitivity label, or a fetch failure). An errored report counts as
         // unreadable and degrades the caveat — fail-loud, so the safe-to-remove verdict is never silently overstated.
         public static ReportAnalysisResult AnalyzeReports(Model m, IReadOnlyList<(string path, string error, ReportDefinitionReader.ParseResult result)> parsed)
+            => AnalyzeReports(m, parsed, null);
+
+        /// <summary>The same reading, with each report's stable CHOICE ID carried onto its usage. <paramref
+        /// name="choiceIds"/> is positional with <paramref name="parsed"/>; a caller that has no choice ids passes
+        /// null. Two chosen reports in different workspaces can share a display name, so anything that joins a
+        /// reading back to a chosen report has to join on the id and never on the name.</summary>
+        public static ReportAnalysisResult AnalyzeReports(Model m,
+            IReadOnlyList<(string path, string error, ReportDefinitionReader.ParseResult result)> parsed,
+            IReadOnlyList<string> choiceIds)
         {
             var reports = new List<ReportUsage>();
+            var index = -1;
             var allUsed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             int read = 0, unreadable = 0, totalUnresolved = 0, totalSkipped = 0;
 
             foreach (var (path, error, pr) in parsed)
             {
+                index++;
                 var resolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 var ext = new List<string>();
                 foreach (var f in pr.Fields)
@@ -374,6 +445,7 @@ namespace Semanticus.Engine.Lineage
                 reports.Add(new ReportUsage
                 {
                     Path = path, Name = ReportName(path), Read = ok,
+                    ChoiceId = choiceIds != null && index < choiceIds.Count ? choiceIds[index] : null,
                     FieldCount = resolved.Count, Unresolved = pr.Unresolved,
                     UsedRefs = resolved.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
                     ExtensionMeasures = ext.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -446,7 +518,7 @@ namespace Semanticus.Engine.Lineage
         private static UnusedResult DemoteSafeToCaution(UnusedResult r, string reason)
         {
             foreach (var i in r.Items)
-                if (i.Verdict == "safe") { i.Verdict = "caution"; i.Reason = reason; }
+                if (i.Verdict is "safe" or "visibleAttribute") { i.Verdict = "caution"; i.Reason = reason; }   // a visible attribute is only never swept; a report that may use it still protects it
             return Recount(r);
         }
 
@@ -455,7 +527,7 @@ namespace Semanticus.Engine.Lineage
         private static UnusedResult DemoteUnresolvedNameMatchesToCaution(UnusedResult r, ISet<string> unresolvedNames)
         {
             foreach (var i in r.Items)
-                if (i.Verdict == "safe" && i.Name != null && unresolvedNames.Contains(i.Name))
+                if ((i.Verdict is "safe" or "visibleAttribute") && i.Name != null && unresolvedNames.Contains(i.Name))
                 {
                     i.Verdict = "caution";
                     i.Reason = $"A report references something named '{i.Name}' that could not be fully attributed, and it may be this object. Verify before removing.";
@@ -469,6 +541,7 @@ namespace Semanticus.Engine.Lineage
             SafeCount = r.Items.Count(i => i.Verdict == "safe"),
             UsedByUnusedOnlyCount = r.Items.Count(i => i.Verdict == "usedByUnusedOnly"),
             CautionCount = r.Items.Count(i => i.Verdict == "caution"),
+            VisibleAttributeCount = r.Items.Count(i => i.Verdict == "visibleAttribute"),
             Caveat = r.Caveat,
         };
 

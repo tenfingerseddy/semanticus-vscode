@@ -13,8 +13,11 @@ assert.match(app, /onReconnect\(\(\) => \{[\s\S]*refreshSession\(\)[\s\S]*s\?\.s
   'a confirmed host model swap must refresh App session state and the model score without clearing state on RPC failure');
 assert.match(app, /DaxModelProvider key=\{session\?\.sessionId \?\? 'no-model'\}/,
   'every model-scoped Studio view must remount when the engine session changes');
-assert.match(app, /setActivity\(\[\]\); setUndoneCount\(0\); setPendingApprovals\(\[\]\)/,
-  'a model swap must not retain the previous model timeline or approvals');
+// The page-held edit timeline retired with Edit History in slice 11 (lane R2): History is the engine's ledger now,
+// read per session by the Plan's History view. What a swap must still drop is the previous model's approvals.
+assert.doesNotMatch(app, /setActivity|setUndoneCount/, 'no page-held timeline is left to carry across a swap');
+assert.match(app, /s\.sessionId !== previousSessionId\) \{\s*(?:\/\/[^\n]*\s*)?setCard\(null\); setError\(null\); setTrend\(\[\]\);\s*setPendingApprovals\(\[\]\);/,
+  'a model swap must not retain the previous model approvals');
 assert.match(main, /class StudioErrorBoundary[\s\S]*getDerivedStateFromError[\s\S]*Reload Studio/,
   'an unexpected view failure must render a recoverable Studio state instead of a blank panel');
 

@@ -1,0 +1,174 @@
+{
+  "Server": "s09-sql.example.invalid",
+  "Database": "TravelBookings",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_booking_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DAY_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_trip",
+      "KeyColumns": [
+        "TRIP_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "TRIP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ROUTE_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEPART_AT",
+          "DataType": "DateTime"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_reservation",
+      "KeyColumns": [
+        "RESERVATION_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "RESERVATION_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "TRIP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "PASSENGERS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "BOOKED_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_payment",
+      "KeyColumns": [
+        "PAYMENT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "PAYMENT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "RESERVATION_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "PAID_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_capacity",
+      "KeyColumns": [
+        "TRIP_ID",
+        "CABIN_CODE"
+      ],
+      "Columns": [
+        {
+          "Name": "TRIP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CABIN_CODE",
+          "DataType": "String"
+        },
+        {
+          "Name": "SEATS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "BLOCKED_SEATS",
+          "DataType": "Int64"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_reservation",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_booking_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_reservation",
+      "FromColumn": "TRIP_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_trip",
+      "ToColumn": "TRIP_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_payment",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_booking_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_payment",
+      "FromColumn": "RESERVATION_ID",
+      "ToSchema": "dbo",
+      "ToTable": "fact_reservation",
+      "ToColumn": "RESERVATION_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_capacity",
+      "FromColumn": "TRIP_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_trip",
+      "ToColumn": "TRIP_ID"
+    }
+  ]
+}

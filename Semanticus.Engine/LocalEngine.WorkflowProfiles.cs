@@ -24,14 +24,16 @@ namespace Semanticus.Engine
         {
             new WorkflowProfileDef
             {
-                Name = "standard", Title = "Solo analyst",
-                Description = "Keep every workflow available and let each playbook use its own checks. Nothing is required.",
+                // Contract 21.3: "No team rules" replaces Solo analyst. The id stays "standard", so saved settings and
+                // every caller that names it keep working.
+                Name = "standard", Title = "No team rules",
+                Description = "Keep every workflow available and let each one use its own checks. Nothing is required.",
                 Effects = new[] { "Every workflow stays on the menu", "Nothing is required", "Each workflow keeps its own check strength" },
             },
             new WorkflowProfileDef
             {
                 Name = "team-standard", Title = "Team standard", Strictness = "warn", Pro = true,
-                Description = "Guide every new or edited measure through the reviewed measure playbook, without blocking the first rollout.",
+                Description = "Guide every new or edited measure through the Verified measure workflow, without blocking the first rollout.",
                 Bindings = new[]
                 {
                     ("create_measure", "verified-measure", "warn"),
@@ -68,14 +70,18 @@ namespace Semanticus.Engine
         {
             RequireProFeature();
             var profile = WorkflowProfiles.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException("Workflow profile '" + name + "' was not found. list_workflow_profiles shows the available profiles.");
+                ?? throw new InvalidOperationException("No set of team rules is named '" + name + "'. list_workflow_profiles lists the sets.");
             var (userDir, stockDir) = WorkflowDirs();
             var file = WorkflowSettingsFileFor(userDir)
                 ?? throw new InvalidOperationException("No workspace can hold workflow settings. Open a model or workspace, then retry.");
             // Profile activation is itself the explicit choice to move its required set to today's library.
             // Validate against user/current names directly so it can also repair a settings file whose old pin
             // names a compatibility file that is no longer present.
-            var library = WorkflowFiles(userDir).Keys.Concat(WorkflowFiles(stockDir).Keys).ToHashSet(StringComparer.Ordinal);
+            // A parked starter a profile requires (Consulting delivery's add-relationship, contract 21.2) resolves to its
+            // park freeze, so it counts as present.
+            var compatible = CompatibleWorkflowFiles();
+            var library = WorkflowFiles(userDir).Keys.Concat(WorkflowFiles(stockDir).Keys)
+                .Concat(compatible.Keys.Where(n => ParkedFreeze(n, compatible) != null)).ToHashSet(StringComparer.Ordinal);
             var missing = profile.Bindings.Select(x => x.workflow).Where(x => !library.Contains(x)).Distinct(StringComparer.Ordinal).ToArray();
             if (missing.Length > 0)
                 throw new InvalidOperationException("This profile needs missing workflow(s): " + string.Join(", ", missing) + ". Restore the stock workflow library, then retry.");
@@ -117,14 +123,14 @@ namespace Semanticus.Engine
             {
                 Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
                 Kind = "activate_workflow_profile", Target = profile.Name, Ok = true,
-                Label = "Workflow profile changed to " + profile.Title,
+                Label = "Team rules changed to " + profile.Title,
             });
             return new WorkflowProfileResult
             {
                 ActiveProfile = profile.Name,
                 Workflows = workflows,
                 Policy = await GetWorkflowPolicyAsync(),
-                Note = profile.Title + " is now the project workflow profile. A later policy change through Studio or the AI Assistant will mark it Custom.",
+                Note = profile.Title + " is now this project's team rules. A later change to a rule, from Studio or from your assistant, marks them Custom.",
             };
         }
 

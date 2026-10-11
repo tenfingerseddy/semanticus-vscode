@@ -1,0 +1,302 @@
+[
+  {
+    "id": "A01",
+    "text": "can i create a new model from sql?",
+    "label": "make"
+  },
+  {
+    "id": "A02",
+    "text": "connect to SQL and create a model",
+    "label": "make"
+  },
+  {
+    "id": "A03",
+    "text": "create a query against the open model",
+    "label": "existing"
+  },
+  {
+    "id": "A04",
+    "text": "make a fresh report off this database model",
+    "label": "existing"
+  },
+  {
+    "id": "A05",
+    "text": "make a new model from the data warehouse",
+    "label": "make"
+  },
+  {
+    "id": "A06",
+    "text": "draft a model from a SQL server",
+    "label": "make"
+  },
+  {
+    "id": "A07",
+    "text": "fix the relationship diagram for this model",
+    "label": "existing"
+  },
+  {
+    "id": "A08",
+    "text": "i need the publish page for this model",
+    "label": "existing"
+  },
+  {
+    "id": "A09",
+    "text": "build documentation for our existing model",
+    "label": "existing"
+  },
+  {
+    "id": "A10",
+    "text": "edit the sales table description in this model",
+    "label": "existing"
+  },
+  {
+    "id": "A11",
+    "text": "build a new diagram for the open model",
+    "label": "existing"
+  },
+  {
+    "id": "A12",
+    "text": "show the SQL behind a table in this model",
+    "label": "existing"
+  },
+  {
+    "id": "A13",
+    "text": "start modeling from these source tables",
+    "label": "make"
+  },
+  {
+    "id": "A14",
+    "text": "create a fresh model off the warehouse",
+    "label": "make"
+  },
+  {
+    "id": "A15",
+    "text": "I want to begin a model with my SQL schema",
+    "label": "make"
+  },
+  {
+    "id": "A16",
+    "text": "set row security for the existing model",
+    "label": "existing"
+  },
+  {
+    "id": "A17",
+    "text": "new Power BI semantic model, SQL backend",
+    "label": "make"
+  },
+  {
+    "id": "A18",
+    "text": "draft tables and relationships from my SQL source",
+    "label": "make"
+  },
+  {
+    "id": "A19",
+    "text": "make a total revenue measure here in this model",
+    "label": "existing"
+  },
+  {
+    "id": "A20",
+    "text": "add descriptions to these tables in my model",
+    "label": "existing"
+  },
+  {
+    "id": "A21",
+    "text": "build me a model from the database schema",
+    "label": "make"
+  },
+  {
+    "id": "A22",
+    "text": "draft a semantic model using my database tables",
+    "label": "make"
+  },
+  {
+    "id": "A23",
+    "text": "can you model this SQL database for me?",
+    "label": "make"
+  },
+  {
+    "id": "A24",
+    "text": "generate a semantic model from warehouse metadata",
+    "label": "make"
+  },
+  {
+    "id": "A25",
+    "text": "model this database from scratch",
+    "label": "make"
+  },
+  {
+    "id": "A26",
+    "text": "create a new report from this warehouse model",
+    "label": "existing"
+  },
+  {
+    "id": "A27",
+    "text": "set up a fresh model using SQL tables",
+    "label": "make"
+  },
+  {
+    "id": "A28",
+    "text": "open querry editor for this model",
+    "label": "existing"
+  },
+  {
+    "id": "A29",
+    "text": "make a model from our source database",
+    "label": "make"
+  },
+  {
+    "id": "A30",
+    "text": "add RLS to the model I already have",
+    "label": "existing"
+  },
+  {
+    "id": "A31",
+    "text": "who can see rows in this model?",
+    "label": "existing"
+  },
+  {
+    "id": "A32",
+    "text": "give this model a quality check",
+    "label": "existing"
+  },
+  {
+    "id": "A33",
+    "text": "start a new Power BI model from a SQL source",
+    "label": "make"
+  },
+  {
+    "id": "A34",
+    "text": "use my SQL connection to generate a model",
+    "label": "make"
+  },
+  {
+    "id": "A35",
+    "text": "please build a new model from the warehouse",
+    "label": "make"
+  },
+  {
+    "id": "A36",
+    "text": "make a new measure in the current model",
+    "label": "existing"
+  },
+  {
+    "id": "A37",
+    "text": "run a query on the model I have open",
+    "label": "existing"
+  },
+  {
+    "id": "A38",
+    "text": "turn these warehouse tables into a new model",
+    "label": "make"
+  },
+  {
+    "id": "A39",
+    "text": "where are the changes to this model?",
+    "label": "existing"
+  },
+  {
+    "id": "A40",
+    "text": "create a new description for the SQL model I have open",
+    "label": "existing"
+  },
+  {
+    "id": "A41",
+    "text": "open the page to make a model from SQL",
+    "label": "make"
+  },
+  {
+    "id": "A42",
+    "text": "publish this SQL model",
+    "label": "existing"
+  },
+  {
+    "id": "A43",
+    "text": "i need a new semantic model from sql",
+    "label": "make"
+  },
+  {
+    "id": "A44",
+    "text": "new dataset from the SQL source please",
+    "label": "make"
+  },
+  {
+    "id": "A45",
+    "text": "new report from my current semantic model please",
+    "label": "existing"
+  },
+  {
+    "id": "A46",
+    "text": "make me a fresh model with the database keys",
+    "label": "make"
+  },
+  {
+    "id": "A47",
+    "text": "can you publish the model we built from SQL?",
+    "label": "existing"
+  },
+  {
+    "id": "A48",
+    "text": "build a sematic model from my SQL tables",
+    "label": "make"
+  },
+  {
+    "id": "A49",
+    "text": "create a model using a new database connection",
+    "label": "make"
+  },
+  {
+    "id": "A50",
+    "text": "schedule refresh for this database model",
+    "label": "existing"
+  },
+  {
+    "id": "A51",
+    "text": "check quality on my SQL model",
+    "label": "existing"
+  },
+  {
+    "id": "A52",
+    "text": "refresh the model we made from the warehouse",
+    "label": "existing"
+  },
+  {
+    "id": "A53",
+    "text": "import the source tables and draft a model",
+    "label": "make"
+  },
+  {
+    "id": "A54",
+    "text": "what changed since this model was created?",
+    "label": "existing"
+  },
+  {
+    "id": "A55",
+    "text": "connect to the warehouse and build a dataset",
+    "label": "make"
+  },
+  {
+    "id": "A56",
+    "text": "show this model's tables and links",
+    "label": "existing"
+  },
+  {
+    "id": "A57",
+    "text": "write docs for the model already here",
+    "label": "existing"
+  },
+  {
+    "id": "A58",
+    "text": "new model please, from SQL Server",
+    "label": "make"
+  },
+  {
+    "id": "A59",
+    "text": "show the change history for my current model",
+    "label": "existing"
+  },
+  {
+    "id": "A60",
+    "text": "make a new model from the SQL warehouse",
+    "label": "make"
+  }
+]

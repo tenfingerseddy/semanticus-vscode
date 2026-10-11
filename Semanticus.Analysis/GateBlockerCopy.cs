@@ -144,9 +144,19 @@ namespace Semanticus.Analysis
         /// <summary>One-line result of the checks on THIS change. Whole-model leftovers are a count with a
         /// pointer to AI Readiness, never a block of their own.</summary>
         public static string CheckLine(IEnumerable<string> blockers, int olderWarnings)
+            => CheckLine(blockers, olderWarnings, null);
+
+        /// <summary>The same line when the gate judged the whole model rather than a change set.
+        /// <paramref name="wholeModelReason"/> says why in one sentence (UAT-S08-1-001: a model with no edits read
+        /// "Checks on this change", so its older findings looked caused by a change that did not exist). Null gives
+        /// the change-set line.</summary>
+        public static string CheckLine(IEnumerable<string> blockers, int olderWarnings, string wholeModelReason)
         {
             var list = blockers?.Where(s => !string.IsNullOrWhiteSpace(s)).ToList()
                        ?? new List<string>();
+            if (!string.IsNullOrWhiteSpace(wholeModelReason))
+                return wholeModelReason.Trim() + " Checks on the whole model: "
+                     + (list.Count == 0 ? "nothing to fix." : string.Join(" ", list));
             if (list.Count == 0)
             {
                 if (olderWarnings <= 0) return "Checks on this change: nothing to fix.";

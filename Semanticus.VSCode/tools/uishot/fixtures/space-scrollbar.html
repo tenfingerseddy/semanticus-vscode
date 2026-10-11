@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The fit that collapses its box</title>
+<!--
+  THE SELF-TEST FOR THE FORCED SCROLLBAR (tools/uishot/scrollbar-width.mjs).
+
+  This page holds the OLD fit and nothing else: the box is collapsed with `height: auto`, its own content height is
+  read, and that height is written back. In a real VS Code window that is the fit that cuts a long text off, because
+  while the box is collapsed the column around it stops overflowing and gives back its scrollbar's width.
+
+  A driver loads this page with the forced scrollbar on and the box must come out SHORTER than its text; with it off
+  the same box must come out right. Either going the other way means the emulation proves nothing, and a page that
+  passes under it proves nothing either.
+-->
+<style>
+  body { margin: 0; font: 13px/20px system-ui, sans-serif; background: #1f1f1f; color: #ddd; }
+  #col { width: 360px; height: 300px; overflow-y: auto; border: 1px solid #555; padding: 8px; box-sizing: border-box; }
+  textarea { width: 100%; box-sizing: border-box; overflow: hidden; resize: none; font: inherit; padding: 4px;
+             background: #2a2a2a; color: inherit; border: 1px solid #555; }
+</style>
+</head>
+<body>
+<div id="col">
+  <p>Before the box.</p>
+  <textarea id="t" rows="4"></textarea>
+  <p>After the box.</p>
+</div>
+<script>
+  var t = document.getElementById('t');
+  var line = 'The quick brown fox jumps over the lazy dog, and the words keep coming until the line has to wrap. ';
+  var text = [];
+  for (var i = 0; i < 40; i++) text.push(line + i);
+  t.value = text.join(' ');
+  // The fit under test. Nothing here is shared with the product: this is the shape the product used to have, kept
+  // so the harness can prove its forced scrollbar still catches it.
+  function fitByCollapsing() {
+    t.style.height = 'auto';
+    t.style.height = (t.scrollHeight + t.offsetHeight - t.clientHeight) + 'px';
+  }
+  window.fitByCollapsing = fitByCollapsing;
+  fitByCollapsing();
+</script>
+</body>
+</html>

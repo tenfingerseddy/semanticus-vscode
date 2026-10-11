@@ -1,0 +1,11 @@
+{
+ "point": "compose.draft",
+ "arm": "hybrid",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "decidedBy": "Kane, 26 September 2026",
+ "rule": "Jev drafts for Pro (JevDraftBuilder.JevDrafts = true) only when the Pro path (Jev when sure, else the word match) is right on at least describeMin of the fresh set's Workflows steps AND at least composeMin of its Plan drafts. Jev only and the word match only are reported beside it and decide nothing.",
+ "describeMin": 0.8,
+ "composeMin": 0.8,
+ "labels": "labels-fresh.json"
+}

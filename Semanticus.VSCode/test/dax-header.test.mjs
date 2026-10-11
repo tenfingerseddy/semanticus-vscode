@@ -423,9 +423,9 @@ test('save decides from the URI identity, rejects before any RPC, sequences rena
     assert.doesNotMatch(ext, /private async refExists\(/, 'the liveness-probe helper is removed');
     assert.doesNotMatch(ext, /GETDAX_ABSENT_MARKER/, 'the getDax absent-marker is removed with the probes');
     // the rename→body pair fences the BODY write on the RENAME'S returned revision (a delete+recreate between them refuses).
-    assert.match(wf, /setDax', newRef, body, 'human', liveSession, renamed\.revision\)/, 'the body write after a rename is fenced on the rename\'s returned revision');
+    assert.match(wf, /setDax', newRef, body, 'human', liveSession, renamed\.revision, this\.startedFrom\.get\(key\) \?\? null\)/, 'the body write after a rename is fenced on the rename\'s returned revision');
     // the recovery/plain body write passes recoveryRevision (set only on a resume; undefined => unfenced genuine plain save).
-    assert.match(wf, /setDax', baseRef, body, 'human', liveSession, recoveryRevision\)/, 'the recovery body write is fenced on the recorded revision; a genuine plain save passes undefined (unfenced — SCOPE RULING)');
+    assert.match(wf, /setDax', baseRef, body, 'human', liveSession, recoveryRevision \?\? null, this\.startedFrom\.get\(key\) \?\? null\)/, 'the recovery body write is fenced on the recorded revision; a genuine plain save passes undefined (unfenced — SCOPE RULING)');
     // SCOPE RULING: a genuine plain save (no pending) must NOT be revision-fenced — recoveryRevision is left undefined there.
     assert.match(wf, /SCOPE RULING/, 'the plain-save scope ruling is documented at the call site');
     // CRITICAL 1 (r8): a confirmed post-save model drift is still surfaced as a backstop after the writes land.
@@ -455,7 +455,7 @@ test('save decides from the URI identity, rejects before any RPC, sequences rena
     assert.match(wf, /reopenRenamedDax\(uri, newRef\)/, 'the CLEAN path re-homes the editor onto the renamed object');
     assert.match(wf, /reopenRenamedDax\(uri, baseRef\)/, 'a resolved pending rename finally re-homes the (now clean) editor');
     // the success toast claims only what happened — no "applied together".
-    assert.match(wf, /Renamed to "\$\{newName\}" and saved\./, 'the success toast names the rename honestly');
+    assert.match(wf, /Renamed to "\$\{newName\}" and applied\./, 'the success toast names the rename honestly');
     assert.doesNotMatch(wf, /applied together/, 'the "applied together" claim is gone (two tracked changes)');
 });
 test('lint surfaces a broken header on line 1; lint + Format decide by URI identity (HIGH 4)', () => {
@@ -576,7 +576,12 @@ test('the help WHERE index folds the zero-dialog creates but keeps hierarchy + d
     // 'Create a hierarchy' and 'Set a description or display folder' are honest RESTORATIONS (real tasks with a real
     // home) — folding them into the DAX-editor claim would have been false. The "index shrank" metric is measured across
     // the whole tree program, not this PR, so net task-coverage is unchanged. No deletion.
-    assert.equal(count, 58, '42 existing task entries plus 8 getting-started tasks and 8 term explanations');
+    // 59 from 22 September 2026: AI instructions became a page of its own under Edit and the index gained
+    // one entry for finding it. The number is asserted rather than bounded so an entry that quietly
+    // disappears in a copy sweep fails here instead of leaving a task with no home in the index.
+    // 57 from 8 October 2026: two rows that repeated a menu or a page left (Restart the engine is Help > Restart engine;
+    // inspecting a Pro license is the Pro page's own "Have a license key?").
+    assert.equal(count, 57, '40 existing task entries, 8 getting-started tasks, 8 term explanations and AI instructions');
     assert.doesNotMatch(block, /q: 'Create a measure',/, 'the standalone "Create a measure" entry is gone (one gesture, self-evident)');
     assert.match(block, /Create a measure, calculated column, calculated table, calculation item, or function/, 'a single create entry covers the five zero-dialog kinds');
     // MEDIUM 6: hierarchy creation (NOT zero-dialog) keeps its own honest entry rather than being folded into the

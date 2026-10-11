@@ -1,0 +1,16 @@
+ProductKey,SKU,ProductName,Subcategory,Category,CategorySortOrder,Brand,ListPrice,UnitCost
+1,NS-1001,Trail Jacket,Footwear,Apparel,1,Northstar Studio,189,96
+2,NS-1002,Summit Boots,Footwear,Apparel,1,Northstar Studio,240,121
+3,NS-1003,Fleece Vest,Footwear,Apparel,1,Polaris Line,95,44
+4,NS-2001,Wireless Speaker,Audio,Electronics,2,Polaris Line,149,78
+5,NS-2002,Studio Headphones,Audio,Electronics,2,Northstar Studio,279,142
+6,NS-2003,Smart Bulb,Smart Home,Electronics,2,Polaris Line,29,11
+7,NS-3001,Desk Lamp,Lighting,Home,3,Polaris Line,65,27
+8,NS-3002,Floor Lamp,Lighting,Home,3,Northstar Studio,130,61
+9,NS-4001,Copper Pan,Cookware,Kitchen,4,Northstar Studio,110,52
+10,NS-4002,Travel Mug,Cookware,Kitchen,4,Polaris Line,32,12
+11,NS-5001,Camp Stove,Camping,Outdoor,5,Northstar Studio,175,88
+12,NS-5002,Two Person Tent,Camping,Outdoor,5,Polaris Line,420,219
+13,NS-5003,Walking Poles,Hiking,Outdoor,5,Northstar Studio,78,33
+14,NS-5004,Daypack,Hiking,Outdoor,5,Polaris Line,88,41
+15,NS-9001,Sample Pack,Cookware,Samples,9,Northstar Studio,0,3

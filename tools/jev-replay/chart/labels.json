@@ -1,0 +1,3538 @@
+{
+ "point": "queries.chart_kind",
+ "written": "2026-09-28",
+ "writtenBeforeFirstRun": true,
+ "set": "held-out",
+ "labeller": "the D6 builder agent (Claude Opus 5.5), acting as labeller; not the chart rules and not Jev",
+ "howWritten": "Each question was written by hand with its result shape, then labelled from the question's intent: every chart a reader would accept for it (acceptable) and any chart that would mislead (harmful: a line or filled area across more than a handful of series, a filled area under an average or a percent, bars for more values than can be read, a scatter that throws away time order when the question asks for a trend, or bars where the question asks how two numbers move together). chartpick.mjs was not run to write any label; the self-test only checks afterwards that every label names charts the rules can draw for that shape. No answer from Jev has been seen. The labels are not yet reviewed by a person: Kane, or a person he names, reviews them before the one gate run, and a label changed then is changed before that run, never after.",
+ "note": "Held out by whole model (Northstar, MSSEC, Smartsheets). Placeholder names only. Weighted toward intent words that change the best chart on the same shape: share, trend, mix, compared, best, against, relationship, exact.",
+ "items": [
+  {
+   "id": "cn-01",
+   "model": "northstar",
+   "words": "total net sales this year",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-02",
+   "model": "northstar",
+   "words": "how much gross profit did we make",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-03",
+   "model": "northstar",
+   "words": "net sales and gross profit overall",
+   "shape": {
+    "dims": [],
+    "measures": 2,
+    "rows": 1
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-04",
+   "model": "northstar",
+   "words": "net sales trend by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": [
+    "scatter"
+   ]
+  },
+  {
+   "id": "cn-05",
+   "model": "northstar",
+   "words": "which month had the best net sales",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-06",
+   "model": "northstar",
+   "words": "best month for units sold",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-07",
+   "model": "northstar",
+   "words": "how are net sales trending over the quarters",
+   "shape": {
+    "dims": [
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 8
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-08",
+   "model": "northstar",
+   "words": "net sales compared across years",
+   "shape": {
+    "dims": [
+     {
+      "name": "Year",
+      "isDate": true,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 3
+   },
+   "acceptable": [
+    "bar",
+    "line",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-09",
+   "model": "northstar",
+   "words": "compare this year and last year net sales",
+   "shape": {
+    "dims": [
+     {
+      "name": "Year",
+      "isDate": true,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 3
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-10",
+   "model": "northstar",
+   "words": "running build up of net sales through the months",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-11",
+   "model": "northstar",
+   "words": "average basket size by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cn-12",
+   "model": "northstar",
+   "words": "margin percent trend by quarter",
+   "shape": {
+    "dims": [
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 8
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cn-13",
+   "model": "northstar",
+   "words": "weekly net sales trend",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 104
+     }
+    ],
+    "measures": 1,
+    "rows": 104
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-14",
+   "model": "northstar",
+   "words": "which week was our best week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 104
+     }
+    ],
+    "measures": 1,
+    "rows": 104
+   },
+   "acceptable": [
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-15",
+   "model": "northstar",
+   "words": "net sales by region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 6
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-16",
+   "model": "northstar",
+   "words": "compare regions on net sales",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 6
+   },
+   "acceptable": [
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-17",
+   "model": "northstar",
+   "words": "share of net sales by region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 6
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-18",
+   "model": "northstar",
+   "words": "share of units by channel",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 3
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-19",
+   "model": "northstar",
+   "words": "net sales per category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 8
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-20",
+   "model": "northstar",
+   "words": "list net sales for every category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 8
+   },
+   "acceptable": [
+    "table",
+    "matrix",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-21",
+   "model": "northstar",
+   "words": "net sales by brand",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     }
+    ],
+    "measures": 1,
+    "rows": 40
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-22",
+   "model": "northstar",
+   "words": "which brands sell the most",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     }
+    ],
+    "measures": 1,
+    "rows": 40
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-23",
+   "model": "northstar",
+   "words": "net sales by store",
+   "shape": {
+    "dims": [
+     {
+      "name": "Store",
+      "isDate": false,
+      "distinct": 120
+     }
+    ],
+    "measures": 1,
+    "rows": 120
+   },
+   "acceptable": [
+    "table",
+    "matrix"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-24",
+   "model": "northstar",
+   "words": "compare every store on net sales",
+   "shape": {
+    "dims": [
+     {
+      "name": "Store",
+      "isDate": false,
+      "distinct": 120
+     }
+    ],
+    "measures": 1,
+    "rows": 120
+   },
+   "acceptable": [
+    "table",
+    "matrix"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-25",
+   "model": "northstar",
+   "words": "net sales for each product",
+   "shape": {
+    "dims": [
+     {
+      "name": "Product",
+      "isDate": false,
+      "distinct": 850
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-26",
+   "model": "northstar",
+   "words": "net sales and gross profit by region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 2,
+    "rows": 6
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-27",
+   "model": "northstar",
+   "words": "does discount drive margin across brands",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     }
+    ],
+    "measures": 2,
+    "rows": 40
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-28",
+   "model": "northstar",
+   "words": "net sales against gross profit for each store",
+   "shape": {
+    "dims": [
+     {
+      "name": "Store",
+      "isDate": false,
+      "distinct": 120
+     }
+    ],
+    "measures": 2,
+    "rows": 120
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-29",
+   "model": "northstar",
+   "words": "relationship between units and net sales by product",
+   "shape": {
+    "dims": [
+     {
+      "name": "Product",
+      "isDate": false,
+      "distinct": 850
+     }
+    ],
+    "measures": 2,
+    "rows": 500
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-30",
+   "model": "northstar",
+   "words": "units versus returns by category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 2,
+    "rows": 8
+   },
+   "acceptable": [
+    "scatter",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-31",
+   "model": "northstar",
+   "words": "net sales and budget by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 2,
+    "rows": 24
+   },
+   "acceptable": [
+    "line",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-32",
+   "model": "northstar",
+   "words": "compare net sales to budget each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 2,
+    "rows": 24
+   },
+   "acceptable": [
+    "line",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-33",
+   "model": "northstar",
+   "words": "does ad spend move with net sales month to month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 2,
+    "rows": 24
+   },
+   "acceptable": [
+    "scatter",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-34",
+   "model": "northstar",
+   "words": "net sales by region by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 144
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-35",
+   "model": "northstar",
+   "words": "net sales trend for each region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 144
+   },
+   "acceptable": [
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-36",
+   "model": "northstar",
+   "words": "how has each region trended over the months",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 144
+   },
+   "acceptable": [
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-37",
+   "model": "northstar",
+   "words": "share of net sales by channel each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 72
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-38",
+   "model": "northstar",
+   "words": "channel mix over time",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 72
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-39",
+   "model": "northstar",
+   "words": "net sales by channel by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 72
+   },
+   "acceptable": [
+    "line",
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-40",
+   "model": "northstar",
+   "words": "exact net sales per channel per month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 72
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-41",
+   "model": "northstar",
+   "words": "best month for each region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 144
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-42",
+   "model": "northstar",
+   "words": "net sales by category by quarter",
+   "shape": {
+    "dims": [
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     },
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 64
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-43",
+   "model": "northstar",
+   "words": "category trend by quarter",
+   "shape": {
+    "dims": [
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     },
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 64
+   },
+   "acceptable": [
+    "line",
+    "matrix"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-44",
+   "model": "northstar",
+   "words": "net sales by brand by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cn-45",
+   "model": "northstar",
+   "words": "brand trend by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 24
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cn-46",
+   "model": "northstar",
+   "words": "store net sales by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Store",
+      "isDate": false,
+      "distinct": 120
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 104
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cn-47",
+   "model": "northstar",
+   "words": "net sales by region and category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-48",
+   "model": "northstar",
+   "words": "compare categories within each region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "matrix",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-49",
+   "model": "northstar",
+   "words": "net sales by channel and region",
+   "shape": {
+    "dims": [
+     {
+      "name": "Channel",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 18
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-50",
+   "model": "northstar",
+   "words": "net sales by brand and store",
+   "shape": {
+    "dims": [
+     {
+      "name": "Brand",
+      "isDate": false,
+      "distinct": 40
+     },
+     {
+      "name": "Store",
+      "isDate": false,
+      "distinct": 120
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cn-51",
+   "model": "northstar",
+   "words": "net sales and margin by region and category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Region",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Category",
+      "isDate": false,
+      "distinct": 8
+     }
+    ],
+    "measures": 2,
+    "rows": 48
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-52",
+   "model": "northstar",
+   "words": "list the products",
+   "shape": {
+    "dims": [
+     {
+      "name": "Product",
+      "isDate": false,
+      "distinct": 850
+     }
+    ],
+    "measures": 0,
+    "rows": 500
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cn-53",
+   "model": "northstar",
+   "words": "average price per product against units sold",
+   "shape": {
+    "dims": [
+     {
+      "name": "Product",
+      "isDate": false,
+      "distinct": 850
+     }
+    ],
+    "measures": 2,
+    "rows": 500
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-01",
+   "model": "mssec",
+   "words": "how many open alerts are there",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-02",
+   "model": "mssec",
+   "words": "total incidents this quarter",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-03",
+   "model": "mssec",
+   "words": "alerts and incidents overall",
+   "shape": {
+    "dims": [],
+    "measures": 2,
+    "rows": 1
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-04",
+   "model": "mssec",
+   "words": "alerts trend by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 52
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": [
+    "scatter"
+   ]
+  },
+  {
+   "id": "cm-05",
+   "model": "mssec",
+   "words": "which week had the most alerts",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 52
+   },
+   "acceptable": [
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-06",
+   "model": "mssec",
+   "words": "worst month for incidents",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-07",
+   "model": "mssec",
+   "words": "daily alert trend",
+   "shape": {
+    "dims": [
+     {
+      "name": "Day",
+      "isDate": true,
+      "distinct": 90
+     }
+    ],
+    "measures": 1,
+    "rows": 90
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-08",
+   "model": "mssec",
+   "words": "average time to resolve by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 52
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cm-09",
+   "model": "mssec",
+   "words": "mean time to detect trend by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cm-10",
+   "model": "mssec",
+   "words": "patch compliance percent by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cm-11",
+   "model": "mssec",
+   "words": "cumulative incidents through the year",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-12",
+   "model": "mssec",
+   "words": "compare months on alert count",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-13",
+   "model": "mssec",
+   "words": "alerts by severity",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-14",
+   "model": "mssec",
+   "words": "share of alerts by severity",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-15",
+   "model": "mssec",
+   "words": "compare operating systems on alert count",
+   "shape": {
+    "dims": [
+     {
+      "name": "OS",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 6
+   },
+   "acceptable": [
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-16",
+   "model": "mssec",
+   "words": "alerts per alert category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Alert Category",
+      "isDate": false,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-17",
+   "model": "mssec",
+   "words": "incidents by department",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     }
+    ],
+    "measures": 1,
+    "rows": 15
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-18",
+   "model": "mssec",
+   "words": "which department has the most incidents",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     }
+    ],
+    "measures": 1,
+    "rows": 15
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-19",
+   "model": "mssec",
+   "words": "alerts by country",
+   "shape": {
+    "dims": [
+     {
+      "name": "Country",
+      "isDate": false,
+      "distinct": 30
+     }
+    ],
+    "measures": 1,
+    "rows": 30
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-20",
+   "model": "mssec",
+   "words": "alerts per device",
+   "shape": {
+    "dims": [
+     {
+      "name": "Device",
+      "isDate": false,
+      "distinct": 900
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-21",
+   "model": "mssec",
+   "words": "list every device with its alert count",
+   "shape": {
+    "dims": [
+     {
+      "name": "Device",
+      "isDate": false,
+      "distinct": 900
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "table",
+    "matrix"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-22",
+   "model": "mssec",
+   "words": "share of incidents by status",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 3
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-23",
+   "model": "mssec",
+   "words": "alerts and incidents by department",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     }
+    ],
+    "measures": 2,
+    "rows": 15
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-24",
+   "model": "mssec",
+   "words": "do more alerts mean more incidents across departments",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     }
+    ],
+    "measures": 2,
+    "rows": 15
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-25",
+   "model": "mssec",
+   "words": "alert count against vulnerability count by device",
+   "shape": {
+    "dims": [
+     {
+      "name": "Device",
+      "isDate": false,
+      "distinct": 900
+     }
+    ],
+    "measures": 2,
+    "rows": 500
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-26",
+   "model": "mssec",
+   "words": "relationship between patch lag and incidents by country",
+   "shape": {
+    "dims": [
+     {
+      "name": "Country",
+      "isDate": false,
+      "distinct": 30
+     }
+    ],
+    "measures": 2,
+    "rows": 30
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-27",
+   "model": "mssec",
+   "words": "alerts versus incidents by severity",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 2,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "scatter",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-28",
+   "model": "mssec",
+   "words": "alerts and incidents by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 2,
+    "rows": 52
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-29",
+   "model": "mssec",
+   "words": "compare alerts to closed alerts each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 2,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-30",
+   "model": "mssec",
+   "words": "do alerts and incidents move together week to week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 2,
+    "rows": 52
+   },
+   "acceptable": [
+    "scatter",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-31",
+   "model": "mssec",
+   "words": "alerts by severity by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 208
+   },
+   "acceptable": [
+    "line",
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-32",
+   "model": "mssec",
+   "words": "alert trend for each severity",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 208
+   },
+   "acceptable": [
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-33",
+   "model": "mssec",
+   "words": "severity mix over time",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-34",
+   "model": "mssec",
+   "words": "share of alerts by severity each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-35",
+   "model": "mssec",
+   "words": "exact alert counts per severity per month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-36",
+   "model": "mssec",
+   "words": "alerts by status by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 156
+   },
+   "acceptable": [
+    "line",
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-37",
+   "model": "mssec",
+   "words": "incidents by department by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 180
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cm-38",
+   "model": "mssec",
+   "words": "department incident trend",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 180
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cm-39",
+   "model": "mssec",
+   "words": "alerts by alert category by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Alert Category",
+      "isDate": false,
+      "distinct": 12
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cm-40",
+   "model": "mssec",
+   "words": "worst week for each operating system",
+   "shape": {
+    "dims": [
+     {
+      "name": "OS",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 52
+     }
+    ],
+    "measures": 1,
+    "rows": 312
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-41",
+   "model": "mssec",
+   "words": "operating system trend over months",
+   "shape": {
+    "dims": [
+     {
+      "name": "OS",
+      "isDate": false,
+      "distinct": 6
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 72
+   },
+   "acceptable": [
+    "line",
+    "matrix"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-42",
+   "model": "mssec",
+   "words": "alerts per device per day",
+   "shape": {
+    "dims": [
+     {
+      "name": "Device",
+      "isDate": false,
+      "distinct": 900
+     },
+     {
+      "name": "Day",
+      "isDate": true,
+      "distinct": 90
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cm-43",
+   "model": "mssec",
+   "words": "alerts by severity and operating system",
+   "shape": {
+    "dims": [
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "OS",
+      "isDate": false,
+      "distinct": 6
+     }
+    ],
+    "measures": 1,
+    "rows": 24
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-44",
+   "model": "mssec",
+   "words": "compare severities within each department",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     },
+     {
+      "name": "Severity",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 60
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-45",
+   "model": "mssec",
+   "words": "incidents by country and status",
+   "shape": {
+    "dims": [
+     {
+      "name": "Country",
+      "isDate": false,
+      "distinct": 30
+     },
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 90
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-46",
+   "model": "mssec",
+   "words": "alerts by department and alert category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     },
+     {
+      "name": "Alert Category",
+      "isDate": false,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 180
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-47",
+   "model": "mssec",
+   "words": "average resolve time by department by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Department",
+      "isDate": false,
+      "distinct": 15
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 180
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cm-48",
+   "model": "mssec",
+   "words": "list the devices",
+   "shape": {
+    "dims": [
+     {
+      "name": "Device",
+      "isDate": false,
+      "distinct": 900
+     }
+    ],
+    "measures": 0,
+    "rows": 500
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cm-49",
+   "model": "mssec",
+   "words": "mean time to resolve against alert volume by alert category",
+   "shape": {
+    "dims": [
+     {
+      "name": "Alert Category",
+      "isDate": false,
+      "distinct": 12
+     }
+    ],
+    "measures": 2,
+    "rows": 12
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cm-50",
+   "model": "mssec",
+   "words": "how does each country compare on alerts",
+   "shape": {
+    "dims": [
+     {
+      "name": "Country",
+      "isDate": false,
+      "distinct": 30
+     }
+    ],
+    "measures": 1,
+    "rows": 30
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-01",
+   "model": "smartsheets",
+   "words": "how many tasks are overdue",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-02",
+   "model": "smartsheets",
+   "words": "total hours logged",
+   "shape": {
+    "dims": [],
+    "measures": 1,
+    "rows": 1
+   },
+   "acceptable": [
+    "card",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-03",
+   "model": "smartsheets",
+   "words": "planned and actual hours overall",
+   "shape": {
+    "dims": [],
+    "measures": 2,
+    "rows": 1
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-04",
+   "model": "smartsheets",
+   "words": "tasks completed trend by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 26
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": [
+    "scatter"
+   ]
+  },
+  {
+   "id": "cs-05",
+   "model": "smartsheets",
+   "words": "which week did we close the most tasks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 26
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-06",
+   "model": "smartsheets",
+   "words": "best month for completed tasks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-07",
+   "model": "smartsheets",
+   "words": "hours logged trend by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-08",
+   "model": "smartsheets",
+   "words": "burn up of completed tasks over the weeks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 26
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-09",
+   "model": "smartsheets",
+   "words": "percent complete trend by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 26
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cs-10",
+   "model": "smartsheets",
+   "words": "average days late by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "table"
+   ],
+   "harmful": [
+    "area"
+   ]
+  },
+  {
+   "id": "cs-11",
+   "model": "smartsheets",
+   "words": "compare quarters on hours logged",
+   "shape": {
+    "dims": [
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-12",
+   "model": "smartsheets",
+   "words": "open tasks by status",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     }
+    ],
+    "measures": 1,
+    "rows": 5
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-13",
+   "model": "smartsheets",
+   "words": "share of tasks by status",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     }
+    ],
+    "measures": 1,
+    "rows": 5
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-14",
+   "model": "smartsheets",
+   "words": "tasks per project",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 1,
+    "rows": 35
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-15",
+   "model": "smartsheets",
+   "words": "which projects have the most overdue tasks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 1,
+    "rows": 35
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-16",
+   "model": "smartsheets",
+   "words": "hours by owner",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     }
+    ],
+    "measures": 1,
+    "rows": 25
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-17",
+   "model": "smartsheets",
+   "words": "compare owners on completed tasks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     }
+    ],
+    "measures": 1,
+    "rows": 25
+   },
+   "acceptable": [
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-18",
+   "model": "smartsheets",
+   "words": "share of hours by portfolio",
+   "shape": {
+    "dims": [
+     {
+      "name": "Portfolio",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-19",
+   "model": "smartsheets",
+   "words": "tasks by task type",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task Type",
+      "isDate": false,
+      "distinct": 7
+     }
+    ],
+    "measures": 1,
+    "rows": 7
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-20",
+   "model": "smartsheets",
+   "words": "hours for every task",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task",
+      "isDate": false,
+      "distinct": 640
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-21",
+   "model": "smartsheets",
+   "words": "list each task with its days late",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task",
+      "isDate": false,
+      "distinct": 640
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "table",
+    "matrix"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-22",
+   "model": "smartsheets",
+   "words": "tasks by priority",
+   "shape": {
+    "dims": [
+     {
+      "name": "Priority",
+      "isDate": false,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 3
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-23",
+   "model": "smartsheets",
+   "words": "planned and actual hours by project",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 2,
+    "rows": 35
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-24",
+   "model": "smartsheets",
+   "words": "does planned effort predict actual hours across projects",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 2,
+    "rows": 35
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-25",
+   "model": "smartsheets",
+   "words": "planned against actual hours for each task",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task",
+      "isDate": false,
+      "distinct": 640
+     }
+    ],
+    "measures": 2,
+    "rows": 500
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-26",
+   "model": "smartsheets",
+   "words": "relationship between team size and days late by project",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 2,
+    "rows": 35
+   },
+   "acceptable": [
+    "scatter"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-27",
+   "model": "smartsheets",
+   "words": "planned versus actual hours by portfolio",
+   "shape": {
+    "dims": [
+     {
+      "name": "Portfolio",
+      "isDate": false,
+      "distinct": 4
+     }
+    ],
+    "measures": 2,
+    "rows": 4
+   },
+   "acceptable": [
+    "bar",
+    "scatter",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-28",
+   "model": "smartsheets",
+   "words": "planned and actual hours by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 2,
+    "rows": 26
+   },
+   "acceptable": [
+    "line",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-29",
+   "model": "smartsheets",
+   "words": "compare planned to actual hours each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 2,
+    "rows": 12
+   },
+   "acceptable": [
+    "line",
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-30",
+   "model": "smartsheets",
+   "words": "do hours logged and tasks closed move together week to week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 2,
+    "rows": 26
+   },
+   "acceptable": [
+    "scatter",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-31",
+   "model": "smartsheets",
+   "words": "open tasks by status by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 130
+   },
+   "acceptable": [
+    "line",
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-32",
+   "model": "smartsheets",
+   "words": "status trend over the weeks",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 130
+   },
+   "acceptable": [
+    "line",
+    "area"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-33",
+   "model": "smartsheets",
+   "words": "status mix over time",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 130
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-34",
+   "model": "smartsheets",
+   "words": "share of hours by portfolio each month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Portfolio",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "area",
+    "line"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-35",
+   "model": "smartsheets",
+   "words": "exact hours per portfolio per month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Portfolio",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 48
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-36",
+   "model": "smartsheets",
+   "words": "hours by priority by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Priority",
+      "isDate": false,
+      "distinct": 3
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 78
+   },
+   "acceptable": [
+    "line",
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-37",
+   "model": "smartsheets",
+   "words": "hours by project by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 420
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-38",
+   "model": "smartsheets",
+   "words": "project trend by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-39",
+   "model": "smartsheets",
+   "words": "hours by owner by week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-40",
+   "model": "smartsheets",
+   "words": "best week for each owner",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-41",
+   "model": "smartsheets",
+   "words": "task type trend by month",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task Type",
+      "isDate": false,
+      "distinct": 7
+     },
+     {
+      "name": "Month",
+      "isDate": true,
+      "distinct": 12
+     }
+    ],
+    "measures": 1,
+    "rows": 84
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-42",
+   "model": "smartsheets",
+   "words": "hours per task per week",
+   "shape": {
+    "dims": [
+     {
+      "name": "Task",
+      "isDate": false,
+      "distinct": 640
+     },
+     {
+      "name": "Week",
+      "isDate": true,
+      "distinct": 26
+     }
+    ],
+    "measures": 1,
+    "rows": 500
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-43",
+   "model": "smartsheets",
+   "words": "tasks by status and priority",
+   "shape": {
+    "dims": [
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     },
+     {
+      "name": "Priority",
+      "isDate": false,
+      "distinct": 3
+     }
+    ],
+    "measures": 1,
+    "rows": 15
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-44",
+   "model": "smartsheets",
+   "words": "compare statuses within each project",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     },
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     }
+    ],
+    "measures": 1,
+    "rows": 175
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-45",
+   "model": "smartsheets",
+   "words": "hours by owner and task type",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     },
+     {
+      "name": "Task Type",
+      "isDate": false,
+      "distinct": 7
+     }
+    ],
+    "measures": 1,
+    "rows": 175
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-46",
+   "model": "smartsheets",
+   "words": "tasks by portfolio and status",
+   "shape": {
+    "dims": [
+     {
+      "name": "Portfolio",
+      "isDate": false,
+      "distinct": 4
+     },
+     {
+      "name": "Status",
+      "isDate": false,
+      "distinct": 5
+     }
+    ],
+    "measures": 1,
+    "rows": 20
+   },
+   "acceptable": [
+    "matrix",
+    "table",
+    "bar"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-47",
+   "model": "smartsheets",
+   "words": "average days late by owner by quarter",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     },
+     {
+      "name": "Quarter",
+      "isDate": true,
+      "distinct": 4
+     }
+    ],
+    "measures": 1,
+    "rows": 100
+   },
+   "acceptable": [
+    "matrix",
+    "table"
+   ],
+   "harmful": [
+    "line",
+    "area"
+   ]
+  },
+  {
+   "id": "cs-48",
+   "model": "smartsheets",
+   "words": "list the projects",
+   "shape": {
+    "dims": [
+     {
+      "name": "Project",
+      "isDate": false,
+      "distinct": 35
+     }
+    ],
+    "measures": 0,
+    "rows": 35
+   },
+   "acceptable": [
+    "table"
+   ],
+   "harmful": []
+  },
+  {
+   "id": "cs-49",
+   "model": "smartsheets",
+   "words": "average hours per task against task count by owner",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     }
+    ],
+    "measures": 2,
+    "rows": 25
+   },
+   "acceptable": [
+    "scatter",
+    "table"
+   ],
+   "harmful": [
+    "bar"
+   ]
+  },
+  {
+   "id": "cs-50",
+   "model": "smartsheets",
+   "words": "how does each owner compare on hours",
+   "shape": {
+    "dims": [
+     {
+      "name": "Owner",
+      "isDate": false,
+      "distinct": 25
+     }
+    ],
+    "measures": 1,
+    "rows": 25
+   },
+   "acceptable": [
+    "bar",
+    "table"
+   ],
+   "harmful": []
+  }
+ ]
+}

@@ -1,0 +1,9 @@
+StoreKey,StoreCode,StoreName,City,Region,Channel,OpenDate,CloseDate
+1,ST-001,Harborview Flagship,Harborview,Coast,Flagship,2019-03-01,
+2,ST-002,Lakeside Outlet,Lakeside,North,Outlet,2020-06-15,
+3,ST-003,Pine Crest Pop-up,Pine Crest,Mountain,Pop-up,2022-09-01,2024-08-31
+4,ST-004,Riverbend Flagship,Riverbend,South,Flagship,2018-01-10,
+5,ST-005,Sunfield Outlet,Sunfield,South,Outlet,2021-11-05,
+6,ST-006,Northstar Online,Harborview,Coast,Online,2017-05-20,
+7,ST-007,Lakeside Pop-up,Lakeside,North,Pop-up,2023-02-01,
+8,ST-008,Sunfield Depot,Sunfield,South,Outlet,2022-01-15,

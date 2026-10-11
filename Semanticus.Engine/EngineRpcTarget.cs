@@ -15,39 +15,50 @@ namespace Semanticus.Engine
     {
         private readonly IEngine _engine;
         private readonly string _origin;
-        public EngineRpcTarget(IEngine engine, string origin = "human")
+        // F-246: this connection's reader id in the change journal (agent connections only), set by RpcServer.
+        private readonly string _reader;
+        public EngineRpcTarget(IEngine engine, string origin = "human", string reader = null)
+            : this(engine, origin, reader, served: null) { }
+
+        /// <summary><paramref name="served"/> is the engine the connection is served through; null means the one its role calls for. A test passes its own to see which calls the
+        /// fence lets through.</summary>
+        internal EngineRpcTarget(IEngine engine, string origin, string reader, IEngine served)
         {
-            _engine = engine;
             _origin = origin == "agent" ? "agent" : "human";
+            // A connection that authenticated as an assistant is served through the gate, in the process that owns the model: every
+            // call it can make is looked up in the registry and asked about there (AssistantEngine). The person's door is served through the model fence
+            // instead (PersonFence): a write whose request names the model its page was showing is refused when another is open. Neither door is the other's.
+            _engine = served ?? (_origin == "agent" ? AssistantEngine.ForAssistant(engine) : PersonFence.For(engine));
+            _reader = reader;
         }
 
         public async Task<OpenResult> open(string path, bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved, _origin, "open the model at " + path);
             return await _engine.OpenAsync(path, discardUnsaved);
         }
         public async Task<OpenResult> createModel(string name = null, int compatibilityLevel = 1604, bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved, _origin, "start a new empty model" + (string.IsNullOrWhiteSpace(name) ? "" : " named " + name));
             return await _engine.CreateModelAsync(name, compatibilityLevel, discardUnsaved);
         }
         public async Task<OpenResult> openLocal(string dataSource = null, string database = null, bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved, _origin, "open the model that is running in Power BI Desktop");
             return await _engine.OpenLocalAsync(dataSource, database, discardUnsaved);
         }
-        public async Task<OpenResult> openLive(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false)
+        public async Task<OpenResult> openLive(string endpoint, string database, string authMode = "azcli", string rawToken = null, string tenantId = null, bool forceReauth = false, string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false, bool silentOnly = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved);
-            return await _engine.OpenLiveAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(_engine, discardUnsaved, _origin, "open the published model " + (string.IsNullOrWhiteSpace(database) ? endpoint : database));
+            return await _engine.OpenLiveAsync(endpoint, database, authMode, rawToken, tenantId, forceReauth, accountProfileId, makeDefault, loginHint, _origin, discardUnsaved, silentOnly);
         }
-        public Task<DeployReport> deployLive(string endpoint, string database, string authMode = "serviceprincipal", string rawToken = null, string tenantId = null, bool commit = false, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null) => _engine.DeployLiveAsync(endpoint, database, authMode, rawToken, tenantId, commit, _origin, overrideReason, confirmToken, deleteRefs);
+        public Task<DeployReport> deployLive(string endpoint, string database, string authMode = "serviceprincipal", string rawToken = null, string tenantId = null, bool commit = false, string origin = "human", string overrideReason = null, string confirmToken = null, string[] deleteRefs = null, string expectedEndpoint = null, string expectedDatabase = null) => _engine.DeployLiveAsync(endpoint, database, authMode, rawToken, tenantId, commit, _origin, overrideReason, confirmToken, deleteRefs, expectedEndpoint, expectedDatabase);
         public Task<RefreshTypeInfo[]> listRefreshTypes() => _engine.ListRefreshTypesAsync();
         public Task<RefreshReport> refreshPartition(string partitionRef, string refreshType = "Full", string endpoint = null, string database = null, string authMode = null, string rawToken = null, string tenantId = null, bool commit = false, string origin = "human") => _engine.RefreshPartitionAsync(partitionRef, refreshType, endpoint, database, authMode, rawToken, tenantId, commit, _origin);
         public Task<TreeNode[]> listTree(string parentRef) => _engine.ListTreeAsync(parentRef);
         public Task<ObjectInfo> getObject(string objRef) => _engine.GetObjectAsync(objRef);
         public Task<string> getDax(string objRef) => _engine.GetDaxAsync(objRef);
-        public Task<SetResult> setDax(string objRef, string expression, string origin = "human", string expectedSession = null, long? expectedRevision = null) => _engine.SetDaxAsync(objRef, expression, _origin, expectedSession, expectedRevision);
+        public Task<SetResult> setDax(string objRef, string expression, string origin = "human", string expectedSession = null, long? expectedRevision = null, string expectedExpression = null) => _engine.SetDaxAsync(objRef, expression, _origin, expectedSession, expectedRevision, expectedExpression);
         public Task<DaxLintResult> lintDax(string expression) => _engine.LintDaxAsync(expression);
         public Task<OptimizeMeasureResult> optimizeMeasure(string measureRef, string[] candidates, string[] verifyGroupBy = null, string[] verifyFilters = null, bool apply = true, string origin = "human") => _engine.OptimizeMeasureAsync(measureRef, candidates, verifyGroupBy, verifyFilters, apply, _origin);
         public Task<ProbeResult> probeMeasure(string expr, string primaryAxis = null, ProbeScenario[] scenarios = null, bool includeDefaults = true, int rowCap = 5000) => _engine.ProbeMeasureAsync(expr, primaryAxis, scenarios, includeDefaults, rowCap);
@@ -61,7 +72,7 @@ namespace Semanticus.Engine
         public Task<TestSuiteRunResult> runTests(bool persist = false, string origin = "human", string[] only = null, string[] sections = null) => _engine.RunTestSuiteAsync(persist, _origin, only, sections);
         public Task<ReconcileOutcome> tryTest(TestDefinition def, string origin = "human") => _engine.TryTestAsync(def, _origin);
         public Task<TestSuiteInfo> listTests() => _engine.ListTestDefinitionsAsync();
-        public Task<TestDefinition> saveTest(TestDefinition def, string origin = "human") => _engine.SaveTestDefinitionAsync(def, _origin);
+        public Task<TestDefinition> saveTest(TestDefinition def, string origin = "human", string expectedJson = null) => _engine.SaveTestDefinitionAsync(def, _origin, expectedJson);
         public Task<bool> deleteTest(string id, string origin = "human") => _engine.DeleteTestDefinitionAsync(id, _origin);
         public Task<TestHistoryInfo> listTestRuns(int last = 20) => _engine.ListTestRunsAsync(last);
         public Task<TestRunDetail> getTestRun(string runId) => _engine.GetTestRunAsync(runId);
@@ -88,9 +99,9 @@ namespace Semanticus.Engine
         public Task<WorkflowDocumentEditResult> editWorkflowDocument(string name, string expectByteHash, string exactText, string expectPath, string origin = "human", string sessionId = null) => _engine.EditWorkflowDocumentAsync(name, expectByteHash, exactText, expectPath, _origin, sessionId);
         public Task<WorkflowLayout> getWorkflowLayout(string name) => _engine.GetWorkflowLayoutAsync(name);
         public Task<WorkflowLayout> saveWorkflowLayout(string name, System.Collections.Generic.Dictionary<string, WorkflowPosition> positions, string expectedRevision = null) => _engine.SaveWorkflowLayoutAsync(name, positions, expectedRevision);
-        public Task<WorkflowRunView> startWorkflow(string name, string origin = "human") => _engine.StartWorkflowAsync(name, _origin);
+        public Task<WorkflowRunView> startWorkflow(string name, string origin = "human", string document = null) => _engine.StartWorkflowAsync(name, _origin, document);
         public Task<WorkflowRunView> getWorkflowRun(string runId = null) => _engine.GetWorkflowRunAsync(runId);
-        public Task<WorkflowRunView> submitWorkflowStep(string runId = null, string stepId = null, string answersJson = null, string origin = "human", string callGate = null) => _engine.SubmitWorkflowStepAsync(runId, stepId, answersJson, _origin, callGate);
+        public Task<WorkflowRunView> submitWorkflowStep(string runId = null, string stepId = null, string answersJson = null, string origin = "human", string callGate = null, string writesJson = null) => _engine.SubmitWorkflowStepAsync(runId, stepId, answersJson, _origin, callGate, writesJson);
         public Task<WorkflowRunView> skipWorkflowStep(string runId = null, string stepId = null, string reason = null, string origin = "human") => _engine.SkipWorkflowStepAsync(runId, stepId, reason, _origin);
         public Task<WorkflowRunView> abortWorkflow(string runId = null, string reason = null, string origin = "human") => _engine.AbortWorkflowAsync(runId, reason, _origin);
         public Task<Semanticus.Engine.Evidence.EvidenceArtifact> exportWorkflowEvidence(string runId = null) => _engine.ExportWorkflowEvidenceAsync(runId);
@@ -108,7 +119,7 @@ namespace Semanticus.Engine
 
         public Task<InsightRecord> addInsight(string text, string[] keys = null, string kind = "insight", string scope = "project", bool fingerprintScoped = false, string origin = "human") => _engine.AddInsightAsync(text, keys, kind, scope, fingerprintScoped, _origin);
         public Task<InsightRecord> approveInsight(string id, string origin = "human") => _engine.ApproveInsightAsync(id, _origin);
-        public Task<InsightRecord> editInsight(string id, string text = null, string[] keys = null, string origin = "human") => _engine.EditInsightAsync(id, text, keys, _origin);
+        public Task<InsightRecord> editInsight(string id, string text = null, string[] keys = null, string origin = "human", string expectedJson = null) => _engine.EditInsightAsync(id, text, keys, _origin, expectedJson);
         public Task<InsightRecord> upvoteInsight(string id, string origin = "human") => _engine.UpvoteInsightAsync(id, _origin);
         public Task<InsightRecord> downvoteInsight(string id, string origin = "human") => _engine.DownvoteInsightAsync(id, _origin);
         public Task<SetResult> deleteInsight(string id, string origin = "human") => _engine.DeleteInsightAsync(id, _origin);
@@ -116,23 +127,33 @@ namespace Semanticus.Engine
         public Task<InsightListResult> listInsights(string scope = null, string status = null) => _engine.ListInsightsAsync(scope, status);
         public Task<RecallResult> recallExperience(string query = null, int maxResults = 12) => _engine.RecallExperienceAsync(query, maxResults);
         public Task<PrimerDocument> getPrimer() => _engine.GetPrimerAsync();
-        public Task<PrimerDocument> setPrimer(string markdown, string origin = "human") => _engine.SetPrimerAsync(markdown, _origin);
+        public Task<PrimerDocument> setPrimer(string markdown, string origin = "human", string expectedMarkdown = null) => _engine.SetPrimerAsync(markdown, _origin, expectedMarkdown);
         public Task<PrimerSuggestionList> listPrimerSuggestions() => _engine.ListPrimerSuggestionsAsync();
         public Task<PrimerSuggestionDecision> acceptPrimerSuggestion(string id, string origin = "human") => _engine.AcceptPrimerSuggestionAsync(id, _origin);
         public Task<PrimerSuggestionDecision> rejectPrimerSuggestion(string id, string origin = "human") => _engine.RejectPrimerSuggestionAsync(id, _origin);
         public Task<ModelFingerprint> getModelFingerprint() => _engine.GetModelFingerprintAsync();
+        public Task<Facts.ModelFacts> getModelFacts(string origin = "human") => _engine.GetModelFactsAsync(_origin);
         public Task<InterviewListResult> listInterviewQuestions(string scope = null) => _engine.ListInterviewQuestionsAsync(scope);
-        public Task<InterviewQuestion> addInterviewQuestion(string question, string tier, string query = null, string scalarExpr = null, string paraphraseExpr = null, string[] groupBy = null, string[] filters = null, string expectedValue = null, string expectedMatrixJson = null, bool expectRefusal = false, string fixRuleId = null, string seedSource = null, string scope = "project", string origin = "human", string id = null) => _engine.AddInterviewQuestionAsync(question, tier, query, scalarExpr, paraphraseExpr, groupBy, filters, expectedValue, expectedMatrixJson, expectRefusal, fixRuleId, seedSource, scope, _origin, id);
+        public Task<InterviewQuestion> addInterviewQuestion(string question, string tier, string query = null, string scalarExpr = null, string paraphraseExpr = null, string[] groupBy = null, string[] filters = null, string expectedValue = null, string expectedMatrixJson = null, bool expectRefusal = false, string fixRuleId = null, string seedSource = null, string scope = "project", string origin = "human", string id = null, string replacesJson = null) => _engine.AddInterviewQuestionAsync(question, tier, query, scalarExpr, paraphraseExpr, groupBy, filters, expectedValue, expectedMatrixJson, expectRefusal, fixRuleId, seedSource, scope, _origin, id, replacesJson);
         public Task<InterviewRunResult> runInterview(string questionId = null, string inlineJson = null, bool abstained = false, string attemptDax = null, string origin = "human") => _engine.RunInterviewAsync(questionId, inlineJson, abstained, attemptDax, _origin);
         public Task<SetResult> deleteInterviewQuestion(string id, string origin = "human") => _engine.DeleteInterviewQuestionAsync(id, _origin);
         public Task<InterviewSeedResult> listInterviewSeeds(string source = null, string measure = null) => _engine.ListInterviewSeedsAsync(source, measure);
-        public Task<SaveResult> save(string path = null, string format = null, bool overwrite = false) => _engine.SaveAsync(path, format, overwrite);
+        // pickedInDialog is honoured only on a person's connection: it says the person chose this exact file in a save dialog,
+        // which is the one way a never-saved model replaces an existing .bim. An agent connection's value is ignored.
+        public Task<SaveResult> save(string path = null, string format = null, bool overwrite = false, bool pickedInDialog = false) => _engine.SaveAsync(path, format, overwrite, _origin, _origin == "human" && pickedInDialog);
         public Task<SessionInfo> sessionInfo() => _engine.SessionInfoAsync();
         public Task<ConnectionContext> connectionContext() => _engine.ConnectionContextAsync();
         public Task<ModelConnectionRecord> rememberXmlaConnection(string endpoint, string database = null, string modelName = null, string authMode = "azcli", string origin = "human") => _engine.RememberXmlaConnectionAsync(endpoint, database, modelName, authMode, _origin);
         public Task<WorkingCopyResult> prepareWorkingCopy(string connectionId, string parentFolder = null, bool commit = false, string queryConnectionId = null, string publishConnectionId = null, string origin = "human") => _engine.PrepareWorkingCopyAsync(connectionId, parentFolder, commit, queryConnectionId, publishConnectionId, _origin);
-        public Task<ConnectionContext> setPublishDestination(string connectionId, string origin = "human") => _engine.SetPublishDestinationAsync(connectionId, _origin);
+        public Task<ConnectionContext> setPublishDestination(string connectionId, string origin = "human", bool clear = false) => _engine.SetPublishDestinationAsync(connectionId, _origin, clear);
+        public Task<NewModelResult> publishNewModel(string workspace, string name, string authMode = null, string tenantId = null, string origin = "human", string workspaceId = null, bool commit = true) => _engine.PublishNewModelAsync(workspace, name, authMode, tenantId, _origin, workspaceId, commit);
+        public Task<ModelSqlEndpointResult> setModelSqlEndpoint(string sqlSourceId, string connectionId = null, string origin = "human") => _engine.SetModelSqlEndpointAsync(sqlSourceId, connectionId, _origin);
+        public Task<ModelSqlEndpointList> listModelSqlEndpoints() => _engine.ListModelSqlEndpointsAsync();
         public Task<Entitlement.EntitlementInfo> getEntitlement() => _engine.GetEntitlementAsync();
+        /// <summary>Which build this engine is (F-241). A window asks before it adopts a running engine, so an
+        /// in-place reinstall at the same version and path is not joined to the build it replaced. Plumbing for
+        /// the attach, not a capability: it reads no model and changes nothing, so either role may ask.</summary>
+        public Task<string> buildIdentity() => Task.FromResult(BuildIdentity.Current);
         public Task<VerifiedModeState> getVerifiedMode() => _engine.GetVerifiedModeAsync();
         public Task<VerifiedModeState> setVerifiedMode(bool on, string origin = "human") => _engine.SetVerifiedModeAsync(on, _origin);
         public Task<ModelGraph> getModelGraph() => _engine.GetModelGraphAsync();
@@ -145,18 +166,25 @@ namespace Semanticus.Engine
         public Task<MeasureRow[]> listMeasures() => _engine.ListMeasuresAsync();
         public Task<ColumnRow[]> listColumns() => _engine.ListColumnsAsync();
         public Task<ModelObjects> getModelObjects() => _engine.GetModelObjectsAsync();
-        public Task<UndoState> undo(string origin = "human") => _engine.UndoAsync(_origin);
-        public Task<UndoState> redo(string origin = "human") => _engine.RedoAsync(_origin);
+        // toEntry (contract 8.6): walk to that History entry in one commit; omitted, one step as before.
+        public Task<UndoState> undo(string origin = "human", string toEntry = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? _engine.UndoAsync(_origin) : _engine.UndoToEntryAsync(toEntry, _origin);
+        public Task<UndoState> redo(string origin = "human", string toEntry = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? _engine.RedoAsync(_origin) : _engine.RedoToEntryAsync(toEntry, _origin);
+        public Task<PlanHistoryView> getPlanHistory(string by = null, string objectRef = null, string before = null, int limit = 50) =>
+            _engine.GetPlanHistoryAsync(by, objectRef, before, limit);
         public Task publishActivity(ActivityEvent e) => _engine.PublishActivityAsync(e);
         public Task<HealthDelta> pullAgentHealth(string correlationId = null) => _engine.PullAgentHealthAsync(correlationId);
+        public Task<ForeignChanges> pullForeignChanges() =>
+            _reader == null ? Task.FromResult<ForeignChanges>(null) : _engine.PullForeignChangesAsync(_reader);
 
         public Task<BpaScorecard> bpaScan() => _engine.BpaScanAsync();
         public Task<SetResult> bpaFix(string ruleId, string objRef, string origin = "human") => _engine.BpaFixAsync(ruleId, objRef, _origin);
         public Task<BpaFixAllResult> bpaFixAll(string origin = "human") => _engine.BpaFixAllAsync(_origin);
         public Task<FixPrompt> bpaGetFixPrompt(string ruleId, string objRef) => _engine.BpaGetFixPromptAsync(ruleId, objRef);
-        public Task<BpaRulesInfo> loadBpaRules(string source, bool replace = false, string origin = "human") => _engine.LoadBpaRulesAsync(source, replace, _origin);
+        public Task<BpaRulesInfo> loadBpaRules(string source, bool replace = false, string origin = "human", string expectedRuleJson = null) => _engine.LoadBpaRulesAsync(source, replace, _origin, expectedRuleJson);
         public Task<BpaRulesInfo> resetBpaRules(string origin = "human") => _engine.ResetBpaRulesAsync(_origin);
-        public Task<ReadinessRulesInfo> loadReadinessRules(string source, bool replace = false, string origin = "human") => _engine.LoadReadinessRulesAsync(source, replace, _origin);
+        public Task<ReadinessRulesInfo> loadReadinessRules(string source, bool replace = false, string origin = "human", string expectedRuleJson = null) => _engine.LoadReadinessRulesAsync(source, replace, _origin, expectedRuleJson);
         public Task<ReadinessRulesInfo> resetReadinessRules(string origin = "human") => _engine.ResetReadinessRulesAsync(_origin);
         public Task<RuleValidationResult> validateRule(string kind, string rules) => _engine.ValidateRuleAsync(kind, rules);
         public Task<CustomRulesInfo> getCustomRules() => _engine.GetCustomRulesAsync();
@@ -170,7 +198,7 @@ namespace Semanticus.Engine
         public Task<SetResult> waiveFinding(string system, string ruleId, string objRef, string reason, string origin = "human") => _engine.WaiveFindingAsync(system, ruleId, objRef, reason, _origin);
         public Task<SetResult> unwaiveFinding(string system, string ruleId, string objRef, string origin = "human") => _engine.UnwaiveFindingAsync(system, ruleId, objRef, _origin);
         public Task<Semanticus.Analysis.WaiverRecord[]> listWaivers() => _engine.ListWaiversAsync();
-        public Task<DaxValidation> validateDax(string expression) => _engine.ValidateDaxAsync(expression);
+        public Task<DaxValidation> validateDax(string expression, bool strict = false) => _engine.ValidateDaxAsync(expression, strict);
         public Task<SetResult> setDescription(string objRef, string text, string origin = "human") => _engine.SetDescriptionAsync(objRef, text, _origin);
         // displayFolder stays after the ignored legacy-origin slot so installed clients retain their positional shape.
         public Task<string> createMeasure(string tableRef, string name, string expression, string origin = "human", string displayFolder = null) => _engine.CreateMeasureAsync(tableRef, name, expression, _origin, displayFolder);
@@ -182,15 +210,15 @@ namespace Semanticus.Engine
         public Task<string> createNamedExpression(string name, string expression = null, string origin = "human") => _engine.CreateNamedExpressionAsync(name, expression, _origin);
         public Task<PartitionInfo[]> listPartitions(string tableRef) => _engine.ListPartitionsAsync(tableRef);
         public Task<string> getPartitionM(string partitionRef) => _engine.GetPartitionMAsync(partitionRef);
-        public Task<SetResult> setPartitionM(string partitionRef, string mExpression, string origin = "human") => _engine.SetPartitionMAsync(partitionRef, mExpression, _origin);
+        public Task<SetResult> setPartitionM(string partitionRef, string mExpression, string origin = "human", string expectedM = null) => _engine.SetPartitionMAsync(partitionRef, mExpression, _origin, expectedM);
         public Task<DocExpression[]> listNamedExpressions() => _engine.ListNamedExpressionsAsync();
         public Task<string> getNamedExpression(string name) => _engine.GetNamedExpressionAsync(name);
-        public Task<SetResult> updateNamedExpression(string name, string expression, string origin = "human") => _engine.UpdateNamedExpressionAsync(name, expression, _origin);
+        public Task<SetResult> updateNamedExpression(string name, string expression, string origin = "human", string expectedExpression = null) => _engine.UpdateNamedExpressionAsync(name, expression, _origin, expectedExpression);
         public Task<string> createImportTable(string name, string mExpression = null, string origin = "human") => _engine.CreateImportTableAsync(name, mExpression, _origin);
         public Task<string> createDirectLakeTable(string name, string entityName = null, string schemaName = null, string sourceName = null, string origin = "human") => _engine.CreateDirectLakeTableAsync(name, entityName, schemaName, sourceName, _origin);
         public Task<string> createCalculatedTable(string name, string expression, string origin = "human") => _engine.CreateCalculatedTableAsync(name, expression, _origin);
         public Task<string> createFieldParameter(string name, FieldParameterItem[] items, string origin = "human") => _engine.CreateFieldParameterAsync(name, items, _origin);
-        public Task<SetResult> setColumnDataType(string columnRef, string dataType, string origin = "human") => _engine.SetColumnDataTypeAsync(columnRef, dataType, _origin);
+        public Task<SetResult> setColumnDataType(string columnRef, string dataType, string origin = "human", string expectedDataType = null, string expectedIdentity = null) => _engine.SetColumnDataTypeAsync(columnRef, dataType, _origin, expectedDataType, expectedIdentity);
         public Task<SourceSchema> getSourceSchema(string tableRef, string authMode = "azcli", string tenantId = null, string origin = "human") => _engine.GetSourceSchemaAsync(tableRef, authMode, tenantId, _origin);
         public Task<SchemaDiff> diffSchema(string tableRef, SourceColumn[] sourceColumns = null, string authMode = "azcli", string tenantId = null, string origin = "human") => _engine.DiffSchemaAsync(tableRef, sourceColumns, authMode, tenantId, _origin);
         public Task<ApplySchemaResult> applySchemaUpdate(string tableRef, SchemaUpdateItem[] items, string origin = "human") => _engine.ApplySchemaUpdateAsync(tableRef, items, _origin);
@@ -203,10 +231,10 @@ namespace Semanticus.Engine
         public Task<string> createPerspective(string name, string origin = "human") => _engine.CreatePerspectiveAsync(name, _origin);
         public Task<SetResult> setPerspectiveMember(string perspectiveRef, string objRef, bool include, string origin = "human") => _engine.SetPerspectiveMemberAsync(perspectiveRef, objRef, include, _origin);
         public Task<PerspectiveInfo[]> getPerspectives() => _engine.GetPerspectivesAsync();
-        public Task<SetResult> setCalcItemFormatString(string calcItemRef, string formatExpression, string origin = "human") => _engine.SetCalcItemFormatStringAsync(calcItemRef, formatExpression, _origin);
+        public Task<SetResult> setCalcItemFormatString(string calcItemRef, string formatExpression, string origin = "human", string expectedFormat = null) => _engine.SetCalcItemFormatStringAsync(calcItemRef, formatExpression, _origin, expectedFormat);
         public Task<FormatTemplateInfo[]> listFormatTemplates(string category = null, string search = null) => _engine.ListFormatTemplatesAsync(category, search);
-        public Task<SetResult> setMeasureFormatExpression(string objRef, string formatExpression, string origin = "human") => _engine.SetMeasureFormatExpressionAsync(objRef, formatExpression, _origin);
-        public Task<SetResult> setCalcGroupPrecedence(string calcGroupRef, int precedence, string origin = "human") => _engine.SetCalcGroupPrecedenceAsync(calcGroupRef, precedence, _origin);
+        public Task<SetResult> setMeasureFormatExpression(string objRef, string formatExpression, string origin = "human", string expectedFormatExpression = null, string expectedIdentity = null) => _engine.SetMeasureFormatExpressionAsync(objRef, formatExpression, _origin, expectedFormatExpression, expectedIdentity);
+        public Task<SetResult> setCalcGroupPrecedence(string calcGroupRef, int precedence, string origin = "human", string expectedPrecedence = null) => _engine.SetCalcGroupPrecedenceAsync(calcGroupRef, precedence, _origin, expectedPrecedence);
         public Task<DaxLibPackage[]> daxLibSearch(string text = null, int skip = 0, int take = 0) => _engine.DaxLibSearchAsync(text, skip, take);
         public Task<string[]> daxLibVersions(string id) => _engine.DaxLibVersionsAsync(id);
         public Task<DaxLibPackageDetail> daxLibPackageInfo(string id, string version = null) => _engine.DaxLibPackageInfoAsync(id, version);
@@ -218,10 +246,10 @@ namespace Semanticus.Engine
         // targetRef stays after the ignored legacy-origin slot so installed clients retain their positional shape.
         public Task<string> duplicateObject(string objRef, string newName = null, string origin = "human", string targetRef = null) => _engine.DuplicateObjectAsync(objRef, newName, targetRef, _origin);
         public Task<ObjectProperty[]> getObjectProperties(string objRef) => _engine.GetObjectPropertiesAsync(objRef);
-        public Task<SetResult> setObjectProperty(string objRef, string propertyName, string value, string origin = "human") => _engine.SetObjectPropertyAsync(objRef, propertyName, value, _origin);
+        public Task<SetResult> setObjectProperty(string objRef, string propertyName, string value, string origin = "human", string expectedValue = null, string expectedIdentity = null) => _engine.SetObjectPropertyAsync(objRef, propertyName, value, _origin, expectedValue, expectedIdentity);
         // #140: the property-grid MULTI-select write — N objects, one atomic all-or-nothing undoable change.
-        public Task<SetResult> setObjectProperties(string[] objRefs, string propertyName, string value, string origin = "human") => _engine.SetObjectPropertiesAsync(objRefs, propertyName, value, _origin);
-        public Task<SetResult> setDisplayFolder(string[] refs, string folder, string origin = "human") => _engine.SetDisplayFolderAsync(refs, folder, _origin);
+        public Task<SetResult> setObjectProperties(string[] objRefs, string propertyName, string value, string origin = "human", string expectedValue = null, string[] expectedValues = null, string expectedIdentity = null) => _engine.SetObjectPropertiesAsync(objRefs, propertyName, value, _origin, expectedValue, expectedValues, expectedIdentity);
+        public Task<SetResult> setDisplayFolder(string[] refs, string folder, string origin = "human", string expectedSession = null, long? expectedRevision = null) => _engine.SetDisplayFolderAsync(refs, folder, _origin, expectedSession, expectedRevision);
         public Task<FolderRenameResult> renameDisplayFolder(string tableRef, string fromPath, string toPath, string origin = "human") => _engine.RenameDisplayFolderAsync(tableRef, fromPath, toPath, _origin);
         public Task<DependentInfo[]> getDependents(string objRef) => _engine.GetDependentsAsync(objRef);
         public Task<DependentInfo[]> getDependencies(string objRef) => _engine.GetDependenciesAsync(objRef);
@@ -237,29 +265,29 @@ namespace Semanticus.Engine
         public Task<CloudReport[]> listReports(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListReportsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<ReportAnalysisResult> analyzeCloudReports(string workspaceId, string[] reportIds, bool consent = false, string authMode = "azcli", string tenantId = null, string runId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId, _origin, cancellationToken);
         public Task<string> scriptObjects(string[] refs, string format) => _engine.ScriptObjectsAsync(refs, format);
-        public Task<ApplyScriptResult> applyDaxScript(string script, string origin = "human") => _engine.ApplyDaxScriptAsync(script, _origin);
-        public Task<ApplyScriptResult> applyTmdlScript(string script, string origin = "human") => _engine.ApplyTmdlScriptAsync(script, _origin);
+        public Task<ApplyScriptResult> applyDaxScript(string script, string origin = "human", string[] applyAnyway = null, string expectedSession = null) => _engine.ApplyDaxScriptAsync(script, _origin, applyAnyway, expectedSession);
+        public Task<ApplyScriptResult> applyTmdlScript(string script, string origin = "human", string[] applyAnyway = null, string expectedSession = null) => _engine.ApplyTmdlScriptAsync(script, _origin, applyAnyway, expectedSession);
         public Task<SetResult> setCompatibilityLevel(int level, string origin = "human") => _engine.SetCompatibilityLevelAsync(level, _origin);
         public Task<RenameResult> renameObject(string objRef, string newName, string origin = "human", string expectedSession = null, long? expectedRevision = null) => _engine.RenameObjectAsync(objRef, newName, _origin, expectedSession, expectedRevision);
         public Task<SetResult> setColumnMetadata(string objRef, bool? isHidden, string summarizeBy, string dataCategory, string sortByColumn, string origin = "human") => _engine.SetColumnMetadataAsync(objRef, isHidden, summarizeBy, dataCategory, sortByColumn, _origin);
-        public Task<SetResult> setMeasureFormat(string objRef, string formatString, string origin = "human") => _engine.SetMeasureFormatAsync(objRef, formatString, _origin);
+        public Task<SetResult> setMeasureFormat(string objRef, string formatString, string origin = "human", string expectedSession = null, long? expectedRevision = null) => _engine.SetMeasureFormatAsync(objRef, formatString, _origin, expectedSession, expectedRevision);
         public Task<SetResult> markDateTable(string tableRef, string dateColumn, string origin = "human") => _engine.MarkDateTableAsync(tableRef, dateColumn, _origin);
         public Task<RefreshPolicyInfo> getIncrementalRefreshPolicy(string tableRef) => _engine.GetIncrementalRefreshPolicyAsync(tableRef);
-        public Task<SetResult> setIncrementalRefreshPolicy(string tableRef, string dateColumn, int? rollingWindowPeriods, string rollingWindowGranularity, int? incrementalPeriods, string incrementalGranularity, int? incrementalPeriodsOffset, string mode, string pollingExpression, bool autoWire = false, string origin = "human") => _engine.SetIncrementalRefreshPolicyAsync(tableRef, dateColumn, rollingWindowPeriods, rollingWindowGranularity, incrementalPeriods, incrementalGranularity, incrementalPeriodsOffset, mode, pollingExpression, autoWire, _origin);
+        public Task<SetResult> setIncrementalRefreshPolicy(string tableRef, string dateColumn, int? rollingWindowPeriods, string rollingWindowGranularity, int? incrementalPeriods, string incrementalGranularity, int? incrementalPeriodsOffset, string mode, string pollingExpression, bool autoWire = false, string origin = "human", string expectedJson = null) => _engine.SetIncrementalRefreshPolicyAsync(tableRef, dateColumn, rollingWindowPeriods, rollingWindowGranularity, incrementalPeriods, incrementalGranularity, incrementalPeriodsOffset, mode, pollingExpression, autoWire, _origin, expectedJson);
         public Task<SetResult> removeIncrementalRefreshPolicy(string tableRef, string origin = "human") => _engine.RemoveIncrementalRefreshPolicyAsync(tableRef, _origin);
         public Task<SetResult> setRelationship(string relationshipName, string crossFilteringBehavior, bool? isActive, string origin = "human") => _engine.SetRelationshipAsync(relationshipName, crossFilteringBehavior, isActive, _origin);
         public Task<SetResult> setRelationshipCardinality(string relationshipName, string fromCardinality, string toCardinality, string origin = "human") => _engine.SetRelationshipCardinalityAsync(relationshipName, fromCardinality, toCardinality, _origin);
         public Task<ReadinessPlan> makeAiReady(string origin = "human", int maxQueue = 40) => _engine.MakeAiReadyAsync(_origin, maxQueue);
-        public Task<SetResult> enableQna(string culture = null, string origin = "human") => _engine.EnableQnaAsync(culture, _origin);
+        public Task<SetResult> createLinguisticSchema(string culture = null, string origin = "human") => _engine.CreateLinguisticSchemaAsync(culture, _origin);
         public Task<SetResult> setSynonyms(string objRef, string[] terms, string culture = null, string origin = "human") => _engine.SetSynonymsAsync(objRef, terms, culture, _origin);
-        public Task<SetInstructionsResult> setAiInstructions(string instructions, string culture = null, string origin = "human") => _engine.SetAiInstructionsAsync(instructions, culture, _origin);
+        public Task<SetInstructionsResult> setAiInstructions(string instructions, string culture = null, string origin = "human", string expectedInstructions = null) => _engine.SetAiInstructionsAsync(instructions, culture, _origin, expectedInstructions);
         public Task<AiInstructionsInfo> getAiInstructions(string culture = null) => _engine.GetAiInstructionsAsync(culture);
         public Task<SetResult> setAiDataSchema(string objRef, bool included, string culture = null, string origin = "human") => _engine.SetAiDataSchemaAsync(objRef, included, culture, _origin);
         public Task<RoleInfo[]> listRoles() => _engine.ListRolesAsync();
         public Task<RoleInfo> createRole(string name, string modelPermission = null, string origin = "human") => _engine.CreateRoleAsync(name, modelPermission, _origin);
         public Task<SetResult> deleteRole(string name, string origin = "human") => _engine.DeleteRoleAsync(name, _origin);
         public Task<SetResult> setRolePermission(string name, string modelPermission, string origin = "human") => _engine.SetRolePermissionAsync(name, modelPermission, _origin);
-        public Task<SetTablePermissionResult> setTablePermission(string roleName, string tableRef, string filterDax, string origin = "human") => _engine.SetTablePermissionAsync(roleName, tableRef, filterDax, _origin);
+        public Task<SetTablePermissionResult> setTablePermission(string roleName, string tableRef, string filterDax, string origin = "human", string expectedFilter = null) => _engine.SetTablePermissionAsync(roleName, tableRef, filterDax, _origin, expectedFilter);
         public Task<SetResult> setRoleMember(string roleName, string memberName, bool add = true, string origin = "human") => _engine.SetRoleMemberAsync(roleName, memberName, add, _origin);
         public Task<SetResult> setTableObjectPermission(string roleName, string tableRef, string permission, string origin = "human") => _engine.SetTableObjectPermissionAsync(roleName, tableRef, permission, _origin);
         public Task<SetResult> setColumnObjectPermission(string roleName, string columnRef, string permission, string origin = "human") => _engine.SetColumnObjectPermissionAsync(roleName, columnRef, permission, _origin);
@@ -296,17 +324,17 @@ namespace Semanticus.Engine
         public Task<ChangePlanView> proposeReplace(SearchOptions find, string replace = "", int maxItems = 500, string origin = "human") => _engine.ProposeReplaceAsync(find, replace, maxItems, _origin);
         public Task<ChangePlanView> getPlan() => _engine.GetPlanAsync();
         public Task<ChangePlanView> addPlanItem(string objRef, string kind, string after = null, string title = null, string[] verifyGroupBy = null, string[] verifyFilters = null, string origin = "human") => _engine.AddPlanItemAsync(objRef, kind, after, title, verifyGroupBy, verifyFilters, _origin);
-        public Task<ChangePlanView> setPlanItem(string itemId, string after = null, bool? approved = null, string origin = "human") => _engine.SetPlanItemAsync(itemId, after, approved, _origin);
+        public Task<ChangePlanView> setPlanItem(string itemId, string after = null, bool? approved = null, string origin = "human", string expectedAfter = null) => _engine.SetPlanItemAsync(itemId, after, approved, _origin, expectedAfter);
         public Task<ApplyPlanReport> applyPlan(string[] approvedIds = null, string origin = "human", string[] overrideIds = null, string overrideReason = null) => _engine.ApplyPlanAsync(approvedIds, _origin, overrideIds, overrideReason);
         public Task<ChangePlanView> clearPlan(string origin = "human") => _engine.ClearPlanAsync(_origin);
         public Task<DocModelDto> getDocModel(int topN = 50) => _engine.GetDocModelAsync(topN);
         public Task<DocOutline> getDocOutline() => _engine.GetDocOutlineAsync();
-        public Task<string> getDocSection(string objRef, string sectionKey) => _engine.GetDocSectionAsync(objRef, sectionKey);
-        public Task<SetResult> setDocSection(string objRef, string sectionKey, string markdown, string origin = "human") => _engine.SetDocSectionAsync(objRef, sectionKey, markdown, _origin);
+        public Task<string> getDocSection(string objRef, string sectionKey, string expectedIdentity = null) => _engine.GetDocSectionAsync(objRef, sectionKey, expectedIdentity);
+        public Task<SetResult> setDocSection(string objRef, string sectionKey, string markdown, string origin = "human", string expectedMarkdown = null, string expectedIdentity = null) => _engine.SetDocSectionAsync(objRef, sectionKey, markdown, _origin, expectedMarkdown, expectedIdentity);
         public Task<SpecView> getSpec() => _engine.GetSpecAsync();
-        public Task<SpecView> setSpec(string specJson, string origin = "human") => _engine.SetSpecAsync(specJson, _origin);
+        public Task<SpecView> setSpec(string specJson, string origin = "human", long? expectedSpecVersion = null) => _engine.SetSpecAsync(specJson, _origin, expectedSpecVersion);
         public Task<SpecView> clearSpec(string origin = "human") => _engine.ClearSpecAsync(_origin);
-        public Task<SpecView> saveSpec(string path) => _engine.SaveSpecAsync(path);
+        public Task<SpecView> saveSpec(string path, string origin = "human") => _engine.SaveSpecAsync(path, _origin);
         public Task<SpecView> loadSpec(string path, string origin = "human") => _engine.LoadSpecAsync(path, _origin);
         public Task<SpecBuildReport> buildModelFromSpec(string origin = "human") => _engine.BuildModelFromSpecAsync(_origin);
         public Task<SpecView> autogenerateSpecFromModel(string origin = "human") => _engine.AutogenerateSpecFromModelAsync(_origin);
@@ -342,10 +370,10 @@ namespace Semanticus.Engine
         public Task<ModelConnectionRecord[]> listConnections() => _engine.ListConnectionsAsync();
         public Task<SqlSourceRecord[]> listSqlSources() => _engine.ListSqlSourcesAsync();
         public Task<SqlSourceUsage[]> listSqlSourceUsage() => _engine.ListSqlSourceUsageAsync();
-        public Task<SqlSourceRecord> saveSqlSource(string id, string name, string server, string database, string authMode, string tenantId, string origin = "human") => _engine.SaveSqlSourceAsync(id, name, server, database, authMode, tenantId, _origin);
+        public Task<SqlSourceRecord> saveSqlSource(string id, string name, string server, string database, string authMode, string tenantId, string origin = "human", string expectedJson = null) => _engine.SaveSqlSourceAsync(id, name, server, database, authMode, tenantId, _origin, expectedJson);
         public Task<SqlSourceDeleteResult> deleteSqlSource(string id, string origin = "human") => _engine.DeleteSqlSourceAsync(id, _origin);
         public Task<SqlSourceTestResult> testSqlSource(string id, string origin = "human") => _engine.TestSqlSourceAsync(id, _origin);
-        public Task<TableSourceMappingInfo> setTableSourceMapping(string table, string sqlSourceId, string schema = null, string entity = null, string origin = "human") => _engine.SetTableSourceMappingAsync(table, sqlSourceId, schema, entity, _origin);
+        public Task<TableSourceMappingInfo> setTableSourceMapping(string table, string sqlSourceId, string schema = null, string entity = null, string origin = "human", string expectedJson = null) => _engine.SetTableSourceMappingAsync(table, sqlSourceId, schema, entity, _origin, expectedJson);
         public Task<bool> clearTableSourceMapping(string table, string origin = "human") => _engine.ClearTableSourceMappingAsync(table, _origin);
         public Task<TableSourceMappingList> listTableMappings() => _engine.ListTableSourceMappingsAsync();
         public Task<ConnectionHistoryEvent[]> listConnectionHistory(string connectionId = null) => _engine.ListConnectionHistoryAsync(connectionId);
@@ -366,6 +394,7 @@ namespace Semanticus.Engine
             bool confirm = false, string confirmToken = null, string origin = "human") =>
             _engine.PurgeRestorePointsAsync(id, olderThanDays, confirm, confirmToken, _origin);
         public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, _origin, cancellationToken);
+        public Task<FabricSemanticModel[]> listWorkspaceModels(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspaceModelsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<DeploymentPipeline[]> listDeploymentPipelines(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDeploymentPipelinesAsync(authMode, tenantId, _origin, cancellationToken);
         public Task<PipelineStage[]> getPipelineStages(string pipelineId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetPipelineStagesAsync(pipelineId, authMode, tenantId, _origin, cancellationToken);
         public Task<StageItem[]> getStageItems(string pipelineId, string stageId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetStageItemsAsync(pipelineId, stageId, authMode, tenantId, _origin, cancellationToken);
@@ -379,13 +408,110 @@ namespace Semanticus.Engine
         public Task<FabricGitResult> fabricGitConnect(string workspaceId, string provider, string organization, string project = null, string repository = null, string branch = "main", string directory = null, string connectionId = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitConnectAsync(workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<FabricGitResult> fabricGitDisconnect(string workspaceId, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.FabricGitDisconnectAsync(workspaceId, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<CicdPublishResult> cicdPublish(string workspaceId, string itemId, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.CicdPublishAsync(workspaceId, itemId, commit, authMode, tenantId, _origin, cancellationToken);
-        public Task<CicdScaffold> cicdGenerate(string target = "github", string workspaceId = null, string environment = "PROD", bool write = false) => _engine.CicdGenerateAsync(target, workspaceId, environment, write);
+        public Task<CicdScaffold> cicdGenerate(string target = "github", string workspaceId = null, string environment = "PROD", bool write = false, string origin = "human") => _engine.CicdGenerateAsync(target, workspaceId, environment, write, _origin);
         public Task<DataAgentList> listDataAgents(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDataAgentsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<DataAgentDetail> getDataAgent(string workspaceId, string agentId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetDataAgentAsync(workspaceId, agentId, authMode, tenantId, _origin, cancellationToken);
         public Task<DataAgentConfig> generateDataAgentConfig(int maxColumnsPerTable = 200) => _engine.GenerateDataAgentConfigFromModelAsync(maxColumnsPerTable);
         public Task<DataAgentWriteReport> createDataAgent(string workspaceId, string name, string aiInstructions = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, tenantId, _origin, cancellationToken);
-        public Task<DataAgentWriteReport> updateDataAgent(string workspaceId, string agentId, string aiInstructions = null, string datasourceFolder = null, string datasourceJson = null, string fewshotsJson = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, tenantId, _origin, cancellationToken);
+        public Task<DataAgentWriteReport> updateDataAgent(string workspaceId, string agentId, string aiInstructions = null, string datasourceFolder = null, string datasourceJson = null, string fewshotsJson = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", string expectedPart = null, string expectedContent = null, CancellationToken cancellationToken = default) => _engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, tenantId, _origin, expectedPart, expectedContent, cancellationToken);
         public Task<DataAgentWriteReport> publishDataAgent(string workspaceId, string agentId, string description = null, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.PublishDataAgentAsync(workspaceId, agentId, description, commit, authMode, tenantId, _origin, cancellationToken);
         public Task<DataAgentWriteReport> deleteDataAgent(string workspaceId, string agentId, bool commit = false, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.DeleteDataAgentAsync(workspaceId, agentId, commit, authMode, tenantId, _origin, cancellationToken);
+
+        // --- Typed decisions (Jev M0a). The same seven operations reach the MCP door under their snake_case
+        // names; both doors return the SAME DTOs from Decisions/DecisionProtocol.cs, so there is no second
+        // shape to drift.
+        public Task<DecisionPointInfo[]> getDecisionPoints() => _engine.GetDecisionPointsAsync();
+        public Task<DecisionPointInfo[]> setDecisionPointEnabled(string name, bool enabled, string origin = "human", string expectedSession = null) => _engine.SetDecisionPointEnabledAsync(name, enabled, _origin, expectedSession);
+        public Task<DecisionConsentInfo> getConsent() => _engine.GetConsentAsync();
+        public Task<DecisionConsentInfo> setConsent(string[] fields, int schemaVersion, string origin = "human", string expectedScope = null) => _engine.SetConsentAsync(fields, schemaVersion, _origin, expectedScope);
+        public Task<DecisionConsentInfo> withdrawConsent(string origin = "human") => _engine.WithdrawConsentAsync(_origin);
+        public Task<DecisionBudgetInfo> getDecisionBudget() => _engine.GetDecisionBudgetAsync();
+        public Task<MeasureDefaultsProposal> proposeMeasureDefaults(string objRef) => _engine.ProposeMeasureDefaultsAsync(objRef);
+
+        // The living plan (Jev M2, plus the Fix milestone's target). The same operations as the agent door
+        // under camelCase names, returning the SAME DTOs from Plan/ModelPlanView.cs, so the page and the
+        // assistant cannot be told different plans. markPlanTargetDone is the one name here that is not also
+        // an MCP tool: the agent door reaches it through model_plan_action's "done" verb instead.
+        public Task<ModelPlanView> getModelPlan() => _engine.GetModelPlanAsync();
+        public Task<WordsQueue> getWordsQueue(int max = LocalEngine.WordsPageDefault, int offset = 0) => _engine.GetWordsQueueAsync(LocalEngine.WordsPageSize(max), System.Math.Max(0, offset));
+        public Task<ModelPlanView> skipModelPlanItem(string id, string reason, string origin = "human") => _engine.SkipModelPlanItemAsync(id, reason, _origin);
+        public Task<ModelPlanView> unskipModelPlanItem(string id, string origin = "human") => _engine.UnskipModelPlanItemAsync(id, _origin);
+        // The only place a client-supplied origin is honoured, and only for one value: "plan" says this start
+        // is a step of the page's run-all, which the history records as actor "plan" rather than "you". It is a
+        // label on a story and not a permission, and everything else still falls back to the pinned _origin, so
+        // a caller cannot claim to be the agent door from the human one.
+        // The digest comes LAST and defaults to null, because this target binds by POSITION: a parameter
+        // added anywhere else would rebind an existing caller's origin onto it.
+        //
+        // Five verbs reach this one method: start, propose, approve and cancel on an ordinary item, and
+        // "done" on a target item. The target branch used to be a fork HERE, mirrored on the agent door;
+        // it now lives at the head of LocalEngine.ModelPlanActionAsync's verb switch, so both doors are
+        // one call again and neither can drift from the other.
+        public Task<ModelPlanActionResult> modelPlanAction(
+            string id, string action = "start", string origin = "human", string digest = null) =>
+            // "plan" (the Plan page's own origin) is honoured from a PERSON's connection only. An agent connection that
+            // sends it is still an agent: otherwise the page's origin would be a way around contract 12 (lane E3).
+            _engine.ModelPlanActionAsync(id, action, origin == "plan" && _origin == "human" ? "plan" : _origin, digest);
+
+        // Run the plan: every listed item, each with the digest the page was shown, applied as ONE step; or, with
+        // no items and the plan's readyDigest, every Ready Semanticus row (contract 7.2). The origin is the pinned
+        // one; a caller cannot claim the agent door from the human one. readyDigest is LAST: this binds by position.
+        public Task<ApplyPlanItemsResult> applyPlanItems(PlanItemDigest[] items, string origin = "human", string readyDigest = null) =>
+            _engine.ApplyPlanItemsAsync(items, _origin, readyDigest);
+
+        // The target: what this model should become. Free, and none of these changes the model.
+        // markPlanTargetDone is the same operation modelPlanAction(id, "done") reaches, asked for directly;
+        // there is one implementation behind both, so they cannot answer differently.
+        public Task<ModelPlanView> addPlanTarget(string text, string section, string origin = "human") => _engine.AddPlanTargetAsync(text, section, _origin);
+        public Task<ModelPlanView> removePlanTarget(string id, string origin = "human") => _engine.RemovePlanTargetAsync(id, _origin);
+        public Task<ModelPlanActionResult> markPlanTargetDone(string id, string origin = "human") => _engine.MarkPlanTargetDoneAsync(id, _origin);
+
+        public Task<NextAction[]> getNextActions() => _engine.GetNextActionsAsync();
+
+        // ---- the queue (Plan at the heart, lane E3, contract 3.3): the agent door's four ops, reached by an attached
+        // assistant through RemoteEngine. The reader is THIS connection, never a value off the wire, so one pipe cannot
+        // answer another's claim or read another's offer fingerprint. A person's own claim, Mark done and Could not
+        // are on HumanGovernanceRpcTarget instead.
+        public Task<Jev.AssistantRequestList> listAssistantRequests() => _engine.ListAssistantRequestsAsync(QueueReader);
+        public Task<Jev.HandoffResult> claimRequest(string requestId) => _engine.ClaimAssistantRequestAsync(requestId, QueueReader);
+        public Task<Jev.HandoffResult> completeRequest(string requestId, string claimToken, string text = null) =>
+            _engine.CompleteAssistantRequestAsync(requestId, claimToken, text, QueueReader);
+        public Task<Jev.HandoffResult> declineRequest(string requestId, string claimToken, string reason, string[] choices = null) =>
+            _engine.DeclineAssistantRequestAsync(requestId, claimToken, reason, QueueReader, choices);
+
+        // ---- the composer's drafts (lane L4): the same four ops as compose_task, get_draft, edit_draft and run_draft.
+        // The origin is this connection's, never a value off the wire. The held approval is on HumanGovernanceRpcTarget.
+        public Task<Composer.DraftView> composeTask(string words = null, string workflow = null, string inputsJson = null, string stepsJson = null, string title = null, string origin = "human", string document = null) =>
+            _engine.ComposeTaskAsync(words, workflow, inputsJson, stepsJson, title, _origin, document);
+        public Task<Composer.DraftView> getDraft(string draftId) => _engine.GetDraftAsync(draftId);
+        public Task<Composer.DescribedWorkflow> describeWorkflowSteps(string words) => _engine.DescribeWorkflowStepsAsync(words);
+        public Task<Query.DataAnswer> askData(Query.DataAsk ask, string origin = "human") => _engine.AskDataAsync(ask, _origin);
+        public Task<Query.DataQuestionHistory> listDataQuestions(int limit = 50) => _engine.ListDataQuestionsAsync(limit);
+        public Task<Query.ChartPick> pickChartKind(Query.ChartPickAsk ask) => _engine.PickChartKindAsync(ask);
+        public Task<Composer.DraftView> editDraft(string draftId, string action, string step = null, string blank = null, string question = null, string text = null, string origin = "human") =>
+            _engine.EditDraftAsync(draftId, action, step, blank, question, text, _origin);
+        public Task<Composer.DraftView> runDraft(string draftId, string origin = "human") => _engine.RunDraftAsync(draftId, _origin);
+        /// <summary>The Plan fold line for this connection (contract 6.1), the pull F-246 uses. A person's connection
+        /// is shown the Plan itself, so it gets nothing here.</summary>
+        public Task<string> pullPlanOffer() =>
+            _reader == null ? Task.FromResult<string>(null) : _engine.PullPlanOfferAsync(_reader);
+
+        /// <summary>A person's connection that calls the agent ops is named apart from the in-process MCP door.</summary>
+        private string QueueReader => _reader ?? "studio";
+        public Task<AskRouteResult> routeAsk(string text) => _engine.RouteAskAsync(text);
+
+        // ---- the spec-first start (M11): the same eight verbs as start_model_from_sql, get_start_plan, edit_start_plan,
+        // grant_start_disclosure, get_start_words, write_start_words, build_start_plan and discard_start_plan, all on the
+        // same IEngine methods, so the Plan page and an assistant read one StartPlanView. The origin is this connection's,
+        // never a value off the wire. Approving the plan is NOT here: approveStartPlan is on HumanGovernanceRpcTarget,
+        // which an agent connection never registers.
+        public Task<StartPlan.StartPlanView> startModelFromSql(StartPlan.StartModelRequest request, string origin = "human") => _engine.StartModelFromSqlAsync(request, _origin);
+        public Task<StartPlan.StartPlanView> getStartPlan() => _engine.GetStartPlanAsync();
+        public Task<StartPlan.StartPlanView> editStartPlan(StartPlan.StartPlanEdit edit, string origin = "human") => _engine.EditStartPlanAsync(edit, _origin);
+        public Task<StartPlan.StartPlanView> grantStartDisclosure(string digest, string origin = "human") => _engine.GrantStartDisclosureAsync(digest, _origin);
+        public Task<StartPlan.StartWordsPage> getStartWords(int max = 0, int offset = 0) => _engine.GetStartWordsAsync(max, offset);
+        public Task<StartPlan.StartWordsResult> writeStartWords(StartPlan.StartWord[] words, string origin = "human") => _engine.WriteStartWordsAsync(words, _origin);
+        public Task<StartPlan.StartPlanBuildResult> buildStartPlan(string digest, string origin = "human") => _engine.BuildStartPlanAsync(digest, _origin);
+        public Task<StartPlan.StartPlanView> discardStartPlan(string origin = "human") => _engine.DiscardStartPlanAsync(_origin);
     }
 }

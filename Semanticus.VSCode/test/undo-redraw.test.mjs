@@ -15,7 +15,8 @@ assert.match(ext, /if \(refs\.length === 1\) await conn\.sendRequest\('deleteObj
 assert.doesNotMatch(ext, /for \(const t of targets\) await conn\.sendRequest\('deleteObject'/,
   'authorDelete must not delete selected objects one by one');
 
-assert.match(adv, /useEffect\(\(\) => \{ setPrec\(String\(group\.precedence\)\); \}, \[group\.precedence\]\)/,
+// The box follows the model when nothing is typed (keptwords.ts), so an undo shows; typed words are kept instead (solui-round2-u2.test.mjs proves both).
+assert.match(adv, /useKeptText\(String\(group\.precedence\)[,)]/,
   'calc-group precedence input must follow the model after undo');
 
 assert.match(adv, /\.then\(\(\) => loadPersp\(\)\)/,

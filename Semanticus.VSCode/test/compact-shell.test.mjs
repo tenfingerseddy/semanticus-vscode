@@ -35,11 +35,12 @@ test('v1.5 the publish caption is gone and the Publish tooltip carries both fact
   has(app, /title=\{unreachable \?[\s\S]{0,400}\$\{publishLine\}\. \$\{permissionLine\}/,
     'the Publish button tooltip must still name the destination AND the assistant permission');
   has(app, /data-testid="publish-button"/, 'the one publish control stays');
-  has(styles, /header\.studio-chrome\s*\{[^}]*min-height:\s*40px/, 'the header row is 40px tall');
+  // 40px is --sem-bar-h (tokens.css; scripts/visual-style-scan.mjs holds the approved value), One Visual Language.
+  has(styles, /header\.studio-chrome\s*\{[^}]*min-height:\s*(40px|var\(--sem-bar-h\))/, 'the header row is 40px tall');
 });
 
 test('the two publish facts still have a home on the page', () => {
-  has(contextbar, />Publish to</, 'the bottom bar keeps the destination slot');
+  has(contextbar, />Publish:</, 'the bottom bar keeps the destination slot');
   // The caption used to be the shortcut into Assistant permissions. That door is the header's Your assistant
   // chip, which is why removing the caption costs nobody the page.
   has(read('webview/src/activity.tsx'), /id: 'permissions', label: 'Permissions'/,
@@ -50,7 +51,7 @@ test('the two publish facts still have a home on the page', () => {
 test('the breadcrumb is no longer a block of its own', () => {
   hasNot(app, /studio-breadcrumb/, 'the standalone breadcrumb row is merged into the area row');
   hasNot(styles, /\.studio-breadcrumb/, 'its rules go with it');
-  has(styles, /\.studio-arearow\s*\{[^}]*min-height:\s*40px/, 'the area row is 40px tall');
+  has(styles, /\.studio-arearow\s*\{[^}]*min-height:\s*(40px|var\(--sem-bar-h\))/, 'the area row is 40px tall');
 });
 
 // This test used to assert the opposite: that Back appeared as soon as the history stack had something in it.
@@ -69,14 +70,11 @@ test('there is no Back button and no history stack behind it', () => {
 // what the old Back could not do.
 test('Settings gets one Done, and Done always lands somewhere', () => {
   has(app, /isSettings = route\.destination === 'utility'/, 'Settings is the utility destination, named once');
-  has(app, /\{isSettings && <button[^>]*data-testid="settings-done"[^>]*>Done<\/button>\}/,
+  has(app, /\{isSettings && <div className="ml-auto flex items-center gap-2">\s*<button[^>]*data-testid="settings-done"[^>]*>Done<\/button>\s*<\/div>\}/,
     'Done renders on Settings pages and nowhere else');
   has(app, /data-testid="settings-done" className="sem-btn sem-btn-sm"/, 'Done is on the shared dense control step');
-  // ONE auto margin at the right-hand end, on the group, not two competing ones. PageNotesButton brings its own
-  // margin-left:auto (styles.css .studio-page-notes-wrap), so an ml-auto on Done as well splits the free space and
-  // leaves Done halfway across the row. That is not a style nit: it is what the first build of this actually did.
-  has(app, /<div className="ml-auto flex items-center gap-2">\s*\{isSettings && <button[\s\S]{0,200}<PageNotesButton tab=\{tab\} \/>\s*<\/div>/,
-    'Done and the page notes are one right-hand group with a single auto margin');
+  // ONE auto margin at the right-hand end, on the group, not on Done itself. The page notes button that used to
+  // share this group left on 8 October 2026 (Help > Help for this page shows the same guide).
   hasNot(app, /data-testid="settings-done"[^>]*ml-auto/, 'and Done does not carry a competing auto margin of its own');
   // ONE page to return to, not a stack, recorded only on the way IN.
   has(app, /const returnTo = useRef<Route \| undefined>/, 'the return page is a single route, not a history stack');
@@ -85,7 +83,7 @@ test('Settings gets one Done, and Done always lands somewhere', () => {
   // The restamp is the whole fix. goRoute drops any route whose session is not the live one, and a page recorded
   // during the cold host hand-off carries an empty stamp, so without this Done would be inert exactly as Back was.
   has(app, /sessionId: sid \|\| remembered\.sessionId/, 'the remembered page is restamped with the live session');
-  has(app, /if \(!remembered\) \{ goTab\('modelhome'\); return; \}/, 'and with nothing remembered, Done goes to Overview');
+  has(app, /if \(!remembered\) \{ goTab\('plan'\); return; \}/, 'and with nothing remembered, Done goes to the Plan, the start page (Plan at the heart)');
   // A real model swap forgets it; the session merely becoming known does not.
   has(app, /if \(previousSid\) returnTo\.current = undefined;/,
     'only a real session change clears the return page, never the cold hand-off that simply learns the session');
@@ -115,8 +113,12 @@ test('an object in the route never takes the segment strip away', () => {
   hasNot(styles, /\.studio-arearow-object/, 'nor paints one');
   // The tool name is never on the row twice. With the strip up, the active segment is the tool's name, so the
   // fallback <strong> is the ONLY place toolLabel may render, and the ternary has exactly two arms.
-  has(app, /\? <AreaTabs group=\{group!\}[\s\S]{0,300}: <strong className="studio-arearow-tool">\{toolLabel\}<\/strong>\}/,
-    'the tool name renders only when there is no strip to say it');
+  has(app, /\? <AreaTabs group=\{group!\}[\s\S]{0,300}: nameRepeats \? null : <strong className="studio-arearow-tool">\{toolLabel\}<\/strong>\}/,
+    'the tool name renders only when there is no strip to say it, and not when the area already said it');
+  // Seven areas brought two whose single tool carries the area's own name, and the row printed both:
+  // "Overview › Overview", "Workflows › Workflows". The chevron goes with the half that was dropped.
+  has(app, /const nameRepeats = !showStrip && toolLabel === areaLabel;/, 'the row knows when it is about to say a name twice');
+  has(app, /\{areaLabel\}\{nameRepeats \? '' : ' ›'\}/, 'and drops the chevron with the name it was pointing at');
 });
 
 // The second exit. With Back retired, the area buttons are the standing navigation, and the one for the area you
@@ -124,46 +126,30 @@ test('an object in the route never takes the segment strip away', () => {
 test('the area you are already in is a way out, not a way back to the same page', () => {
   has(app, /routeRef\.current\.destination === area \? undefined : lastInArea\.current\[area\]/,
     'area memory is skipped for the area you are currently in');
-  has(app, /else goTab\(areaHomeTool\(area, hasPlanRef\.current\)\);/, 'so that click lands on the area home');
+  has(app, /else goTab\(areaHomeTool\(area\)\);/, 'so that click lands on the area home');
 });
 
-test('the page guide is behind the ⓘ on every page, including Overview', () => {
+test('the page guide has one door: Help > Help for this page (the ⓘ left the row on 8 October 2026)', () => {
   hasNot(app, /<PageGuide/, 'no page keeps an always-open guide block');
-  hasNot(help, /export function PageGuide/, 'the guide block is replaced, not merely unused');
-  has(app, /<PageNotesButton tab=\{tab\}/, 'every page gets the notes button');
-  has(help, /export function PageNotesButton/, 'the notes button owns the guide content');
-  has(help, /role="dialog"/, 'the notes open as a dialog, not a details block');
-  has(help, /aria-label="Page notes"/, 'the dialog is named for a screen reader');
-  has(help, /Getting started/, 'the Getting started steps move into the notes');
-  has(help, /guide\.lead/, 'so does the page sentence');
-  // Same keyboard contract as the header menus: Enter opens, Escape closes and returns focus.
-  has(help, /function PageNotesButton[\s\S]{0,2600}closeAndReturnFocus/,
-    'Escape must close the notes and put focus back on the ⓘ');
-  has(styles, /\.studio-page-notes\b/, 'the ⓘ rides the shared dense control scale');
-});
-
-// Kane asked for this explicitly on 2026-09-14: the guide's words MOVE behind the ⓘ, they are not reworded on the
-// way. Every string below is the one the old open guide block rendered (git show 9c55f4c5:…/help.tsx).
-test('the Getting started content is retained word for word', () => {
-  has(help, /\{guide\.lead\}/, 'the page sentence is the same string, not a paraphrase');
-  has(help, /<GettingStarted steps=\{guide\.start\} \/>/, 'the numbered steps are the same array');
-  has(help, />Getting started</, 'the heading still reads Getting started');
-  has(help, />Open Help above for more detail, related tasks and explanations of common terms\.</,
-    'the closing line is verbatim');
-  // Uppercasing it in CSS changes how the heading reads on screen, and "word for word" includes the word.
+  hasNot(app, /PageNotesButton/, 'the ⓘ page notes are not mounted on the row');
+  hasNot(help, /export function PageNotesButton/, 'and the popover is deleted, not merely unused');
+  hasNot(styles, /\.studio-page-notes\b/, 'with its rules');
+  has(help, /id: 'page', label: 'Help for this page'/, 'the slide-over keeps the guide: lead, steps and sections');
+  has(help, /\{h\.lead\}/, 'the page sentence is the guide lead');
+  has(help, /<GettingStarted steps=\{h\.start\} \/>/, 'with the same numbered steps');
   hasNot(help, /uppercase[^>]*>Getting started</, 'the heading is not transformed into GETTING STARTED');
 });
 
 // ---- 3. the bottom bar is one line --------------------------------------------------------------
-test('the bottom bar is one 34px line of three slots plus the pill', () => {
+test('the bottom bar is one 34px line: the model, Tests, Publish and the pill (shortened 8 Oct)', () => {
   has(contextbar, /minHeight: 34/, 'the bar is 34px, not 38');
-  has(contextbar, />Editing</);
-  has(contextbar, />Tests</);
-  has(contextbar, />Publish to</);
+  has(contextbar, /data-testid="connections-editing"/);
+  has(contextbar, />Tests:</);
+  has(contextbar, />Publish:</);
   has(contextbar, /connection-sync/, 'the sync pill stays');
-  has(contextbar, />Review changes →</, 'so does Review changes');
-  has(styles, /\.studio-contextbar\s*\{[^}]*grid-template-columns:[^;]*auto auto/,
-    'three roles then the pill then Review changes, on one row');
+  hasNot(contextbar, /Review changes|connection-hint/, 'Review changes and the per-slot hints left the bar');
+  has(styles, /\.studio-contextbar\s*\{[^}]*display: flex/,
+    'the model, then Tests, then Publish, then the pill, on one row');
   hasNot(styles, /@media \(max-width: 740px\)\s*\{\s*\.studio-contextbar \{ grid-template-columns: repeat\(2/,
     'the old multi-row stack is replaced by the Tests fold');
 });
@@ -176,9 +162,9 @@ test('under 900px Tests folds into the pill tooltip', () => {
   has(contextbar, /Tests: \$\{queryMain\}/, 'the folded Tests fact lands in the pill tooltip');
 });
 
-test('the unsaved warning may still take a second line', () => {
-  has(styles, /\.studio-contextbar \.connection-sync-warn/, 'the warning keeps its own row rule');
-  has(contextbar, /connection-sync-warn/, 'and the component still applies it while unsaved edits exist');
+test('the unsaved-edits warning is not in the bottom bar: Ask answers and query results carry it once', () => {
+  hasNot(contextbar, /connection-sync-warn|\{warn \? v\.detail/, 'the bar no longer prints the sentence');
+  has(read('webview/src/askdata.tsx'), /<QueryStalenessChip \/>/, 'the Ask answer says it, where it matters');
 });
 
 // ---- 4. Ctrl+scroll zoom ------------------------------------------------------------------------
@@ -225,10 +211,11 @@ test('a change says so for a second, a no-op reset does not', () => {
 });
 
 test('Help offers the same thing without a wheel', () => {
-  has(help, /section: 'Text size'/, 'the Help menu gains a Text size section');
+  has(help, /aria-label="Text size"/, 'the Help menu has one Text size row');
   has(help, /id: 'textsize-smaller', label: 'Smaller'/, 'Smaller');
   has(help, /id: 'textsize-larger', label: 'Larger'/, 'Larger');
-  has(help, /id: 'textsize-reset', label: 'Reset'/, 'and Reset');
+  has(help, /id: 'textsize-reset', label: 'Reset'/, 'and Reset, on the percentage between them');
+  hasNot(help, /section: 'Text size'/, 'with no heading of its own');
   has(app, /onTextSize=\{/, 'the shell wires them to the one zoom control');
 });
 
@@ -258,10 +245,13 @@ test('the last fold is decided by fit, not by a fixed width', () => {
     'the fixed-width cap on the deepest fold is gone');
   has(app, /if \(header\.clientWidth < FOLD_AREAS_BELOW\) return 4;/,
     'FOLD_AREAS_BELOW survives only as the early shortcut for a genuinely narrow header');
-  has(app, /for \(let level = 1; level <= 3; level\+\+\) if \(saving\[level\] >= overflow\) return level;/,
-    'levels 1 to 3 are still taken shallowest-first, so the header never folds more than it has to');
-  has(app, /saving\[4\]/, 'level 4 still has a measured saving of its own');
-  has(styles, /\n\.studio-groups \{[^}]*overflow: hidden/,
+  // Journey m11 F1: the per-level saving was an estimate, and it folded the areas at widths where level 3 fitted.
+  // Each level is now tried on the real layout, shallowest first; shell-journey.mjs sweeps the widths.
+  has(app, /for \(let level = 0; level <= 3; level\+\+\) \{\s*header\.dataset\.fold = String\(level\);\s*if \(fits\(\)\) return level;/,
+    'levels 0 to 3 are tried shallowest-first on the real layout, so the header never folds more than it has to');
+  hasNot(app, /saving\[/, 'no hand-summed saving estimate decides a fold any more');
+  has(app, /new MutationObserver\(schedule\)/, 'content that grows without a resize re-measures the fold');
+  has(styles, /\n\.studio-groups \{[^}]*overflow: clip; overflow-clip-margin: var\(--sem-space-2\)/,
     'and the areas nav clips its own buttons instead of painting them outside its box');
 });
 
@@ -283,17 +273,13 @@ test('a popover is placed in one coordinate space, the zoomed root its own', () 
   has(toolrow, /export function anchorUnder/, 'and one shared placement for every anchored popover');
   has(toolrow, /b\.bottom \/ z/, 'the measured rect is divided by the zoom before it becomes a CSS pixel');
   has(toolrow, /closest\('\.studio-root'\)/, 'and the clamp is the zoomed root, not the raw viewport');
-  has(app, /anchorUnder/, 'the Create menu is placed by the same helper as the tool row menu');
 });
 
-test('the Create menu is not rendered inside the strip that scrolls', () => {
-  // .area-tabs is overflow-x: auto so the segment strip shrinks instead of wrapping. An absolutely positioned
-  // menu inside it made the strip scrollable in both directions, and focusing the highlighted item scrolled the
-  // strip to reveal it, leaving one scrolled segment and two scrollbars. Kane hit this on his first click.
-  hasNot(app, /area-tabs-create-menu absolute left-0 top-full/, 'the absolute-inside-the-scroller menu is gone');
-  has(app, /createPortal/, 'the menu is portalled out to the Studio root');
-  has(app, /preventScroll: true/, 'and focusing an item can never scroll a container under it');
+test('the Edit strip has no menu, so nothing inside it can scroll the row', () => {
+  // The Advanced modelling dropdown was portalled out of the strip because a menu inside an overflow-x scroller
+  // made the strip scroll both ways (Kane, first click on the Yoga). The dropdown is gone (8 October 2026), the
+  // menu code with it, and the strip keeps the rules that stop a vertical scrollbar.
+  hasNot(app, /AdvancedFoldTab|area-tabs-create/, 'no menu is rendered in or beside the strip');
   has(styles, /\.area-tabs \{[^}]*overflow-x: auto/, 'the strip still scrolls rather than wrapping');
   has(styles, /\.area-tabs \{[^}]*overflow-y: hidden/, 'but nothing inside it can add a vertical scrollbar');
-  has(styles, /\.area-tabs-create-menu \{[^}]*position: fixed/, 'the menu is placed, not flowed');
 });

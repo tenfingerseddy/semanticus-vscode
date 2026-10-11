@@ -311,13 +311,13 @@ namespace Semanticus.Tests
         public async Task Seeds_op_extracts_verified_answers_binds_the_pack_and_dedups_saved_questions()
         {
             var dir = TempDir("seeds");
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var sessions = new SessionManager();
             try
             {
                 var home = Path.Combine(dir, "home");
                 Directory.CreateDirectory(home);
-                Environment.SetEnvironmentVariable("USERPROFILE", home);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
 
                 // A temp COPY of the vendored model with the Prep-for-AI disk anchors beside it (opening the
                 // vendored bim directly would write sidecars into the repo).
@@ -356,7 +356,7 @@ namespace Semanticus.Tests
             finally
             {
                 sessions.Dispose();
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(dir, true); } catch { }
             }
         }
@@ -370,13 +370,13 @@ namespace Semanticus.Tests
             // computed number to confirm-and-record, pinned at kernel level above). Persisting without an
             // oracle stays refused: a SAVED question must always grade as a regression check.
             var dir = TempDir("flow");
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var sessions = new SessionManager();
             try
             {
                 var home = Path.Combine(dir, "home");
                 Directory.CreateDirectory(home);
-                Environment.SetEnvironmentVariable("USERPROFILE", home);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
                 var copy = Path.Combine(dir, "AdventureWorks.bim");
                 File.Copy(TestModels.FindBim(), copy);
                 File.WriteAllText(Path.Combine(dir, "definition.pbism"), "{}");
@@ -402,7 +402,7 @@ namespace Semanticus.Tests
             finally
             {
                 sessions.Dispose();
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(dir, true); } catch { }
             }
         }
@@ -414,11 +414,11 @@ namespace Semanticus.Tests
         private static async Task<(LocalEngine engine, SessionManager sessions, string ws, string origHome)> GateModelAsync()
         {
             var ws = TempDir("gate");
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(ws, "home");
             Directory.CreateDirectory(home);
             Directory.CreateDirectory(Path.Combine(ws, ".semanticus"));
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
             var sessions = new SessionManager();
             var e = new LocalEngine(sessions, new Fake(true), ws);
             await e.CreateModelAsync("GateModel", 1604);
@@ -431,7 +431,7 @@ namespace Semanticus.Tests
         private static void Cleanup(SessionManager sessions, string ws, string origHome)
         {
             sessions.Dispose();
-            Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
             try { Directory.Delete(ws, true); } catch { }
         }
 

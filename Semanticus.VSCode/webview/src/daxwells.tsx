@@ -1,18 +1,26 @@
-// Power-BI-style field wells for DAX Lab's Visual mode. Drag fields from the Fields rail into Rows / Columns
-// / Values / Filters; the wells compose a SUMMARIZECOLUMNS (+ CALCULATETABLE) query that runs through the SAME
+// The field wells' model and query builder for Queries' Build view (the wells' UI is querywells.tsx). Drag fields from the Fields rail into Rows / Columns
+// / Measures / Filters; the wells compose a SUMMARIZECOLUMNS (+ CALCULATETABLE) query that runs through the SAME
 // runDax path the editor uses — so a visual IS a query you can benchmark. Filters reuse the grid's filter
 // popovers (date range/relative, numeric, text) and translate to DAX boolean predicates, so "filter context"
 // is something you build by dragging, not hand-typing.
 
-import { useState } from 'react';
 import type { DaxModel } from './dax';
-import { ColumnFilter, FilterFamily, FilterPopover, describe } from './gridfilter';
-import { uiLabel } from './copy';
+import type { ColumnFilter, FilterFamily } from './gridfilter';
 
 export type FieldKind = 'measure' | 'column' | 'table';
-export interface WellField { kind: FieldKind; ref: string; name: string; table?: string }
+// `sortBy`: the column the model orders this field by (its sort-by column, same table). It is read from the model, never
+// typed by the person, and it travels on the field so buildQuery can bring the column and order by it (UAT N1).
+export interface WellField { kind: FieldKind; ref: string; name: string; table?: string; sortBy?: { ref: string; name: string } }
 export interface PivotFilter { ref: string; name: string; family: FilterFamily; filter: ColumnFilter }
-export interface PivotConfig { rows: WellField[]; cols: WellField[]; values: WellField[]; filters: PivotFilter[] }
+// `context`: filters the wells cannot hold, as the engine wrote them (a question's own filters, askdata-model.ts
+// pivotConfigOf). Never part of the person's wells; it only travels with a result so the number's context is whole.
+export interface ContextLine { name: string; value: string; dax: string }
+export interface PivotConfig { rows: WellField[]; cols: WellField[]; values: WellField[]; filters: PivotFilter[]; context?: ContextLine[] }
+
+/** Every filter a result was computed under, as DAX: the filter well's lines, then any context the wells cannot hold. */
+export function contextFilterLines(c: PivotConfig): string[] {
+  return [...c.filters.map(filterToDax).filter((x): x is string => !!x), ...(c.context ?? []).map((l) => l.dax)];
+}
 
 export const EMPTY_CONFIG: PivotConfig = { rows: [], cols: [], values: [], filters: [] };
 
@@ -38,6 +46,55 @@ export function familyByName(name: string): FilterFamily {
 }
 
 const esc = (s: string) => s.replace(/"/g, '""');
+
+/** Each row and column field's sort-by from the model (`sortByColumn`, a name in the field's own table). A field the model
+ *  does not list keeps what it carried: a model not loaded yet says nothing, and nothing is invented. */
+export function withSortBy(c: PivotConfig, model: DaxModel): PivotConfig {
+  if (!model.columns.length) return c;
+  const known = new Map(model.columns.map((m) => [`${m.table}|${m.name}`, m.sortByColumn]));
+  const one = (f: WellField): WellField => {
+    if (f.kind !== 'column' || !f.table || !known.has(`${f.table}|${f.name}`)) return f;
+    const by = known.get(`${f.table}|${f.name}`);
+    const { sortBy: _drop, ...rest } = f;
+    return by && by !== f.name ? { ...rest, sortBy: { ref: `'${f.table}'[${by}]`, name: by } } : rest;
+  };
+  const rows = c.rows.map(one), cols = c.cols.map(one);
+  const same = (a: WellField[], b: WellField[]) => a.every((f, i) => f === b[i]);
+  return same(rows, c.rows) && same(cols, c.cols) ? c : { ...c, rows, cols };
+}
+
+/** The group-by fields in query order (rows, then columns), the sort-by columns the query brings after them, and the
+ *  position in the group-by list each field's sort-by answer sits at. A sort-by column that is itself a well field is
+ *  that field's own column, not brought twice. */
+export function sortPlan(c: PivotConfig): { group: WellField[]; extra: { ref: string }[]; source: (number | null)[] } {
+  const group = [...c.rows, ...c.cols];
+  const extra: { ref: string }[] = [];
+  const source = group.map((f) => {
+    if (!f.sortBy) return null;
+    const own = group.findIndex((g) => g.ref === f.sortBy!.ref);
+    if (own >= 0) return own;
+    let at = extra.findIndex((x) => x.ref === f.sortBy!.ref);
+    if (at < 0) { extra.push({ ref: f.sortBy.ref }); at = extra.length - 1; }
+    return group.length + at;
+  });
+  return { group, extra, source };
+}
+
+/** Every column a wells query groups by, in query order: the fields, then the sort-by columns it brought. A grouped column
+ *  is in each cell's filter context, so anything that recomputes a cell (Explain this number) must group by all of them. */
+export function queryGroupRefs(c: PivotConfig): string[] {
+  const { group, extra } = sortPlan(c);
+  return [...group.map((f) => f.ref), ...extra.map((x) => x.ref)];
+}
+
+/** The ORDER BY of a query: every sort-by column in field order. A model-ordered field is shown in the model's order, as
+ *  Power BI does it, so a fiscal "Jul to Jun" month field never runs January first. */
+function orderBy(c: PivotConfig): string {
+  const { group, source } = sortPlan(c);
+  const refs: string[] = [];
+  group.forEach((f, i) => { if (source[i] !== null && f.sortBy && !refs.includes(f.sortBy.ref)) refs.push(f.sortBy.ref); });
+  return refs.length ? `\nORDER BY ${refs.join(', ')}` : '';
+}
 
 // One DAX boolean predicate for a column filter — the bridge that turns a dropped filter into filter context.
 export function filterToDax(pf: PivotFilter): string | null {
@@ -112,28 +169,28 @@ function daxDate(iso: string): string {
 
 // Build the runnable EVALUATE query from the wells.
 export function buildQuery(c: PivotConfig): string {
-  const group = [...c.rows, ...c.cols].map((f) => f.ref);
+  const group = queryGroupRefs(c);
   const valExt = c.values.map((v) => `"${v.name}", ${v.ref}`);
   const inner = [...group, ...valExt];
   if (!inner.length) return 'EVALUATE\nROW("(drag fields into the wells)", BLANK())';
   const sc = `SUMMARIZECOLUMNS(\n    ${inner.join(',\n    ')}\n)`;
   const filters = c.filters.map(filterToDax).filter((x): x is string => !!x);
-  if (!filters.length) return `EVALUATE\n${sc}`;
+  if (!filters.length) return `EVALUATE\n${sc}${orderBy(c)}`;
   const indented = sc.split('\n').map((l, i) => (i === 0 ? l : '    ' + l)).join('\n');
-  return `EVALUATE\nCALCULATETABLE(\n    ${indented},\n    ${filters.join(',\n    ')}\n)`;
+  return `EVALUATE\nCALCULATETABLE(\n    ${indented},\n    ${filters.join(',\n    ')}\n)${orderBy(c)}`;
 }
 
 // Like buildQuery, but wraps each Values measure in EVALUATEANDLOG so the Debug tab captures a labelled
 // snapshot per measure — lets "Log each measure" produce trace output without the user hand-editing DAX.
 export function buildInstrumentedQuery(c: PivotConfig): string {
   if (!c.values.length) return buildQuery(c);
-  const group = [...c.rows, ...c.cols].map((f) => f.ref);
+  const group = queryGroupRefs(c);
   const valExt = c.values.map((v) => `"${v.name}", EVALUATEANDLOG(${v.ref}, "${v.name}")`);
   const sc = `SUMMARIZECOLUMNS(\n    ${[...group, ...valExt].join(',\n    ')}\n)`;
   const filters = c.filters.map(filterToDax).filter((x): x is string => !!x);
-  if (!filters.length) return `EVALUATE\n${sc}`;
+  if (!filters.length) return `EVALUATE\n${sc}${orderBy(c)}`;
   const indented = sc.split('\n').map((l, i) => (i === 0 ? l : '    ' + l)).join('\n');
-  return `EVALUATE\nCALCULATETABLE(\n    ${indented},\n    ${filters.join(',\n    ')}\n)`;
+  return `EVALUATE\nCALCULATETABLE(\n    ${indented},\n    ${filters.join(',\n    ')}\n)${orderBy(c)}`;
 }
 
 // Sensible, RUNNABLE defaults from the live model — never dead Contoso examples. First measure → Values,
@@ -152,119 +209,4 @@ export function seedConfig(model: DaxModel): PivotConfig {
     values: meas ? [{ kind: 'measure', ref: `[${meas.name}]`, name: meas.name, table: meas.table }] : [],
     filters: [],
   };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UI
-
-const FI: Record<FieldKind | 'date', { glyph: string; color: string }> = {
-  measure: { glyph: 'fx', color: 'var(--sem-accent)' },
-  column: { glyph: '▭', color: '#9cdcfe' },
-  table: { glyph: '▦', color: '#4ec9b0' },
-  date: { glyph: '▭', color: 'var(--sem-warn)' },
-};
-function FieldGlyph({ f }: { f: WellField | { kind: FieldKind; name: string } }) {
-  const isDate = f.kind === 'column' && DATE_RE.test(f.name);
-  const g = isDate ? FI.date : FI[f.kind];
-  return <span style={{ color: g.color, fontStyle: g.glyph === 'fx' ? 'italic' : 'normal', fontWeight: g.glyph === 'fx' ? 700 : 400, fontSize: 11, display: 'inline-flex', width: 13, justifyContent: 'center' }}>{g.glyph}</span>;
-}
-
-const WELL_META: { key: keyof Omit<PivotConfig, 'filters'> | 'filters'; label: string; accepts: FieldKind[]; role: string }[] = [
-  { key: 'rows', label: 'Rows', accepts: ['column'], role: '#9cdcfe' },
-  { key: 'cols', label: 'Columns', accepts: ['column'], role: '#9cdcfe' },
-  { key: 'values', label: 'Values', accepts: ['measure'], role: 'var(--sem-accent)' },
-  { key: 'filters', label: 'Filters', accepts: ['column'], role: 'var(--sem-accent)' },
-];
-
-export function FieldWells({ config, onConfig, onCompare }: { config: PivotConfig; onConfig: (c: PivotConfig) => void; onCompare?: (valueRef: string) => void }) {
-  const [over, setOver] = useState<string | null>(null);
-  const [editFilter, setEditFilter] = useState<{ idx: number; x: number; y: number } | null>(null);
-  const [dropMsg, setDropMsg] = useState<string | null>(null);
-
-  const drop = (wellKey: string, accepts: FieldKind[]) => (e: React.DragEvent) => {
-    e.preventDefault(); setOver(null);
-    const f = parseRef(e.dataTransfer.getData('text/plain'));
-    if (!f) return;
-    if (!accepts.includes(f.kind)) {
-      setDropMsg(`${wellKey === 'values' ? 'Values' : wellKey === 'filters' ? 'Filters' : uiLabel(wellKey)} takes ${accepts.map((kind) => uiLabel(kind)).join(' or ')}, not ${uiLabel(f.kind).toLowerCase()}`);
-      setTimeout(() => setDropMsg(null), 2200);
-      return;
-    }
-    if (wellKey === 'filters') {
-      if (config.filters.some((x) => x.ref === f.ref)) return;
-      const family = familyByName(f.name);
-      const init = defaultFilter(family);
-      onConfig({ ...config, filters: [...config.filters, { ref: f.ref, name: f.name, family, filter: init }] });
-    } else {
-      const arr = config[wellKey as 'rows' | 'cols' | 'values'];
-      if (arr.some((x) => x.ref === f.ref)) return;
-      onConfig({ ...config, [wellKey]: [...arr, f] });
-    }
-  };
-
-  const removeAt = (wellKey: keyof PivotConfig, i: number) => {
-    const arr = config[wellKey] as unknown[];
-    onConfig({ ...config, [wellKey]: arr.filter((_, j) => j !== i) });
-  };
-
-  return (
-    <div className="relative">
-      <div className="grid gap-2.5 p-3" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-        {WELL_META.map((w) => {
-          const isOver = over === w.key;
-          return (
-            <div key={w.key} onDragOver={(e) => { e.preventDefault(); setOver(w.key); }} onDragLeave={() => setOver((o) => (o === w.key ? null : o))} onDrop={drop(w.key, w.accepts)}
-              className="rounded-[9px] px-2.5 py-2" style={{ minHeight: 56, background: 'var(--sem-surface)', border: `1px dashed ${isOver ? 'var(--sem-accent)' : 'var(--sem-border-strong, var(--sem-border))'}`, boxShadow: isOver ? '0 0 0 2px var(--sem-accent-soft) inset' : 'none' }}>
-              <div className="flex items-center gap-1.5 mb-1.5 text-[9.5px] font-bold uppercase" style={{ letterSpacing: '.09em', color: 'var(--sem-muted)' }}>
-                <span style={{ width: 6, height: 6, borderRadius: 2, background: w.role }} />{w.label}
-              </div>
-              <div className="flex flex-wrap gap-1.5 items-center">
-                {w.key === 'filters'
-                  ? config.filters.map((pf, i) => (
-                    <span key={pf.ref} className="inline-flex items-center gap-1.5 text-[11.5px] rounded-[7px] pl-2 pr-1.5 py-0.5" style={{ background: 'var(--sem-accent-soft)', border: '1px solid var(--sem-accent-line)' }}>
-                      <FieldGlyph f={{ kind: 'column', name: pf.name }} />
-                      <button onClick={(e) => { const r = (e.currentTarget as HTMLElement).getBoundingClientRect(); setEditFilter({ idx: i, x: r.left, y: r.bottom + 4 }); }} className="inline-flex items-center gap-1" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }} title="Edit filter">
-                        <b style={{ fontWeight: 600 }}>{pf.name}</b><span style={{ color: 'color-mix(in srgb,var(--sem-fg) 72%, var(--sem-accent))' }}>{describe(pf.filter)}</span>
-                      </button>
-                      <span onClick={() => removeAt('filters', i)} className="cursor-pointer" style={{ color: 'var(--sem-muted)', fontSize: 11 }}>✕</span>
-                    </span>
-                  ))
-                  : config[w.key as 'rows' | 'cols' | 'values'].map((f, i) => (
-                    <span key={f.ref} className="inline-flex items-center gap-1.5 text-[11.5px] rounded-[7px] pl-2 pr-1.5 py-0.5" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-                      <FieldGlyph f={f} /><span>{f.name}</span>
-                      {w.key === 'values' && onCompare && <span onClick={() => onCompare(f.ref)} title="Verify a rewrite of this measure across the matrix" className="cursor-pointer" style={{ color: 'var(--sem-muted)', fontSize: 11 }}>⇄</span>}
-                      <span onClick={() => removeAt(w.key as keyof PivotConfig, i)} className="cursor-pointer" style={{ color: 'var(--sem-muted)', fontSize: 11 }}>✕</span>
-                    </span>
-                  ))}
-                {((w.key === 'filters' && config.filters.length === 0) || (w.key !== 'filters' && config[w.key as 'rows' | 'cols' | 'values'].length === 0)) && (
-                  <span className="text-[11px]" style={{ color: 'var(--sem-muted)', opacity: .7 }}>drag {w.accepts.join('/')} here</span>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {dropMsg && <div className="absolute left-3 -bottom-5 text-[11px]" style={{ color: 'var(--sem-warn)' }}>{dropMsg}</div>}
-
-      {editFilter && config.filters[editFilter.idx] && (
-        <>
-          <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setEditFilter(null)} />
-          <div className="fixed" style={{ zIndex: 50, top: editFilter.y, left: Math.max(8, Math.min(editFilter.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 296)) }} onClick={(e) => e.stopPropagation()}>
-            <FilterPopover family={config.filters[editFilter.idx].family} name={config.filters[editFilter.idx].name} initial={config.filters[editFilter.idx].filter}
-              onApply={(filter) => { const next = [...config.filters]; next[editFilter.idx] = { ...next[editFilter.idx], filter }; onConfig({ ...config, filters: next }); setEditFilter(null); }}
-              onClear={() => { removeAt('filters', editFilter.idx); setEditFilter(null); }} />
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function defaultFilter(family: FilterFamily): ColumnFilter {
-  switch (family) {
-    case 'number': return { kind: 'number', op: 'between', a: null, b: null };
-    case 'date': return { kind: 'date', mode: 'rel', n: 6, unit: 'month' };
-    case 'boolean': return { kind: 'boolean', value: true };
-    default: return { kind: 'text', op: 'contains', value: '', picked: [] };
-  }
 }

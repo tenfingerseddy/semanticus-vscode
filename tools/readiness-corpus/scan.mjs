@@ -2,7 +2,7 @@
 // Readiness corpus scanner — makes the "median community model grades X" claim reproducible.
 //
 //   node scan.mjs fetch    shallow-clone every corpus repo into work/ (git required)
-//   node scan.mjs scan     open each model OFFLINE in the engine, ai_readiness_summary, write results
+//   node scan.mjs scan     open each model OFFLINE in the engine, ai_readiness_scan (detail summary), write results
 //   node scan.mjs report   grade distribution + median -> results/corpus-report.md
 //
 // Scans are offline (TMDL/BIM metadata only — no data, no credentials, nothing executed), so the
@@ -10,10 +10,10 @@
 // fetched); results/ commits the raw per-model scores next to the summary.
 
 import { spawn, execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const MODELS = JSON.parse(readFileSync(join(__dirname, 'models.json'), 'utf8'));
@@ -42,7 +42,10 @@ class Mcp {
         let dll = process.env.SEMANTICUS_ENGINE_DLL || MODELS.engineDll;
         if (dll && !existsSync(dll)) dll = join(__dirname, dll);   // config path is relative to this folder
         if (!dll || !existsSync(dll)) throw new Error('Set SEMANTICUS_ENGINE_DLL (path to Semanticus.Engine.dll).');
-        const child = spawn('dotnet', [dll, '--mcp'], { stdio: ['pipe', 'pipe', 'inherit'] });
+        // A benchmark run keeps its per-user state in a scratch folder, never the real ~/.semanticus (27 Sep),
+        // unless the caller already chose one.
+        const env = { ...process.env, SEMANTICUS_HOME: process.env.SEMANTICUS_HOME || mkdtempSync(join(tmpdir(), 'sem-home-corpus-')) };
+        const child = spawn('dotnet', [dll, '--mcp'], { stdio: ['pipe', 'pipe', 'inherit'], env });
         const mcp = new Mcp(child);
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', d => mcp._onData(d));
@@ -317,7 +320,7 @@ async function cmdScan() {
         try {
             const open = await mcp.tool('open_model', { path: target });
             if (open && open.error) throw new Error(open.error);
-            const s = await mcp.tool('ai_readiness_summary', {});
+            const s = await mcp.tool('ai_readiness_scan', { detail: 'summary' });
             // ReadinessSummary fields: Grade, Overall (the 0-100 score), TotalFindings — casing per serializer
             rows.push({
                 repo: m.repo, path: m.path, kind: m.kind, commit: provenance.commit,

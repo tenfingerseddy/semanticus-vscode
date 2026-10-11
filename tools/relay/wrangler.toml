@@ -1,0 +1,70 @@
+# Semanticus decision relay. See README.md and docs/redesign/contracts/relay.md.
+#
+# This worker is deliberately separate from tools/fulfillment. It holds the licence VERIFICATION key and
+# the Jev house key. It must never be given the licence signing key, the Stripe keys, or any issuance
+# route: that separation is the reason a hole here cannot mint a licence or move money.
+name = "semanticus-relay"
+main = "worker.mjs"
+compatibility_date = "2026-07-01"
+
+# The production address. A custom domain, so `wrangler deploy` creates the DNS record and the certificate
+# itself; semanticus.com.au must already be a zone on the same Cloudflare account. This is the engine's
+# JevDecisionOracle.DefaultRelayBaseUrl, and tools/relay/test/deploy-config.test.mjs fails if they drift.
+routes = [
+  { pattern = "relay.semanticus.com.au", custom_domain = true },
+]
+
+# The reconcile job. Every fifteen minutes it settles reservations left possibly charged for an hour,
+# releases reservations that never left the relay, and prunes finished entries past their retention.
+[triggers]
+crons = ["*/15 * * * *"]
+
+# One ledger object per budget identity, plus one named "house".
+[[durable_objects.bindings]]
+name = "LEDGER"
+class_name = "LicenceLedger"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LicenceLedger"]
+
+# The relay's own control plane: the kill switches and the sweep's index of live ledgers.
+# Create once with: npx wrangler kv namespace create RELAY_KV
+[[kv_namespaces]]
+binding = "RELAY_KV"
+id = "9d873b50cd0e4e17aa656b966fc5eda7"
+
+# The billing side's subscription status map, { sid -> status }, READ ONLY from here. The relay never
+# writes to it.
+#
+# CONFIRMED 21 September 2026 by the fulfilment lane: the key is `sid:<sid>` (worker.mjs:297 reads exactly
+# what tools/fulfillment/worker/stripe.mjs writes) and the namespace is that worker's **BILLING_KV**, not
+# FULFILL_KV. This id held FULFILL_KV's, which is the Paddle sale records; reading the wrong namespace is
+# not a loud failure, it is an empty one, and an empty status row reads as "not inactive", so a cancelled
+# subscriber would have been served. Paste BILLING_KV's real id here, the same one that goes in
+# tools/fulfillment/worker/wrangler.toml, before deploying.
+[[kv_namespaces]]
+binding = "STATUS_KV"
+id = "c36e4692c7394434ba7aa0b687e3d3b1"
+
+[vars]
+# The licence verification key: the SPKI base64 PUBLIC key, the same string the shipped engine embeds as
+# LicenseEntitlement.EmbeddedPublicKey. Public by nature, so a var rather than a secret. deploy-config.test.mjs
+# fails if it stops matching the engine.
+RELAY_PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4UzdpLYvBWYfMnPiArcoCmJ7H1V6pV4nOf9jJmZRu31j1gf5B9LXHKCXmBFQL7lJxINjweMi8inaqLFr6du1aQ=="
+# The served model, pinned. The caller never chooses it.
+RELAY_MODEL = "jev-latest"
+RELAY_UPSTREAM = "https://api.typesafe.ai/v1/systemone"
+# The house-wide cap is the per-licence cap (RELAY_LICENCE_TOKENS below) times this count. Start it at the
+# real number of paying licences, not an aspiration: it is the blast radius of a bug or a stolen token.
+# At 80 licences the house cap is 80 x 47,600,000 = 3.808 billion input tokens, about USD 160 a month.
+RELAY_LICENCE_COUNT = "80"
+# The per-licence monthly cap, in input tokens. Kane, 1 October 2026 ("dont put silly allowances on Jev. it
+# basically cost nothing ... the batching is the best mitigation not caps"): each user gets USD 2 a month,
+# which at Jev's USD 0.042 per million input tokens (output is free) is 47,600,000 input tokens (USD 1.9992).
+# This replaces the 26 September choice of 5,000,000 a licence and a USD 100 house cap. Absent = the same
+# 47,600,000 (LIMITS.licenceMonthlyTokens). Change it only on Kane's word.
+RELAY_LICENCE_TOKENS = "47600000"
+
+# Secrets (npx wrangler secret put <NAME>, pasted interactively, never in this file):
+#   JEV_HOUSE_KEY   the Jev vendor key. The only credential this worker holds.

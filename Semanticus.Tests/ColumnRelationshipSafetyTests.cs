@@ -48,6 +48,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Create_relationship_accepts_matching_types_and_mcp_door_uses_the_same_refusal()
         {
@@ -71,8 +72,32 @@ namespace Semanticus.Tests
             }
         }
 
+        // ---- A table cannot relate to itself (Power BI refuses it at deploy) ---------------------
+
+        [Fact]
+        public async Task A_relationship_from_a_table_to_itself_is_refused_on_both_doors_without_a_revision()
+        {
+            var (engine, sessions) = await NewModelAsync();
+            using (engine)
+            {
+                await engine.CreateTableAsync("Employee", "human");
+                var id = await engine.CreateColumnAsync("table:Employee", "EmployeeId", "Int64", "EmployeeId", "human");
+                var boss = await engine.CreateColumnAsync("table:Employee", "ManagerId", "Int64", "ManagerId", "human");
+
+                var before = sessions.Current.Revision;
+                var viaEngine = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => engine.CreateRelationshipAsync(boss, id, null, true, "human"));
+                Assert.Contains("two different tables", viaEngine.Message, StringComparison.OrdinalIgnoreCase);
+                var viaMcp = await Assert.ThrowsAsync<InvalidOperationException>(
+                    () => McpTools.CreateRelationship(engine, boss, id, "OneDirection", true));
+                Assert.Contains("two different tables", viaMcp.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Equal(before, sessions.Current.Revision);
+            }
+        }
+
         // ---- D-040 one active relationship per table pair ---------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Second_active_relationship_on_the_same_tables_is_refused()
         {
@@ -100,6 +125,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Activating_a_second_relationship_on_the_same_tables_is_refused()
         {
@@ -182,6 +208,7 @@ namespace Semanticus.Tests
 
         // ---- D-053 sort by column on the grid ---------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Sort_by_column_is_readable_and_settable_on_the_shared_grid_surface()
         {
@@ -287,6 +314,7 @@ namespace Semanticus.Tests
 
         // ---- D-156 rename report-impact warning -------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rename_warns_that_reports_are_not_rewritten()
         {

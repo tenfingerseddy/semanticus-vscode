@@ -1,4 +1,4 @@
-FILE Semanticus.Engine/workflows/governed-rename.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/governed-rename.md
   error=<null>
   source=stock file=governed-rename.md
   name=governed-rename kind=<null> version=2 strictness=hard

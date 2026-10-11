@@ -75,6 +75,7 @@ namespace Semanticus.Tests
             Assert.True(hit.Replaceable);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dax_matches_are_classified_into_reference_literal_and_comment()
         {
@@ -113,6 +114,7 @@ namespace Semanticus.Tests
             Assert.Contains("[SR_Col]", await MeasureExpr("SR_Block"));   // nothing changed
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Replace_targeting_a_string_literal_span_edits_only_that_literal()
         {
@@ -137,6 +139,7 @@ namespace Semanticus.Tests
             Assert.Contains("// SR_Col comment", after); // the comment is untouched (we scoped to one span)
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Replace_in_a_name_renames_and_FormulaFixup_rewrites_the_reference()
         {
@@ -200,6 +203,7 @@ namespace Semanticus.Tests
         // mentions (in a comment) — the fixture for the M-breakage rename warning.
         private const string MWarnFixtureBim = """{"name":"MWarnModel","compatibilityLevel":1500,"model":{"defaultPowerBIDataSourceVersion":"powerBI_V3","tables":[{"name":"Facts","columns":[{"name":"Id","dataType":"int64","sourceColumn":"Id"}],"partitions":[{"name":"Facts","mode":"import","source":{"type":"m","expression":"let Source = #table(type table [Id = Int64.Type], {}) /* references SR_MWarnToken here */ in Source"}}],"measures":[{"name":"SR_MWarnToken","expression":"1"}]}]}}""";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Replace_in_a_description_is_a_single_undoable_plain_text_edit()
         {

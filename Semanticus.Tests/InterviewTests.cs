@@ -31,14 +31,14 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
-        // Redirect USERPROFILE so the global-scope fallback (LocateInterviewQuestion searches project → global)
+        // Redirect SEMANTICUS_HOME so the global-scope fallback (LocateInterviewQuestion searches project → global)
         // lands in a temp home, never the real one; caller restores it.
         private static string RedirectHome(string ws)
         {
-            var orig = Environment.GetEnvironmentVariable("USERPROFILE");
+            var orig = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(ws, "home");
             Directory.CreateDirectory(home);
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
             return orig;
         }
 
@@ -61,7 +61,7 @@ namespace Semanticus.Tests
 
         private static void Cleanup(string dir, string origHome)
         {
-            Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
             try { Directory.Delete(dir, true); } catch { }
         }
 
@@ -125,6 +125,84 @@ namespace Semanticus.Tests
                 Assert.Equal(2, listed.SkippedCorruptLines);
                 Assert.Single(listed.Questions, x => x.Id == q.Id);          // the good line still replays
                 Assert.Contains("not bricked", listed.Note);
+            }
+            finally { Cleanup(ws, home); }
+        }
+
+        // A8-2: the pin form replaces a saved question with the scalar the person typed. When the question changed under the open form (another writer
+        // gave it a different query, or a trusted table answer), the replacement is refused inside the write and the stored question is left as it is.
+        [Fact]
+        public async Task Pinning_an_answer_is_refused_when_the_question_is_no_longer_the_one_the_person_saw()
+        {
+            var (e, ws, home) = await MakeWs();
+            try
+            {
+                const string Query = "EVALUATE ROW(\"Sales\", [Total Sales])";
+                var q = await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "199", null, false, null, "user", "project", "human");
+                string Seen(string question, string query) => System.Text.Json.JsonSerializer.Serialize(new
+                { question, tier = "value", query, scalarExpr = (string)null, paraphraseExpr = (string)null, groupBy = new string[0], filters = new string[0], expectedValue = "199", expectedMatrix = new string[0][] });
+
+                // another writer replaces it with a grouped question and a trusted table answer
+                await e.AddInterviewQuestionAsync("Sales by year?", "value", "EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Sales\", [Total Sales])", null, null,
+                    new[] { "Date[Year]" }, null, null, "[[\"2024\",\"99\"],[\"2025\",\"100\"]]", false, null, "user", "project", "human", q.Id);
+
+                // the person's form still shows "Total sales?": the pin names that question as the one it replaces, and is refused
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "200", null, false, null, "user", "project", "human", q.Id, Seen("Total sales?", Query)));
+                Assert.Contains("changed", ex.Message);
+                var stored = (await e.ListInterviewQuestionsAsync("project")).Questions.Single(x => x.Id == q.Id);
+                Assert.Equal("Sales by year?", stored.Question);
+                Assert.NotNull(stored.ExpectedMatrix);
+                Assert.Equal(2, stored.ExpectedMatrix.Length);
+
+                // a pin that names the question as it now stands, with a matrix still there, would also drop the table answer: refused too
+                var now = Seen("Sales by year?", "EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Sales\", [Total Sales])");
+                await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    e.AddInterviewQuestionAsync("Sales by year?", "value", "EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Sales\", [Total Sales])", null, null, new[] { "Date[Year]" }, null, "200", null, false, null, "user", "project", "human", q.Id, now));
+            }
+            finally { Cleanup(ws, home); }
+        }
+
+        // Join 13, J-I1: the basis names the value the form opened with. Another writer pinning 250 on the SAME question while the form is open
+        // must stop a Save of 200, and the stored 250 stays.
+        [Fact]
+        public async Task Pinning_an_answer_is_refused_when_another_writer_pinned_a_different_value_meanwhile()
+        {
+            var (e, ws, home) = await MakeWs();
+            try
+            {
+                const string Query = "EVALUATE ROW(\"Sales\", [Total Sales])";
+                var q = await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "199", null, false, null, "user", "project", "human");
+                string Seen(string value) => System.Text.Json.JsonSerializer.Serialize(new
+                { question = "Total sales?", tier = "value", query = Query, scalarExpr = (string)null, paraphraseExpr = (string)null, groupBy = new string[0], filters = new string[0], expectedValue = value, expectedMatrix = new string[0][] });
+
+                // another writer pins 250 on the same question (same text, same query)
+                await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "250", null, false, null, "user", "project", "human", q.Id);
+
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                    e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "200", null, false, null, "user", "project", "human", q.Id, Seen("199")));
+                Assert.Contains("changed", ex.Message);
+                Assert.Equal("250", (await e.ListInterviewQuestionsAsync("project")).Questions.Single(x => x.Id == q.Id).ExpectedValue);
+
+                // the person has now seen 250: a pin on that basis writes
+                var pinned = await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "200", null, false, null, "user", "project", "human", q.Id, Seen("250"));
+                Assert.Equal("200", pinned.ExpectedValue);
+            }
+            finally { Cleanup(ws, home); }
+        }
+
+        [Fact]
+        public async Task Pinning_an_answer_on_the_question_the_person_saw_still_works()
+        {
+            var (e, ws, home) = await MakeWs();
+            try
+            {
+                const string Query = "EVALUATE ROW(\"Sales\", [Total Sales])";
+                var q = await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "199", null, false, null, "user", "project", "human");
+                var seen = System.Text.Json.JsonSerializer.Serialize(new
+                { question = "Total sales?", tier = "value", query = Query, scalarExpr = (string)null, paraphraseExpr = (string)null, groupBy = new string[0], filters = new string[0], expectedValue = "199", expectedMatrix = new string[0][] });
+                var pinned = await e.AddInterviewQuestionAsync("Total sales?", "value", Query, null, null, null, null, "200", null, false, null, "user", "project", "human", q.Id, seen);
+                Assert.Equal("200", pinned.ExpectedValue);
             }
             finally { Cleanup(ws, home); }
         }

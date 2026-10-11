@@ -29,7 +29,7 @@ that genuinely require a human. The frozen release surface and platform claims a
       Dev→Test→Prod board), and the door-safe `.Error` contract on a Fabric 4xx.
 - [x] **XMLA live model lane — VERIFIED (FrameworkTesting / SM_Observatory).** The SP CAN open a model live over
       XMLA. Confirmed read-only against the tenant: `open_live`, `run_dax`, `vertipaq_scan` (LIVE storage stats, 8
-      tables), and `ai_readiness_scan_live` (DMV-cardinality rules, graded). Baked into `AirSmoke` as a READ-ONLY
+      tables), and `ai_readiness_scan` with `live=true` (DMV-cardinality rules, graded). Baked into `AirSmoke` as a READ-ONLY
       block gated on the SP + `SEMANTICUS_LIVE_XMLA`/`SEMANTICUS_LIVE_DB`; `ci.yml` passes them.
   - [ ] **To turn BOTH live lanes on in CI:** add GitHub repo/org **secrets** — `FABRIC_CLIENT`/`FABRIC_SECRET`/
         `FABRIC_TENANT` (the SP), plus `SEMANTICUS_LIVE_XMLA` (e.g. `powerbi://api.powerbi.com/v1.0/myorg/<workspace>`)
@@ -60,6 +60,9 @@ that genuinely require a human. The frozen release surface and platform claims a
       [`docs/performance-gate.md`](docs/performance-gate.md) against the RC commit and attach the JSON result. Repeat
       with the large-model fixture. Record extension-host startup during the F5 pass. Any p95 above 120 percent of
       its comparable baseline needs an investigated and explicitly accepted reason.
+- [ ] **Green nightly sweep on the release SHA.** The default CI run skips the sweep tier (`Cost=sweep`: full matrices, door and
+      mode copies, held-out sets, the full plan commutation gate). `.github/workflows/sweep.yml` runs it nightly on the
+      self-hosted runner; run it by hand (workflow_dispatch) on the exact RC SHA and confirm it is green.
 - [ ] **Final RC merge call.** Confirm the chosen SHA is on `origin/main`, all required CI jobs for that exact SHA
       are green, every security-sensitive PR has independent approval, and there are zero open P0/P1 defects.
 - [x] **Version and release notes.** Version 1.1.3 is stamped in `package.json` and `package-lock.json`, with a

@@ -1,0 +1,165 @@
+{
+  "Server": "s05-sql.example.invalid",
+  "Database": "ChannelSales",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_sales_date",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "FULL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_legacy_date",
+      "KeyColumns": [
+        "LEGACY_DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "LEGACY_DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "FULL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_channel",
+      "KeyColumns": [
+        "CHANNEL_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CHANNEL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CHANNEL_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_order",
+      "KeyColumns": [
+        "ORDER_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ORDER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CHANNEL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ORDER_COUNT",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ORDER_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_order_line",
+      "KeyColumns": [
+        "LINE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "LINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ORDER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "UNITS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "LINE_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sales_date",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order",
+      "FromColumn": "CHANNEL_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_channel",
+      "ToColumn": "CHANNEL_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order_line",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sales_date",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order_line",
+      "FromColumn": "ORDER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "fact_order",
+      "ToColumn": "ORDER_ID"
+    }
+  ]
+}

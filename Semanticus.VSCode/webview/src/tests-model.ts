@@ -38,7 +38,7 @@ export function resultChip(enabled: boolean, outcome?: OutcomeLike | null): Resu
 // offering it would let a person ask for a run that the engine then refuses for a reason they cannot see.
 export function runScopeGroups(enabledChecks: number, relationships: number | null, tableCounts: number): RunGroup[] {
   return ([
-    { id: 'checks', label: 'Enabled saved checks', count: enabledChecks },
+    { id: 'checks', label: 'Saved checks', count: enabledChecks },
     { id: 'relationships', label: 'Relationships', count: relationships },
     { id: 'tableCounts', label: 'Table row counts', count: tableCounts },
   ] as RunGroup[]).filter((group) => group.count == null || group.count > 0);
@@ -63,24 +63,6 @@ export function runOnlyLabel(group: RunGroup): string {
 // here, in the page, before the request exists.
 export function tickedRunRefusal(tickedCount: number): string | null {
   return tickedCount > 0 ? null : 'Tick at least one check first. Nothing is ticked, so there is nothing to run.';
-}
-
-// Tick boxes live ONLY on saved-check rows. With no saved checks the run menu still offered "Only what I
-// ticked", and the list header still said "Tick to run a subset", so both described a control that was not
-// on the page (Kane, live on the Yoga, 2026-09-15). An option nobody can take is not offered.
-export function tickingIsPossible(savedCheckCount: number): boolean {
-  return savedCheckCount > 0;
-}
-
-export function savedChecksHint(savedCheckCount: number): string {
-  return tickingIsPossible(savedCheckCount) ? 'Tick to run a subset.' : 'Save a check to run checks one at a time.';
-}
-
-// What the ticked option says about itself: the refusal while nothing is ticked, else the count.
-export function tickedMenuNote(tickedCount: number, savedCheckCount: number): string {
-  const refusal = tickedRunRefusal(tickedCount);
-  if (refusal) return refusal;
-  return `${tickedCount.toLocaleString()} ${tickedCount === 1 ? 'check' : 'checks'} ticked.`;
 }
 
 // A partial rerun replaces only what it ran. Every other row keeps its own older result AND its own older
@@ -418,7 +400,7 @@ export function unknownCellText(outcome?: UnknownOutcomeLike | null): string | n
 // "required for a verdict" for exactly this reason, so the drawer says the cost before the last click.
 export function limitedEvidenceNote(groupCount: number): string | null {
   if (groupCount > 0) return null;
-  return 'This compares only the overall total, which is limited evidence. '
+  return 'This compares only the overall total, which proves very little. '
     + 'A comparison with no groups can show a matching total but can never pass as verified. '
     + 'Add at least one field to compare across.';
 }

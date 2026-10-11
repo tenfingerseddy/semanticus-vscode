@@ -1,0 +1,3057 @@
+{
+ "about": "Two baselines in one file. `pages` is the screen family (gap, margin, padding, grid, nesting, contrast), one entry per page state, measured at 1440 x 900. `space` is the space family (Kane's space rule), one entry per scene, measured at all three of 2000 x 1200, 1440 x 900 and 900 x 900; a scene's count is the worst it reaches at any of them. Counts may only go down. `spaceNotes` says why any space count above zero is recorded rather than fixed. See tools/uishot/screencheck.mjs.",
+ "viewport": [
+  1440,
+  900
+ ],
+ "total": 378,
+ "pages": {
+  "connections": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:after-not-now": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:after-ok": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:card": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:card-free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:card-reshown": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:line-off": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:line-on": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:line-turn-on": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:line-unsaved": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:line-withdrawn": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:settings": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:settings-free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:settings-sent": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "consent:settings-toggled": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "edit-advanced": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "edit-find": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "edit-instructions": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "edit-pq": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "edit-queries": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "explore-data": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "explore-diagram": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "explore-lineage": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "explore-size": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "help": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:alias-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:alias-modelhome": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:alias-overview-area": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:applied-row": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-answered": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-create-measure": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-create-measure-pressed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-create-with-form": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-empty": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-not-known": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-routed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:ask-routed-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:bpa-row-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:bpa-rows": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:cleanup-drop-all": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:cleanup-keep-all": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:cleanup-review": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:cleanup-unticked": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:collisions-choose": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:confidence-hover": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:deeplink-changes": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:deeplink-changes-empty": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:deeplink-spec": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 4,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:done-group": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:empty": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:error": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-add": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-answer-goes-while-typing": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-enter-keeps-the-page": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-lines": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-lines-typing": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-long": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-long-hint": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-open-ask-carries-words": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-open-ask-page-name-only": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-suggest": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-task-stays-quiet": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-two-readings-question-first": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:field-two-readings-task-first": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:filter-needs-me": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-ask-pill": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-item-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-jev": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-list": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-map": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-map-item-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-overview-card": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-pill": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-proposed-auto": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-proposed-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:free-target-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:header-keeps-areas-824": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:header-keeps-areas-840": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-after-plan-press": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-approved-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-cancelled-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-changes": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-decisions": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-done-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-legacy": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-proposed-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-put-back": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:history-redraw-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:item-assistant-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:item-ready-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:item-skipped": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:item-yours-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-filter": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-landed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-looking": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-row": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:jev-unsure": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:latest-opens-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:list": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:map": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:map-done-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:map-filter-needs-me": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:map-item-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:map-quiet-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:nothing-pending": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-line": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-line-after-area": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-line-empty": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-line-picked-elsewhere": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:object-none": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:overview-card": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:overview-proposed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:page": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:page-show-all": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:panel-route-back-to-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:pending-notes-beside-sets": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:plan-button-leaves-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:plan-key-leaves-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-approve": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-auto-pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-detached": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-drop": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-drop-all": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-keep": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-ran-before": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-row": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-stale": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:proposed-stale-after": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:queue-on": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:queue-paused": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:queue-take": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 24,
+   "contrast-light": 24,
+   "contrast-hc": 0
+  },
+  "plan-drive:queue-up": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:raise-level": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:raise-level-not-blocking": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:raise-level-shown": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:remove-claimed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:remove-menu": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:remove-task": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 7,
+   "contrast-light": 7,
+   "contrast-hc": 0
+  },
+  "plan-drive:remove-undo": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 15,
+   "contrast-light": 15,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-doer-menu": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-doer-switch": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-open-held-line": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-open-lines-keeps-nav": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:row-open-suggestion": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:run": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:run-all": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:run-all-bulk": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:run-disabled-why": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:search-margin": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:skip-with-reason": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:start-page": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:start-performed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:start-refused": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:starts": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:starts-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:strip-filtered": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-add": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-added": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-closed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-item-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:target-removed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:update-adds-a-row-above": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:update-grows-an-open-row-above": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:update-grows-the-open-row-under-the-pointer": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:update-removes-a-row-above": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-drive:words-row-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-history": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-item": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-list": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:1-before": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:2-running": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:3-wave-two": {
+   "gap": 2,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:4-after-receipt": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:5-only-assistant": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:6-doer-menu-and-fold": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 26,
+   "contrast-light": 26,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:7-dots": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:dark:8-after-undo": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:1-before": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:2-running": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:3-wave-two": {
+   "gap": 2,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:4-after-receipt": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:5-only-assistant": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:6-doer-menu-and-fold": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 26,
+   "contrast-light": 26,
+   "contrast-hc": 0
+  },
+  "plan-run:light:7-dots": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-run:light:8-after-undo": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "plan-start": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entitlement-failed": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-coldnav": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-deeplink": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-findatool": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-hostnav": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-keyboard": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-legacy-dataagent": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:entry-row": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:free-connections-usage": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:free-instructions-suggestions": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:free-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:free-plan-level-ok": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:free-plan-raise-level": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-advmodels": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-dataagent": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-docs": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-evidence": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-knowledge": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-knowledge-pill": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-mcode": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-published-basic": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-spec": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 3,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:freed-tests": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:locked-workflows-free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:locked-workflows-pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pending-freed-page": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pending-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pending-then-free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pending-then-pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pending-workflows": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pro-knowledge": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pro-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:pro-tier-no-features": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:reconnect-after": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:reconnect-before": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:reconnect-downgrade": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:restored-cold-locked": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:restored-cold-seed-free": {
+   "gap": 0,
+   "margin": 1,
+   "padding": 1,
+   "grid": 3,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-drive:restored-cold-unstamped": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:done-returns": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:header-free-help": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:header-pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:help-opens-page": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:key-expired": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:key-invalid": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:key-ok": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-free": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-free-key": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-monthly": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-not-open": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-on": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-pro": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:page-waiting": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "pro-in-app:unlock-locked": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "publish": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "review-bpa": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "review-docs": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "review-readiness": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "review-tests": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:01-plan": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:02-explore": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:03-edit": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:04-review": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:05-publish": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:06-workflows": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:08-edit-advanced-modelling-fold": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:09-edit-advanced-modelling-calendars": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "shell:10-review-validation-reports": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "sql-start-draft": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 7,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "sql-start-hub-card": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "sql-start-hub-form": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "sql-start-standalone": {
+   "gap": 0,
+   "margin": 2,
+   "padding": 2,
+   "grid": 1,
+   "nesting": 4,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "sql-start-step": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  },
+  "workflows": {
+   "gap": 0,
+   "margin": 0,
+   "padding": 0,
+   "grid": 0,
+   "nesting": 0,
+   "contrast-dark": 0,
+   "contrast-light": 0,
+   "contrast-hc": 0
+  }
+ },
+ "space": {
+  "adv-calculationgroups": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "adv-calendars": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "adv-daxlib": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "adv-daxlib-long": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "adv-fieldparameters": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "adv-rlsols": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "connections": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-advanced": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-find": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-find-results": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-instructions": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-instructions-editing": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-pq": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-pq-profile": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-queries": {
+   "boxed-scroll": 1,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-queries-performance": {
+   "boxed-scroll": 1,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-queries-query": {
+   "boxed-scroll": 1,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "edit-queries-result": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-data": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-diagram": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-diagram-relationships": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-diagram-vertical": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-lineage": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-lineage-graph": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-lineage-impact": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "explore-size": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "help": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "instructions-notes": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "plan-history": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "plan-item": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "plan-list": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "plan-pending": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "plan-start": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "pro": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "propgrid-long": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "publish": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "publish-earlier-versions": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-bpa": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-bpa-warnings": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-docs": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-readiness": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-tests": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "review-tests-reports": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "settings": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  },
+  "workflows": {
+   "boxed-scroll": 0,
+   "hidden-action": 0,
+   "page-cap": 0,
+   "fixed-box": 0,
+   "primary-small": 0,
+   "narrow": 0
+  }
+ },
+ "spaceNotes": {
+  "edit-queries": "The result card scrolls at 1440 x 900 with about 110 px of its own box empty (114 px hidden on the Visual and Performance states, 12 px in the query editor). It is the fault the 27 September audit measured on Queries and the one page it put out of scope, because a separate lane is redesigning that page; Kane accepted the recording on 27 September and that lane takes every one of these keys to 0. The check could not see it until the space family learned to measure the empty room inside a box instead of only the band under the page's lowest content. Recorded, not hidden: Queries may not get worse. It is the same element on all three keys (div.sem-card.flex-1.min-h-0, the result card whose height comes from the splitter at daxlab.tsx useResizable lab.wbH). The lane that recorded it did change one file this page draws with, the shared result table (grid.tsx, so a narrow result spreads across its box); it did not touch the splitter that gives the card its height, which is what makes the card scroll.",
+  "edit-queries-performance": "The result card scrolls at 1440 x 900 with about 110 px of its own box empty (114 px hidden on the Visual and Performance states, 12 px in the query editor). It is the fault the 27 September audit measured on Queries and the one page it put out of scope, because a separate lane is redesigning that page; Kane accepted the recording on 27 September and that lane takes every one of these keys to 0. The check could not see it until the space family learned to measure the empty room inside a box instead of only the band under the page's lowest content. Recorded, not hidden: Queries may not get worse. It is the same element on all three keys (div.sem-card.flex-1.min-h-0, the result card whose height comes from the splitter at daxlab.tsx useResizable lab.wbH). The lane that recorded it did change one file this page draws with, the shared result table (grid.tsx, so a narrow result spreads across its box); it did not touch the splitter that gives the card its height, which is what makes the card scroll.",
+  "edit-queries-query": "The result card scrolls at 1440 x 900 with about 110 px of its own box empty (114 px hidden on the Visual and Performance states, 12 px in the query editor). It is the fault the 27 September audit measured on Queries and the one page it put out of scope, because a separate lane is redesigning that page; Kane accepted the recording on 27 September and that lane takes every one of these keys to 0. The check could not see it until the space family learned to measure the empty room inside a box instead of only the band under the page's lowest content. Recorded, not hidden: Queries may not get worse. It is the same element on all three keys (div.sem-card.flex-1.min-h-0, the result card whose height comes from the splitter at daxlab.tsx useResizable lab.wbH). The lane that recorded it did change one file this page draws with, the shared result table (grid.tsx, so a narrow result spreads across its box); it did not touch the splitter that gives the card its height, which is what makes the card scroll."
+ }
+}

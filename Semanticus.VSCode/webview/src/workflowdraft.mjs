@@ -1,5 +1,7 @@
 const clone = (value) => value == null ? value : structuredClone(value);
 
+const sameValue = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
 const snapshot = (draft) => ({
   sourceText: draft.sourceText,
   editModel: clone(draft.editModel),
@@ -59,6 +61,10 @@ function findTarget(definition, key) {
 function assignField(target, field, value) {
   if (target.kind !== 'step' || !field.includes('.')) {
     target.value[field] = clone(value);
+    // Format 3: who does a step and its action move together, as the engine writes them (lane author-gaps, B7). An
+    // action gives the step to Semanticus; giving it to the assistant or a person takes its action and blanks off.
+    if (target.kind === 'step' && field === 'action' && value) target.value.performer = 'semanticus';
+    if (target.kind === 'step' && field === 'performer' && value !== 'semanticus') { target.value.action = null; target.value.blanks = []; }
     return;
   }
   const [container, nested] = field.split('.');
@@ -195,7 +201,15 @@ export function applyWorkflowOperation(draft, operation, structural = false) {
     operations.unshift(stabilizeOperation);
     applyLocal(editModel, stabilizeOperation);
   }
-  operations.push(clone(operation));
+  // Author sends a field as it is typed, one edit per key. Each key's edit follows straight on from the one before it on
+  // the same field, so the two are one edit: from what the field held before the first key to what it holds now. Sent
+  // one per key, a value on the way ("reconcile ", ending in a space) had to be written and read back on its own, and one
+  // the file cannot hold refused the whole save (verifier on m11/sol-fixes-1 round 3, VR7).
+  const last = operations.at(-1);
+  if (operation.op === 'set_field' && last?.op === 'set_field' && last.target === operation.target
+      && last.field === operation.field && sameValue(last.value, operation.expect)) {
+    operations[operations.length - 1] = { ...last, value: clone(operation.value) };
+  } else operations.push(clone(operation));
   applyLocal(editModel, operation);
   return { ...draft, editModel, operations, undo: [...draft.undo, snapshot(draft)], redo: [], preview: null };
 }

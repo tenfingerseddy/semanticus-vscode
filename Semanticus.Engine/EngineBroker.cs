@@ -23,6 +23,42 @@ namespace Semanticus.Engine
         // process's TMPDIR. The agent process often has a different TMPDIR than the UI owner, so the short PipeName
         // alone is not enough to join; clients must open this stamped path (D-118).
         public string PipePath { get; set; }
+        // The process this engine dies with: the extension host that spawned it, or whoever last adopted it
+        // (ParentLifetime). Additive and NULLABLE on purpose, and the null case is load-bearing: a record
+        // without it came from a build that predates the parent watch, and "no recorded parent" must NEVER
+        // be read as "no owner". A reader that stops an engine on that guess kills a live window's unsaved
+        // session, which is exactly what the sweep in Semanticus.VSCode/src/extension.ts is now careful not
+        // to do when VS Code updates while an older window is still open.
+        public int? ParentPid { get; set; }
+        /// <summary>"assistant" when the assistant's connection started this owner itself (VS Code was closed).
+        /// Null for an owner a VS Code window started. An updated window stops an assistant-started owner of
+        /// another version instead of reading its live parent (the connection) as another open window.</summary>
+        public string StartedBy { get; set; }
+        public const string StartedByAssistant = "assistant";
+        /// <summary>Which BUILD this owner is (<see cref="BuildIdentity"/>), F-241. The executable path cannot tell
+        /// an in-place reinstall from the build it replaced, so a window compares this instead before it adopts.
+        /// Null on a record from an engine older than this field, which a window reads as "not my build".</summary>
+        public string BuildId { get; set; }
+        /// <summary>Where this owner keeps per-user state (<see cref="SemanticusHome.Root"/>) and its sign-ins
+        /// (<see cref="SemanticusHome.SignInDir"/>), stamped by WriteInfo. An engine given its own state folder joins
+        /// only an owner whose folders are the same ones (27 Sep): joining any other would write that run's
+        /// connections and sign-ins into someone else's home. Null on a record older than these fields.</summary>
+        public string Home { get; set; }
+        public string SignInDir { get; set; }
+    }
+
+    /// <summary>What the assistant's door may do with a live owner it found for its folder (F-241).</summary>
+    public enum McpJoin
+    {
+        /// <summary>This install and this build: join it.</summary>
+        Join,
+        /// <summary>A record older than executable provenance. Joined with a warning, as before.</summary>
+        Legacy,
+        /// <summary>Another install folder: the extension updated. The "was updated" reconnect.</summary>
+        DifferentInstall,
+        /// <summary>This path, another build (an in-place reinstall), or an owner too old to say which build it is.
+        /// Not joined and never stopped from this side: Studio replaces it, or offers Save when it holds work.</summary>
+        DifferentBuild,
     }
 
     /// <summary>
@@ -64,11 +100,64 @@ namespace Semanticus.Engine
             if (ownerAlive)
                 return "[mcp] FATAL: Semanticus is already open for this folder, but the AI Assistant could not join that session within "
                     + seconds
-                    + "s. Keep the VS Code window open and reconnect the AI Assistant.";
+                    + "s. Keep the VS Code window open, run Semanticus: Connect AI Assistant in VS Code, then reconnect with /mcp.";
             return "[mcp] FATAL: Semanticus could not start for this folder within "
                 + seconds
-                + "s. Wait a moment and reconnect. If it keeps happening, close other VS Code windows for this folder.";
+                + "s. Wait a moment, then reconnect with /mcp. If it keeps happening, close other VS Code windows for this folder, run Semanticus: Connect AI Assistant in VS Code, then reconnect with /mcp.";
         }
+
+        /// <summary>Stderr when the owner for this folder is a different installed build (usually: the extension
+        /// updated while an older window, or an older connection, is still in use).</summary>
+        public const string McpDifferentBuildMessage =
+            "[mcp] FATAL: Semanticus for this folder is running a different version than this connection. Run Semanticus: Connect AI Assistant in VS Code, then reconnect with /mcp.";
+
+        /// <summary>Stderr when this engine was given its own state folder and the owner already running for the folder
+        /// keeps its state somewhere else. There is one owner per folder, so this run cannot start its own here.</summary>
+        public const string McpDifferentStateFolderMessage =
+            "[mcp] FATAL: Semanticus is already running for this folder, and it keeps its saved connections and sign-ins in a different state folder than the one this engine was given (--state-dir or SEMANTICUS_HOME). Not joining it, so nothing from this run is written there. Start this run on a folder of its own with --workspace, or stop the other engine first.";
+
+        /// <summary>Stderr when this engine chose no state folder (the person's own assistant) and the owner already
+        /// running for the folder keeps its state in another one: an isolated run started it with a folder of its own.
+        /// Names both folders, and the one way to join that folder on purpose.</summary>
+        public static string McpOwnerUsesAnotherStateFolderMessage(string ownerHome, string mine) =>
+            $"[mcp] FATAL: Semanticus is already running for this folder, but another run started it with a state folder of its own ({ownerHome}), not your usual one ({mine}). "
+            + "Not joining it, so none of your saved connections, sign-ins or settings are written there, and your own agent policy stays the one in force. "
+            + $"Stop that engine, then reconnect with /mcp. If you meant to use that folder, start this engine with {SemanticusHome.Option} {ownerHome}.";
+
+        /// <summary>True when joining the owner <paramref name="info"/> describes would put this process's writes in a
+        /// home it did not choose. Such an owner is never joined: every write the join makes (saved connections, sign-ins)
+        /// lands in the owner's home, the owner's agent policy and licence govern the calls, and nothing tells the caller.
+        /// <para>A process that chose its home (SEMANTICUS_HOME, --state-dir, or SEMANTICUS_SIGNIN_DIR) joins only an owner
+        /// whose home AND sign-in store are the ones it was given; a record too old to say where it keeps state cannot
+        /// prove that, so it is not joined either.</para>
+        /// <para>A process that chose nothing is the person's own engine, and its home is the person's usual one. It
+        /// joins only an owner whose stamped home is that same folder (27 Sep, round 3: an isolated run's owner took the
+        /// person's saved connections into a scratch folder and swapped the person's locked policy for the default). An
+        /// unstamped record predates --state-dir, so it can only be the person's own and is joined as before. The sign-in
+        /// store is not compared here: its default follows XDG_DATA_HOME, which two of the person's own processes can
+        /// see differently, while an owner started with a state folder of its own always has a different home.</para></summary>
+        public static bool StateFolderMismatch(EngineInfo info) =>
+            info != null && StateFolderMismatch(info, ChoseStateFolder(), SemanticusHome.Root(), SemanticusHome.SignInDir);
+
+        /// <summary>The rule itself, for this process's choice, home and sign-in store (a test cannot unset the test
+        /// run's own home without moving every test running beside it).</summary>
+        internal static bool StateFolderMismatch(EngineInfo info, bool chose, string home, Func<string> signInDir)
+        {
+            if (info == null) return false;
+            if (chose)
+                return !SemanticusHome.SameFolder(info.Home, home) || !SemanticusHome.SameFolder(info.SignInDir, signInDir());
+            return !string.IsNullOrWhiteSpace(info.Home) && !SemanticusHome.SameFolder(info.Home, home);
+        }
+
+        /// <summary>The line the MCP door prints, and why it stops, when <see cref="StateFolderMismatch"/> refused
+        /// <paramref name="info"/>'s owner.</summary>
+        public static string StateFolderMismatchMessage(EngineInfo info) =>
+            ChoseStateFolder()
+                ? McpDifferentStateFolderMessage
+                : McpOwnerUsesAnotherStateFolderMessage(info?.Home, Path.GetFullPath(SemanticusHome.Root()));
+
+        private static bool ChoseStateFolder() =>
+            SemanticusHome.IsMoved || !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(SemanticusHome.SignInVariable));
 
         /// <summary>Returns the held lock stream (keep open for the engine's lifetime) or null if another owner exists.</summary>
         public static FileStream TryAcquireOwnerLock(string workspace)
@@ -99,6 +188,12 @@ namespace Semanticus.Engine
                     info.ProcessStartUtc = Process.GetCurrentProcess().StartTime.ToUniversalTime().ToString("o");
                 if (string.IsNullOrEmpty(info.ExePath))
                     info.ExePath = CurrentExecutablePath();
+                if (string.IsNullOrEmpty(info.BuildId))
+                    info.BuildId = BuildIdentity.Current;
+                if (string.IsNullOrEmpty(info.Home))
+                    info.Home = Path.GetFullPath(SemanticusHome.Root());
+                if (string.IsNullOrEmpty(info.SignInDir))
+                    info.SignInDir = Path.GetFullPath(SemanticusHome.SignInDir());
             }
             catch { /* identity stamping is best-effort — a record without it is handled as legacy by IsAlive */ }
             // Stamp the owner's absolute pipe address under THIS process's temp directory. An attaching agent must
@@ -120,6 +215,39 @@ namespace Semanticus.Engine
             if (!File.Exists(p)) return null;
             try { return JsonConvert.DeserializeObject<EngineInfo>(File.ReadAllText(p)); }
             catch { return null; }
+        }
+
+        /// <summary>Remove this workspace's published record, but ONLY when it names <paramref name="pid"/>.
+        /// An engine that is leaving takes its own advertisement with it; a record naming anyone else belongs
+        /// to another owner, and deleting that would hide a live session from the next window. Returns whether
+        /// a record was actually removed.</summary>
+        /// <summary>Re-stamp the watched parent on this workspace's record, but ONLY when it names
+        /// <paramref name="pid"/>. Called after an adoption, so a reader can tell "this engine belongs to a
+        /// window that is still open" from "this engine's window is gone". Returns whether it was written.
+        /// </summary>
+        public static bool UpdateParentPid(string workspace, int pid, int? parentPid)
+        {
+            try
+            {
+                var info = ReadInfo(workspace);
+                if (info == null || info.Pid != pid) return false;
+                info.ParentPid = parentPid;
+                WriteInfo(workspace, info);
+                return true;
+            }
+            catch { return false; }   // a record we could not re-stamp reads as an older one, which is safe
+        }
+
+        public static bool ClearInfo(string workspace, int pid)
+        {
+            try
+            {
+                var info = ReadInfo(workspace);
+                if (info == null || info.Pid != pid) return false;
+                File.Delete(Path.Combine(DirFor(workspace), "engine.json"));
+                return true;
+            }
+            catch { return false; }   // a record we could not remove is stale, not fatal: IsAlive still rejects it
         }
 
         public static bool IsAlive(EngineInfo info)
@@ -187,6 +315,20 @@ namespace Semanticus.Engine
         {
             try { return Process.GetCurrentProcess().MainModule?.FileName ?? Environment.ProcessPath; }
             catch { return Environment.ProcessPath; }
+        }
+
+        /// <summary>The one join rule for the assistant's door, shared by the first join (Program.Mcp) and every
+        /// rejoin (RemoteEngine). The path decides the install; the build identity decides the build, because an
+        /// in-place reinstall keeps the path (F-241). A process that cannot read its own build cannot judge anyone
+        /// else's, so it joins as every build before this one did.</summary>
+        public static McpJoin McpJoinVerdict(EngineInfo info) => McpJoinVerdict(info, BuildIdentity.Current);
+
+        public static McpJoin McpJoinVerdict(EngineInfo info, string expectedBuild)
+        {
+            if (!HasExecutableProvenance(info)) return McpJoin.Legacy;
+            if (!ExecutableMatches(info)) return McpJoin.DifferentInstall;
+            if (string.IsNullOrEmpty(expectedBuild)) return McpJoin.Join;
+            return string.Equals(info.BuildId, expectedBuild, StringComparison.OrdinalIgnoreCase) ? McpJoin.Join : McpJoin.DifferentBuild;
         }
 
         public static bool HasExecutableProvenance(EngineInfo info)

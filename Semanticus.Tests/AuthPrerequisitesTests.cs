@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -21,7 +22,7 @@ namespace Semanticus.Tests
     {
         // The full accepted-name surface this probe reads, saved/restored around every test so a real developer's or
         // CI's own value is never clobbered and no mutation leaks past this test — mirrors the save/restore pattern
-        // this suite already uses for other process-wide environment state (e.g. USERPROFILE in ExperienceLogTests).
+        // this suite already uses for other process-wide environment state (e.g. SEMANTICUS_HOME in ExperienceLogTests).
         private static readonly string[] AllEnvNames =
         {
             "AZURE_CLIENT_ID", "FABRIC_CLIENT", "POWERBI_CLIENT_ID",
@@ -179,23 +180,47 @@ namespace Semanticus.Tests
         [Fact]
         public async Task An_empty_mode_defaults_to_the_azcli_probe()
         {
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager()) { AzCliForTests = FakeAz(signedIn: false) };
             var result = await engine.ProbeAuthPrerequisitesAsync("", null);
             Assert.Equal("azcli", result.Mode);   // never a blank mode name in the returned DTO
         }
 
-        // The azcli branch shells out to the local CLI and is genuinely environment-dependent (this machine may or may
-        // not have `az` installed / signed in) — we only assert the CONTRACT: it completes, never throws, never hangs
-        // the engine, and Ready is a genuine bool either way. This deliberately never depends on / drives a real `az
-        // login` — CLAUDE.md's golden rule and the task spec both require the probe to stay silent and local-only.
+        // The azcli branch runs the Azure CLI. A test never runs the person's own: it would read their real sign-in
+        // (verifier, targeted round, F1), and the test-run net stubs az and fails the run when anything calls it. So
+        // these tests hand the probe a stand-in az of their own, signed in or not, and prove what it makes of each.
         [Fact]
         public async Task Azcli_probe_never_throws_and_returns_a_well_formed_result_regardless_of_this_machines_cli_state()
         {
-            using var engine = new LocalEngine(new SessionManager());
+            using var engine = new LocalEngine(new SessionManager()) { AzCliForTests = FakeAz(signedIn: false) };
             var result = await engine.ProbeAuthPrerequisitesAsync("azcli", null);
             Assert.Equal("azcli", result.Mode);
             Assert.False(result.KeyVaultSupported);
-            if (!result.Ready) Assert.False(string.IsNullOrWhiteSpace(result.Detail));   // an honest, actionable note when not ready
+            Assert.False(result.Ready);
+            Assert.False(string.IsNullOrWhiteSpace(result.Detail));   // an honest, actionable note when not ready
+
+            engine.AzCliForTests = FakeAz(signedIn: true);
+            var signedIn = await engine.ProbeAuthPrerequisitesAsync("azcli", null);
+            Assert.True(signedIn.Ready);
+            Assert.Equal("someone@contoso.example", signedIn.CliAccount);
+            Assert.Equal("00000000-0000-4000-8000-000000000001", signedIn.CliTenant);
+        }
+
+        /// <summary>A stand-in Azure CLI that answers `az account show -o json` as signed in or as nobody signed in.</summary>
+        private static string FakeAz(bool signedIn)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-fake-az-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(dir);
+            const string json = "{\"user\":{\"name\":\"someone@contoso.example\"},\"tenantId\":\"00000000-0000-4000-8000-000000000001\"}";
+            if (OperatingSystem.IsWindows())
+            {
+                var cmd = Path.Combine(dir, "az.cmd");
+                File.WriteAllText(cmd, signedIn ? "@echo " + json + "\r\n" : "@echo Please run az login. 1>&2\r\n@exit /b 1\r\n");
+                return cmd;
+            }
+            var sh = Path.Combine(dir, "az");
+            File.WriteAllText(sh, "#!/bin/sh\n" + (signedIn ? "echo '" + json + "'\n" : "echo 'Please run az login.' >&2\nexit 1\n"));
+            File.SetUnixFileMode(sh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            return sh;
         }
 
         [Fact]

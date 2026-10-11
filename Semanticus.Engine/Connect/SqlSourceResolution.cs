@@ -17,6 +17,8 @@ namespace Semanticus.Engine
         /// <summary>True when a saved source supplied the coordinates. False = the check's own inline values, which is
         /// how every definition saved before named sources existed still works.</summary>
         public bool FromSavedSource { get; set; }
+        /// <summary>True when the coordinates came from the MODEL's SQL endpoint because the check named none of its own.</summary>
+        public bool FromModelEndpoint { get; set; }
         /// <summary>Plain-words reason this could not be resolved, or null. Set only when a named source has gone:
         /// we never quietly fall back to inline values then, because the check would run against a different place
         /// than the person chose.</summary>
@@ -36,17 +38,57 @@ namespace Semanticus.Engine
     }
 
     /// <summary>
-    /// The ONE rule for turning "which SQL" into "where and how to sign in", read by saved checks and by table row
-    /// counts so the two can never disagree:
+    /// The ONE rule for turning "which SQL" into "where and how to sign in", read by saved checks, direct
+    /// reconciliations and table row counts so they can never disagree (contract 19.3):
     ///
-    ///   1. A named source wins. Its server, database, sign-in mode and tenant replace anything inline.
-    ///   2. No named source means the check's own inline values, exactly as before. Every definition saved before
-    ///      named sources existed keeps working, untouched.
-    ///   3. A named source that has been removed is an ERROR, not a fallback. Falling back would run the check
-    ///      against a different place than the person chose and still call it a result.
+    ///   1. The check's own choice wins: a named source first, then the check's own inline server and database.
+    ///      This is the quiet per-check override, and every definition saved before named sources or model
+    ///      endpoints existed keeps pointing exactly where it did.
+    ///   2. A check that names nothing reads the MODEL's SQL endpoint, when the model has one.
+    ///   3. Neither: nothing is resolved here, and the caller's old fallback (reading the model's own partitions)
+    ///      decides, exactly as before.
+    ///   A named source or an endpoint whose source has been removed is an ERROR, not a fallback. Falling back
+    ///   would run the check against a different place than the person chose and still call it a result.
+    ///
+    /// Table row counts apply the same order with the table's own mapping as the per-check choice.
     /// </summary>
     public static class SqlSources
     {
+        /// <summary>The full order: the check's named source, then its inline coordinates, then the model's endpoint
+        /// (<paramref name="modelEndpointId"/>, the saved source id the model links to, or null).</summary>
+        public static SqlSourceResolution Resolve(string sqlSourceId, string inlineServer, string inlineDatabase,
+            string inlineAuthMode, string inlineTenantId, string modelEndpointId)
+        {
+            var checkChoice = Resolve(sqlSourceId, inlineServer, inlineDatabase, inlineAuthMode, inlineTenantId);
+            // The check chose something of its own (a source, even a removed one, or an inline address): that stands.
+            if (checkChoice.SqlSourceId != null || checkChoice.Server != null || checkChoice.Database != null)
+                return checkChoice;
+            var endpointId = string.IsNullOrWhiteSpace(modelEndpointId) ? null : modelEndpointId.Trim();
+            if (endpointId == null) return checkChoice;
+
+            var rec = SqlSourceRegistry.Find(endpointId);
+            if (rec == null)
+                return new SqlSourceResolution
+                {
+                    SqlSourceId = endpointId,
+                    FromModelEndpoint = true,
+                    Error = "this model's SQL endpoint is no longer saved. Open Connections and choose the model's SQL endpoint again",
+                };
+            return new SqlSourceResolution
+            {
+                SqlSourceId = rec.Id,
+                SourceName = rec.Name,
+                Server = rec.Server,
+                Database = rec.Database,
+                // A sign-in named on the check itself still applies to where the model's endpoint points; otherwise
+                // the source's own sign-in, which is the point of saving it once.
+                AuthMode = Clean(inlineAuthMode) ?? rec.AuthMode,
+                TenantId = Clean(inlineTenantId) ?? rec.TenantId,
+                FromSavedSource = true,
+                FromModelEndpoint = true,
+            };
+        }
+
         public static SqlSourceResolution Resolve(string sqlSourceId, string inlineServer, string inlineDatabase,
             string inlineAuthMode, string inlineTenantId)
         {
@@ -84,10 +126,14 @@ namespace Semanticus.Engine
         /// <summary>Resolve a saved reconciliation's coordinates ONTO its request, so everything downstream reads one
         /// set of fields and nothing else has to know named sources exist. Returns the resolution; check its
         /// <see cref="SqlSourceResolution.Error"/> before running.</summary>
-        public static SqlSourceResolution Apply(ReconcileRequest request)
+        public static SqlSourceResolution Apply(ReconcileRequest request) => Apply(request, null);
+
+        /// <summary>The same, with the model's SQL endpoint as the step after the check's own choice. Idempotent: once
+        /// applied, the request carries the coordinates inline, and resolving it again lands on the same place.</summary>
+        public static SqlSourceResolution Apply(ReconcileRequest request, string modelEndpointId)
         {
             if (request == null) return new SqlSourceResolution();
-            var resolved = Resolve(request.SqlSourceId, request.Server, request.Database, request.AuthMode, request.TenantId);
+            var resolved = Resolve(request.SqlSourceId, request.Server, request.Database, request.AuthMode, request.TenantId, modelEndpointId);
             if (resolved.Error != null || !resolved.FromSavedSource) return resolved;
             request.Server = resolved.Server;
             request.Database = resolved.Database;
@@ -147,6 +193,44 @@ namespace Semanticus.Engine
                 .Select(d => string.IsNullOrWhiteSpace(d.Title) ? d.Id : d.Title)
                 .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        /// <summary>
+        /// The upgrade's pick for one model (contract 19.3, migration by id): the saved source its checks and table
+        /// mappings name most often. Ties go to the lowest id, so two processes decide the same way. Sources that are
+        /// no longer saved are never picked. Null when nothing names a saved source. Every check keeps its own
+        /// source id either way, so the one not picked stays that check's override and nothing changes where it points.
+        /// </summary>
+        public static string MostUsedSource(IEnumerable<TestDefinition> defs, IEnumerable<TableSourceMapping> mappings,
+            Func<string, bool> isSaved)
+        {
+            var ids = new List<string>();
+            foreach (var d in defs ?? Enumerable.Empty<TestDefinition>())
+            {
+                if (d == null || !string.Equals(d.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                    || string.IsNullOrWhiteSpace(d.ParamsJson)) continue;
+                var id = TestSuiteStore.Deserialize<ReconcileRequest>(d.ParamsJson)?.SqlSourceId;
+                if (!string.IsNullOrWhiteSpace(id)) ids.Add(id.Trim());
+            }
+            foreach (var m in mappings ?? Enumerable.Empty<TableSourceMapping>())
+                if (!string.IsNullOrWhiteSpace(m?.SqlSourceId)) ids.Add(m.SqlSourceId.Trim());
+            return ids.Where(id => isSaved == null || isSaved(id))
+                .GroupBy(id => id, StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(g => g.Count())
+                .ThenBy(g => g.Key, StringComparer.Ordinal)
+                .Select(g => g.Key)
+                .FirstOrDefault();
+        }
+
+        /// <summary>True for a saved reconciliation that names no source and no server or database of its own: the
+        /// checks the upgrade pins to the model's partitions.</summary>
+        public static bool NamesNoPlace(TestDefinition d)
+        {
+            if (d == null || !string.Equals(d.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                || string.IsNullOrWhiteSpace(d.ParamsJson)) return false;
+            var r = TestSuiteStore.Deserialize<ReconcileRequest>(d.ParamsJson);
+            return r != null && string.IsNullOrWhiteSpace(r.SqlSourceId)
+                && string.IsNullOrWhiteSpace(r.Server) && string.IsNullOrWhiteSpace(r.Database);
         }
 
         private static string Clean(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

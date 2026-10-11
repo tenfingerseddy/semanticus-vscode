@@ -1,31 +1,29 @@
 ---
 name: semanticus-model-pr
-description: Stage and review Semanticus model edits as a Change Plan, then apply requested changes in one undoable batch. Use for model diffs, reviewed bulk edits or a pull request for a model.
+description: Collect and review Semanticus model edits as a change list, then apply requested changes in one undoable step. Use for model diffs, reviewed bulk edits or a pull request for a model.
 ---
 
 # Review model changes
 
-Inspect an existing plan before replacing it. Use `propose_plan` for analysis-led fixes or
-`add_plan_item` for specific changes. `get_plan` shows current and proposed values, status and
-risk. Scope the plan to the user's request.
+Inspect an existing plan before replacing it. `propose_plan` builds an analysis-led change list and
+`add_plan_item` adds a specific change. `get_plan` shows current and new values, status and risk.
+Scope the list to the user's request. (The Plan page's own rows come from `get_model_plan`, and
+`apply_plan_items` runs them; see the semanticus skill.)
 
-For an optimisation that should preserve results, choose `verifyGroupBy` fields from dimensions
-relevant to that measure. Matching checks cover those contexts, not every possible filter.
-An intentional change in business meaning needs expected-answer tests instead.
-Unverified DAX and rename items remain proposed until approved through `set_plan_item`.
-Content revisions can reset approval; read the resulting status.
+For a rewrite that must keep its results, choose `verifyGroupBy` fields from dimensions that matter
+to that measure. A match covers those contexts, not every filter. A deliberate change of business
+meaning needs expected-answer checks instead. Unverified DAX and rename items stay pending until
+approved with `set_plan_item`. A change to an item's content can reset its approval; read the status.
 
-Use `set_plan_item` to fill, approve or reject items within existing authorization. If the user
-asked to review before application, present the concrete diff. Otherwise do the already authorised
-work without inventing a second approval step.
+Use `set_plan_item` to fill, approve or reject items within the user's authorization. If the user
+asked to review first, show the diff. Otherwise do the authorised work.
 
-`apply_plan` applies approved items; `approvedIds` can narrow that set. Read its actual applied,
-skipped and failed results. If the model changed since the plan was assembled, inspect the new
-state and refresh affected items. A single `undo` reverts the applied model batch.
+`apply_plan` applies the approved items; `approvedIds` narrows the set. Read its applied, skipped and
+failed results. If the model changed since the list was built, read the new state and refresh the
+affected items. One `undo_change` takes the whole application back.
 
-Use `save_model` for local persistence. Apply changes to the working model first, then save local
-files when that is part of the request. Remote models remain unchanged until publication: preview
-`deploy_live`, review its destination and changes, then commit when the task includes that write.
-Restoring a remote restore point is a separate remote action; local `undo` does not reverse it.
-The user sees the same plan and edits in Studio under Changes. The VS Code view updates at once;
-your assistant sees a user edit on its next call.
+`save_model` writes local files, after the changes are applied. A remote model stays as it is until
+`deploy_live`: preview it, read the destination and changes, then commit when the task includes that
+write. Restoring a remote version is a separate remote action that `undo_change` does not reverse.
+Studio shows the same items under Pending changes on the Plan page and updates at once; you see a
+person's edit on your next call.

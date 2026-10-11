@@ -14,10 +14,13 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const styles = read('webview/src/styles.css');
+// The scale's values moved into the visual-language tokens (One Visual Language, 23 September 2026).
+const tokens = read('webview/src/tokens.css');
 const daxlab = read('webview/src/daxlab.tsx');
 const deploy = read('webview/src/deploy.tsx');
 const compare = read('webview/src/compare.tsx');
 const diffview = read('webview/src/diffview.tsx');
+const changes = read('webview/src/publish-changes.tsx');
 const app = read('webview/src/App.tsx');
 
 const failures = [];
@@ -27,8 +30,8 @@ const has = (src, re, msg) => { if (!re.test(src)) throw new Error(msg); };
 
 // ---- the scale itself -------------------------------------------------------------------------
 check('control scale tokens', () => {
-  has(styles, /--sem-control-h:\s*28px/, 'the shared control height must stay 28px');
-  has(styles, /--sem-control-h-sm:\s*24px/, 'the shared dense control height must stay 24px');
+  has(tokens, /--sem-control-h:\s*28px/, 'the shared control height must stay 28px');
+  has(tokens, /--sem-control-h-sm:\s*24px/, 'the shared dense control height must stay 24px');
   has(styles, /\.sem-btn\s*\{[\s\S]*?height:\s*var\(--sem-control-h\)/, '.sem-btn must own its height');
   has(styles, /\.sem-seg-item\s*\{[\s\S]*?height:\s*var\(--sem-control-h-sm\)/, '.sem-seg-item must own its height');
   // A full-size button can also carry a pressed state (the Published mode row), so the scale owns that
@@ -121,7 +124,6 @@ function onTheScale(tag, what, required = 'sem-btn') {
 
 // ---- DAX Lab toolbar --------------------------------------------------------------------------
 check('DAX Lab Save measure check', () => onTheScale(buttonTag(daxlab, '>Save measure check', 'DAX Lab Save measure check'), 'DAX Lab Save measure check'));
-check('DAX Lab Reset', () => onTheScale(buttonTag(daxlab, '>Reset</button>', 'DAX Lab Reset'), 'DAX Lab Reset'));
 check('DAX Lab Stop', () => onTheScale(buttonTag(daxlab, '>Stop</button>', 'DAX Lab Stop'), 'DAX Lab Stop'));
 check('DAX Lab Run', () => {
   const tag = buttonTag(daxlab, '>Run</button>', 'DAX Lab Run');
@@ -146,33 +148,29 @@ check('DAX Lab mode segment', () => {
 // sized itself, so those rows drifted from the toolbar above them.
 check('DAX Lab button primitive', () => onTheScale(buttonTag(fnBody(daxlab, 'Button', 'the DAX Lab button primitive'), '<button', 'the DAX Lab button primitive'), 'the DAX Lab button primitive'));
 
-// ---- Published: the mode row and the controls under it ----------------------------------------
-check('Published mode row', () => {
-  const modeBtn = fnBody(deploy, 'ModeBtn', 'the Published mode row button');
-  onTheScale(buttonTag(modeBtn, '<button', 'the Published mode row button'), 'the Published mode row button');
-  has(modeBtn, /aria-pressed=/, 'the Published mode row must carry its selected state on aria-pressed');
-});
-for (const [file, src, what] of [['deploy.tsx', deploy, 'the Published Btn primitive'], ['compare.tsx', compare, 'the Compare Btn primitive']])
-  check(what, () => onTheScale(buttonTag(fnBody(src, 'Btn', `${what} in ${file}`), '<button', what), what));
-// The swap arrow shares the Compare again row, so it sits on the same scale rather than on its own.
-check('Compare swap button', () => onTheScale(buttonTag(compare, 'swap source/target', 'the Compare swap button'), 'the Compare swap button'));
-
-// ---- the Model Diff mode switcher, directly under the Published compare row --------------------
-// It was a hand-rolled two-button strip with its own accent FILL, which made it the loudest thing on the
-// Published screen once the rows above it came down to 28px. It is a segment like any other.
-check('Model Diff mode switcher', () => {
-  const at = diffview.indexOf('MODES.map');
-  if (at === -1) throw new Error('could not find the Model Diff mode switcher');
-  const region = diffview.slice(Math.max(0, at - 400), at + 600);
-  has(region, /className="sem-seg[" ]/, 'the Review / Side by side pair must use the shared .sem-seg wrapper');
-  has(region, /className="sem-seg-item"/, 'the Review / Side by side buttons must use .sem-seg-item');
-  has(region, /aria-pressed=/, 'the Review / Side by side pair must carry its selection on aria-pressed');
+// ---- Publish: the tab row and the controls under it ---------------------------------------------
+// The Changes / Earlier versions / Promote row is a segment like any other: the shared wrapper, the shared item,
+// the selection on aria-pressed, and no size of its own.
+check('Publish tab segment', () => {
+  const at = deploy.indexOf('aria-label="Publish views"');
+  if (at === -1) throw new Error('could not find the Publish tab segment');
+  const region = deploy.slice(Math.max(0, at - 200), at + 500);
+  has(region, /className="sem-seg[" ]/, 'the Publish tab row must use the shared .sem-seg wrapper');
+  has(region, /className="sem-seg-item"/, 'the Publish tab buttons must use .sem-seg-item');
+  has(region, /aria-pressed=/, 'the Publish tab row must carry its selection on aria-pressed');
   for (const tag of region.match(/<button[\s\S]*?>/g) ?? []) {
     const local = localSizing(tag);
-    if (local.length) throw new Error(`the Model Diff mode switcher re-states the scale with ${local.join(' ')}`);
+    if (local.length) throw new Error(`the Publish tab segment re-states the scale with ${local.join(' ')}`);
     const inline = inlineSizing(tag);
-    if (inline) throw new Error(`the Model Diff mode switcher re-states the scale inline with ${inline}`);
+    if (inline) throw new Error(`the Publish tab segment re-states the scale inline with ${inline}`);
   }
+});
+check('the Published Btn primitive', () => onTheScale(buttonTag(fnBody(deploy, 'Btn', 'the Published Btn primitive in deploy.tsx'), '<button', 'the Published Btn primitive'), 'the Published Btn primitive'));
+// The one write button on each tab is the filled action on the shared scale, never sized on its own.
+check('the Publish write button', () => {
+  const tag = buttonTag(changes, 'data-testid="publish-go"', 'the Publish write button');
+  onTheScale(tag, 'the Publish write button');
+  has(tag, /sem-btn-primary/, 'the Publish write button is the one filled action on the page');
 });
 
 // ---- the area tab strips ------------------------------------------------------------------------
@@ -182,15 +180,26 @@ check('Model Diff mode switcher', () => {
 for (const [what, name, required] of [
   ['the area sub-tab', 'Tab', 'sem-tab'],
   ['the primary area tab', 'GroupTab', 'sem-tab'],
-  ['the Create overflow tab', 'CreateTab', 'sem-tab'],
 ]) check(what, () => onTheScale(buttonTag(fnBody(app, name, what), '<button', what), what, required));
+// And the sentence above is CHECKED, not asserted in a comment. It was a comment alone until 23 September
+// 2026, and two of the three tabs did not carry aria-current at all: the Edit sub-tab row and the Advanced
+// modelling fold marked the open tool with a background colour and nothing else, so a screen reader could
+// not tell which one was open. A wash is not a state.
+for (const [what, name, flag] of [
+  ['the area sub-tab', 'Tab', 'active'],
+  ['the primary area tab', 'GroupTab', 'active'],
+]) check(`${what} says it is the current page`, () => {
+  const tag = buttonTag(fnBody(app, name, what), '<button', what);
+  has(tag, new RegExp(`aria-current=\\{${flag} \\? 'page' : undefined\\}`),
+    `${what} marks the open tool with colour only; a screen reader cannot hear a background`);
+});
 check('the primary area tab is the full-size step', () => {
   const tag = buttonTag(fnBody(app, 'GroupTab', 'the primary area tab'), '<button', 'the primary area tab');
   has(classOf(tag), /\bsem-tab-lg\b/, 'the primary area row takes the full-size tab step, the sub-tab row below it the dense one');
 });
 
 // ---- and no other call site in these files quietly opts back out ------------------------------
-for (const [file, src] of [['daxlab.tsx', daxlab], ['deploy.tsx', deploy], ['compare.tsx', compare], ['diffview.tsx', diffview], ['App.tsx', app]])
+for (const [file, src] of [['daxlab.tsx', daxlab], ['deploy.tsx', deploy], ['publish-changes.tsx', changes], ['compare.tsx', compare], ['diffview.tsx', diffview], ['App.tsx', app]])
   check(`${file} sem-btn call sites`, () => {
     for (const tag of src.match(/<button[\s\S]*?>/g) ?? []) {
       const on = classOf(tag).split(/\s+/);

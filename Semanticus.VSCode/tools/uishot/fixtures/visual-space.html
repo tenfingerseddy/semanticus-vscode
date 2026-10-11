@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<!-- The space check's self-test page. ?bad=0 follows the space rule: the card fills the page, the text shows in
+     full, the paragraph is a readable column (data-readable) and Save sits outside anything that scrolls, so it
+     must score zero in every space kind. ?bad=1 plants the AI instructions faults of 27 September 2026: the text
+     scrolls in a 200 px box with the page empty below, and Save is cut off inside that box. ?bad=2 plants the page
+     cap: the page is held at 900 px on a wide screen while it scrolls. visual-check.mjs renders both before it scores any real page. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Space check self-test</title>
+  <link rel="stylesheet" href="../../../media/studio/studio.css" />
+  <style>
+    main { height: 100vh; overflow: auto; }
+    .bad2 .frame { max-width: 900px; margin-inline: auto; }
+    .bad1 .box { height: 200px; overflow-y: auto; }
+    .bad2 .tall { height: 2400px; }
+    .good .box p { max-width: 70ch; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="sem-page frame" id="page">
+      <section class="sem-card sem-stack">
+        <h2 class="sem-card-title">AI instructions</h2>
+        <div class="box">
+          <p data-readable>The fiscal year starts on 1 July. "Sales" means net sales after returns. Dates come from the Date table only. Round money to whole dollars.</p>
+          <p>Regions are APAC, EMEA and Americas.</p><p>Say when a number is a forecast.</p><p>Stock figures are month-end snapshots.</p>
+          <p>Margin is Gross Margin %.</p><p>Currency is AUD.</p><p>Budget figures are monthly.</p><p>Prospects are not customers.</p>
+          <p>Store counts use Open Stores.</p><p>Do not guess.</p><p>Qualify by region.</p>
+          <div class="save-in"></div>
+        </div>
+        <div class="save-out"></div>
+      </section>
+      <div class="tall-slot"></div>
+    </div>
+  </main>
+  <script>
+    const which = new URLSearchParams(location.search).get('bad') || '0';
+    const bad = which === '1';
+    document.body.className = which === '0' ? 'good' : 'bad' + which;
+    const save = '<button class="sem-btn sem-btn-primary" type="button">Save</button>';
+    document.querySelector(bad ? '.save-in' : '.save-out').innerHTML = save;
+    if (which === '2') document.querySelector('.tall-slot').innerHTML = '<div class="tall"></div>';
+  </script>
+</body>
+</html>

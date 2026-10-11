@@ -6,7 +6,8 @@ import {
 import '@xyflow/react/dist/style.css';
 import { loadState, saveState, rpc, onWorkflowLayoutChange, onReconnect } from './bridge';
 // Same shared control the rest of the editor uses, so a later control restyle reaches this surface too.
-import { Button } from './workflows';
+import { Button } from './workflow-ui';
+import { TagMark } from './workflowforms';
 // The counts chip is the same chip the Diagram and Lineage float on their own canvases, so one canvas
 // reads one way everywhere in Studio.
 import { CanvasChip } from './toolrow';
@@ -23,20 +24,25 @@ const defaultPosition = (index: number) => ({ x: index * 300, y: 30 });
 // reader needs once. It is the canvas background's tooltip now, and the empty state says the same thing
 // in the one case where it is actually news.
 const CANVAS_HINT = 'Select a step to edit it. Steps run in this order.';
+// React Flow's fit margin, a fraction of the viewport (not a CSS length), so it is named once here.
+const FIT_MARGIN = 0.15;
+const FIT_VIEW = { padding: FIT_MARGIN, maxZoom: 1, duration: 200 };
+const FIT_VIEW_OPTIONS = { padding: FIT_MARGIN, maxZoom: 1 };
 
 export interface CanvasCounts { steps: number; actions: number; checks: number }
 
 function WorkflowStepNode({ data: { step }, selected }: NodeProps<StepNode>) {
   return (
-    <div data-wf-canvas-step={step.order} className="rounded-xl border p-3 text-left"
+    <div data-wf-canvas-step={step.order} className="rounded border p-3 text-left"
       style={{ width: 248, background: 'var(--sem-surface)', color: 'var(--sem-fg)',
-        borderColor: selected ? 'var(--sem-accent)' : 'var(--sem-border)',
-        boxShadow: selected ? '0 0 0 2px var(--sem-accent-soft)' : undefined }}>
+        borderColor: selected ? 'var(--sem-accent)' : 'var(--sem-border)' }}>
       <Handle type="target" position={Position.Left} isConnectable={false} />
-      <div className="text-[10px] mb-1" style={{ color: 'var(--sem-muted)' }}>STEP {step.number}</div>
-      <div className="text-[13px] font-semibold break-words">{step.title || 'Untitled'}</div>
-      <div className="text-[10px] mt-1 break-words" style={{ color: 'var(--sem-muted)' }}>{step.idLabel}</div>
-      <div className="flex flex-col gap-1 mt-2 text-[10px]" style={{ color: 'var(--sem-accent)' }}>
+      {/* The two tags as small icons on the box header (composer contract 10.5): a step with none is Semanticus's. */}
+      <div className="text-(length:--sem-text-label) mb-1 flex items-center gap-1" style={{ color: 'var(--sem-muted)' }}>Step {step.number}
+        {(step.tags ?? []).map((tag) => <TagMark key={tag} tag={tag} />)}</div>
+      <div className="text-(length:--sem-text-body) font-semibold break-words">{step.title || 'Untitled'}</div>
+      <div className="text-(length:--sem-text-label) mt-1 break-words" style={{ color: 'var(--sem-muted)' }}>{step.idLabel}</div>
+      <div className="flex flex-col gap-1 mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         {step.when && <span>When {step.when}</span>}
         {step.forEach && <span>For each {step.forEach.as || 'item'} in {step.forEach.in || 'a list'}</span>}
         {step.call && <span>Calls {step.call.workflow}</span>}
@@ -147,14 +153,14 @@ function Canvas({ steps, storageKey, workflowName, workflowTitle, selected, onSe
   // re-measured by the next frame, so the refit lands on the new width instead of the old one.
   useEffect(() => {
     if (!fitSignal) return;
-    const frame = requestAnimationFrame(() => { void fitView({ padding: 0.15, maxZoom: 1, duration: 200 }); });
+    const frame = requestAnimationFrame(() => { void fitView(FIT_VIEW); });
     return () => cancelAnimationFrame(frame);
   }, [fitSignal, fullscreen, fitView]);
 
   const arrange = () => {
     const arranged = nodes.map((node, index) => ({ ...node, position: defaultPosition(index) }));
     setNodes(arranged); remember(arranged);
-    requestAnimationFrame(() => { void fitView({ padding: 0.15, maxZoom: 1, duration: 200 }); });
+    requestAnimationFrame(() => { void fitView(FIT_VIEW); });
   };
 
   const chip = 'sem-btn sem-btn-sm';
@@ -178,7 +184,7 @@ function Canvas({ steps, storageKey, workflowName, workflowTitle, selected, onSe
           setNodes(nodes.map((node, index) => ({ ...node, position: defaultPosition(index) })));
           if (session.current) void session.current.save({}); else saveState(storageKey, {});
         }} title="Forget the saved positions and start from the plain order.">Reset</button>
-        <button type="button" className={chip} onClick={() => { void fitView({ padding: 0.15, maxZoom: 1, duration: 200 }); }}
+        <button type="button" className={chip} onClick={() => { void fitView(FIT_VIEW); }}
           title="Fit every step in view.">Fit all</button>
         <span className="sem-wf-canvas-tool-sep" />
         <button type="button" className={chip} aria-pressed={fullscreen} onClick={() => onFullscreen?.()}
@@ -191,8 +197,8 @@ function Canvas({ steps, storageKey, workflowName, workflowTitle, selected, onSe
         <button type="button" onClick={() => { void session.current?.refresh(); }} className="underline">Reload shared layout</button>
       </CanvasChip>}
       {steps.length === 0 ? <div className="h-full flex flex-col items-center justify-center gap-2 px-6 text-center" data-wf-canvas-empty="true">
-        <div className="text-[13px] font-semibold">No steps yet</div>
-        <div className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>Steps run in this order. Add the first one to start.</div>
+        <div className="text-(length:--sem-text-body) font-semibold">No steps yet</div>
+        <div className="text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Steps run in this order. Add the first one to start.</div>
         {onAddStep && <Button primary disabled={addDisabled} onClick={onAddStep}>Add the first step</Button>}
       </div> : <>
         <ReactFlow<StepNode> nodes={nodes.map((node) => ({ ...node, selected: node.data.step.order === selected }))}
@@ -203,7 +209,7 @@ function Canvas({ steps, storageKey, workflowName, workflowTitle, selected, onSe
           nodesDraggable={!loading}
           nodesConnectable={false} edgesReconnectable={false} edgesFocusable={false}
           deleteKeyCode={null} multiSelectionKeyCode={null} selectionOnDrag={false}
-          fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.1} maxZoom={1.8}
+          fitView fitViewOptions={FIT_VIEW_OPTIONS} minZoom={0.1} maxZoom={1.8}
           proOptions={{ hideAttribution: true }}>
           <Background color="var(--sem-border)" gap={20} />
           <Controls showInteractive={false} />

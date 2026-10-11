@@ -138,16 +138,18 @@ vendored as a pinned git submodule at [`external/TabularEditor`](external/Tabula
 - License: **MIT**
 - Copyright (c) 2025 Tabular Editor ApS
 
-**One Tabular Editor 2 file is COPIED into this repository, not merely compiled in place**, and is
+**Three Tabular Editor 2 files are COPIED into this repository, not merely compiled in place**, and are
 therefore published as part of the Semanticus source tree:
 
 | This repository | Upstream path | Relationship |
 |---|---|---|
 | `Semanticus.Core/Grammars/DAXLexer.g4` | `AntlrGrammars/DAXLexer.g4` | Copy. Grammar rules unmodified; an MIT attribution header was added. Taken from submodule pin `7029129aa3f45d35f987d8f6ac7e5a971f28771c`, upstream blob `63d27cccf2ba9ac26a4e8b87418609614d471faa`. |
 | `Semanticus.Core/Compat/SplitModelSerializer.LinuxPaths.cs` | `TOMWrapper/TOMWrapper/Serialization/SplitModelSerializer.cs` | Copy. MIT. Version `7029129aa3f45d35f987d8f6ac7e5a971f28771c`. URL https://github.com/TabularEditor/TabularEditor. Path joins use Path.Combine so a Tabular Editor folder opens and saves on Linux. |
+| `Semanticus.Core/Compat/FormulaFixup.Patched.cs` | `TOMWrapper/Utils/FormulaFixup.cs` | Copy. MIT. Version `7029129aa3f45d35f987d8f6ac7e5a971f28771c`. URL https://github.com/TabularEditor/TabularEditor. Modified: a keyword that is never a table (RETURN, NOT, IN, VAR, ASC, DESC, AND, OR) is not read as the table of a following bracket, and a reference to a table the model lacks skips that reference instead of ending the walk of the formula, so a rename rewrites every reference; and each measure's KPI joins the full dependency-tree rebuild so a rename rewrites its expressions; a bare [column] inside a row-scan function is read from the table that function scans, in the arguments that function evaluates per row only (one table of functions, each row cited from its Microsoft Learn page: PERCENTILEX scans only its expression, CONCATENATEX its expression and order-by expressions, TOPN, SAMPLE and TOPNSKIP their order-by expressions, RANKX only its expression; every other argument is read in the caller's context; CALCULATETABLE opens no row scope; SUMMARIZE reads a bare name as a column only when a groupBy argument names it, and any other bare name in its expressions is read in the caller's scope; a scan of CURRENTGROUP () inside GROUPBY reads the table of that GROUPBY; a scan of a VAR reads the one table the VAR's expression stands for, as the same expression inline would, and a VAR name is visible only inside its own VAR ... RETURN block (an inner VAR of the same name hides the outer one there alone, and the block ends when the expression it stands in ends, giving back what it hid, and a VAR name is not visible inside its own initializer); open scans are searched from the innermost out, then the home table; TOPN, SAMPLE and TOPNSKIP name their table as argument 2 or 3; when the scanned table cannot be known, only a column name that is unique in the model and the home table's is bound); and the generated KPI helpers [_<name> Goal], [_<name> Status] and [_<name> Trend] are rewritten when the base measure is renamed, at the occurrences the walk bound to the helper only (a column of the same name is left alone); and a row scan whose table argument is FILTER, ALL, CALCULATETABLE, TOPN, SAMPLE or TOPNSKIP over one plain table name reads the row of that table. All other lines are unchanged. The donor file is no longer compiled. |
 
 The copy exists because `Semanticus.Core` runs `Antlr4.CodeGenerator` over a grammar inside its own
-project directory. It is used under the MIT license reproduced below, not under the Elastic License 2.0.
+project directory. The two C# copies exist so a Linux path join and the rename fixup can be repaired without
+editing the pristine submodule. All three are used under the MIT license reproduced below, not under the Elastic License 2.0.
 The attribution gate named in the "Borrowing code" section above fails if this table, that file's header, or
 any other undeclared verbatim copy of a vendored donor file drifts.
 
@@ -201,7 +203,16 @@ Our copy is a **modified subset**, not a verbatim copy: 69 of the upstream 71 ru
 their scope narrowed, five Semanticus-authored `SEM_` rules are appended, documentation links were
 stripped from 29 description fields, and the `PERCENTAGE_FORMATTING` FixExpression was rewritten so its
 JSON string contains real semicolon characters instead of the six-character `\u003B` sequence the
-upstream file stores. Every difference, with its reason, is enumerated in the `PROVENANCE`
+upstream file stores. Four rules exempt field parameters, the flag-format rule accepts the three-part Yes/No format
+string from every flag type it catches, and the date-format and month-format rules both flag only a column with no
+format string at all and are advice that suggests ISO `yyyy-mm-dd` and `MMMM yyyy` respectively, and the flag-format
+rule never raises a date column for its name. The two measure-scoped format rules, `PERCENTAGE_FORMATTING` and `INTEGER_FORMATTING`, flag
+only a measure with no format string expression whose format string is made only of plain number characters (and the
+integer rule also a measure with no format at all), so neither can write over a date, time, currency, unit, word or
+dynamic format. Both are severity 1 (advice), and no fix writes over a format string that is already there, so the integer rule's
+fix only fills a blank one that Semanticus can prove holds a whole number and the percentage rule's never applies. Since the Plan statement check (28 Sep) the integer rule no longer raises `#,##0` or `#,##0.0`, which
+already show thousands separators; `REDUCE_USAGE_OF_CALCULATED_TABLES` spares a generated `CALENDAR` or `CALENDARAUTO`
+date table; and `UNNECESSARY_COLUMNS` never raises a key column, including every part of a key a model spec declares. Every difference, with its reason, is enumerated in the `PROVENANCE`
 file next to the rule file. MIT permits modification; the changes are recorded so the diff against upstream
 is never a mystery.
 
@@ -1128,3 +1139,221 @@ The vendored M standard-library symbol dataset (866 built-in functions/constants
 
 - Source: <https://github.com/microsoft/vscode-powerquery>
 - License: **MIT** — Copyright (c) Microsoft Corporation
+
+## Instrument Sans font
+
+The exported documentation embeds this font as a `data:` URI (Vite `?inline`, docfonts.ts, our own loader), so the
+file reads the same on any machine with no network. The font is shipped unchanged, as the Latin subset the Semanticus site build
+self-hosts. The licence was read at the version below.
+
+- Tracked path: `Semanticus.VSCode/media/fonts/InstrumentSans-latin-variable.woff2`
+- Licence text: `Semanticus.VSCode/media/fonts/InstrumentSans-OFL.txt` (the same text is reproduced below)
+- Source: <https://github.com/Instrument/instrument-sans>
+- Version: **7fa22308a3d0c94ee2b3cd537a1196b65db34a3e**
+- License: **OFL-1.1** (SIL Open Font License 1.1), Copyright 2022 The Instrument Sans Project Authors
+- Reserved Font Name: none declared
+
+```
+Copyright 2022 The Instrument Sans Project Authors (https://github.com/Instrument/instrument-sans)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```
+
+## JetBrains Mono font
+
+The exported documentation embeds this font as a `data:` URI (Vite `?inline`, docfonts.ts, our own loader), so the
+file reads the same on any machine with no network. The font is shipped unchanged, as the Latin subset the Semanticus site build
+self-hosts. The licence was read at the commit that tag v2.304 points at.
+
+- Tracked path: `Semanticus.VSCode/media/fonts/JetBrainsMono-400.woff2`
+- Licence text: `Semanticus.VSCode/media/fonts/JetBrainsMono-OFL.txt` (the same text is reproduced below)
+- Source: <https://github.com/JetBrains/JetBrainsMono>
+- Version: **cd5227bd1f61dff3bbd6c814ceaf7ffd95e947d9**
+- License: **OFL-1.1** (SIL Open Font License 1.1), Copyright 2020 The JetBrains Mono Project Authors
+- Reserved Font Name: none declared
+
+```
+Copyright 2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+https://scripts.sil.org/OFL
+
+
+-----------------------------------------------------------
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+-----------------------------------------------------------
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded, 
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting -- in part or in whole -- any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+```

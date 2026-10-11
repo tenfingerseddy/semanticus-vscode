@@ -1,0 +1,210 @@
+{
+  "Server": "s06-sql.example.invalid",
+  "Database": "ParcelService",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_delivery_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DAY_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_service_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DAY_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_depot",
+      "KeyColumns": [
+        "DEPOT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEPOT_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_delivery",
+      "KeyColumns": [
+        "DELIVERY_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DELIVERY_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "PARCELS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CHARGE_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_return",
+      "KeyColumns": [
+        "RETURN_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "RETURN_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "RETURN_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CREDIT_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_repair",
+      "KeyColumns": [
+        "REPAIR_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "REPAIR_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SERVICE_DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "REPAIR_HOURS",
+          "DataType": "Decimal"
+        },
+        {
+          "Name": "PARTS_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_delivery",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_delivery_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_delivery",
+      "FromColumn": "DEPOT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_depot",
+      "ToColumn": "DEPOT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_return",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_delivery_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_return",
+      "FromColumn": "DEPOT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_depot",
+      "ToColumn": "DEPOT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_repair",
+      "FromColumn": "SERVICE_DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_service_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_repair",
+      "FromColumn": "DEPOT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_depot",
+      "ToColumn": "DEPOT_ID"
+    }
+  ]
+}

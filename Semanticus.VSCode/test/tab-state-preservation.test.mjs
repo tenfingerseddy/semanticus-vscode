@@ -124,7 +124,12 @@ ok('DAX Lab visual auto-run only fires after the user changes wells, never on ta
 
 // ---- M Code stays a cancellation boundary (rendered inside the tab body → unmounts on switch) ----
 ok('M Code is rendered inside the Shell tab-conditional (unmounts on tab switch), never lifted to a holder', () => {
-  assert.match(app, /tab === 'mcode' \? \([\s\S]*<MCodeView navTarget=\{pqTarget\} \/>/);
+  // Since r1 (Kane, 8 Oct) Power Query is a sub-page of Advanced modelling: the tab body renders that page for
+  // `mcode`, and the page renders MCodeView only while Power Query is its area, so it still unmounts on a switch.
+  assert.match(app, /tab === 'advmodels' \|\| tab === 'mcode' \? \([\s\S]*?<AdvancedModelsView [^>]*mcodeTarget=\{pqTarget\}/);
+  const advmodels = read('webview/src/advmodels.tsx');
+  assert.match(advmodels, /if \(area === 'mcode'\) \{[\s\S]{0,600}?<MCodeView navTarget=\{mcodeTarget\} \/>/);
+  assert.ok(!advmodels.includes('MCodeTabStateProvider'), 'nor inside the Advanced modelling page');
   assert.ok(!app.includes('MCodeTabStateProvider'), 'M Code must not gain a state-preservation holder');
 });
 

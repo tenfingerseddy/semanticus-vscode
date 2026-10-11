@@ -20,6 +20,11 @@ namespace Semanticus.Engine
         public bool Ok { get; set; }               // outcome — an attempt that failed is still worth remembering
         public string Detail { get; set; }         // short human note (e.g. why a switch happened); never a credential
         public string WhenUtc { get; set; }
+        /// <summary>True for the open of a copy under a temp folder that was not saved to Connections. Such rows share
+        /// one bucket of their own in the caps, so a run of throwaway opens can only push out other throwaway opens,
+        /// never the person's own rows (an account switch, a failed sign-in) that also carry no connection id.
+        /// Null (not written) on every other row.</summary>
+        public bool? Throwaway { get; set; }
     }
 
     /// <summary>
@@ -36,6 +41,8 @@ namespace Semanticus.Engine
         public const int MaxPerConnection = 25;
         public const int MaxTotal = 500;
         private const string FileName = "connection-history.json";
+        // Not a connection id (ids are hex), so no real connection can share the throwaway bucket.
+        private const string ThrowawayBucket = "\u0001throwaway";
 
         private static readonly object Gate = new object();
         private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
@@ -70,9 +77,9 @@ namespace Semanticus.Engine
                 lock (Gate)
                 using (AcquireLock())
                 {
-                    var all = ReadForWrite();
+                    var all = ReadForWrite(out var unreadable);
                     all.Insert(0, ev);
-                    Save(all);
+                    Save(all, unreadable);
                 }
             }
             catch { /* a convenience log never fails the connection it is a log of */ }
@@ -130,14 +137,27 @@ namespace Semanticus.Engine
                 foreach (var e in all) ProjectForDisplay(e);
                 return all;
             }
-            catch { return new List<ConnectionHistoryEvent>(); }
+            catch
+            {
+                // An unreadable log shows the previous good copy, the same rows the next write will start from.
+                try
+                {
+                    var all = JsonSerializer.Deserialize<List<ConnectionHistoryEvent>>(File.ReadAllText(FilePath() + ".bak"), JsonOpts) ?? new List<ConnectionHistoryEvent>();
+                    foreach (var e in all) ProjectForDisplay(e);
+                    return all;
+                }
+                catch { return new List<ConnectionHistoryEvent>(); }
+            }
         }
 
-        // On the write path an unreadable log is simply discarded (moved aside) rather than preserved: unlike the
-        // registry it carries no governance data, so a fresh log is the right recovery — but we still keep the bytes
-        // for a curious user rather than deleting them outright.
-        private static List<ConnectionHistoryEvent> ReadForWrite()
+        // On the write path an unreadable log starts the next write from the previous good copy, .bak, when it parses,
+        // and Save sets the unreadable file aside (its bytes kept for a curious user) in the same step that puts the new
+        // log in place, never rotating it into .bak. Nothing is moved here: a write that fails after this read (a full
+        // disk) used to leave no log at all, so the timeline showed nothing and the next two writes rotated .bak away
+        // (27 Sep, round 3; see ConnectionRegistry.ReadForWrite). With no good copy either, a fresh log is the recovery.
+        private static List<ConnectionHistoryEvent> ReadForWrite(out bool unreadable)
         {
+            unreadable = false;
             var p = FilePath();
             if (!File.Exists(p)) return new List<ConnectionHistoryEvent>();
             try
@@ -146,30 +166,32 @@ namespace Semanticus.Engine
             }
             catch
             {
-                try { File.Move(p, p + ".corrupt-" + Guid.NewGuid().ToString("N").Substring(0, 8)); } catch { /* best-effort */ }
-                return new List<ConnectionHistoryEvent>();
+                unreadable = true;
+                try { return JsonSerializer.Deserialize<List<ConnectionHistoryEvent>>(File.ReadAllText(p + ".bak"), JsonOpts) ?? new List<ConnectionHistoryEvent>(); }
+                catch { return new List<ConnectionHistoryEvent>(); }
             }
         }
 
-        private static void Save(List<ConnectionHistoryEvent> all)
+        private static void Save(List<ConnectionHistoryEvent> all, bool setAsideUnreadable = false)
         {
-            // Enforce the per-connection cap first (keep the newest N of each), then the global cap over what remains.
-            // Order is preserved (newest-first) because GroupBy is stable and we re-sort by the original position.
-            if (all.Count > MaxTotal || all.GroupBy(e => e.Id ?? "").Any(g => g.Count() > MaxPerConnection))
+            // Enforce the per-connection cap (keep the newest N of each), then the global cap over what remains, in one
+            // newest-first pass. Throwaway opens are one bucket of their own and do not count toward the global cap, so
+            // they can only ever push out each other: at most MaxPerConnection of them sit beside MaxTotal of the rest.
+            var perConnCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var kept = new List<ConnectionHistoryEvent>(Math.Min(all.Count, MaxTotal + MaxPerConnection));
+            var personal = 0;
+            foreach (var e in all)   // already newest-first
             {
-                var perConnCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var kept = new List<ConnectionHistoryEvent>(Math.Min(all.Count, MaxTotal));
-                foreach (var e in all)   // already newest-first
-                {
-                    var key = e.Id ?? "";
-                    perConnCount.TryGetValue(key, out var c);
-                    if (c >= MaxPerConnection) continue;
-                    perConnCount[key] = c + 1;
-                    kept.Add(e);
-                    if (kept.Count >= MaxTotal) break;
-                }
-                all = kept;
+                var throwaway = e.Throwaway == true;
+                var key = throwaway ? ThrowawayBucket : e.Id ?? "";
+                perConnCount.TryGetValue(key, out var c);
+                if (c >= MaxPerConnection) continue;
+                if (!throwaway && personal >= MaxTotal) continue;
+                perConnCount[key] = c + 1;
+                if (!throwaway) personal++;
+                kept.Add(e);
             }
+            all = kept;
 
             // Serialization-boundary scrub (CRITICAL 1): redact any secret from EVERY string field of every event before
             // the write — a secret-shaped account/tenant/detail, or a field added later. Endpoint/database are already
@@ -178,8 +200,9 @@ namespace Semanticus.Engine
 
             Directory.CreateDirectory(ConnectionRegistry.Root());
             var tmp = FilePath() + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(all, JsonOpts));
-            File.Move(tmp, FilePath(), overwrite: true);
+            ConnectionRegistry.WriteFlushed(tmp, JsonSerializer.Serialize(all, JsonOpts));
+            if (setAsideUnreadable) ConnectionRegistry.ReplaceSettingAside(tmp, FilePath());   // .bak keeps the good copy
+            else ConnectionRegistry.ReplaceKeepingBackup(tmp, FilePath());   // keeps one previous copy as connection-history.json.bak
         }
     }
 }

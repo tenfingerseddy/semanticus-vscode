@@ -80,7 +80,7 @@ namespace Semanticus.Engine
             ? GovernanceReason
             : $"The agent policy does not permit {Describe(cap)} on a '{label}' target. "
               + (label == "prod"
-                 ? "This target is labelled production (or is unlabelled, which is treated as production). A human can do this directly, or relabel the target if that classification is wrong."
+                 ? "This target is labelled production (or is unlabelled, which is treated as production). A human can do this directly, or relabel the target if that classification is wrong. The user sets target labels in VS Code."
                  : "A human can do this directly, or loosen the policy for this environment.");
 
         private static string Describe(AgentCapability cap) => cap switch

@@ -3,7 +3,7 @@
   <!--
     Semanticus.Analysis (P-AIR1)
     ============================
-    The AI-Readiness analyzer: scores a semantic model A-F for AI consumers (Copilot / Q&A / Fabric
+    The AI-Readiness analyzer: scores a semantic model A-F for AI consumers (Copilot / Fabric
     Data Agents / NL) and produces findings + safe deterministic remediations. Built as a clean,
     modern, typed rule set over the TOMWrapper model — deliberately NOT the TE2 Dynamic-LINQ fork
     ("only what's good from TE2; better way if there is one"). The curated rules are ours, so typed

@@ -1,0 +1,26 @@
+table Calendar
+	/// YYYYMMDD date join key
+	column 'Date Key'
+		dataType: int64
+		sourceColumn: DateKey
+		summarizeBy: none
+
+	/// full snapshot date
+	column Date
+		dataType: dateTime
+		sourceColumn: Date
+		summarizeBy: none
+
+	/// snapshot year stored as integer
+	column Year
+		dataType: int64
+		sourceColumn: Year
+		summarizeBy: none
+
+	partition Calendar = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [DateKey = Int64.Type, Date = type date, Year = Int64.Type], {})
+			in
+				Source

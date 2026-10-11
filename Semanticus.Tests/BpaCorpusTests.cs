@@ -24,8 +24,11 @@ namespace Semanticus.Tests
     /// it cannot distinguish one 74-rule corpus from another, so a swap, a rename or a drop-one-and-add-one was
     /// invisible. Both directions of the set comparison are reported by name when they fail.
     /// </summary>
-    public sealed class BpaCorpusTests
+    public sealed class BpaCorpusTests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public BpaCorpusTests(TemplateCopies copies) => _copies = copies;
+
         // THE CORPUS IS PINNED BY IDENTITY, NOT BY COUNT. Until 2026-07-30 these tests asserted only
         // `rules.Count == 74` and `rules.Count - authored.Count == 69`, so the five SEM_ rules were pinned by id
         // while the 69 Microsoft rules were not pinned at all: swapping one rule for another, renaming one, or
@@ -168,14 +171,14 @@ namespace Semanticus.Tests
             return r.ReadToEnd();
         }
 
-        private static async Task<LocalEngine> FreshAsync()
+        private Task<LocalEngine> FreshAsync() => _copies.OpenAsync("fresh", BuildFreshAsync, new Fake(), new SessionManager());
+
+        private static async Task BuildFreshAsync(LocalEngine engine)
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake());
             await engine.CreateModelAsync("BpaCorpus", 1601);
             var t = await engine.CreateTableAsync("Facts", "human");
             await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
             await engine.CreateMeasureAsync(t, "Total", "SUM(Facts[Amount])", "human");
-            return engine;
         }
 
         [Fact]
@@ -281,6 +284,9 @@ namespace Semanticus.Tests
         // The six-character sequence backslash-u-003B, which JSON leaves in the shipped corpus today.
         private const string UnicodePercentageFix = "FormatString = \"#,0.0%\\u003B-#,0.0%\\u003B#,0.0%\"";
 
+        /// <summary>The same fix literal written to Description, a plain string property with no format meaning.</summary>
+        private static string OnDescription(string fix) => fix.Replace("FormatString = ", "Description = ");
+
         private static BpaRule PercentageRule(string fix) => new BpaRule
         {
             ID = "PERCENTAGE_FORMATTING",
@@ -292,16 +298,24 @@ namespace Semanticus.Tests
             FixExpression = fix,
         };
 
-        private static async Task<(LocalEngine engine, SessionManager sessions)> PercentageModelAsync()
+        private async Task<(LocalEngine engine, SessionManager sessions)> PercentageModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake());
+            return (await _copies.OpenAsync("percentage", BuildPercentageAsync, new Fake(), sessions), sessions);
+        }
+
+        private static async Task BuildPercentageAsync(LocalEngine engine)
+        {
             await engine.CreateModelAsync("PctFix", 1604);
             var t = await engine.CreateTableAsync("Facts", "human");
             await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
             var m = await engine.CreateMeasureAsync(t, "Margin", "1", "human");
             await engine.SetMeasureFormatAsync(m, "0%", "human");
-            return (engine, sessions);
+            // A blank format is filled only on a value the engine proves is a whole number (THE FORMAT FILL RULE,
+            // FormatFill.MayFill), so the plan's one real seed is the integer rule filling this count. The tests that
+            // prove how a fix literal is decoded and written carry that literal on Description (OnDescription): the
+            // decoding is the same for every string property, and a format fix with a percentage literal never applies.
+            await engine.CreateMeasureAsync(t, "Unformatted", "COUNTROWS ( Facts )", "human");
         }
 
         [Fact]
@@ -330,23 +344,23 @@ namespace Semanticus.Tests
             var (engine, sessions) = await PercentageModelAsync();
             using (engine)
             {
-                var rule = PercentageRule(QuotedPercentageFix);
+                var rule = PercentageRule(OnDescription(QuotedPercentageFix));
                 var preview = await sessions.Require().ReadAsync(m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     return BpaAnalyzer.PreviewFix(rule, obj);
                 });
-                Assert.Equal("FormatString", preview.prop);
+                Assert.Equal("Description", preview.prop);
                 Assert.Equal(CanonicalPercentage, preview.after);
 
                 await sessions.Require().MutateAsync("human", "percentage fix", m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     Assert.True(BpaAnalyzer.ApplyFix(m, rule, obj));
                 });
 
                 var written = await sessions.Require().ReadAsync(m =>
-                    m.AllMeasures.Single(x => x.Name == "Margin").FormatString);
+                    m.AllMeasures.Single(x => x.Name == "Unformatted").Description);
                 Assert.Equal(CanonicalPercentage, written);
                 Assert.Equal(preview.after, written);
             }
@@ -358,22 +372,22 @@ namespace Semanticus.Tests
             var (engine, sessions) = await PercentageModelAsync();
             using (engine)
             {
-                var rule = PercentageRule(UnicodePercentageFix);
+                var rule = PercentageRule(OnDescription(UnicodePercentageFix));
                 var preview = await sessions.Require().ReadAsync(m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     return BpaAnalyzer.PreviewFix(rule, obj);
                 });
                 Assert.Equal(CanonicalPercentage, preview.after);
 
                 await sessions.Require().MutateAsync("human", "unicode percentage fix", m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     Assert.True(BpaAnalyzer.ApplyFix(m, rule, obj));
                 });
 
                 var written = await sessions.Require().ReadAsync(m =>
-                    m.AllMeasures.Single(x => x.Name == "Margin").FormatString);
+                    m.AllMeasures.Single(x => x.Name == "Unformatted").Description);
                 Assert.Equal(CanonicalPercentage, written);
                 Assert.Equal(preview.after, written);
             }
@@ -387,14 +401,14 @@ namespace Semanticus.Tests
             {
                 var ruleJson =
                     "[{\"ID\":\"PERCENTAGE_FORMATTING\",\"Name\":\"percentages\",\"Category\":\"Formatting\"," +
-                    "\"Severity\":2,\"Scope\":\"Measure\",\"Expression\":\"FormatString.Contains(\\\"%\\\")\"," +
-                    "\"FixExpression\":\"FormatString = \\\"#,0.0%;-#,0.0%;#,0.0%\\\"\"}]";
+                    "\"Severity\":2,\"Scope\":\"Measure\",\"Expression\":\"string.IsNullOrWhitespace(Description)\"," +
+                    "\"FixExpression\":\"Description = \\\"#,0.0%;-#,0.0%;#,0.0%\\\"\"}]";
                 await engine.LoadBpaRulesAsync(ruleJson, replace: true, "human");
 
                 var preview = await sessions.Require().ReadAsync(m =>
                 {
                     var rule = BpaRuleSet.Parse(ruleJson).Single();
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     return BpaAnalyzer.PreviewFix(rule, obj);
                 });
                 Assert.Equal(CanonicalPercentage, preview.after);
@@ -403,14 +417,14 @@ namespace Semanticus.Tests
                 Assert.True(bulk.Applied >= 1);
 
                 var written = await sessions.Require().ReadAsync(m =>
-                    m.AllMeasures.Single(x => x.Name == "Margin").FormatString);
+                    m.AllMeasures.Single(x => x.Name == "Unformatted").Description);
                 Assert.Equal(CanonicalPercentage, written);
                 Assert.Equal(preview.after, written);
             }
         }
 
         // ---- object-aware fix eligibility: an invalid literal is not "auto-fixable" ---------------------
-        // A custom rule (load_bpa_rules) is the only path that can introduce an arbitrary FixExpression, and
+        // A custom rule (load_rules with system='bpa') is the only path that can introduce an arbitrary FixExpression, and
         // eligibility used to be pure SYNTAX: "IsHidden = yes" and an unknown enum member both parse as
         // deterministic assignments, so the scan advertised a fix that cannot exist on the object. Two things
         // broke downstream. propose_plan seeds BPA fixes through PreviewFix, whose conversion THREW on the first
@@ -458,9 +472,12 @@ namespace Semanticus.Tests
 
                 Assert.DoesNotContain(plan.Items, i => i.RuleId == "TEST_BAD_BOOL_FIX" || i.RuleId == "TEST_BAD_ENUM_FIX");
                 // The proposal still carries the shipped rule's real fix — one bad rule omits one item, it does not
-                // cost the user every other seed in the plan.
-                var pct = Assert.Single(plan.Items.Where(i => i.Kind == "bpa_fix" && i.RuleId == "PERCENTAGE_FORMATTING"));
-                Assert.Equal(CanonicalPercentage, pct.After);
+                // cost the user every other seed in the plan. That is the integer rule filling the blank count: no fix
+                // writes over a format string, so "Margin"'s 0% is advice and seeds nothing.
+                var fill = Assert.Single(plan.Items.Where(i => i.Kind == "bpa_fix" && i.RuleId == "INTEGER_FORMATTING"));
+                Assert.Equal("measure:Facts/Unformatted", fill.ObjectRef);
+                Assert.Equal("#,0", fill.After);
+                Assert.DoesNotContain(plan.Items, i => i.RuleId == "PERCENTAGE_FORMATTING");
             }
         }
 
@@ -504,23 +521,23 @@ namespace Semanticus.Tests
             var (engine, sessions) = await PercentageModelAsync();
             using (engine)
             {
-                var rule = PercentageRule(fix);
+                var rule = PercentageRule(OnDescription(fix));
                 var preview = await sessions.Require().ReadAsync(m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     return BpaAnalyzer.PreviewFix(rule, obj);
                 });
-                Assert.Equal("FormatString", preview.prop);
+                Assert.Equal("Description", preview.prop);
                 Assert.Equal(expected, preview.after);
 
                 await sessions.Require().MutateAsync("human", "escaped literal fix", m =>
                 {
-                    var obj = m.AllMeasures.Single(x => x.Name == "Margin");
+                    var obj = m.AllMeasures.Single(x => x.Name == "Unformatted");
                     Assert.True(BpaAnalyzer.ApplyFix(m, rule, obj));
                 });
 
                 var written = await sessions.Require().ReadAsync(m =>
-                    m.AllMeasures.Single(x => x.Name == "Margin").FormatString);
+                    m.AllMeasures.Single(x => x.Name == "Unformatted").Description);
                 Assert.Equal(expected, written);
                 Assert.Equal(preview.after, written);
             }

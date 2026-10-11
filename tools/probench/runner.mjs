@@ -11,9 +11,10 @@
 // see (Power BI Desktop open, or an attached owner engine — the MCP door is attach-or-own).
 
 import { spawn } from 'node:child_process';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -26,7 +27,10 @@ class Mcp {
     static async start() {
         const dll = process.env.SEMANTICUS_ENGINE_DLL || CONFIG.engineDll;
         if (!dll || !existsSync(dll)) throw new Error('Set SEMANTICUS_ENGINE_DLL to the Semanticus.Engine.dll path (or config.json engineDll).');
-        const child = spawn('dotnet', [dll, '--mcp'], { stdio: ['pipe', 'pipe', 'inherit'] });
+        // A benchmark run keeps its per-user state in a scratch folder, never the real ~/.semanticus (27 Sep),
+        // unless the caller already chose one.
+        const env = { ...process.env, SEMANTICUS_HOME: process.env.SEMANTICUS_HOME || mkdtempSync(join(tmpdir(), 'sem-home-probench-')) };
+        const child = spawn('dotnet', [dll, '--mcp'], { stdio: ['pipe', 'pipe', 'inherit'], env });
         const mcp = new Mcp(child);
         child.stdout.setEncoding('utf8');
         child.stdout.on('data', d => mcp._onData(d));

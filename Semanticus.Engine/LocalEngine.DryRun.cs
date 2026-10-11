@@ -13,14 +13,19 @@ namespace Semanticus.Engine
     /// result, with a hard guarantee of no mutation / no undo entry / no broadcast / no audit record. The rehearsal
     /// itself lives at the <see cref="Session.MutateAsync"/> chokepoint (the vendored rollback path, driven by the
     /// ambient <see cref="DryRunScope"/>); this partial is the wrapper op that resolves an op name to its McpTools
-    /// method, refuses the ops a rolled-back rehearsal would mislead on, binds the JSON args, and invokes under the
-    /// scope. Ops that do external/system I/O, span multiple dependent mutations, touch the undo timeline, or write
-    /// sidecar/bookkeeping state are DENIED with a teaching refusal that names the right preview path.
+    /// method, binds the JSON args, and invokes it under the scope.
+    ///
+    /// THE GUARD IS THE GATE, not a list of ops. The tool runs on the gated engine (<see cref="AssistantEngine"/>), so every engine
+    /// call it makes meets the registry: a model edit runs (the rehearsal rolls it back), and any call whose row says it cannot be
+    /// previewed (<see cref="GateEntry.CanPreview"/>: a write to a file, a setting, a sidecar, the session, the undo timeline) is
+    /// refused with one plain line, whatever the op is called. A new op therefore needs no entry here to be safe. The name list below
+    /// is only the TEACHING layer: it turns a refusal the rehearsal would reach late into a sentence that names the right path.
     /// </summary>
     public sealed partial class LocalEngine
     {
-        // --- deny-list (the ops dry_run refuses, each family with the reason its refusal teaches) --------------
-        // A rolled-back rehearsal of these would be misleading, not informative: I/O escapes the rollback,
+        // --- teaching list (the ops dry_run turns away early, each family with the reason its refusal teaches) ----
+        // NOT a guard: the gate refuses whatever the rollback does not cover (see the class comment), so a name missing from here is
+        // never a way round. A rolled-back rehearsal of these would be misleading, not informative: I/O escapes the rollback,
         // composites diverge because later steps read earlier persisted writes, the undo timeline is already
         // reversible, and bookkeeping writes are sidecar/annotation state a model rollback doesn't cover.
 
@@ -32,6 +37,8 @@ namespace Semanticus.Engine
             "dry_run cannot rehearse the undo timeline: undo is already reversible, so just run undo_change / redo_change";
         private const string CompositeReason =
             "its later steps read earlier writes, so a rolled-back rehearsal would diverge: use propose_plan / the op's own preview path / apply one typed op at a time";
+        private const string StartPlanReason =
+            "it creates and keeps a start plan (a folder, a saved model and the plan's own file) that a rolled-back rehearsal does not undo: read the plan with get_start_plan, or run it directly";
         private const string BookkeepingReason =
             "it writes bookkeeping state (workflow / knowledge / waiver), not a model-definition edit: dry_run rehearses model edits and does not apply here";
 
@@ -60,15 +67,20 @@ namespace Semanticus.Engine
                 "connect_local", "disconnect", "refresh_partition", "export_vpax", "clear_cache", "evaluate_and_log",
                 "run_interview");
             // Cloud/network reads not caught by a prefix.
-            Add(CloudReason, "analyze_cloud_reports", "list_workspaces", "autogenerate_spec_from_fabric");
+            Add(CloudReason, "analyze_cloud_reports", "list_workspaces", "list_workspace_models", "autogenerate_spec_from_fabric");
             // History checkpoints do a real git commit + model save (and restore reopens the model) when their
             // commit/restore flag is set, outside MutateAsync — a rehearsal cannot roll them back, so refuse like the
             // git_/deploy families rather than execute a real commit under a "nothing was changed" report.
             Add(CloudReason, "create_history_checkpoint", "restore_history_checkpoint");
+            // The spec-first start (M11) creates a folder and a saved model, keeps its plan in a sidecar and builds into the
+            // person's model with a plan the person approved: none of that rolls back with a rehearsal, which would then
+            // report that nothing changed. The two reads (get_start_plan, get_start_words) change nothing and stay rehearsable.
+            Add(StartPlanReason, "start_model_from_sql", "edit_start_plan", "grant_start_disclosure", "write_start_words",
+                "build_start_plan", "discard_start_plan");
             // Undo timeline.
             Add(TimelineReason, "undo_change", "redo_change");
             // Multi-mutate composites whose later steps read earlier persisted writes.
-            Add(CompositeReason, "apply_plan", "apply_safe_fixes", "bpa_fix_all", "make_model_ai_ready",
+            Add(CompositeReason, "apply_plan", "apply_safe_fixes", "make_model_ai_ready",
                 "apply_model_diff", "cherry_pick", "build_model_from_spec", "apply_dax_script", "apply_tmdl");
             // Workflow / knowledge / waiver bookkeeping (sidecar-file or annotation writers, not model-definition edits).
             // The settings-file + workflow-templates writers bypass MutateAsync, so a rehearsal would PERSIST them —
@@ -81,12 +93,21 @@ namespace Semanticus.Engine
                 "set_model_primer", "save_evidence",   // sidecar-file writers (Primer .md, sealed evidence JSON/HTML) that bypass MutateAsync — a rehearsal would PERSIST + broadcast them
                 "waive_finding", "unwaive_finding",
                 "add_interview_question", "delete_interview_question",   // sidecar-JSONL writers — a rehearsal would PERSIST them
+                // The Model Plan's memory (.semanticus/plan-memory.json: skips, completions, the refresh log) is a
+                // sidecar written by ComposeAsync OUTSIDE the model batch, so a rehearsal kept the skip for real
+                // while the report said nothing changed (Astra 11 on PR 385). model_plan_action is denied with
+                // them: it writes that same memory AND runs the safe fixes, and apply_safe_fixes is already denied
+                // just above as a composite.
+                "skip_model_plan_item", "unskip_model_plan_item", "model_plan_action", "apply_plan_items",
+                // The target is kept in that same sidecar, so a rehearsal would write one for real while the
+                // report said nothing changed. Same reason, same denial.
+                "add_plan_target", "remove_plan_target",
                 // Spec/plan session-state writers bypass MutateAsync, so a rehearsal would PERSIST them — which
                 // would silently break the report's "nothing was changed" guarantee. Denied for the same reason.
                 "set_spec", "clear_spec", "load_spec", "save_spec", "propose_plan", "propose_replace", "add_plan_item", "set_plan_item",
-                "clear_plan", "capture_baseline", "save_layout", "set_verified_mode", "load_bpa_rules", "reset_bpa_rules",
-                "load_readiness_rules", "reset_readiness_rules",   // rule-annotation writers — same family as the BPA pair
-                "set_publish_destination", "remember_xmla_connection", "forget_connection", "label_connection");   // connection-registry writers — a rehearsal would persist them outside model rollback
+                "clear_plan", "capture_baseline", "save_layout", "set_verified_mode",
+                "load_rules", "reset_rules",   // rule-annotation writers (both systems)
+                "set_publish_destination", "remember_xmla_connection", "forget_connection");   // connection-registry writers: a rehearsal would persist them outside model rollback
             return d;
         }
 
@@ -99,8 +120,8 @@ namespace Semanticus.Engine
             if (TryGuardDryRunnable(op, out var reason)) throw Refuse(op, reason);
         }
 
-        /// <summary>The deny-list as a PREDICATE (no throw): true + the teaching <paramref name="reason"/> when the
-        /// op is NOT dry-runnable. Shared with replay_check_workflow so both admission paths read the SAME deny-list
+        /// <summary>The teaching list as a PREDICATE (no throw): true + the <paramref name="reason"/> when the
+        /// op is one dry_run turns away early. Shared with replay_check_workflow so both admission paths read the SAME deny-list
         /// (never a duplicated copy that could drift). Does not cover the unknown-op case — the caller resolves the
         /// op against <see cref="OpSurface"/> first.</summary>
         internal static bool TryGuardDryRunnable(string op, out string reason)
@@ -145,7 +166,7 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(
                     $"'{op}' is not a known op. get_op_catalog lists the real tool surface; dry_run rehearses any single MODEL-MUTATING op from it.");
 
-            // 2) Deny-list — a teaching refusal that names the alternative.
+            // 2) Teaching list — a refusal that names the alternative (the gate refuses the rest, below).
             GuardDryRunnable(op);
 
             // 3) Bind the JSON args to the method's parameters (case-insensitive by name; missing optionals take
@@ -160,7 +181,7 @@ namespace Semanticus.Engine
                 Op = op,
                 Note = "Rehearsal only: nothing was changed, no undo entry, no broadcast. Run the op itself to apply.",
             };
-            var collector = new DryRunCollector();
+            var collector = new DryRunCollector { FromTool = true };
             DryRunScope.Current = collector;
             try
             {
@@ -199,7 +220,9 @@ namespace Semanticus.Engine
             for (int i = 0; i < pars.Length; i++)
             {
                 var p = pars[i];
-                if (i == 0 && typeof(IEngine).IsAssignableFrom(p.ParameterType)) { args[i] = this; continue; }
+                // The tool runs on the GATED engine, so every write it makes meets the gate: under a rehearsal the gate lets a model edit
+                // through (rolled back) and refuses a write that lands anywhere else. Never on `this`: that is a road around the gate.
+                if (i == 0 && typeof(IEngine).IsAssignableFrom(p.ParameterType)) { args[i] = GateContext.Gated ?? AssistantEngine.For(this); continue; }
                 if (bag.TryGetValue(p.Name, out var el) && el.ValueKind != JsonValueKind.Null)
                 {
                     try { args[i] = JsonSerializer.Deserialize(el.GetRawText(), p.ParameterType, DryRunBindJson); }

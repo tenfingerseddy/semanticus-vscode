@@ -1,5 +1,5 @@
-// C1.6 Publish surface: one word, one confirm, Ctrl+S never publishes, Deploy header resolves,
-// compare target resets on model switch, account is named, empty Fabric Git id is refused.
+// Publish surface: one word, one button, Ctrl+S never publishes, the label is the guard, the destination is named once,
+// the Changes tab resets on model switch, the account is named, and the Publish page has no second step.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -13,7 +13,11 @@ const copy = await loadTypeScriptModule(resolve(root, 'webview/src/publishcopy.t
 const pkg = JSON.parse(read('package.json'));
 const deploy = read('webview/src/deploy.tsx');
 const compare = read('webview/src/compare.tsx');
+const changes = read('webview/src/publish-changes.tsx');
+const sharedPublishCopy = read('webview/src/publishcopy.ts');
 const app = read('webview/src/App.tsx');
+let reach = '';
+try { reach = read('webview/src/publishReach.ts'); } catch { /* the O5 test says what is missing */ }
 const extension = read('src/extension.ts');
 const propgrid = read('media/propgrid/propgrid.js');
 const help = read('webview/src/help.tsx');
@@ -24,6 +28,36 @@ const sharedCopy = await loadTypeScriptModule(resolve(root, 'webview/src/copy.ts
 let passed = 0;
 const test = (name, fn) => { fn(); passed++; };
 
+test('H1 the page publishes through one operation, and the destination travels with every call', () => {
+  // The host relays the engine's set_publish_destination activity, so Studio re-reads without opening Connections.
+  assert.match(extension, /kind === 'set_publish_destination'/, 'the host must relay set_publish_destination as a connectionChanged nudge');
+  // The page rehearses once and writes once, both through applyDiff with the destination it compared. No deployLive.
+  const calls = changes.match(/rpc<ApplyDiffResult>\('applyDiff'[^\n]*/g) ?? [];
+  assert.equal(calls.length, 2, 'the Publish page makes one rehearsal call and one write call');
+  for (const c of calls) assert.match(c, /left, right,/, 'every applyDiff call names the two sides it compared: ' + c);
+  assert.match(calls[0], /, false, 'human'\)/, 'the rehearsal writes nothing');
+  assert.match(calls[1], /\[\.\.\.effective\], true, 'human'\)/, 'the write sends the ticked rows, from the person, with no token and no reason');
+  assert.doesNotMatch(deploy + changes, /deployLive/, 'the page has no second publish operation');
+});
+
+test('J10-3 the extension host sends no deployLive of its own: a null target would publish to a destination the person was not shown', () => {
+  assert.doesNotMatch(extension, /sendRequest<[^>]*>\('deployLive'/, 'no host code may call deployLive; the Publish page is the one door and it carries the shown destination');
+  assert.doesNotMatch(extension, /overrideDeployToLive/, 'the unused override helper is gone');
+});
+
+test('B2 the Data agent page signs in only when the person asks', () => {
+  // Picking "Sign in in a browser" (or a device code) used to list workspaces at once, which opens the sign-in window.
+  assert.equal(sharedCopy.mayStartSignIn('interactive', '', 'interactive|'), false);
+  assert.equal(sharedCopy.mayStartSignIn('devicecode', '', 'devicecode|'), false);
+  assert.equal(sharedCopy.mayStartSignIn('interactive', 'interactive|', 'interactive|'), true, 'pressed for this choice');
+  assert.equal(sharedCopy.mayStartSignIn('interactive', 'interactive|', 'interactive|tenant-b'), false, 'a new tenant is a new sign-in');
+  assert.equal(sharedCopy.mayStartSignIn('azcli', '', 'azcli|'), true, 'the command line never opens a window');
+  assert.equal(sharedCopy.mayStartSignIn('serviceprincipal', '', 'serviceprincipal|'), true);
+  const effect = dataagent.slice(dataagent.indexOf("rpc<FabricWorkspace[]>('listWorkspaces'") - 400, dataagent.indexOf("rpc<FabricWorkspace[]>('listWorkspaces'"));
+  assert.match(effect, /mayStartSignIn\(/, 'the workspace listing must wait for the person when the sign-in opens a window');
+  assert.match(dataagent, /data-testid="dataagent-sign-in"/, 'the page must offer a Sign in button for those modes');
+});
+
 test('D-007 palette and tree use the word Publish', () => {
   const cmd = pkg.contributes.commands.find((c) => c.command === 'semanticus.saveToLive');
   assert.equal(cmd.title, copy.PUBLISH_COMMAND_TITLE);
@@ -31,33 +65,33 @@ test('D-007 palette and tree use the word Publish', () => {
   assert.doesNotMatch(cmd.title, /Save to Live|deploy metadata/i);
 });
 
-test('D-007 the header carries the one Publish control and the Ship page has no second one', () => {
-  // The app has ONE publish action and it lives in the header. The Published page used to repeat it in its card
-  // head, which left two accent buttons saying nearly the same thing, so these assertions moved to App.tsx.
-  assert.match(app, />Publish…</);
+test('D-007 the header Publish opens the Publish page and is hidden on it', () => {
+  // One Publish button in sight: the header one on every other page, the page's own on the Publish page.
+  assert.match(app, />Publish</);
   assert.match(app, /data-testid="publish-button"/);
+  assert.match(app, /tab !== 'deploy' && tab !== 'compare' && tab !== 'dataagent' && <div className="studio-publish-block">/);
+  assert.match(app, /const openPublish = \(\) => goTab\('deploy'\)/);
+  assert.doesNotMatch(app, />Publish…</, 'the header button no longer opens a review, so it carries no ellipsis');
   assert.doesNotMatch(deploy, /data-testid="publish-button"/);
-  assert.doesNotMatch(deploy, />Publish</);
-  assert.doesNotMatch(deploy, />Push changes</);
-  assert.match(deploy, />What to publish</);
-  assert.doesNotMatch(deploy, /Choose what to publish/);
+  assert.doesNotMatch(deploy, /PublishConfirm|publish-confirm|publishOpen|confirmPublish|publishNeedReason|publishOverride/, 'the review card and its reason box are gone');
+  assert.doesNotMatch(deploy, />Advanced</, 'the Advanced tab is gone');
+  assert.match(deploy, /Changes/);
   assert.doesNotMatch(help, /Choose what to publish/);
-  // The review still opens above whatever mode you were in, now seeded by the header button's publish route.
-  assert.match(deploy, /\{entry === 'review' && <PublishConfirm/);
-  assert.match(app, /const openPublish = \(\) => goTab\('deploy', undefined, 'publish'\)/);
 });
 
-test('D-007 chip, palette, and tree all open the Deploy confirm', () => {
+test('D-007 chip, palette, and tree all open the Publish page', () => {
   assert.match(extension, /navigateStudio\(extCtx, 'deploy', 'publish'\)/);
-  assert.match(app, /tool === 'deploy' && target === 'publish'/);
+  assert.doesNotMatch(app, /tool === 'deploy' && target === 'publish'/, 'the publish route has no seed: the page itself is the review');
   assert.match(extension, /publishStatus\.command = 'semanticus\.saveToLive'/);
   assert.match(extension, /\$\(cloud-upload\)/);
 });
 
-test('D-007 confirm card is the one write surface', () => {
-  assert.match(deploy, /data-testid="publish-confirm"/);
-  assert.match(deploy, /data-testid="publish-account"/);
-  assert.match(deploy, /deployLive/);
+test('D-007 the Publish page has one write button, named by its label', () => {
+  assert.match(changes, /data-testid="publish-go"/);
+  assert.match(changes, /publishLabel\(\{/);
+  assert.match(deploy, /data-testid="restore-go"/);
+  assert.match(deploy, /data-testid="promote-go"/);
+  assert.doesNotMatch(deploy + changes, /Publish anyway|Why publish anyway|Validate selection|Confirm rollback|Preview rollback/);
   assert.doesNotMatch(extension, /showWarningMessage\(\s*`Deploy \$\{dry\.totalChanges\}/);
 });
 
@@ -71,54 +105,65 @@ test('chip text hides when the model is not live and names Publish when it is', 
   assert.equal(copy.publishChipText({ liveBound: true, previewError: 'sign-in expired' }), 'Publish · could not check');
 });
 
-test('D-010 header resolves instead of hanging on loading', () => {
-  const loading = copy.deployHeaderState({
-    loading: true, liveBound: true, modelName: 'V2', targetName: 'V2', lastRestore: 'none',
-  });
-  assert.equal(loading.resolved, false);
-  const idle = copy.deployHeaderState({
-    loading: false, liveBound: true, modelName: 'V2', targetName: 'V2', lastRestore: '2h ago',
-  });
-  assert.equal(idle.resolved, true);
-  assert.match(idle.line, /click Publish to review changes/);
-  assert.doesNotMatch(idle.line, /working-copy state loading|working-copy changes not counted|drift: not checked/);
-  const file = copy.deployHeaderState({
-    loading: false, liveBound: false, modelName: 'Contoso', targetName: 'No live target', lastRestore: 'none',
-  });
-  assert.equal(file.resolved, true);
-  assert.match(file.line, /no publish destination yet/);
-  const counted = copy.deployHeaderState({
-    loading: false, liveBound: true, modelName: 'V2', targetName: 'V2', changeCount: 1, lastRestore: 'none',
-  });
-  assert.match(counted.line, /1 change waiting/);
+test('the label is the guard: it names the count and the place, and says so when something is removed', () => {
+  const L = (o) => copy.publishLabel({ target: 'Contoso Sales', ...o });
+  assert.equal(L({ changes: 5, removals: 0 }), 'Publish 5 changes to Contoso Sales');
+  assert.equal(L({ changes: 1, removals: 0 }), 'Publish 1 change to Contoso Sales');
+  assert.equal(L({ changes: 5, removals: 1 }), 'Publish 5 changes and remove 1 from Contoso Sales');
+  assert.equal(L({ changes: 0, removals: 2 }), 'Remove 2 from Contoso Sales');
+  assert.equal(L({ changes: 0, removals: 0 }), 'Nothing ticked');
+  assert.equal(L({ changes: 3, removals: 0, busy: true }), 'Publishing...');
+  assert.equal(L({ changes: 0, removals: 0, empty: true }), 'Nothing to publish');
+  assert.doesNotMatch(L({ changes: 0, removals: 0 }), /^Publish/, 'no label invites a write of nothing');
 });
 
-test('D-010 source no longer uses the unresolved git header sentences', () => {
-  assert.doesNotMatch(deploy, /working-copy state loading/);
-  assert.doesNotMatch(deploy, /working-copy changes not counted/);
-  assert.doesNotMatch(deploy, /drift: not checked/);
+test('ticks change the count: removals count apart, and a row that needs an unticked table is left out', () => {
+  const table = { ref: 'table:Returns', objectType: 'Table', name: 'Returns', table: null, action: 'Create' };
+  const rate = { ref: 'measure:Returns/Return Rate', objectType: 'Measure', name: 'Return Rate', table: 'Returns', action: 'Create' };
+  const margin = { ref: 'measure:Sales/Margin %', objectType: 'Measure', name: 'Margin %', table: 'Sales', action: 'Update' };
+  const legacy = { ref: 'measure:Sales/Legacy', objectType: 'Measure', name: 'Legacy', table: 'Sales', action: 'Delete' };
+  const rel = { ref: 'relationship:Returns->Date', objectType: 'Relationship', name: 'Returns to Date', table: null, action: 'Create', leftText: JSON.stringify({ fromTable: 'Returns', toTable: 'Date' }) };
+  const rows = [table, rate, margin, legacy, rel];
+  // the parent-needed rule
+  assert.deepEqual(copy.neededParent(rate, rows, new Set([rate.ref, margin.ref])), { name: 'Returns', ref: table.ref }, 'a child of a new table that is not ticked needs it');
+  assert.equal(copy.neededParent(rate, rows, new Set([rate.ref, table.ref])), null, 'ticking the table clears it');
+  assert.deepEqual(copy.neededParent(rel, rows, new Set([rel.ref]))?.name, 'Returns', 'a relationship that points at a new table needs it too');
+  assert.equal(copy.neededParent(margin, rows, new Set()), null, 'a change to an existing table needs nothing');
+  assert.equal(copy.neededParent(legacy, rows, new Set()), null, 'a removal needs nothing');
+  // the counts
+  assert.deepEqual(copy.publishCounts(rows, new Set([margin.ref, table.ref])), { changes: 2, removals: 0 });
+  assert.deepEqual(copy.publishCounts(rows, new Set([margin.ref, legacy.ref])), { changes: 1, removals: 1 });
+  // the row notes
+  assert.equal(copy.rowNote(table, 'Contoso Sales'), 'new table');
+  assert.equal(copy.rowNote({ ...margin, leftText: '{"expression":"a","name":"x"}', rightText: '{"expression":"b","name":"x"}' }, 'X'), 'formula changed');
+  assert.equal(copy.rowNote({ ...margin, leftText: '{"formatString":"a"}', rightText: '{"formatString":"b"}' }, 'X'), 'measure changed');
+  assert.match(copy.rowNote(legacy, 'Contoso Sales'), /^only on Contoso Sales\. Tick to remove it there$/);
+  // the engine's failed list, in plain words, matched by ref and never taken apart
+  const reasons = copy.failureReasons([table.ref, `${margin.ref} (merged locally but the live deploy did not carry it: a metadata deploy doesn't push this object type)`], rows);
+  assert.match(reasons.get(table.ref), /different object with this name/);
+  assert.match(reasons.get(margin.ref), /does not take this kind of change/);
+  // the line that names what stayed in the person's copy: up to two names, then a count, one plain sentence
+  assert.equal(copy.couldNotGoLine(new Map([[margin.ref, 'x']]), rows), '1 change could not go (Margin %).');
+  assert.equal(copy.couldNotGoLine(reasons, rows), '2 changes could not go (Returns, Margin %).');
+  assert.equal(copy.couldNotGoLine(new Map([[table.ref, 'x'], [rate.ref, 'x'], [margin.ref, 'x']]), rows), '3 changes could not go (Returns, Return Rate and 1 more).');
+  assert.match(changes, /couldNotGoLine\(failed, items\)/, 'the page says it after a publish that left something behind');
+  // the page wires it
+  assert.match(changes, /neededParent\(it, items, wish\)/);
+  assert.match(changes, /failureReasons\(dry\.failedRefs, list\)/);
+  assert.match(changes, /Needs the \{parent\.name\} table, which is not ticked\./);
+  assert.match(changes, /Tick \{parent\.name\} too/);
 });
 
-test('D-008 compare remounts when the session changes', () => {
-  assert.equal(copy.shouldResetCompareOnSessionChange('sess-a', 'sess-b'), true);
-  assert.equal(copy.shouldResetCompareOnSessionChange('sess-a', 'sess-a'), false);
-  assert.equal(copy.shouldResetCompareOnSessionChange(null, 'sess-b'), false);
-  assert.match(deploy, /<CompareView key=\{session\?\.sessionId \?\? 'none'\}/);
+test('D-008 the Changes tab remounts when the session changes', () => {
+  assert.match(deploy, /<PublishChanges key=\{session\?\.sessionId \?\? 'none'\}/);
 });
 
-test('D-012 confirm names the account, or says it is unknown', () => {
-  assert.equal(copy.publishAccountLine('megan@contoso.com'), 'As megan@contoso.com');
-  assert.equal(copy.publishAccountLine(''), copy.UNKNOWN_ACCOUNT);
-  assert.equal(copy.publishAccountLine(null), copy.UNKNOWN_ACCOUNT);
-  assert.match(deploy, /publishAccountLine\(/);
-});
-
-test('D-011 empty Fabric Git workspace id returns a visible message', () => {
-  assert.equal(copy.fabricGitWorkspaceMessage(''), copy.FABRIC_GIT_EMPTY_ID);
-  assert.equal(copy.fabricGitWorkspaceMessage('   '), copy.FABRIC_GIT_EMPTY_ID);
-  assert.equal(copy.fabricGitWorkspaceMessage('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'), null);
-  assert.match(deploy, /fabricGitWorkspaceMessage/);
-  assert.doesNotMatch(deploy, /disabled=\{!fgWs\.trim\(\)\}/);
+test('D-012 the header names the destination and the account once, and the stage only when one was set', () => {
+  assert.match(deploy, /<span>To <b>\{targetName\}<\/b><\/span>/);
+  assert.match(deploy, /\{stage && <span className="sem-chip sem-chip-outline">\{stage\}<\/span>\}/);
+  assert.match(deploy, /\{account && <span className="sem-text-meta">as \{account\}<\/span>\}/);
+  assert.doesNotMatch(deploy, /treated as production/, 'no label means no badge, not a guess');
+  assert.doesNotMatch(deploy, /Publishing writes your reviewed changes|It never publishes\./, 'the caveat sentences are gone');
 });
 
 test('D-044 unmodified DAX buffer is a no-op', () => {
@@ -139,114 +184,138 @@ test('D-044 Ctrl+S in Properties applies the focused field and never publishes',
   assert.match(extension, /semanticus\.applyPropertyField/);
 });
 
-test('confirm button names Publish and the destination', () => {
-  assert.equal(copy.publishButtonLabel(1, 'V2'), 'Publish 1 change to V2');
-  assert.equal(copy.publishButtonLabel(2, 'V2'), 'Publish 2 changes to V2');
-  assert.equal(copy.publishButtonLabel(1, 'V2', 1), 'Publish 1 change and remove 1 from V2');
+test('the one button says what it will do in the words of the person', () => {
   assert.match(copy.nothingToPublishCopy('V2'), /Nothing to publish/);
-  assert.match(copy.nothingToPublishCopy('V2', ['UAT Added']), /Nothing new to publish/);
-  assert.match(copy.previewFailedCopy('V2', 'sign-in expired'), /Could not check V2/);
+  assert.match(copy.unreachableCopy('V2'), /^Could not reach V2\./);
+  assert.equal(copy.publishedLine(5, 'Contoso Sales'), 'Published 5 changes to Contoso Sales. Your copy did not change.');
+  assert.equal(copy.publishedLine(1, 'Contoso Sales'), 'Published 1 change to Contoso Sales. Your copy did not change.');
+  assert.equal(copy.undoneLine('Contoso Sales', '09:42'), 'Contoso Sales is back to how it was before 09:42.');
+  assert.equal(copy.restoreLabel('Contoso Sales', '2 Oct 14:15'), 'Restore Contoso Sales to 2 Oct 14:15');
+  assert.equal(copy.promoteLabel(3, 'Test', 'Production'), 'Promote 3 items from Test to Production');
+  assert.equal(copy.shortWhen(new Date(2026, 9, 2, 14, 15)), '2 Oct 14:15', 'a version is named by its day and time on the person\'s own clock');
+  for (const line of [copy.publishedLine(2, 'X'), copy.undoneLine('X', '09:42'), copy.restoreDetail(3, 1, 'X')]) assert.doesNotMatch(line, /\u2014/, 'no em dashes in shipped copy');
 });
 
 test('help and compare use the word Publish for the live write', () => {
   assert.doesNotMatch(help, /Save to Live Model/);
   assert.match(help, /Publish/);
-  assert.doesNotMatch(compare, /embedded \? 'Push changes'/);
 });
 
-test('D-180 publish button label never invites a no-op write', () => {
-  assert.equal(copy.publishButtonLabel(0, 'V2'), 'Nothing to publish');
-  assert.doesNotMatch(copy.publishButtonLabel(0, 'V2'), /^Publish/);
-  assert.equal(copy.publishButtonLabel(1, 'V2'), 'Publish 1 change to V2');
+test('D-180 the button never invites a no-op write', () => {
+  assert.equal(copy.publishLabel({ changes: 0, removals: 0, target: 'V2' }), 'Nothing ticked');
+  assert.match(changes, /disabled=\{!canPress\}/, 'nothing ticked leaves the button disabled');
+  assert.match(changes, /const canPress = !!diff && !busy && effective\.size > 0/);
 });
 
-test('D-181 the confirm says it is still checking, not nothing to publish', () => {
+test('D-181 the page says it is still checking, not nothing to publish', () => {
   assert.match(copy.checkingCopy('Contoso'), /Checking Contoso/);
   assert.doesNotMatch(copy.checkingCopy('Contoso'), /Nothing to publish/);
-  assert.match(deploy, /busy && !preview \? checkingCopy\(dest\)/);
+  assert.equal(copy.publishLabel({ changes: 0, removals: 0, target: 'Contoso', checking: true }), 'Checking...');
+  assert.match(changes, /const checking = loading && !diff;/);
 });
 
-test('D-181 a new check clears the old preview before it starts', () => {
-  const loadPreview = deploy.slice(deploy.indexOf('async function loadPreview'), deploy.indexOf('function openPublish'));
-  assert.ok(loadPreview.indexOf('setPreview(null)') >= 0);
-  assert.ok(loadPreview.indexOf('setPreview(null)') < loadPreview.indexOf('setPreviewBusy(true)'));
-});
-
-test('D-179 a successful publish reloads restore points', () => {
-  const confirmPublish = deploy.slice(deploy.indexOf('async function confirmPublish'), deploy.indexOf('async function loadRestorePoints'));
-  assert.match(confirmPublish, /loadRestorePoints\(\)/);
+test('D-179 a successful publish and an undo both reload the restore points', () => {
+  assert.match(changes, /onWrote\?\.\(\);/);
+  assert.match(deploy, /onWrote=\{\(\) => void loadRestorePoints\(\)\}/);
 });
 
 test('D-178/D-226 publish is gated on the resolved destination, not liveBound alone', () => {
   assert.match(deploy, /const canPublish = liveBound \|\| !!/);
   assert.match(deploy, /context\?\.publishing\?\.available/);
-  // The gate no longer hides a button on this page; it decides what the page shows when the header's Publish…
-  // seeds a review. Without a destination the entry state is choose-destination and no confirm ever opens.
-  assert.match(deploy, /const entry = publishEntryState\(\{ canPublish, publishOpen \}\)/);
-  assert.match(deploy, /if \(!canPublish\) \{ setPublishOpen\(false\); return; \}/);
-  assert.doesNotMatch(deploy, /disabled=\{!liveBound \|\| previewBusy \|\| publishBusy\}/);
+  assert.match(deploy, /const hasDestination = canPublish && reviewSeed\?\.right\?\.kind === 'workspace'/);
 });
 
-test('UX12 the publish entry state decides what the card shows, and no destination outranks the rest', () => {
-  assert.equal(copy.publishEntryState({ canPublish: false, publishOpen: false }), 'choose-destination');
-  assert.equal(copy.publishEntryState({ canPublish: false, publishOpen: true }), 'choose-destination');
-  assert.equal(copy.publishEntryState({ canPublish: true, publishOpen: true }), 'review');
-  assert.equal(copy.publishEntryState({ canPublish: true, publishOpen: false }), 'compare');
+test('UX12 with no destination the page offers a new model and Choose destination, and no list', () => {
+  assert.match(changes, /if \(!right \|\| !left\) return <NewModel /);
+  assert.match(changes, /data-testid="publish-choose" onClick=\{onChooseDestination\}>Choose destination</);
+  const newModel = changes.slice(changes.indexOf('function NewModel('));
+  assert.doesNotMatch(newModel, /publish-go"|publish-list/, 'the no-destination view carries no change list');
 });
 
 test('UX12 the header names a missing destination instead of claiming no live model', () => {
-  const none = copy.deployHeaderState({
-    loading: false, liveBound: false, modelName: 'Contoso', targetName: 'No live target', lastRestore: 'none',
-  });
-  assert.match(none.line, /no publish destination yet/);
-  assert.doesNotMatch(none.line, /not connected to a live model/);
+  assert.match(deploy, /No publish destination yet\./);
+  assert.doesNotMatch(deploy, /not connected to a live model/);
 });
 
-test('UX12 the confirm renders only under the review state, and a destination can always be chosen', () => {
-  assert.match(deploy, /entry === 'review' && <PublishConfirm/);
-  assert.match(deploy, /entry === 'choose-destination'/);
-  assert.match(deploy, /No publish destination yet/);
-  assert.match(deploy, />Choose destination</);
-  assert.doesNotMatch(deploy, /publishOpen && <PublishConfirm/);
+test('UX12 an unreachable destination shows one line and Sign in, with no list and no button', () => {
+  assert.match(changes, /data-testid="publish-unreachable"/);
+  assert.match(changes, /unreachableCopy\(destination\)/);
+  assert.match(changes, /data-testid="publish-signin"/);
+  assert.match(changes, /\{diff && <PageAction slot=\{slot\}>/, 'the write button exists only once a list was read');
+  assert.match(changes, /\{diff && !empty && \(\s*<section/, 'and so does the list');
 });
 
 test('UX12 rollback wording follows applied and failedRefs, never error absence', () => {
-  assert.match(copy.rollbackResultLine({ applied: false, note: 'Contoso Sales already matches this restore point. Nothing to roll back.' }, 'Contoso Sales', '2h ago'), /already matches/);
-  assert.doesNotMatch(copy.rollbackResultLine({ applied: false }, 'Contoso Sales', '2h ago'), /^Restored/);
-  assert.match(copy.rollbackResultLine({ applied: true, failedRefs: ['measure:Sales/Margin %'] }, 'Contoso Sales', '2h ago'), /except 1 object that could not be restored: measure:Sales\/Margin %/);
-  assert.match(copy.rollbackResultLine({ applied: true, failedRefs: [] }, 'Contoso Sales', '2h ago'), /^Restored Contoso Sales to the point from 2h ago\. Your local model edits are unchanged/);
+  assert.match(copy.rollbackResultLine({ applied: false, note: 'Contoso Sales already matches this saved version.' }, 'Contoso Sales', '2 Oct 14:15'), /already matches/);
+  assert.doesNotMatch(copy.rollbackResultLine({ applied: false }, 'Contoso Sales', '2 Oct 14:15'), /^Restored/);
+  assert.match(copy.rollbackResultLine({ applied: true, failedRefs: ['measure:Sales/Margin %'] }, 'Contoso Sales', '2 Oct 14:15'), /except 1 object that could not be restored: measure:Sales\/Margin %/);
+  assert.match(copy.rollbackResultLine({ applied: true, failedRefs: [] }, 'Contoso Sales', '2 Oct 14:15'), /^Restored Contoso Sales to the version from 2 Oct 14:15\. Your copy did not change\./);
   assert.equal(copy.rollbackResultLine({ applied: true, error: 'target gone' }, 'X', 'now'), 'target gone');
-  assert.match(deploy, /setRestoreNote\(rollbackResultLine\(r, restored, when\)\)/);
-  assert.doesNotMatch(deploy, /if \(!r\.error\) setRestoreNote/);
+  assert.match(deploy, /rollbackResultLine\(r, target, picked\)/);
 });
 
-test('UX12 the remainder sentence needs a fresh comparison; a failed refresh keeps the write summary and says the list may be stale', () => {
-  assert.equal(copy.publishedSubsetLine({ count: 2, target: 'Contoso Sales', failed: 0, refreshed: true }), 'Published 2 changes to Contoso Sales. The differences still shown are not yet published.');
-  const stale = copy.publishedSubsetLine({ count: 1, target: 'Contoso Sales', failed: 1, refreshed: false });
-  assert.match(stale, /^Published 1 change to Contoso Sales\. 1 could not be published\./);
-  assert.match(stale, /could not be refreshed/);
-  assert.doesNotMatch(stale, /not yet published/);
-  assert.match(compare, /setRefreshStale\(!refreshed\)/);
-  assert.match(compare, /publishedSubsetLine\(\{ count: result\.count/);
+test('Earlier versions: picking a version runs the preview by itself, and one button restores it', () => {
+  assert.match(deploy, /rpc<RollbackResult>\('rollbackPush', selectedId, false, null, 'human'\)/, 'the preview runs when a version is picked');
+  assert.match(deploy, /rpc<RollbackResult>\('rollbackPush', selectedId, true, null, 'human'\)/);
+  assert.match(deploy, /\}, \[selectedId, nonce\]\);/, 'the preview is keyed on the picked version');
+  assert.doesNotMatch(deploy, /Preview rollback|Confirm rollback|Will remove|deleted from the live target/, 'no Preview step, no Confirm step, no red warning line');
+  assert.equal(copy.restoreDetail(0, 0, 'Contoso Sales'), 'Contoso Sales already matches this version.');
+  assert.equal(copy.restoreDetail(3, 1, 'Contoso Sales'), 'This puts back 3 objects and removes 1 object that came after this version.');
+});
+
+test('Promote: picking both stages runs the check by itself, and one button sends the token unseen', () => {
+  assert.match(deploy, /\}, \[selPipe, srcSel, tgtSel\]\);/, 'the check runs when the stages are picked');
+  assert.match(deploy, /rpc<DeployStageReport>\('deployStage', selPipe, srcSel, tgtSel, null, null, false, null, false, signInMode, promoteTenantId, 'human'\)/);
+  // r1 publish-p2: the stage move has no readiness gate, so no override reason is sent and the page never reads report.gate.
+  assert.doesNotMatch(deploy, /'human', null\)|report\.gate/, 'no overrideReason on deployStage, and no gate read');
+  assert.match(deploy, /true, report\.confirmToken \?\? null, false, signInMode/, 'the token from the check goes out with the button');
+  assert.doesNotMatch(deploy, /promote anyway|override the failing check|reason \(required|will be sent with Promote|confirm token/i, 'no tick box, no reason field, no token line');
+  assert.match(deploy, /Copy a model from one stage to the next\./);
+  assert.doesNotMatch(deploy, /A pipeline is a set of stages|Promotion <i>rules<\/i>/, 'the explainer paragraphs are gone');
+});
+
+test('UX12 a refused write compares again by itself and shows the engine\'s plain sentence, never a reason box', () => {
+  assert.match(changes, /if \(r\.error\) setLine\(\{ tone: 'bad', text: r\.error \}\)/, 'the engine\'s sentence is shown as it comes');
+  assert.match(changes, /await read\(\);   \/\/ a refused write usually means the destination moved/, 'the list is read again after every press');
+  assert.doesNotMatch(changes, /overrideReason|Why publish/, 'no reason is ever typed');
+  assert.match(changes, /data-testid="publish-undo"/);
+  assert.match(changes, /rpc<RollbackWire>\('rollbackPush', point\.id, true, null, 'human'\)/, 'Undo publish restores the point the publish just saved, in one call');
 });
 
 test('UX12 publish and restore results say the local copy is untouched', () => {
-  assert.match(deploy, /Your local model edits are unchanged\./);
-  assert.match(deploy, /Your local model edits stay unchanged\./);
+  assert.match(sharedPublishCopy, /Your copy did not change\./);
   assert.doesNotMatch(deploy, /never changes your local files or your history/);
 });
 
+// Verifier r2 O5 (lane m11/create-model-ui): the "cannot reach" flag is module state, read by the header on every
+// page, and only the Published page reset it, so a model swapped in while another page was open kept the old
+// model's refusal: Publish greyed out and "Cannot reach" over a model nobody had tried. The flag belongs to the model
+// session and the destination it was read for.
+test('O5 a model swap never carries the old model\'s "cannot reach" onto the new one', () => {
+  const out = ts.transpileModule(reach, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', out)((name) => (name === 'react' ? { useEffect() {}, useState: (v) => [v, () => {}] } : {}), module, module.exports);
+  const { reachFor } = module.exports;
+  const refused = { sessionId: 's1', connectionId: 'c1' };
+  assert.deepEqual(reachFor(refused, 's1', 'c1'), { unreachable: true }, 'the model and destination that refused show it');
+  assert.equal(reachFor(refused, 's2', 'c1'), null, 'a different model opened since has not been tried');
+  assert.equal(reachFor(refused, 's1', 'c2'), null, 'nor has a different destination');
+  assert.equal(reachFor(refused, undefined, 'c1'), null, 'no model open, nothing refused');
+  assert.deepEqual(reachFor({ sessionId: 's1', connectionId: null }, 's1', undefined), { unreachable: true }, 'no destination id reads as the same no destination id');
+  assert.equal(reachFor(null, 's1', 'c1'), null, 'nothing tried, nothing refused');
+  assert.match(deploy, /setPublishReach\(ok \? null : \{ sessionId: session\?\.sessionId \?\? '', connectionId: context\?\.publishing\?\.connectionId \?\? null \}\)/,
+    'the Published page records which model and destination refused');
+});
+
 // M17: a publish destination that cannot be read must not be offered as a publish you can press, and the
-// comparison must say it never reached the destination instead of showing a diff that looks complete.
-test('M17 an unreachable destination disables Publish and says the comparison could not read it', () => {
-  assert.match(compare, /onTargetRead\?:/, 'the comparison must report whether it reached the target');
-  assert.match(compare, /onTargetRead\?\.\(\{ ok: false/, 'a failed compare reports the target as unread');
-  assert.match(compare, /onTargetRead\?\.\(\{ ok: true/, 'a successful compare clears the unread state');
-  assert.match(compare, /Could not read the destination/,
-    'the embedded comparison must say plainly that it never read the destination');
-  assert.match(deploy, /export function usePublishReach\(/, 'the header needs the destination reachability');
-  assert.match(deploy, /onTargetRead=\{/, 'the Published page must listen to its own destination comparison');
-  assert.match(app, /usePublishReach\(\)/, 'the header Publish must read the reachability');
+// page must say it never reached the destination instead of showing a list that looks complete.
+test('M17 an unreachable destination disables the header Publish and says the page could not read it', () => {
+  assert.match(changes, /onReach\?\.\(false\)/, 'a failed read reports the destination as unread');
+  assert.match(changes, /onReach\?\.\(true\)/, 'a successful read clears the unread state');
+  assert.match(changes, /Could not reach|unreachableCopy/, 'the page says plainly that it never read the destination');
+  assert.match(reach, /export function usePublishReach\(/, 'the header needs the destination reachability');
+  assert.match(deploy, /onReach=\{/, 'the Publish page must report whether it reached its destination');
+  assert.match(app, /usePublishReach\(shellSession\?\.sessionId, context\?\.publishing\?\.connectionId\)/, 'the header Publish must read the reachability of the model and destination it shows');
   assert.match(app, /Cannot reach \$\{publishTarget \|\| 'the publish destination'\}/,
     'the header names the destination itself, so the button and the page never print different names for it');
   assert.doesNotMatch(deploy, /destination: targetName/,
@@ -346,11 +415,6 @@ test('T??? Promote renders the plain line, its action, and a quiet line while a 
   assert.match(deploy, />Find my pipelines</, 'the button keeps the words Kane already knows');
 });
 
-// ---- Fabric Git and CI/CD publish: WHO signs in (Kane, Yoga, 2026-09-15: "same treatment here for login")
-// The defect Promote had survived in two more panels of the same page. Both hard-coded the Azure command
-// line and printed the raw credential failure, so on Kane's laptop Status, Commit, Update and Publish could
-// only ever end in a red line about a command line he has never run, with nothing to press.
-
 test('T??? no panel on the Published page names a sign-in mode for the person', () => {
   const stray = deploy.split('\n')
     .map((line, i) => `${i + 1}: ${line.trim()}`)
@@ -359,99 +423,67 @@ test('T??? no panel on the Published page names a sign-in mode for the person', 
     `deploy.tsx must hold no 'azcli' literal at all; the choices live in copy.ts and the picker:\n${stray.join('\n')}`);
 });
 
-test('T??? every Fabric Git call carries the picked account, not a literal', () => {
-  for (const call of ['fabricGitConnection', 'fabricGitStatus', 'fabricGitCommit', 'fabricGitUpdate']) {
-    const lines = deploy.split('\n').filter((l) => l.includes(`'${call}'`));
-    assert.ok(lines.length > 0, `${call} is not called from the panel at all`);
-    for (const line of lines) {
-      // fgMode is the argument form: the Status read takes the mode as a parameter so Sign in can retry in
-      // the same tick it switches, exactly the way Promote's loadPipelines does.
-      assert.match(line, /\bfgSignInMode\b|\bfgMode\b/, `${call} must pass the picked mode: ${line.trim()}`);
-      assert.ok(line.includes('fgTenantId'), `${call} must pass the place the person named: ${line.trim()}`);
-    }
-  }
-});
-
-test('T??? every CI/CD publish call carries the picked account, and the scaffold writer asks for none', () => {
-  const lines = deploy.split('\n').filter((l) => l.includes("'cicdPublish'"));
-  assert.equal(lines.length, 2, 'the plan and the confirm are the two publish calls');
-  for (const line of lines) {
-    assert.match(line, /\bpubSignInMode\b|\bpubMode\b/, `the publish must pass the picked mode: ${line.trim()}`);
-    assert.ok(line.includes('pubTenantId'), `the publish must pass the place the person named: ${line.trim()}`);
-  }
-  // cicd_generate takes NO sign-in mode: EngineRpcTarget.cs cicdGenerate(target, workspaceId, environment,
-  // write) makes no Fabric call, it only writes files. It must not grow a fake one for symmetry.
-  const gen = deploy.split('\n').find((l) => l.includes("'cicdGenerate'"));
-  assert.ok(gen, 'the scaffold generator is still called');
-  assert.doesNotMatch(gen, /SignInMode|TenantId/,
-    'the scaffold writer makes no Fabric call, so it must not pretend to sign anyone in');
-});
-
-test('T??? each panel that signs in shows the shared picker once, with its own remembered choice', () => {
+test('T??? the Promote panel shows the shared picker once, with its own remembered choice', () => {
   const pickers = deploy.match(/<AccountPicker/g) || [];
-  assert.equal(pickers.length, 3, 'Promote, Fabric Git and CI/CD publish each show the picker exactly once');
-  for (const key of ['promote.authMode', 'promote.tenantId', 'fabricgit.authMode', 'fabricgit.tenantId',
-    'cicdpublish.authMode', 'cicdpublish.tenantId']) {
-    assert.ok(deploy.includes(`'${key}'`), `${key} must be its own remembered choice, not shared with another panel`);
+  assert.equal(pickers.length, 1, 'Promote is the one panel on the page that signs in, so it shows the picker exactly once');
+  for (const key of ['promote.authMode', 'promote.tenantId']) {
+    assert.ok(deploy.includes(`'${key}'`), `${key} must be its own remembered choice`);
   }
-  // All three start from the way the publish destination was really opened, then fall back to a browser.
-  assert.equal((deploy.match(/defaultSignInMode\(context\?\.publishing\)/g) || []).length, 3,
-    'every panel derives its starting choice from the destination the engine reports');
-  // The Fabric Git explanation has to still make sense with a picker sitting above it.
-  assert.match(deploy, /signs you in the way you picked above/,
-    'the Fabric Git explanation must account for the control now above it');
+  assert.equal((deploy.match(/defaultSignInMode\(context\?\.publishing\)/g) || []).length, 1,
+    'the starting choice comes from the destination the engine reports');
 });
 
-test('T??? a failed Fabric Git or publish sign-in is explained in words, with the fix', () => {
-  assert.match(deploy, /<AccountProblem error=\{fgErr\}/, 'the Fabric Git failure goes through the plain-words component');
-  assert.match(deploy, /<AccountProblem error=\{pubErr\}/, 'and so does the publish failure');
-  assert.doesNotMatch(deploy, /\{fgErr\}<\/div>/, 'the raw engine text must not be printed straight into the Fabric Git panel');
-  // The two halves of the CI/CD panel keep separate lines. Generate writes files and can never fail on a
-  // sign-in, so its plain line stays where it is; only the publish half goes through the account map.
-  const pubPreviewBody = deploy.slice(deploy.indexOf('const pubPreview ='), deploy.indexOf('function pubSignInAndRetry'));
-  assert.doesNotMatch(pubPreviewBody, /setCicdErr/, 'a publish failure must not land in the scaffold line');
-  const genBody = deploy.slice(deploy.indexOf('const cicdGenerate ='), deploy.indexOf('const pubPreview ='));
-  assert.doesNotMatch(genBody, /setPubErr/, 'a scaffold failure must not land in the publish line');
-  // The banner names its own test ids from the panel key, so a driver can find each panel's fix separately.
-  assert.match(deploy, /data-testid=\{`\$\{testId\}-signin-fix`\}/, 'the fix has to be a control, not a sentence');
-  for (const id of ['promote', 'fabricgit', 'cicd']) {
-    assert.ok(deploy.includes(`testId="${id}"`), `the ${id} panel must name itself to the banner`);
+test('T??? the hidden delivery screens are gone from the page, and the assistant still reaches them', () => {
+  for (const gone of ['fabricGitConnection', 'fabricGitStatus', 'fabricGitCommit', 'fabricGitUpdate', 'cicdPublish', 'cicdGenerate', 'gitStatus', 'gitCommit', 'gitPush', 'gitPull', 'deployGate', 'DataAgentView']) {
+    assert.ok(!deploy.includes(gone), `${gone} must not be reachable from the Publish page`);
   }
-  // The failure Kane read under the workspace id box, mapped.
-  const status = sharedCopy.signInProblem("AzureCliCredential authentication failed: ERROR: Please run 'az login' to set up account.");
-  assert.equal(status.fix, 'signIn');
-  assert.equal(status.fixLabel, 'Sign in');
-  assert.equal(status.detail, null, 'a known problem shows the plain line only');
-  // One map now serves three panels, so a line that named pipelines would be wrong on two of them.
-  const role = sharedCopy.signInProblem('Fabric REST 403 InsufficientPrivileges [Authenticated, but you lack the role]');
-  assert.equal(role.fix, 'askAdmin');
-  assert.doesNotMatch(role.lead, /pipeline/i,
-    'the shared 403 line is read on Fabric Git and on publish too, so it cannot claim to be about pipelines');
-  assert.match(role.lead, /not allowed/i);
+  assert.doesNotMatch(app, /DataAgentView/, 'the Data Agent screen is not mounted');
+  assert.match(app, /tab === 'deploy' \|\| tab === 'dataagent' \?/, 'the legacy dataagent route lands on Changes');
 });
 
 test('T??? Sign in repeats a read, and never runs a live write for the person', () => {
-  // Just the function's own body, so a neighbouring declaration cannot make this pass or fail by accident.
-  const bodyOf = (decl) => {
-    const start = deploy.indexOf(decl);
-    assert.ok(start >= 0, `${decl} must exist`);
-    const end = deploy.indexOf('\n  }', start);
-    return deploy.slice(start, end);
-  };
-  const fgRetry = bodyOf('function fgSignInAndRetry');
-  assert.match(fgRetry, /fgReadStatus\('interactive'\)/, 'signing in re-runs the Status read');
-  assert.doesNotMatch(fgRetry, /fgConfirm|fgPreview/, 'signing in must never commit or update a workspace');
-  const pubRetry = bodyOf('function pubSignInAndRetry');
-  assert.match(pubRetry, /pubPreview\('interactive'\)/, 'signing in re-runs the dry-run plan, which writes nothing');
-  assert.doesNotMatch(pubRetry, /pubConfirm/, 'signing in must never publish over a model');
-  // A write that failed on the sign-in keeps its Confirm step, so the person can press it again after
-  // signing in rather than starting the two-step over.
-  const fgConfirmBody = deploy.slice(deploy.indexOf('const fgConfirm ='), deploy.indexOf('const cicdGenerate ='));
-  assert.ok(fgConfirmBody.indexOf('if (r.error) { setFgErr(r.error); return; }') >= 0,
-    'a failed Fabric Git write must leave the pending Confirm in place');
-  const pubConfirmBody = deploy.slice(deploy.indexOf('const pubConfirm ='), deploy.indexOf('const canDeploy ='));
-  assert.ok(pubConfirmBody.indexOf('if (r.error) { setPubErr(r.error); return; }') >= 0,
-    'a failed publish must leave the pending Confirm in place');
+  const start = deploy.indexOf('function signInAndRetry');
+  assert.ok(start >= 0, 'signInAndRetry must exist');
+  const body = deploy.slice(start, deploy.indexOf('\n', start));
+  assert.match(body, /loadPipelines\('interactive'\)/, 'signing in re-runs the pipeline read');
+  assert.doesNotMatch(body, /promote\(|deployStage/, 'signing in must never promote');
+  const changeStart = changes.indexOf('async function signInAndRetry');
+  const changeBody = changes.slice(changeStart, changes.indexOf('\n  }', changeStart));
+  assert.match(changeBody, /void read\(\)/, 'signing in on the Changes tab only reads again');
+  assert.doesNotMatch(changeBody, /publish\(|applyDiff/, 'signing in must never publish');
+});
+
+test('J3 a change that differs only by an annotation the publish never carries is not a publishable change', () => {
+  const row = (action, l, r, extra = {}) => ({ ref: 'measure:Sales/Margin', objectType: 'Measure', name: 'Margin', table: 'Sales', action,
+    leftText: JSON.stringify(l), rightText: r === null ? null : JSON.stringify(r), ...extra });
+  const base = { name: 'Margin', expression: '1' };
+  const mark = { annotations: [{ name: 'Semanticus_AddedOnPurpose', value: 'the measure for X' }] };
+  assert.equal(copy.isUnpublishable(row('Update', { ...base, ...mark }, base)), true, 'a foreign annotation alone');
+  assert.equal(copy.isUnpublishable(row('Update', { ...base, annotations: [{ name: 'Semanticus_ConsentId', value: 'x' }] }, base)), true, 'the permission marker on the model');
+  assert.equal(copy.isUnpublishable(row('Update', { ...base, annotations: [{ name: 'Semanticus_Waivers', value: '[]' }] }, base)), false, 'an owned annotation does go');
+  assert.equal(copy.isUnpublishable(row('Update', { ...base, expression: '2', ...mark }, base)), false, 'a real change next to the annotation');
+  assert.equal(copy.isUnpublishable(row('Create', { ...base, ...mark }, null)), false, 'a new object');
+  const rows = [row('Update', { ...base, ...mark }, base)];
+  assert.deepEqual(copy.publishCounts(copy.publishableRows(rows), new Set(rows.map((r) => r.ref))), { changes: 0, removals: 0 });
+});
+
+test('newmodel: with no destination, the Publish page publishes the model as a new model in a workspace', () => {
+  assert.deepEqual(copy.newModelSignIn([null, { authMode: '' }, { authMode: 'serviceprincipal', tenantId: 't1' }]), { authMode: 'serviceprincipal', tenantId: 't1' });
+  assert.deepEqual(copy.newModelSignIn([]), { authMode: 'interactive', tenantId: null }, 'a person with no saved sign-in signs in in a browser');
+  assert.equal(copy.newModelLabel({ busy: false, workspace: 'Semanticus Demo' }), 'Publish to Semanticus Demo');
+  assert.equal(copy.newModelLabel({ busy: true, workspace: 'Semanticus Demo' }), 'Publishing...');
+  assert.equal(copy.newModelLabel({ busy: false, workspace: null }), 'Publish');
+  // The card offers a free name when the workspace already holds the model's own name; it never offers one that replaces something.
+  assert.equal(copy.freeNewModelName('Gold', ['Contoso Sales', 'Gold']), 'Gold 2');
+  assert.equal(copy.freeNewModelName('gold', ['Gold', 'Gold 2']), 'gold 3', 'the next free number, whatever the case');
+  assert.equal(copy.freeNewModelName('Gold', ['Contoso Sales']), 'Gold', 'a free name is left alone');
+  assert.match(changes, /data-testid="publish-new-model"/, 'the no-destination state offers the new model card');
+  assert.match(changes, /rpc<NewModelResult>\('publishNewModel'/, 'one press calls the engine once');
+  assert.match(changes, /tone: r\.loaded \|\| r\.signInNeeded \? 'good' : 'bad', text: r\.note/, 'an import model that needs its source sign-in shows the engine line as a next step, not an error');
+  assert.match(read('webview/src/bridge.ts'), /const LONG_RPC = [^\n]*\|publishNewModel\)/, 'creating and loading a model takes longer than the default wait');
+  // Tests and queries attach to the new model in the engine, so the assistant's publish_new_model attaches them too.
+  assert.doesNotMatch(changes, /connectXmla\(r\.endpoint/, 'the page does not attach Tests itself');
+  assert.match(read('../Semanticus.Engine/LocalEngine.NewModel.cs'), /if \(outcome\.Loaded\)\s+try \{ await ConnectXmlaAsync\(endpoint, name, authMode/, 'the engine attaches Tests to a loaded new model, for both doors');
 });
 
 console.log(`publish surface tests passed (${passed})`);

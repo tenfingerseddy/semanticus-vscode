@@ -36,6 +36,7 @@ namespace Semanticus.Tests
         private static async Task<string> FolderOfAsync(LocalEngine e, string objRef)
             => (await e.GetObjectAsync(objRef)).Properties["displayFolder"] as string ?? "";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Set_display_folder_files_many_objects_as_one_undo_step()
         {
@@ -152,6 +153,7 @@ namespace Semanticus.Tests
             Assert.Equal("Money\\Sub", await FolderOfAsync(e, m2));   // rewritten AND canonicalized
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Tree_fan_stays_flat_and_carries_each_members_display_folder()
         {

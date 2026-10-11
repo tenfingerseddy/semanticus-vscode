@@ -31,6 +31,7 @@ namespace Semanticus.Tests
 
         public Task DisposeAsync() { _engine.Dispose(); return Task.CompletedTask; }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Impact_resolves_a_measure_to_measure_to_column_chain_transitively()
         {
@@ -65,6 +66,7 @@ namespace Semanticus.Tests
             Assert.False(string.IsNullOrEmpty(res.Caveat));    // the model-only honesty caveat is ALWAYS present
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unused_does_NOT_flag_a_measure_referenced_by_a_visible_measure()
         {
@@ -89,6 +91,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(res.Items, i => i.Ref == relEdge.To);      // PK column — structurally used
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Lineage_graph_edges_never_dangle_and_carry_the_dependency_chain()
         {
@@ -117,6 +120,7 @@ namespace Semanticus.Tests
 
         // ---- conservative safe-to-remove guards (adversarial-review fixes) ---------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unused_does_NOT_flag_a_measure_used_only_by_a_calculation_item()
         {
@@ -131,6 +135,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(res.Items, i => i.Ref == msRef);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unused_does_NOT_flag_an_OLS_secured_column_as_safe()
         {
@@ -145,6 +150,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(res.Items, i => i.Ref == colRef);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unused_treats_a_visible_measure_on_a_hidden_table_as_in_use()
         {
@@ -168,12 +174,15 @@ namespace Semanticus.Tests
             Assert.True(impact.Measures > 0, "a table's impact should include the measures it contains");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AnalyzeReports_excludes_a_column_used_only_by_a_local_report_from_safe()
         {
             // The headline gap-closer: a descriptive column no measure references is model-only "safe", but a report
             // displays it — so a report-aware sweep must drop it off the safe list.
             var colRef = await _engine.CreateCalculatedColumnAsync("table:" + _table, "Lin_RptCol", "1", "agent");
+            // Hidden: _table is a dimension, where a VISIBLE unreferenced column is a visibleAttribute, never "safe".
+            await _engine.SetObjectPropertyAsync(colRef, "IsHidden", "true", "agent");
             var baseline = await _engine.UnusedObjectsAsync();
             Assert.Contains(baseline.Items, i => i.Ref == colRef && i.Verdict == "safe");   // model-only: looks safe
 

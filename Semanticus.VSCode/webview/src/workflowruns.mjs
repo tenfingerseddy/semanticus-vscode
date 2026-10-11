@@ -101,9 +101,10 @@ export function reduceRuns(state, incoming, opts = {}) {
   return { runs, sessionId };
 }
 
-/** The live runs, in start order (oldest first). */
+/** The live runs, in start order (oldest first). A draft's guided sub-run (lane l9-finish) is not one: it is part of
+ *  its draft, whose Plan row carries it and numbers its steps, so the header chip never counts it on its own. */
 export function liveRuns(state) {
-  return (state?.runs ?? []).filter(isActive);
+  return (state?.runs ?? []).filter((r) => isActive(r) && !r.draftId);
 }
 
 /** The terminal (completed/aborted/…) runs, in start order. */

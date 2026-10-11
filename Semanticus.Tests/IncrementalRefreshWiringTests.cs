@@ -51,6 +51,7 @@ namespace Semanticus.Tests
             Assert.Contains("'CalcDate' is calculated", ex.Message);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_rejects_a_date_column_that_disagrees_with_the_already_wired_field()
         {
@@ -73,6 +74,7 @@ namespace Semanticus.Tests
             Assert.Equal("order_dt", policy.WiredDateField);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_is_not_convicted_by_an_unrelated_nested_range_comparison()
         {
@@ -93,6 +95,7 @@ namespace Semanticus.Tests
             Assert.True((await _engine.GetIncrementalRefreshPolicyAsync(_tableRef)).Enabled);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_warns_without_rejecting_when_the_wired_field_matches_no_columns_source()
         {
@@ -113,6 +116,7 @@ namespace Semanticus.Tests
             Assert.True((await _engine.GetIncrementalRefreshPolicyAsync(_tableRef)).Enabled);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_auto_wire_authors_a_real_filter_when_the_only_range_mention_is_inside_a_string()
         {
@@ -132,6 +136,7 @@ namespace Semanticus.Tests
             Assert.True((await _engine.GetIncrementalRefreshPolicyAsync(_tableRef)).Enabled);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_rejects_a_calculated_date_column_even_when_a_range_filter_already_exists()
         {
@@ -170,6 +175,7 @@ namespace Semanticus.Tests
         }
 
         // D-060: correcting the partition M after the policy is saved must refresh the captured sourceExpression.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Policy_source_expression_tracks_the_current_partition_M()
         {

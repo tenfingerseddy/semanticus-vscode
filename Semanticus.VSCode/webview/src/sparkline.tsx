@@ -14,7 +14,7 @@ export interface ValuePoint { sessionId?: string; revision: number; when: string
 export interface ValueHistory { status: string; measureRef?: string; context?: string; points?: ValuePoint[]; truncated?: boolean; note?: string }
 
 const OP_PLAIN: Record<string, string> = {
-  apply_plan: 'applied a change plan',
+  apply_plan: 'applied a set of changes',
   optimize_measure: 'optimized a measure',
   deploy_live: 'deployed',
   save_model: 'saved the model',
@@ -83,7 +83,7 @@ export function ValueSparkline({ measureRef, context }: { measureRef: string; co
   }, [measureRef, context]);
 
   if (failed) return null;                      // an older engine without the op — silence, not a scare
-  if (!hist) return <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Loading this number’s history…</div>;
+  if (!hist) return <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Loading this number’s history…</div>;
   // There is no 'pro' branch any more: seeing what moved a number is FREE from 2026-09-15 (Kane's feature
   // line), and the engine's own paused-free verdict went with it. An engine that still answers with the old
   // status is simply treated as having no points, which is what the empty state below already says.
@@ -91,24 +91,24 @@ export function ValueSparkline({ measureRef, context }: { measureRef: string; co
   const observed = points.filter((p) => numOf(p.value) !== null);
   return (
     <div className="flex flex-col gap-1">
-      <div className="text-[9.5px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>This number over time</div>
+      <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>This number over time</div>
       {observed.length >= 2 ? (
-        <div className="rounded px-2 py-1.5" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+        <div className="rounded px-2 py-1" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
           <Sparkline points={points} />
-          <div className="flex flex-wrap gap-x-3 mt-1 text-[10px] tnum" style={{ color: 'var(--sem-muted)' }}>
+          <div className="flex flex-wrap gap-x-3 mt-1 text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>
             <span>first {observed[0].value}</span>
             <span>latest <span style={{ color: 'var(--sem-fg)', fontWeight: 600 }}>{observed[observed.length - 1].value}</span></span>
             <span>{observed.length} of {points.length} points have an observed value</span>
           </div>
         </div>
       ) : (
-        <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
+        <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           {points.length === 0
-            ? 'No history recorded for this number yet. It builds up as changes are applied, deployed and saved.'
+            ? 'No history recorded for this number yet. It builds up as changes are applied, published and saved.'
             : `Not enough observed values to draw a line yet (${observed.length} of ${points.length} recorded points have one; the rest were recorded without a live connection).`}
         </div>
       )}
-      {hist.note && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>{hist.note}</div>}
+      {hist.note && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{hist.note}</div>}
     </div>
   );
 }

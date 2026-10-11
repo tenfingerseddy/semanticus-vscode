@@ -1,3 +1,6 @@
+// tokens.css first, ahead of every module that brings its own stylesheet: every other style reads the
+// visual-language tokens it defines, and the bundle keeps CSS in import order.
+import './tokens.css';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
@@ -12,7 +15,7 @@ const flags = window as unknown as { __semanticusInitialView?: string; __semanti
 const initialView = flags.__semanticusInitialView;
 // The section the standalone hub should land on (Manage Connections -> Current setup). Only the known hub views apply.
 const sectionFlag = flags.__semanticusInitialSection;
-const initialSection = (['open', 'setup', 'accounts', 'history', 'add', 'sqlsources'] as const).find((v) => v === sectionFlag);
+const initialSection = (['open', 'setup', 'accounts', 'history', 'add', 'sqlsources', 'createsql', 'create'] as const).find((v) => v === sectionFlag);
 
 class StudioErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
@@ -27,9 +30,9 @@ class StudioErrorBoundary extends Component<{ children: ReactNode }, { failed: b
     if (!this.state.failed) return this.props.children;
     return (
       <div className="h-full flex items-center justify-center p-8" style={{ background: 'var(--sem-bg)', color: 'var(--sem-fg)' }}>
-        <div className="max-w-md rounded-xl border p-5" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-          <div className="text-[15px] font-semibold">Studio could not finish loading</div>
-          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>Reload Studio to restore the open model. Your model session is unchanged.</div>
+        <div className="max-w-md rounded-(--sem-radius-card) border p-4" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+          <div className="text-sm font-semibold">Studio could not finish loading</div>
+          <div className="text-xs mt-1" style={{ color: 'var(--sem-muted)' }}>Reload Studio to restore the open model. Your model session is unchanged.</div>
           <button className="sem-btn sem-btn-primary mt-4" onClick={() => location.reload()}>Reload Studio</button>
         </div>
       </div>

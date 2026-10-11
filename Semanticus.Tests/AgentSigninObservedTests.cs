@@ -25,23 +25,14 @@ namespace Semanticus.Tests
     /// browser". That is the honest limit of the offline suite, and it is why block 8 still asked a
     /// human to watch his own screen for 25 minutes.
     ///
-    /// So these tests are driven by an EXTERNAL observer: tools/release/signin-sentinel.ps1 watches
-    /// the desktop for new top-level windows and browser processes while the test runs, and
-    /// tools/release/run-block8.ps1 pairs two runs:
-    ///
-    ///   NEGATIVE  agent door, authMode "interactive", empty store -> refuses; nothing observed
-    ///   POSITIVE  human door, same call, same store               -> raises a browser; observed
-    ///
-    /// The positive control is the whole point. A sentinel that could detect nothing at all would
-    /// report a clean negative run, and the gate would be a check that cannot fail. run-block8.ps1
-    /// requires the control to produce a SIGNIN_TITLE_MATCH specifically, and reports VOID when it
-    /// does not.
-    ///
-    /// WHAT THE WATCHING CANNOT DO, because these tests must not be read as proving more than they
-    /// do: if a browser was already running, a sign-in opened as a BACKGROUND TAB creates no new
-    /// top-level window and no new process family, so it is invisible to that method. The runner
-    /// therefore refuses to certify (VOID) on any machine with a browser open. Nothing in this file
-    /// closes that hole; the in-process assertions below are what actually prove the refusals.
+    /// Until 28 Sep these tests were also driven by an EXTERNAL observer (tools/release/signin-sentinel.ps1, paired by
+    /// tools/release/run-block8.ps1), whose positive control ran the human-door call below for real and raised the
+    /// machine's default browser. On 27 Sep a suite run did exactly that on a person's screen. No test may open a
+    /// browser any more: an engine may open one only when its command line opts in (see InteractiveSignIn), which
+    /// no test does, and InteractiveSignIn.BrowserForTests stands in for the browser here. So the positive control is
+    /// now measured from inside the process on every run: the human door reaches the stand-in, and every agent-door
+    /// call below is asserted never to reach it. run-block8.ps1's watched positive run can no longer be produced by this
+    /// suite, so that runner reports VOID rather than PASS until it has another source for its control.
     ///
     /// SAFETY. Isolation covers BOTH halves of the auth store, which is not one thing:
     ///   - EntraToken.PersistDirOverride redirects the auth-record JSON to a temp directory.
@@ -54,8 +45,8 @@ namespace Semanticus.Tests
     /// written procedure this replaces DELETED the real records and restored them afterwards.
     ///
     /// The positive control additionally runs under a SEMANTICUS_ENTRA_CLIENT_ID that is not a
-    /// registered application, so the flow cannot complete. That is ASSERTED by checking no token
-    /// and no record were persisted, not assumed from the id.
+    /// registered application, so even a real browser could not complete the flow. That is ASSERTED by
+    /// checking no record was persisted, not assumed from the id.
     /// </summary>
     [Collection("restore-root")]
     public sealed class AgentSigninObservedTests : IDisposable
@@ -67,15 +58,13 @@ namespace Semanticus.Tests
         private readonly string _prevClientId;
         private readonly string _authDir;
         private int _prompts;
+        // Every time a call reached the point where a browser would open. The stand-in records it and fails the sign-in.
+        private readonly System.Collections.Concurrent.ConcurrentQueue<string> _browser = new System.Collections.Concurrent.ConcurrentQueue<string>();
 
-        // The env var the runner sets to opt in to the browser-raising control.
-        private const string PositiveOptIn = "SEMANTICUS_T163_POSITIVE";
-
-        // A client id that is not expected to be a registered application, so the browser can be
-        // raised (which is what is being observed) while the flow does not complete. This is an
-        // ASSUMPTION about a value, not a guarantee from code: the control asserts the outcome
-        // instead, by checking no token and no auth record were persisted afterwards. If this id
-        // ever became a real registration, that assertion is what would catch it.
+        // A client id that is not expected to be a registered application, so the flow cannot complete
+        // even if something got past the stand-in. This is an ASSUMPTION about a value, not a guarantee
+        // from code: the control asserts the outcome instead, by checking no auth record was persisted
+        // afterwards. If this id ever became a real registration, that assertion is what would catch it.
         private const string UnregisteredClientId = "00000000-dead-4bee-8000-000000000163";
 
         // What Azure.Identity says when a credential that MAY NOT prompt is asked for a token it
@@ -102,6 +91,7 @@ namespace Semanticus.Tests
             EntraToken.TokenCacheNameOverride = "semanticus-t163-observed-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             EntraToken.FabricTokenForTests = null;            // no canned bearer: a credential must really be built
             _prevClientId = Environment.GetEnvironmentVariable("SEMANTICUS_ENTRA_CLIENT_ID");
+            InteractiveSignIn.BrowserForTests = what => _browser.Enqueue(what);   // no call here can reach a real browser
             EntraToken.DeviceCodePromptForTests = (info, ct) =>
             {
                 Interlocked.Increment(ref _prompts);
@@ -114,6 +104,7 @@ namespace Semanticus.Tests
             EntraToken.PersistDirOverride = _prevPersistDir;
             EntraToken.TokenCacheNameOverride = _prevCacheName;
             EntraToken.DeviceCodePromptForTests = null;
+            InteractiveSignIn.BrowserForTests = null;
             EntraToken.FabricTokenForTests = null;
             Environment.SetEnvironmentVariable("SEMANTICUS_ENTRA_CLIENT_ID", _prevClientId);
             ConnectionRegistry.RootOverride = _safeRoot;
@@ -131,6 +122,7 @@ namespace Semanticus.Tests
         private void AssertRefusedWithoutPrompting(string message)
         {
             Assert.Equal(0, Volatile.Read(ref _prompts));
+            Assert.Empty(_browser);   // the agent's call never even reached the point where a browser would open
             Assert.Contains(AuthRequired, message ?? "");
         }
 
@@ -271,6 +263,7 @@ namespace Semanticus.Tests
 
             Assert.True(r.Exported);
             Assert.Equal(0, Volatile.Read(ref _prompts));
+            Assert.Empty(_browser);
             Assert.Contains(AuthRequired, r.Note);
         }
 
@@ -283,46 +276,26 @@ namespace Semanticus.Tests
             AssertRefusedWithoutPrompting(r.Error);
         }
 
-        // ---- the positive control: the sentinel must be able to SEE a sign-in surface ------------
+        // ---- the positive control: the human door really reaches the browser, and a stand-in takes its place ----
 
         /// <summary>
-        /// The control that makes the whole gate meaningful: the SAME browser-lane call on the HUMAN
-        /// door really does raise the default browser, so the external watcher is shown to be capable
-        /// of detecting a sign-in surface at all. Opt in with SEMANTICUS_T163_POSITIVE=1;
-        /// run-block8.ps1 sets it for exactly one run, requires a SIGNIN_TITLE_MATCH from it, and
-        /// reports VOID when it does not get one.
-        ///
-        /// The detection itself happens OUTSIDE this process, so this test deliberately asserts
-        /// nothing about whether a window appeared — it could not observe that. What it DOES assert
-        /// is the safety property: that the flow obtained nothing. No auth record is written and no
-        /// token is returned, which is what makes raising a real browser here acceptable.
+        /// The control that makes the negatives meaningful: the SAME browser-lane call on the HUMAN door really does
+        /// reach the point where a browser would open, so "the agent's call never reached it" is a check that can fail.
+        /// It used to raise the real default browser for an external watcher (opt-in, SEMANTICUS_T163_POSITIVE=1), and
+        /// one run did so on a person's screen on 27 Sep. Now the stand-in is reached instead, on every run, and the
+        /// sign-in fails: nothing is opened, and no record is written.
         /// </summary>
         [Fact]
-        public async Task Human_browser_lane_really_raises_a_signin_surface_positive_control()
+        public async Task Human_browser_lane_reaches_the_browser_and_a_stand_in_takes_its_place_positive_control()
         {
-            if (Environment.GetEnvironmentVariable(PositiveOptIn) != "1")
-            {
-                Console.WriteLine("T163-POSITIVE-SKIPPED: " + PositiveOptIn + " not set");
-                return;
-            }
-
             Environment.SetEnvironmentVariable("SEMANTICUS_ENTRA_CLIENT_ID", UnregisteredClientId);
             using var engine = new LocalEngine(new SessionManager(), new Fake());
-            // Long enough for the browser to be raised, short enough that nobody waits on a sign-in.
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            string outcome;
-            try
-            {
-                var r = await engine.FabricGitStatusAsync("ws-t163", "interactive", null, "human", cts.Token);
-                outcome = "returned error=" + (r.Error ?? "<none>");
-                // If it somehow SUCCEEDED, the "not a registered application" assumption is wrong and
-                // the control just performed a real sign-in. Fail loudly rather than pass quietly.
-                Assert.False(string.IsNullOrWhiteSpace(r.Error),
-                    "the positive control COMPLETED a sign-in. The client id is evidently a real registration now; " +
-                    "stop using it before running this again.");
-            }
-            catch (Exception ex) { outcome = ex.GetType().Name + ": " + ex.Message; }
-            Console.WriteLine("T163-POSITIVE-OUTCOME: " + outcome);
+            var r = await engine.FabricGitStatusAsync("ws-t163", "interactive", null, "human", cts.Token);
+
+            Assert.NotEmpty(_browser);                                            // the human door reached the browser step
+            Assert.Contains("A test stood in for the browser", r.Error ?? "");    // and the stand-in, not a browser, answered
+            Assert.Equal(0, Volatile.Read(ref _prompts));
 
             // The safety assertion: nothing was persisted. This is what makes the "no token, consent
             // or identity was obtained" claim a measurement instead of an assumption about a GUID.

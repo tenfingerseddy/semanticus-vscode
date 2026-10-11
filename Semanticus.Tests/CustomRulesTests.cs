@@ -51,6 +51,7 @@ namespace Semanticus.Tests
 
         // ---- load / merge / replace / reset round-trip + undo -------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Load_merge_replace_reset_round_trip_with_undo()
         {
@@ -84,6 +85,7 @@ namespace Semanticus.Tests
 
         // ---- scoring: AppliesTo = the Applicable population; violations inside it; provenance ------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AppliesTo_scopes_the_applicable_population_and_findings_carry_provenance()
         {
@@ -134,6 +136,7 @@ namespace Semanticus.Tests
 
         // ---- the dormant / no-inflation pins -------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Empty_population_is_dormant_and_never_inflates_any_category()
         {
@@ -165,6 +168,7 @@ namespace Semanticus.Tests
         // A rule can COMPILE clean yet throw on real objects (here: Substring past the end of every name).
         // The load path must run the same test-run evaluation validate_rule does — parse-only validation would
         // persist a rule every subsequent scan chokes on.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Load_refuses_a_rule_that_compiles_but_throws_at_evaluation()
         {
@@ -182,6 +186,7 @@ namespace Semanticus.Tests
         // Scoring integrity: an evaluation error mid-scan (a hand-edited/stale rule the strict load never saw)
         // must leave the rule DORMANT — the population counted before the throw would otherwise read as a ~100%
         // pass and could activate its category. The error surfaces via RuleErrors only.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rule_that_throws_mid_evaluation_goes_dormant_and_never_moves_the_score()
         {
@@ -212,6 +217,7 @@ namespace Semanticus.Tests
 
         // ---- built-in id collision = refusal with teaching ------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Builtin_id_collision_is_refused_with_teaching()
         {
@@ -227,6 +233,7 @@ namespace Semanticus.Tests
 
         // A hand-edited annotation (bypassing the load op's strict validation) fails LOUD on the scorecard:
         // the colliding/unparseable rule is skipped and RuleErrors says so — never a silent pass, never a hijack.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Hand_edited_annotation_surfaces_rule_errors_instead_of_silently_passing()
         {
@@ -240,7 +247,7 @@ namespace Semanticus.Tests
             await sessions.Current.MutateAsync("human", "hand-edit", m =>
                 m.SetAnnotation(CustomReadinessRuleSet.AnnotationName, "{not json"));
             card = await engine.AiReadinessScanAsync();
-            Assert.Contains(card.RuleErrors, e => e.Contains("unparseable") && e.Contains("reset_readiness_rules"));
+            Assert.Contains(card.RuleErrors, e => e.Contains("unparseable") && e.Contains("reset_rules"));
         }
 
         // ---- waivers work on custom findings like any finding ---------------------------------------
@@ -267,6 +274,7 @@ namespace Semanticus.Tests
 
         // ---- validate_rule: teaching errors + the honest test-run preview ---------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Validate_rule_readiness_teaches_and_previews()
         {
@@ -307,6 +315,7 @@ namespace Semanticus.Tests
             Assert.Contains("'readiness'", ex.Message);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Validate_rule_bpa_previews_and_flags_standard_overrides()
         {
@@ -318,7 +327,7 @@ namespace Semanticus.Tests
             Assert.True(ok.AllValid);
             Assert.Equal(3, ok.Rules[0].Applicable);                     // all 3 measures (BPA has no AppliesTo)
             Assert.Equal(2, ok.Rules[0].Violations);                     // Alpha + Gamma undescribed
-            Assert.Contains("load_bpa_rules", ok.Note);
+            Assert.Contains("load_rules, system='bpa'", ok.Note);
 
             var bad = await engine.ValidateRuleAsync("bpa", rule.Replace("string.IsNullOrEmpty(Description)", "NoSuchProp == 1"));
             Assert.False(bad.AllValid);
@@ -333,6 +342,7 @@ namespace Semanticus.Tests
 
         // ---- BPA provenance: violations from model-embedded rules are tagged custom -----------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bpa_violations_from_model_rules_carry_provenance()
         {
@@ -362,17 +372,17 @@ namespace Semanticus.Tests
             Assert.Empty((await engine.GetCustomRulesAsync()).Bpa);   // nothing landed
         }
 
-        // ---- dry_run denies the rule-annotation writers (the load_bpa_rules family) -----------------
+        // ---- dry_run denies the rule-annotation writers (load_rules and reset_rules) -----------------
 
         [Fact]
         public async Task Dry_run_denies_readiness_rule_loads_with_teaching()
         {
             var (engine, _) = await FreshAsync();
             var load = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => engine.DryRunOpAsync("load_readiness_rules", "{\"source\":\"[]\"}"));
+                () => engine.DryRunOpAsync("load_rules", "{\"system\":\"air\",\"source\":\"[]\"}"));
             Assert.Contains("cannot rehearse", load.Message);
             var reset = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => engine.DryRunOpAsync("reset_readiness_rules", null));
+                () => engine.DryRunOpAsync("reset_rules", "{\"system\":\"air\"}"));
             Assert.Contains("cannot rehearse", reset.Message);
         }
     }

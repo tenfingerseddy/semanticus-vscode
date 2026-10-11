@@ -119,7 +119,7 @@ namespace Semanticus.Tests
                 await engine.CreateModelAsync("Fence", 1604);
                 await engine.CreateTableAsync("T", "agent");
                 var mref = await engine.CreateMeasureAsync("table:T", "M", "1", "human");
-                await engine.SaveAsync(dir, "TMDL");
+                await engine.SaveAsync(dir, "TMDL", false, "human");
 
                 var first = await engine.SessionInfoAsync();
                 Assert.False(string.IsNullOrEmpty(first.Source));

@@ -1,0 +1,85 @@
+table Sales
+	/// order identifier
+	column 'Order ID'
+		dataType: int64
+		sourceColumn: OrderID
+		summarizeBy: none
+
+	/// YYYYMMDD date join key
+	column 'Order Date Key'
+		dataType: int64
+		sourceColumn: OrderDateKey
+		summarizeBy: none
+
+	/// product join key
+	column 'Product Key'
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	/// customer join key
+	column 'Customer Key'
+		dataType: int64
+		sourceColumn: CustomerKey
+		summarizeBy: none
+
+	/// gross line amount in dollars. Cents must remain visible.
+	column 'Gross Amount'
+		dataType: double
+		sourceColumn: GrossAmount
+		summarizeBy: none
+
+	/// line discount in dollars. Cents must remain visible.
+	column 'Discount Amount'
+		dataType: double
+		sourceColumn: DiscountAmount
+		summarizeBy: none
+
+	/// net line amount in dollars. Cents must remain visible.
+	column 'Net Amount'
+		dataType: double
+		sourceColumn: NetAmount
+		summarizeBy: none
+
+	/// units sold on this line
+	column Units
+		dataType: int64
+		sourceColumn: Units
+		summarizeBy: none
+
+	column 'Promotion Code'
+		dataType: int64
+		sourceColumn: PromotionCode
+		summarizeBy: none
+
+	/// net sales dollars. Cents must remain visible.
+	measure Revenue = SUM(Sales[Net Amount])
+
+	/// gross sales dollars. Cents must remain visible.
+	measure 'Gross Sales' = SUM(Sales[Gross Amount])
+
+	/// units sold
+	measure 'Units Sold' = SUM(Sales[Units])
+
+	/// distinct orders
+	measure 'Order Count' = DISTINCTCOUNT(Sales[Order ID])
+
+	/// dollars per unit. Cents must remain visible.
+	measure 'Average Selling Price' = DIVIDE([Revenue], [Units Sold])
+
+	/// discount divided by gross sales. Report to at least a tenth of a percentage point.
+	measure 'Discount Rate' = DIVIDE(SUM(Sales[Discount Amount]), [Gross Sales])
+
+	/// share of total product revenue. Report to at least a tenth of a percentage point.
+	measure 'Revenue Share' = DIVIDE([Revenue], CALCULATE([Revenue], ALL(Product)))
+
+	/// year over year revenue change. Report to at least a tenth of a percentage point.
+	measure 'Revenue YoY' = DIVIDE([Revenue] - CALCULATE([Revenue], DATEADD(Calendar[Date], -1, YEAR)), CALCULATE([Revenue], DATEADD(Calendar[Date], -1, YEAR)))
+
+	partition Sales = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [OrderID = Int64.Type, OrderDateKey = Int64.Type, ProductKey = Int64.Type, CustomerKey = Int64.Type, GrossAmount = type number, DiscountAmount = type number, NetAmount = type number, Units = Int64.Type, PromotionCode = Int64.Type], {})
+			in
+				Source

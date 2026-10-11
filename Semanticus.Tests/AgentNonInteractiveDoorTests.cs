@@ -176,10 +176,11 @@ namespace Semanticus.Tests
         // RemoteEngine is the agent proxy: it handshakes as RpcConnectionRole.Agent, so RpcServer installs an
         // EngineRpcTarget whose _origin is "agent". A test that only pins McpTools.DeployGate's current null argument
         // would miss this entirely, which is how the hardcoded "human" survived the first sweep.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_agent_over_the_rpc_door_cannot_make_deploy_gate_prompt_via_its_compare_target()
         {
-            var pipe = "semanticus-t163-gate-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipe = TestPipe.Mint("semanticus-t163-gate-");
             var sessions = new SessionManager();
             using var owner = await PassingModelAsync(sessions);
             using var server = new RpcServer(sessions, owner, pipe);
@@ -250,6 +251,7 @@ namespace Semanticus.Tests
 
         // Fix 3: a UPN is not an identity. Alice is deleted and recreated with the same UPN, so the saved default now
         // carries the SAME username under a DIFFERENT principal. A to-source renewal must refuse, not sail through.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_to_source_renewal_refuses_a_recycled_upn_because_identity_is_the_home_account_id()
         {
@@ -295,6 +297,7 @@ namespace Semanticus.Tests
 
         // Holds on EVERY platform, including the CI Ubuntu leg where no MSAL record persists and therefore no saved
         // identity exists to compare: whatever else happens, an agent renewal never reaches a prompt.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_to_source_agent_renewal_never_prompts_even_where_no_record_persists()
         {
@@ -440,6 +443,7 @@ namespace Semanticus.Tests
         // The attack end to end: presenting the source model in a slightly different form must not let an agent write
         // it as the tenant default. The final case is the CONTROL — a genuinely different model still resolves its own
         // identity, so this test cannot pass by simply refusing everything.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_agent_cannot_escape_the_identity_check_by_respelling_the_endpoint()
         {
@@ -586,6 +590,7 @@ namespace Semanticus.Tests
         private static string PinnedHomeAccountIdOf(object credential)
             => CredentialField<Azure.Identity.AuthenticationRecord>(credential, "Record")?.HomeAccountId;
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_human_still_reuses_their_own_cached_live_credential()
         {

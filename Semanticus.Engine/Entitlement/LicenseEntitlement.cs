@@ -14,9 +14,10 @@ namespace Semanticus.Engine.Entitlement
         // and never in this repo. The literal "REPLACE_AT_ISSUANCE" placeholder means "no production key embedded
         // yet" ⇒ only the dev escape or a SEMANTICUS_LICENSE_PUBKEY override can unlock Pro. Replace this constant
         // with the real public key once issuance is set up (keygen via the Semanticus.License CLI).
-        // Production keypair minted 2026-07-04 (launch): private half in Kane's password manager + the
-        // fulfillment Worker secret. The pre-launch key it replaced was never used to issue a license.
-        public const string EmbeddedPublicKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEvfPm61yXQOeq3I3Vtk+S5pI5b0y+HesTVymzTBQTtQKweRJME0ZqZFkDTBKLvjPKy0nFlwmOLA1SFzYcHGh4/g==";
+        // Production keypair minted 2026-10-08 (go-live, Kane's decision): the private half lives outside the repo and is
+        // set as the billing Worker's SEMANTICUS_SIGNING_KEY secret. It replaced the 2026-07-04 pair, so a licence
+        // signed by the old private key no longer verifies.
+        public const string EmbeddedPublicKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE4UzdpLYvBWYfMnPiArcoCmJ7H1V6pV4nOf9jJmZRu31j1gf5B9LXHKCXmBFQL7lJxINjweMi8inaqLFr6du1aQ==";
 
         // Annual subscriptions expire, but a renewal payment + fresh-token delivery can lag the exp instant (a failed
         // charge retry, a weekend, a manual fulfillment). GRACE keeps a just-lapsed license on Pro for this many days
@@ -31,7 +32,41 @@ namespace Semanticus.Engine.Entitlement
         public bool IsPro { get; }
         public EntitlementInfo Info { get; }
 
-        private LicenseEntitlement(bool isPro, EntitlementInfo info) { IsPro = isPro; Info = info; }
+        /// <summary>The verified token itself, kept ONLY when a real signed Pro token was the thing that unlocked
+        /// this entitlement. It is the credential the hosted decision relay authenticates with: the relay holds the
+        /// public key and re-verifies server side, so nothing else this process could say about itself is worth
+        /// anything to it (docs/redesign/contracts/relay.md, "Eligibility").
+        ///
+        /// Null on every other path, and each null is deliberate rather than an oversight:
+        ///   free, expired past grace, wrong tier: there is nothing a relay would accept;
+        ///   SEMANTICUS_DEV_PRO: a local feature gate is allowed to be generous, spending money is not, and the
+        ///   relay refuses the dev flag by construction, so handing it a credential it does not have would only
+        ///   turn a clean "no service" into a 401 round trip.
+        /// A token inside the grace window IS kept: the relay mirrors the same 14-day grace.
+        ///
+        /// Never logged, never returned on any door, never written to disk by anything here. It is internal so a
+        /// new caller has to be inside this assembly, and there is exactly one: the decision oracle's construction
+        /// in LocalEngine.Decisions.cs.</summary>
+        internal string CloudCredential { get; }
+
+        private LicenseEntitlement(bool isPro, EntitlementInfo info, string cloudCredential = null)
+        {
+            IsPro = isPro;
+            Info = info;
+            CloudCredential = cloudCredential;
+        }
+
+        /// <summary>The credential an entitlement can lend a hosted service, or null when it has none.
+        ///
+        /// It lives here rather than at the call site so the cast is where credential policy is written, and
+        /// so there is ONE sanctioned way to ask. Anything that is not a real verified license reads as null,
+        /// which is the right default for something that can spend money: a test double, a free tier and the
+        /// dev escape all get no credential and therefore no cloud route.
+        ///
+        /// This is NOT a tier read and it is not a gate. It answers "is there a token to present", never "may
+        /// this person do X". The tier gate stays FeatureGrants and nothing here reaches it.</summary>
+        internal static string CloudCredentialOf(IEntitlement entitlement) =>
+            (entitlement as LicenseEntitlement)?.CloudCredential;
 
         /// <summary>The default construction: read the ambient license + public-key override + dev flag, at now.</summary>
         public static LicenseEntitlement FromEnvironment() => FromEnvironmentOrToken(null);
@@ -78,12 +113,14 @@ namespace Semanticus.Engine.Entitlement
                     if (now <= graceEnd)
                         // Lapsed but within grace: STILL Pro, but the Reason teaches the (soft) deadline so the user renews.
                         return new LicenseEntitlement(true, new EntitlementInfo { Tier = "pro", LicensedTo = claims.Sub, Expiry = claims.Exp,
-                            Reason = $"license expired {exp:yyyy-MM-dd}; in grace until {graceEnd:yyyy-MM-dd}. Renew at {RenewUrl} to stay on Pro" });
+                            Reason = $"license expired {exp:yyyy-MM-dd}; in grace until {graceEnd:yyyy-MM-dd}. Renew at {RenewUrl} to stay on Pro" },
+                            cloudCredential: token.Trim());
                     // Past grace ⇒ drop to Free, but TEACH: what lapsed, where to renew, and that nothing broke.
                     return Free($"license expired {exp:yyyy-MM-dd}. Renew at {RenewUrl}; the engine keeps working on the free tier");
                 }
             }
-            return new LicenseEntitlement(true, new EntitlementInfo { Tier = "pro", LicensedTo = claims.Sub, Expiry = claims.Exp });
+            return new LicenseEntitlement(true, new EntitlementInfo { Tier = "pro", LicensedTo = claims.Sub, Expiry = claims.Exp },
+                cloudCredential: token.Trim());
         }
 
         /// <summary>A Pro entitlement for the dev/test harnesses (the smoke runners verify FUNCTIONALITY; the gate
@@ -93,11 +130,15 @@ namespace Semanticus.Engine.Entitlement
         private static LicenseEntitlement Free(string reason) =>
             new LicenseEntitlement(false, new EntitlementInfo { Tier = "free", Reason = reason });
 
+        /// <summary>The user licence file, in the same per-user home as every other store (SEMANTICUS_HOME or
+        /// --state-dir, else ~/.semanticus), so a moved home is moved whole.</summary>
+        public static string LicenseFilePath() => Path.Combine(SemanticusHome.Root(), "license");
+
         private static string ReadLicenseFile()
         {
             try
             {
-                var p = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".semanticus", "license");
+                var p = LicenseFilePath();
                 return File.Exists(p) ? File.ReadAllText(p).Trim() : null;
             }
             catch { return null; }   // an unreadable file ⇒ no license (free); never throw on the read path

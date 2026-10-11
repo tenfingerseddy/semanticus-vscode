@@ -239,17 +239,19 @@ namespace Semanticus.Tests
                 var tableRef = await free.CreateImportTableAsync("Sales", "let Source = Sql.Database(\"srv\",\"db\"), t = Source{[Schema=\"dbo\",Item=\"Sales\"]}[Data] in t", "human");
                 await free.CreateColumnAsync(tableRef, "Amount", "Decimal", null, "human");
 
-                // One item or two, the free tier meets the same sentence: the refusal is about the feature.
+                // Power Query went free on 22 September 2026, so one item or two, the free tier applies both.
+                // A refusal here would mean a gate that was removed is still firing somewhere.
                 var one = new[] { new SchemaUpdateItem { Change = "Added", Column = "CustomerName", DataType = "String" } };
                 var two = new[]
                 {
                     new SchemaUpdateItem { Change = "TypeChanged", Column = "Amount", DataType = "Double" },
                     new SchemaUpdateItem { Change = "Added", Column = "CustomerId", DataType = "Int64" },
                 };
-                var single = await Assert.ThrowsAsync<EntitlementException>(() => free.ApplySchemaUpdateAsync(tableRef, one, "human"));
-                var bulk = await Assert.ThrowsAsync<EntitlementException>(() => free.ApplySchemaUpdateAsync(tableRef, two, "human"));
-                Assert.Contains("Power Query is a Semanticus Pro feature.", single.Message);
-                Assert.Equal(single.Message, bulk.Message);
+                var single = await free.ApplySchemaUpdateAsync(tableRef, one, "human");
+                Assert.Equal(1, single.Added);
+                var bulk = await free.ApplySchemaUpdateAsync(tableRef, two, "human");
+                Assert.Equal(1, bulk.Added);
+                Assert.Equal(1, bulk.Retyped);
             }
             finally { free.Dispose(); }
         }

@@ -41,15 +41,24 @@ assistant's skills menu. Plugin installations add the plugin's command namespace
 
 ## Work in the same session
 
-The VS Code workbench has five areas: **Model**, **Calculations**, **Checks**, **Changes** and
+The VS Code workbench has six areas: **Plan**, **Explore**, **Edit**, **Review**, **Publish** and
 **Workflows**. The areas are a starting point for people. The MCP tool names stay stable, so an
 assistant can use the same model work from any client:
 
-- Model: inspect tables, relationships, diagrams, lineage, search, data previews, Power Query and notes.
-- Calculations: try and compare DAX in DAX Lab.
-- Checks: run Tests, Model quality checks and AI understanding checks, then review saved Results.
-- Changes: review proposed edits, inspect history and publish to a selected destination.
-- Workflows: browse, run and author repeatable steps, including Steps, Canvas and Source views.
+- Plan: every piece of work on the model and who does it, with History (every edit, who made it, undo to any point).
+- Explore: data previews, Ask your data (Pro; `ask_data` and `list_data_questions`; a question that can fairly be read two ways
+  answers "Showing X. You may have meant Y."), the diagram, lineage and size by table.
+- Edit: find and replace, Queries (DAX), AI instructions with Model notes, advanced modelling and Power Query.
+- Review: Model quality, AI readiness, Validation with its Reports, and Docs.
+- Publish: compare with a destination, publish after you confirm, and roll back.
+- Workflows: your workflows and starters, Author for the one you open, and `describe_workflow_steps` to turn words into steps.
+
+On Pro, Jev makes small modelling choices that arrive as Plan rows: column formats, base measures for number
+columns, what Copilot sees and the Plan's order. It also drafts from the person's words: `describe_workflow_steps` for
+a workflow, and a task typed on the Plan (once the person presses Draft the steps) or with Ctrl J (at once). `get_decision_points` lists each one, whether it is on, and
+whether this build asks Jev for it at all ('live'). Nothing is sent until the person agrees; `get_consent` says whether
+they have and lists exactly what goes, including the words they type. The agreement is kept outside the model files,
+but a marker annotation, `Semanticus_ConsentId`, is written into the model and shows in a commit.
 
 The two doors share one session and one undo history. The VS Code view updates when an edit lands.
 Your assistant sees that edit on its next call. Keep the editing model, test model and publishing

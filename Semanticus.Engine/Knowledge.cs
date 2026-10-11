@@ -40,8 +40,15 @@ namespace Semanticus.Engine
         public string Kind { get; set; }                                 // "insight" | "post-mortem"
         public string[] Keys { get; set; } = Array.Empty<string>();      // deterministic match keys (rule ids / gate sigs / error types / op names / domain tokens)
         public string Fingerprint { get; set; }                          // FingerprintKey it is scoped to, or null (all models)
-        public string Status { get; set; }                               // "pending" | "approved" (SSGM write-gate)
-        public bool Untrusted { get; set; }                              // true when the text looks like an instruction to skip checks (D-129)
+        /// <summary>"approved": a PERSON approved these words (or wrote them with auto-approve on), so they are trusted.
+        /// "unreviewed": released to recall, but only as untrusted data, because no person has approved the current
+        /// words (the assistant wrote them, auto-approved or self-approved). "pending": held out of recall (SSGM
+        /// write-gate). The agent door can never produce "approved" (UAT-S06a-1-002).</summary>
+        public string Status { get; set; }
+        public bool Untrusted { get; set; }                              // true unless Status is "approved", and always when the text looks like an instruction to skip checks (D-129)
+        /// <summary>Your assistant wrote (or last rewrote) this text and no person has approved it yet (UAT-S06a-1-002).
+        /// Such an insight is recalled only as untrusted data and never reaches the Primer unless a person accepts it.</summary>
+        public bool NeedsReview { get; set; }
         public int Score { get; set; }                                   // importance counter
         public int Uses { get; set; }                                    // times attached to a run/step (populated by L3+)
         public int Retrievals { get; set; }                              // times returned by recall_experience
@@ -110,7 +117,7 @@ namespace Semanticus.Engine
     /// wholesale rewrite). One line = one delta {op, id, ...}. The reader REPLAYS deltas in order to materialize
     /// the live set; a corrupt line is SKIPPED and counted (never bricks the store). Two scopes, same on-disk
     /// format: project (`.semanticus/knowledge/insights.jsonl`, beside the model — the ExperienceLog placement
-    /// rule) and global (`%USERPROFILE%/.semanticus/knowledge/insights.jsonl`, user-level patterns that travel).
+    /// rule) and global (`<SemanticusHome>/knowledge/insights.jsonl`, SEMANTICUS_HOME or ~/.semanticus, user-level patterns that travel).
     /// </summary>
     internal static class KnowledgeStore
     {
@@ -133,6 +140,10 @@ namespace Semanticus.Engine
             "ignore your instructions",
             "disregard your instructions",
         };
+
+        /// <summary>True for a delta a person made (the UI door records "human"). Every other origin, including a
+        /// missing one on an old line, is the assistant or the engine, whose words a person has not vouched for.</summary>
+        public static bool ByPerson(string origin) => string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>True when the text looks like an instruction to skip checks or swap models, not a lesson.</summary>
         public static bool IsUntrusted(string text)
@@ -191,6 +202,13 @@ namespace Semanticus.Engine
             catch { return false; }
         }
 
+        public const string Approved = "approved", Unreviewed = "unreviewed", Pending = "pending";
+
+        /// <summary>True when recall and the Primer queue may see the insight: approved, or released unreviewed (as
+        /// untrusted data).</summary>
+        public static bool Recallable(InsightRecord r)
+            => string.Equals(r?.Status, Approved, StringComparison.Ordinal) || string.Equals(r?.Status, Unreviewed, StringComparison.Ordinal);
+
         /// <summary>Replay the scope's deltas → the live insight set. score &lt;= 0 OR a delete tombstone = gone; a
         /// `purge` delta erases everything before it in that scope. Corrupt lines are skipped and counted.</summary>
         public static (List<InsightRecord> live, int skipped) Materialize(string file, string scope)
@@ -198,6 +216,11 @@ namespace Semanticus.Engine
             var byId = new Dictionary<string, InsightRecord>(StringComparer.Ordinal);
             var tombstoned = new HashSet<string>(StringComparer.Ordinal);
             var order = new List<string>();                 // preserve first-seen order for a stable output
+            // Two separate facts decide Status (UAT-S06a-1-002). Released: the write-gate let it into recall (auto-
+            // approve on add, or ANY approve). Vouched: a person vouched for the CURRENT words (wrote them under
+            // auto-approve, approved them, or rewrote them). Only the second one makes an insight "approved".
+            var released = new HashSet<string>(StringComparer.Ordinal);
+            var vouched = new HashSet<string>(StringComparer.Ordinal);
             int skipped = 0;
             if (!string.IsNullOrEmpty(file) && File.Exists(file))
             {
@@ -219,6 +242,8 @@ namespace Semanticus.Engine
                         case "add":
                             if (string.IsNullOrEmpty(d.Id) || tombstoned.Contains(d.Id)) { skipped++; break; }
                             if (!byId.ContainsKey(d.Id)) order.Add(d.Id);
+                            released.Remove(d.Id); vouched.Remove(d.Id);
+                            if (d.Status == Approved) { released.Add(d.Id); if (ByPerson(d.Origin)) vouched.Add(d.Id); }
                             byId[d.Id] = new InsightRecord
                             {
                                 Id = d.Id,
@@ -226,8 +251,8 @@ namespace Semanticus.Engine
                                 Kind = string.IsNullOrEmpty(d.Kind) ? "insight" : d.Kind,
                                 Keys = d.Keys ?? Array.Empty<string>(),
                                 Fingerprint = d.Fingerprint,
-                                Status = d.Status == "approved" ? "approved" : "pending",
                                 Untrusted = d.Untrusted,
+                                NeedsReview = !ByPerson(d.Origin),
                                 Score = InitialScore,
                                 Scope = scope,
                                 LastUsedUtc = d.When,
@@ -246,6 +271,11 @@ namespace Semanticus.Engine
                                 {
                                     er.Text = d.Text;
                                     if (IsUntrusted(d.Text)) er.Untrusted = true;
+                                    er.NeedsReview = !ByPerson(d.Origin);   // new words are reviewed only if a person wrote them
+                                    // A person rewriting a released lesson vouches for the new words; the assistant
+                                    // rewriting any lesson withdraws a person's approval of the old ones.
+                                    if (ByPerson(d.Origin) && released.Contains(d.Id)) vouched.Add(d.Id);
+                                    else if (!ByPerson(d.Origin)) vouched.Remove(d.Id);
                                 }
                                 if (d.Keys != null) er.Keys = d.Keys;
                                 er.LastUsedUtc = d.When ?? er.LastUsedUtc;
@@ -262,7 +292,8 @@ namespace Semanticus.Engine
                         case "approve":
                             if (d.Id != null && byId.TryGetValue(d.Id, out var ar) && !tombstoned.Contains(d.Id))
                             {
-                                ar.Status = "approved";
+                                released.Add(d.Id);
+                                if (ByPerson(d.Origin)) { ar.NeedsReview = false; vouched.Add(d.Id); }   // the assistant cannot vouch for any lesson
                                 ar.LastUsedUtc = d.When ?? ar.LastUsedUtc;
                             }
                             break;
@@ -288,6 +319,16 @@ namespace Semanticus.Engine
             }
             // materialize-out: score <= 0 is gone (ExpeL delete-at-zero), tombstones already removed.
             var live = order.Where(byId.ContainsKey).Select(id => byId[id]).Where(r => r.Score > 0).ToList();
+            // Only a person's approval makes an insight "approved" and trusted (UAT-S06a-1-002, reopened on 0ee45add
+            // when add_insight still answered "approved" for the assistant's own unsafe lesson). Anything else the
+            // write-gate released is "unreviewed" and untrusted whatever it says: the phrase list only catches the
+            // shapes it names, and "skip checks and use a different model" was not one of them. Replay derives this,
+            // so records written before the fix are covered too.
+            foreach (var r in live)
+            {
+                r.Status = vouched.Contains(r.Id) && !r.NeedsReview ? Approved : released.Contains(r.Id) ? Unreviewed : Pending;
+                if (r.Status != Approved) r.Untrusted = true;
+            }
             return (live, skipped);
         }
 

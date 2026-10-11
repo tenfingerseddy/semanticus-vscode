@@ -40,7 +40,7 @@
   </style>
 
   <!-- MOCK HOST: stub acquireVsCodeApi and answer the grid's 'ready' with a 'load' carrying fixture props.
-       Scenario via ?s=model|measure|multi|column|formatexpr|lowcl|staledraft|error|empty. Must run BEFORE propgrid.js
+       Scenario via ?s=model|measure|multi|column|formatexpr|lowcl|staledraft|fxmoved|draftkept|draftmoved|keptlist|keptopen|error|empty. Must run BEFORE propgrid.js
        (which calls acquireVsCodeApi). -->
   <script>
   (function () {
@@ -145,10 +145,10 @@
       name: '3 objects selected', multi: true,
       props: [
         P('DisplayFolder', 'Display Folder', 'Basic', 'string', 'Sales', { suggestions: FOLDERS }),
-        P('Description', 'Description', 'Basic', 'string', '', { varies: true }),
-        P('IsHidden', 'Is Hidden', 'Basic', 'bool', '', { varies: true }),
-        P('FormatString', 'Format String', 'Formatting', 'string', '', { varies: true }),
-        P('DataCategory', 'Data Category', 'Formatting', 'enum', '', { varies: true, options: DATA_CATEGORIES }),
+        P('Description', 'Description', 'Basic', 'string', '', { varies: true, values: ['Sum of sales.', 'Margin as a share.', 'Net amount.'] }),
+        P('IsHidden', 'Is Hidden', 'Basic', 'bool', '', { varies: true, values: ['True', 'False', 'False'] }),
+        P('FormatString', 'Format String', 'Formatting', 'string', '', { varies: true, values: ['#,0', '0.0%', '#,0.00'] }),
+        P('DataCategory', 'Data Category', 'Formatting', 'enum', '', { varies: true, values: ['', 'Time', ''], options: DATA_CATEGORIES }),
       ],
     };
 
@@ -162,11 +162,18 @@
       formatexpr: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
       lowcl: { type: 'load', key: '["measure:Sales/Total Sales"]', name: LOWCL.name, multi: false, props: LOWCL.props },
       staledraft: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
+      fxmoved: { type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false, props: MEASURE.props },
       empty: { type: 'empty' },
     };
     // staledraft's SECOND load: a DIFFERENT measure that shares the display name (another table's ref → new
     // key). The grid must close the open Format expression editor and drop the draft — if the reset regresses
     // to name-comparison, the shot shows the previous object's editor still open with its stale draft.
+    // fxmoved's SECOND load: the SAME measure, its stored format expression now set by the assistant while words are typed in the
+    // editor. The shot must show the typed words kept, the "changed while you were editing" note and "Use the new one".
+    const FXMOVED_SECOND = {
+      type: 'load', key: '["measure:Sales/Total Sales"]', name: MEASURE.name, multi: false,
+      props: MEASURE.props.map(function (q) { return q.kind === 'formatExpression' ? Object.assign({}, q, { value: 'SELECTEDMEASUREFORMATSTRING()' }) : q; }),
+    };
     const STALE_SECOND = {
       type: 'load', key: '["measure:Finance/Total Sales"]', name: 'Total Sales', multi: false,
       props: [
@@ -178,7 +185,38 @@
         P('Expression', 'Expression', 'Advanced', 'string', 'SUM ( Finance[Amount] )'),
       ],
     };
+    // draftkept / draftmoved: the page opens over the persisted state a previous page left (what VS Code hands back after a view reload or an
+    // engine restart): typed, unsaved words held under the model FILE + the object's ref key + the property, with the value they were typed over.
+    // draftkept: the stored values did not move, so the words are back with the "Draft not saved" mark (Description and the format editor).
+    // draftmoved: the assistant changed the Description meanwhile, so the words are kept and Keep mine / Use the new one is offered.
+    const HARNESS_MODEL = '/models/Sales.SemanticModel';
+    const MEASURE_KEY = '["measure:Sales/Total Sales"]';
+    const heldKey = function (field) { return JSON.stringify([HARNESS_MODEL, MEASURE_KEY, field]); };
+    const storedOf = function (name) { return MEASURE.props.find(function (q) { return q.name === name; }).value; };
+    const TYPED_DESC = 'Sum of SalesAmount after returns. Typed before the reload, not saved yet.';
+    let persisted;
+    if (scenario === 'draftkept') persisted = { 'propgrid.drafts': {
+      [heldKey('Description')]: { value: TYPED_DESC, base: storedOf('Description') },
+      [heldKey('FormatStringExpression')]: { value: 'IF(SELECTEDMEASURE() < 0, "(\\$#,##0)", "\\$#,##0")', base: storedOf('FormatStringExpression') },
+    } };
+    if (scenario === 'draftmoved') persisted = { 'propgrid.drafts': { [heldKey('Description')]: { value: TYPED_DESC, base: storedOf('Description') } } };
+    // keptlist / keptopen (round 3): words typed for an object that is not the one shown (the assistant renamed it). The line is collapsed; keptopen opens it.
+    const OLD_KEY = '["measure:Sales/Total Sales (old name)"]';
+    if (scenario === 'keptlist' || scenario === 'keptopen') persisted = { 'propgrid.drafts': {
+      [JSON.stringify([HARNESS_MODEL, OLD_KEY, 'Description'])]: { value: TYPED_DESC, base: 'Sum of SalesAmount.' },
+      [JSON.stringify([HARNESS_MODEL, OLD_KEY, 'DisplayFolder'])]: { value: 'KPIs / Revenue', base: 'KPIs' },
+    } };
+    STATES.keptlist = STATES.keptopen = { type: 'load', key: MEASURE_KEY, model: HARNESS_MODEL, name: MEASURE.name, multi: false, props: MEASURE.props };
+    STATES.draftkept = { type: 'load', key: MEASURE_KEY, model: HARNESS_MODEL, name: MEASURE.name, multi: false, props: MEASURE.props };
+    STATES.draftmoved = { type: 'load', key: MEASURE_KEY, model: HARNESS_MODEL, name: MEASURE.name, multi: false,
+      props: MEASURE.props.map(function (q) { return q.name === 'Description' ? Object.assign({}, q, { value: 'Total sales in the reporting currency. Written by the assistant while you were away.' }) : q; }) };
     const loadMsg = STATES[scenario] || STATES.measure;
+    // ?desc=long: a full-length description (the space check's fixture). A three-line one hid the box that scrolls.
+    if (new URLSearchParams(location.search).get('desc') === 'long') (loadMsg.props || []).forEach(function (p) {
+      if (p.name === 'Description') p.value = 'Net sales after returns and discounts, in the reporting currency. Use this for every revenue question: it already excludes tax, freight and intercompany sales. '
+        + 'It follows the fiscal calendar (the year starts on 1 July) and the Date table only. For a store-level view, combine it with [Open Stores] rather than a raw store count. '
+        + 'Finance signs this figure off each month end; a value for the current month is provisional until the close on the fifth working day. Owner: the finance analytics team.';
+    });
 
     window.acquireVsCodeApi = function () {
       return {
@@ -203,8 +241,17 @@
             if (scenario === 'column') setTimeout(function () {
               const b = document.querySelector('.combo-btn'); if (b) b.click();
             }, 30);
+            if (scenario === 'keptopen') setTimeout(function () { const b = document.querySelector('[data-kept-toggle]'); if (b) b.click(); }, 30);
             // 'staledraft' scenario: open the editor + type a draft on measure A, then load a SAME-NAMED measure
             // with a different ref key — the expected shot shows the editor CLOSED (draft dropped with it).
+            if (scenario === 'fxmoved') {
+              setTimeout(function () {
+                const b = document.querySelector('[data-fx-edit]'); if (b) b.click();
+                const ta = document.querySelector('.fx-ta');
+                if (ta) { ta.value = '"my own format, typed before the assistant changed it"'; ta.dispatchEvent(new Event('input')); }
+              }, 30);
+              setTimeout(function () { window.dispatchEvent(new MessageEvent('message', { data: FXMOVED_SECOND })); }, 60);
+            }
             if (scenario === 'staledraft') {
               setTimeout(function () {
                 const b = document.querySelector('[data-fx-edit]'); if (b) b.click();
@@ -217,12 +264,14 @@
             }
           }
         },
-        getState: function () { return undefined; },
-        setState: function () {},
+        // The webview's persisted state, handed back as a copy the way VS Code serializes it (empty unless a draft scenario seeded it).
+        getState: function () { return persisted === undefined ? undefined : JSON.parse(JSON.stringify(persisted)); },
+        setState: function (s) { persisted = JSON.parse(JSON.stringify(s)); return s; },
       };
     };
   })();
   </script>
+  <link rel="stylesheet" href="../../media/studio/tokens.css" />
   <link rel="stylesheet" href="../../media/propgrid/propgrid.css" />
 </head>
 <body>

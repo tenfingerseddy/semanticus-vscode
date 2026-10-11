@@ -21,7 +21,10 @@ namespace Semanticus.Engine.Evidence
     {
         private const string Dot = " · ";   // middle dot separator (not an em-dash)
 
-        public static string Render(EvidenceDoc doc)
+        public static string Render(EvidenceDoc doc) => Render(doc, null);
+
+        /// <summary><paramref name="zone"/> is where times are drawn (the machine's own when null); see EvidenceTime.</summary>
+        public static string Render(EvidenceDoc doc, TimeZoneInfo zone)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             // Validate BEFORE drawing a single byte. The structural rules (a chip owes coverage, an overridden badge
@@ -42,7 +45,7 @@ namespace Semanticus.Engine.Evidence
             sb.Append("<main class=\"ev\">\n");
             sb.Append("<div class=\"ev-card\">\n");
 
-            RenderHeader(doc, sb);
+            RenderHeader(doc, sb, zone);
 
             if (doc.Sections != null)
                 foreach (var s in doc.Sections)
@@ -59,11 +62,11 @@ namespace Semanticus.Engine.Evidence
 
         // ---- header ----
 
-        private static void RenderHeader(EvidenceDoc doc, StringBuilder sb)
+        private static void RenderHeader(EvidenceDoc doc, StringBuilder sb, TimeZoneInfo zone)
         {
             sb.Append("<header class=\"ev-head\">\n");
             if (!string.IsNullOrWhiteSpace(doc.Kind))
-                sb.Append("<div class=\"ev-kind\">").Append(H(doc.Kind)).Append("</div>\n");
+                sb.Append("<div class=\"ev-kind\">").Append(H(KindWords(doc.Kind))).Append("</div>\n");
             sb.Append("<h1 class=\"ev-title\">").Append(H(doc.Title)).Append("</h1>\n");
 
             // STRUCTURAL RULE: no coverage, no verdict badge. A grade must show what it measured. Validate has
@@ -84,7 +87,7 @@ namespace Semanticus.Engine.Evidence
 
             RenderIdentity(doc, sb);
 
-            var produced = ProducedBy(doc);
+            var produced = ProducedBy(doc, zone);
             if (produced.Length > 0)
                 sb.Append("<div class=\"ev-produced\">").Append(H(produced)).Append("</div>\n");
 
@@ -118,10 +121,25 @@ namespace Semanticus.Engine.Evidence
             return string.Join(Dot, parts);
         }
 
-        private static string ProducedBy(EvidenceDoc doc)
+        /// <summary>"workflow-run" is the document's kind for programs; a person reads "Workflow run".</summary>
+        private static string KindWords(string kind)
+        {
+            var words = kind.Trim().Replace('-', ' ');
+            return words.Length == 0 ? words : char.ToUpperInvariant(words[0]) + words.Substring(1);
+        }
+
+        private static string ProducedBy(EvidenceDoc doc, TimeZoneInfo zone)
         {
             var bits = new List<string>();
-            if (!string.IsNullOrWhiteSpace(doc.Producer))
+            // A workflow run names its workflow the way a person knows it, "Test a complex measure, version 7", not by
+            // its file name and a bare number (F16). The document title is that name plus TitleSuffix.
+            if (string.Equals(doc.Kind, "workflow-run", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(doc.Title)
+                && doc.Title.EndsWith(WorkflowEvidenceRenderer.TitleSuffix, StringComparison.Ordinal))
+            {
+                var name = doc.Title.Substring(0, doc.Title.Length - WorkflowEvidenceRenderer.TitleSuffix.Length).Trim();
+                bits.Add("Made by the workflow " + name + (string.IsNullOrWhiteSpace(doc.ProducerVersion) ? "" : ", version " + doc.ProducerVersion.Trim()));
+            }
+            else if (!string.IsNullOrWhiteSpace(doc.Producer))
             {
                 var p = "Produced by " + doc.Producer.Trim();
                 if (!string.IsNullOrWhiteSpace(doc.ProducerVersion)) p += " " + doc.ProducerVersion.Trim();
@@ -129,7 +147,7 @@ namespace Semanticus.Engine.Evidence
             }
             var origin = OriginLabel(doc.Origin);
             if (origin != null) bits.Add(origin);
-            if (!string.IsNullOrWhiteSpace(doc.CreatedUtc)) bits.Add(doc.CreatedUtc.Trim());
+            if (!string.IsNullOrWhiteSpace(doc.CreatedUtc)) bits.Add(EvidenceTime.Readable(doc.CreatedUtc, zone));
             return string.Join(Dot, bits);
         }
 

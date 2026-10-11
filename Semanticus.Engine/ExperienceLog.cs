@@ -33,18 +33,13 @@ namespace Semanticus.Engine
             return dir == null ? null : Path.Combine(dir, FileName);
         }
 
-        /// <summary>The GLOBAL %USERPROFILE%/.semanticus root — the last-resort durable home SHARED by the
-        /// experience log and the vitals store (LocalEngine.VitalsFileFor) for a live/unsaved (ephemeral)
-        /// session with no workspace anchored either. Without it those highest-value sessions (a live XMLA
-        /// model, no folder open) would be captured nowhere and silently dropped. Honors USERPROFILE literally
-        /// (GlobalKnowledgeDir's convention) so it's redirectable/testable; falls back to the OS profile only
-        /// if the var is unset.</summary>
-        public static string GlobalHomeDir()
-        {
-            var home = Environment.GetEnvironmentVariable("USERPROFILE");
-            if (string.IsNullOrEmpty(home)) home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, LayoutStore.DirName);
-        }
+        /// <summary>The GLOBAL per-user root (SemanticusHome: SEMANTICUS_HOME, else ~/.semanticus), the
+        /// last-resort durable home SHARED by the experience log and the vitals store (LocalEngine.VitalsFileFor)
+        /// for a live/unsaved (ephemeral) session with no workspace anchored either. Without it those
+        /// highest-value sessions (a live XMLA model, no folder open) would be captured nowhere and silently
+        /// dropped. It resolves through the one home every per-user store uses (F-232), so a test run that
+        /// points SEMANTICUS_HOME at a scratch directory never writes into the real one.</summary>
+        public static string GlobalHomeDir() => SemanticusHome.Root();
 
         /// <summary>The GLOBAL experience.jsonl target beneath <see cref="GlobalHomeDir"/> — the tee routes
         /// its fallback here when there's no workspace either.</summary>
@@ -175,6 +170,7 @@ namespace Semanticus.Engine
 
         private void OnChanged(ChangeNotification n)
         {
+            if (n.IsSwap) return;   // opening a model is not an edit to learn from
             var s = CurrentFor(n.SessionId);
             if (s == null) return;
             ExperienceStore.AppendLine(FileFor(s), new

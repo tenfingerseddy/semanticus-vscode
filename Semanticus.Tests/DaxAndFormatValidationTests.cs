@@ -38,6 +38,55 @@ namespace Semanticus.Tests
             }
         }
 
+        // F-263 (found by lane L3, 24 Sep): an UNQUOTED table the model does not have was skipped as "may be a VAR",
+        // so SUM ( Ghost[Amount] ) passed validate_dax and every DAX write. Only a name the expression itself
+        // declares (a VAR, or a parameter of a function body) may stand where a table would.
+        [Fact]
+        public async Task An_unknown_unquoted_table_is_an_unknown_reference_and_every_write_refuses_it()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
+            await engine.CreateModelAsync("DaxUnquoted", 1604);
+            var table = await engine.CreateTableAsync("Sales", "human");
+            await engine.CreateColumnAsync(table, "Amount", "Decimal", "Amount", "human");
+            var measure = await engine.CreateMeasureAsync(table, "M", "1", "human");
+
+            var check = await engine.ValidateDaxAsync("SUM ( Ghost[Amount] )");
+            Assert.Contains(check.Diagnostics, d => d.Message.Contains("Unknown table 'Ghost'"));
+
+            var revision = sessions.Current.Revision;
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SetDaxAsync(measure, "SUM ( Ghost[Amount] )", "agent"));
+            Assert.Contains("Ghost", ex.Message);
+            Assert.Equal(revision, sessions.Current.Revision);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => engine.CreateMeasureAsync(table, "N", "SUM ( Ghost[Amount] )", "agent"));
+        }
+
+        [Fact]
+        public async Task A_name_the_expression_declares_may_stand_where_a_table_would()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
+            await engine.CreateModelAsync("DaxDeclared", 1702);
+            var table = await engine.CreateTableAsync("Sales", "human");
+            await engine.CreateColumnAsync(table, "Amount", "Decimal", "Amount", "human");
+
+            foreach (var text in new[]
+            {
+                "VAR Big = FILTER ( Sales, Sales[Amount] > 10 ) RETURN SUMX ( Big, Big[Amount] )",
+                "VAR   _rows=FILTER ( Sales, TRUE () ) RETURN COUNTROWS ( _rows ) + SUMX ( _rows, _rows[Amount] )",
+            })
+            {
+                var check = await engine.ValidateDaxAsync(text);
+                Assert.DoesNotContain(check.Diagnostics, d => d.Message.StartsWith("Unknown table", StringComparison.Ordinal));
+            }
+            // A function body's own parameter is declared by the body.
+            var body = await engine.ValidateDaxAsync("( t : TABLE ) => SUMX ( t, t[Amount] )");
+            Assert.DoesNotContain(body.Diagnostics, d => d.Message.StartsWith("Unknown table", StringComparison.Ordinal));
+            // A variable of another name does not excuse an unknown table.
+            var other = await engine.ValidateDaxAsync("VAR Big = 1 RETURN SUM ( Ghost[Amount] ) + Big");
+            Assert.Contains(other.Diagnostics, d => d.Message.Contains("Unknown table 'Ghost'"));
+        }
+
         [Fact]
         public async Task Dynamic_format_and_function_body_writes_use_the_same_fence()
         {

@@ -6,7 +6,7 @@ import { PANEL_ONLY_CHORDS } from './copy';
 //
 // TWO LAYERS (the load-bearing design — see docs/keyboard-shortcuts.md):
 //   1. VS Code keybindings (package.json `contributes.keybindings`) own every gesture that carries a
-//      Ctrl/Cmd chord safe to fire while typing (Ctrl+F, Ctrl+S, Ctrl+Shift+1–5, Ctrl+Alt+arrows).
+//      Ctrl/Cmd chord safe to fire while typing (Ctrl+F, Ctrl+S, Ctrl+Shift+1 to 6, Ctrl+Alt+arrows).
 //      VS Code forwards webview keydowns to its keybinding service, so these work whether focus is
 //      inside Studio or on its chrome — and users can REMAP them (Keyboard Shortcuts → "Semanticus").
 //   2. This webview handles the gestures VS Code must NOT own: unmodified keys ('?', Esc — typing a
@@ -26,13 +26,13 @@ export const IS_MAC = /mac/i.test(navigator.platform ?? '');
 // The label is what the overlay shows; the id must be a real StudioTab id (App validates via goTab).
 export const KEY_TABS: { key: string; tab: string; label: string }[] = [
   { key: 'd', tab: 'diagram', label: 'Diagram' },
-  { key: 'm', tab: 'mcode', label: 'M Code' },
-  { key: 'l', tab: 'daxlab', label: 'DAX Lab' },
-  { key: 'r', tab: 'readiness', label: 'AI Readiness (re-scans)' },
-  { key: 'b', tab: 'bpa', label: 'BPA (scans on open)' },
-  { key: 'h', tab: 'history', label: 'Edit History' },
+  { key: 'm', tab: 'mcode', label: 'Power Query' },
+  { key: 'l', tab: 'daxlab', label: 'Queries' },
+  { key: 'r', tab: 'readiness', label: 'AI readiness' },
+  { key: 'b', tab: 'bpa', label: 'Model quality' },
+  { key: 'h', tab: 'history', label: 'Plan: History' },
   { key: 'w', tab: 'workflows', label: 'Workflows' },
-  { key: 'k', tab: 'knowledge', label: 'Knowledge' },
+  { key: 'k', tab: 'knowledge', label: 'AI instructions: Notes' },
 ];
 
 interface ShortcutItem { win: string; mac?: string; action: string; note?: string }
@@ -44,10 +44,10 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: 'Studio',
     items: [
-      { win: mod('Ctrl+F'), action: 'Search & Replace across the model', note: 'names, descriptions, DAX; the Search tab, find box focused' },
-      { win: mod('Ctrl+S'), action: 'Save the model to disk' },
-      { win: mod('Ctrl+Z'), action: 'Undo the last model change', note: 'when you are not typing; Ctrl+Alt+Z always undoes a model change' },
-      { win: 'Ctrl+Alt+Z', action: 'Undo the last model change', note: 'the shared you-and-AI timeline, not text undo' },
+      // One row each for the chords the Model tree shares with Studio (r1 min4, S1 and S2); the note says where else they work.
+      { win: mod('Ctrl+F'), action: 'Find and replace across the model', note: 'Find in Model when the Model tree has focus' },
+      { win: mod('Ctrl+S'), action: 'Save the model to disk', note: 'in Studio and in the Model tree' },
+      { win: mod('Ctrl+Z') + ' / Ctrl+Alt+Z', action: 'Undo a model change', note: 'Ctrl+Alt+Z works while you type' },
       { win: 'Ctrl+Alt+Shift+Z', action: 'Redo a model change' },
       { win: 'Ctrl+Alt+T', action: 'Focus the Model tree (side bar)' },
       { win: '?', action: 'Show or hide this cheat sheet' },
@@ -57,7 +57,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: 'Switch tabs',
     items: [
-      { win: 'Ctrl+Shift+1…5', action: 'Jump to an intent: Understand · Change · Improve · Prove · Ship', note: 'returns to the tab you last used in that intent' },
+      { win: 'Ctrl+Shift+1…6', action: 'Jump to an area: Plan · Explore · Edit · Review · Publish · Workflows', note: 'returns to the page you last used in that area' },
       { win: 'Ctrl+Alt+← / →', action: 'Previous / next Studio tab' },
       ...KEY_TABS.map((t) => ({ win: `Ctrl+Alt+${t.key.toUpperCase()}`, action: `Go to ${t.label}` })),
     ],
@@ -65,9 +65,6 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: 'Model tree (side bar)',
     items: [
-      { win: mod('Ctrl+F'), action: 'Find in Model', note: 'searches every object: names, descriptions, DAX' },
-      { win: mod('Ctrl+S'), action: 'Save the model to disk' },
-      { win: mod('Ctrl+Z'), action: 'Undo the last model change' },
       { win: mod('Ctrl+Shift+Z'), mac: '⌘⇧Z', action: 'Redo a model change', note: IS_MAC ? undefined : 'Ctrl+Y works too' },
       { win: 'F2', action: 'Rename the selected object', note: 'DAX references are rewritten automatically' },
       { win: 'Delete', mac: '⌘⌫', action: 'Delete the selected object(s)', note: 'always asks first' },
@@ -80,7 +77,7 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     title: 'DAX & scripts',
     items: [
       { win: mod('Ctrl+S'), action: 'Save the DAX you are editing back to the model', note: 'in any measure / column / calc-item editor' },
-      { win: 'Ctrl+Enter', mac: '⌘↩', action: 'Run the query (DAX Lab) · Apply a DAX/TMDL script', note: 'scripts: the editable Script ▸ documents' },
+      { win: 'Ctrl+Enter', mac: '⌘↩', action: 'Run the query, or apply a script' },
       { win: 'Shift+Alt+F', mac: '⇧⌥F', action: 'Format DAX (offline, built in)' },
       { win: 'Ctrl+Alt+F', action: 'Format DAX with DAX Formatter (online)' },
     ],
@@ -120,7 +117,7 @@ export function hostCommandForKey(e: KeyboardEvent): string | null {
 
 function Key({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="text-[11px] px-1.5 py-0.5 rounded tnum whitespace-nowrap"
+    <kbd className="text-xs px-2 py-1 rounded tnum whitespace-nowrap"
       style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', boxShadow: '0 1px 0 var(--sem-border)', fontFamily: 'inherit' }}>
       {children}
     </kbd>
@@ -139,22 +136,21 @@ export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: ()
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" onClick={onClose} style={{ background: 'rgba(0,0,0,0.45)' }}>
-      <div onClick={(e) => e.stopPropagation()} className="rounded-xl border flex flex-col overflow-hidden"
-        style={{ width: 780, maxWidth: '94vw', maxHeight: '88vh', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)', boxShadow: '0 16px 48px rgba(0,0,0,0.5)' }}>
-        <div className="flex items-center gap-2 px-5 py-3 border-b shrink-0" style={{ borderColor: 'var(--sem-border)' }}>
-          <span className="text-[14px] font-semibold">Keyboard shortcuts</span>
-          <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>press ? any time</span>
-          <button onClick={onClose} aria-label="Close" className="ml-auto text-[14px]" style={{ color: 'var(--sem-muted)' }}>✕</button>
+      <div onClick={(e) => e.stopPropagation()} className="rounded-(--sem-radius-card) border flex flex-col overflow-hidden"
+        style={{ width: 780, maxWidth: '94vw', maxHeight: '88vh', background: 'var(--sem-bg)', borderColor: 'var(--sem-border)', boxShadow: 'var(--sem-shadow-pop)' }}>
+        <div className="flex items-center gap-2 px-4 py-3 border-b shrink-0" style={{ borderColor: 'var(--sem-rule)' }}>
+          <span className="sem-card-title">Keyboard shortcuts</span>
+          <button type="button" onClick={onClose} aria-label="Close" className="sem-btn sem-btn-sm ml-auto w-6 px-0" style={{ borderColor: 'transparent', color: 'var(--sem-muted)' }}>✕</button>
         </div>
-        <div className="flex-1 overflow-auto px-5 py-4">
-          <div className="grid gap-x-8 gap-y-5" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
+        <div className="flex-1 overflow-auto px-4 py-4">
+          <div className="grid gap-x-8 gap-y-4" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
             {SHORTCUT_GROUPS.map((g) => (
-              <div key={g.title} className="flex flex-col gap-1.5 min-w-0">
-                <div className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: 'var(--sem-accent)' }}>{g.title}</div>
+              <div key={g.title} className="flex flex-col gap-2 min-w-0">
+                <div className="sem-card-title">{g.title}</div>
                 {g.items.map((it, i) => (
                   <div key={i} className="flex items-baseline gap-3">
                     <span className="w-[140px] shrink-0 text-right"><Key>{IS_MAC && it.mac ? it.mac : it.win}</Key></span>
-                    <span className="text-[12px] min-w-0" style={{ color: 'var(--sem-fg)' }}>
+                    <span className="text-xs min-w-0" style={{ color: 'var(--sem-fg)' }}>
                       {it.action}
                       {it.note && <span style={{ color: 'var(--sem-muted)' }}>: {it.note}</span>}
                     </span>
@@ -164,11 +160,9 @@ export function ShortcutsOverlay({ open, onClose }: { open: boolean; onClose: ()
             ))}
           </div>
         </div>
-        <div className="px-5 py-3 border-t text-[11px] shrink-0" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
-          Most chords here are standard VS Code keys. Change any of those in <b>File → Preferences → Keyboard Shortcuts</b> (search “Semanticus”).
-          These work only inside this panel, so the Keyboard Shortcuts editor cannot change them: <b>{PANEL_ONLY_CHORDS}</b>.
-          Shortcuts only ever apply inside Semanticus surfaces (Studio, the Model tree, DAX editors). Your usual VS Code keys are untouched everywhere else.
-          Full map with scoping notes: <span style={{ color: 'var(--sem-fg)' }}>docs/keyboard-shortcuts.md</span>.
+        <div className="px-4 py-3 border-t text-xs shrink-0" style={{ borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
+          Change most of these in <b>File → Preferences → Keyboard Shortcuts</b> (search “Semanticus”).
+          These work only here and cannot be changed: <b>{PANEL_ONLY_CHORDS}</b>.
         </div>
       </div>
     </div>

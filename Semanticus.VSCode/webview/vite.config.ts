@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -31,9 +33,18 @@ const printableBundleSource = (): Plugin => ({
   },
 });
 
+// The visual-language tokens also ship as their own file, byte for byte, because the Properties grid is a
+// separate webview that does not load studio.css and still has to read the same tokens.
+const shipTokens = (): Plugin => ({
+  name: 'ship-visual-tokens',
+  generateBundle() {
+    this.emitFile({ type: 'asset', fileName: 'tokens.css', source: readFileSync(fileURLToPath(new URL('./src/tokens.css', import.meta.url))) });
+  },
+});
+
 export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss(), printableBundleSource()],
+  plugins: [react(), tailwindcss(), printableBundleSource(), shipTokens()],
   build: {
     outDir: '../media/studio',
     emptyOutDir: true,

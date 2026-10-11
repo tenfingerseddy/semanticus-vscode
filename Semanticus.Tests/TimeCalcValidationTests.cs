@@ -90,6 +90,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Agent_door_agrees_Time_Calc_is_not_a_missing_source_column()
         {
@@ -109,6 +110,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_real_data_column_with_no_source_still_blocks()
         {

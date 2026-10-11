@@ -1,65 +1,4 @@
-FILE Semanticus.Engine/workflows/add-relationship.md
-  error=<null>
-  source=stock file=add-relationship.md
-  name=add-relationship kind=<null> version=1 strictness=hard
-  title=Connect tables
-  description=Inspect two endpoints, create the relationship with a deliberate shape, and check one meaningful result.
-  whenToUse=Use when loaded tables need a relationship, such as a fact and dimension. For a new source table, use Import a table; for broad cleanup, use Tidy a model.
-  triggers=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter]
-  tags=[]
-  step id=step-1 number=1 title=Choose the endpoints
-    ops=[get_model_graph]
-    instructions.len=434 instructions.hash=596AACC2DEAABAE3
-    gate strictness=<null>
-    input name=joinSpec type=text required=required daxPurity=<null> question=Which two key columns are joined, which side is ONE versus MANY, and why is the chosen filter direction safe?
-  step id=step-2 number=2 title=Create the relationship
-    ops=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter|set_relationship_active|get_model_graph]
-    instructions.len=332 instructions.hash=D5806521C122CCE1
-    gate=<null>
-  step id=step-3 number=3 title=Check a representative aggregate
-    ops=[probe_measure]
-    instructions.len=418 instructions.hash=B9ADCBE269579733
-    gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The existing measure to check through this relationship, for example measure:Sales/Net Sales.
-    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=An independently known result in a relationship-using context; decline when none is available.
-    verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the relationship
-    ops=[save_model]
-    instructions.len=216 instructions.hash=81429755BDB45752
-    gate=<null>
-FILE Semanticus.Engine/workflows/calendar-setup.md
-  error=<null>
-  source=stock file=calendar-setup.md
-  name=calendar-setup kind=<null> version=1 strictness=hard
-  title=Set up a calendar
-  description=Choose a calendar convention, create its mappings, and optionally check one time calculation before saving.
-  whenToUse=Use when the model needs a new or updated date calendar. For comparisons on an existing calendar, use Add time comparisons; for importing a date table, use Import a table.
-  triggers=[define_calendar_from_template|define_calendar|list_calendars]
-  tags=[]
-  step id=step-1 number=1 title=Choose the calendar shape
-    ops=[]
-    instructions.len=300 instructions.hash=8E314C6CA0C0EEC1
-    gate strictness=<null>
-    input name=template type=text required=required daxPurity=<null> question=Which calendar shape: gregorian, fiscal, iso, 445, or 13period?
-    input name=targetTable type=text required=optional daxPurity=<null> question=Which existing date table or new table name should receive the calendar? Leave blank only when Date is unambiguous.
-    input name=dateColumn type=text required=optional daxPurity=<null> question=Which date column should be mapped? Leave blank only when one DateTime column is unambiguous.
-    input name=fiscalStart type=number required=optional daxPurity=<null> question=For a fiscal calendar, the first month numbered 1-12; decline or leave blank for other shapes.
-  step id=step-2 number=2 title=Check compatibility and create the mapping
-    ops=[list_calendars|set_compatibility_level|define_calendar_from_template|define_calendar]
-    instructions.len=371 instructions.hash=0B78BC8961A1132A
-    gate=<null>
-  step id=step-3 number=3 title=Review the mapping and optionally check time logic
-    ops=[list_calendars|create_measure|probe_measure]
-    instructions.len=458 instructions.hash=E5529B3C998FC729
-    gate strictness=hard
-    input name=target type=objectRef required=optional daxPurity=<null> question=Optional ref of a calendar-aware time measure to check, for example measure:Sales/Sales YTD. Leave unanswered for metadata-only setup.
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for that time measure and context; decline when no calculation was created or no trusted value exists.
-    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the calendar
-    ops=[save_model]
-    instructions.len=177 instructions.hash=37AABDDA67AAE99C
-    gate=<null>
-FILE Semanticus.Engine/workflows/check-blast-radius.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/check-blast-radius.md
   error=<null>
   source=stock file=check-blast-radius.md
   name=check-blast-radius kind=<null> version=1 strictness=hard
@@ -93,7 +32,7 @@ FILE Semanticus.Engine/workflows/check-blast-radius.md
     gate strictness=<null>
     input name=decision type=text required=required daxPurity=<null> question=Proceed, revise or reject, with the evidence-based reason.
     input name=residualRisk type=text required=required daxPurity=<null> question=What coverage gaps or external bindings remain for an owner to review?
-FILE Semanticus.Engine/workflows/deploy-to-production.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/deploy-to-production.md
   error=<null>
   source=stock file=deploy-to-production.md
   name=deploy-to-production kind=<null> version=1 strictness=hard
@@ -120,7 +59,7 @@ FILE Semanticus.Engine/workflows/deploy-to-production.md
     ops=[deployment_history|save_model]
     instructions.len=366 instructions.hash=6B989FA155597769
     gate=<null>
-FILE Semanticus.Engine/workflows/governed-rename.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/governed-rename.md
   error=input type 'planItem' is not one of: verification | text | enum | number | objectRef.
   source=stock file=governed-rename.md
   name=governed-rename kind=<null> version=2 strictness=hard
@@ -129,35 +68,6 @@ FILE Semanticus.Engine/workflows/governed-rename.md
   whenToUse=Use when renaming a published measure, column or table may affect reports or external text. For a quick model-only rename, use the direct rename action; for review without applying, use Review a risky change.
   triggers=[rename_object|add_plan_item]
   tags=[]
-FILE Semanticus.Engine/workflows/import-table.md
-  error=<null>
-  source=stock file=import-table.md
-  name=import-table kind=<null> version=1 strictness=hard
-  title=Import a table
-  description=Bring in one table, make its fields deliberate, and record an independent load check when available.
-  whenToUse=Use when adding a fact or dimension table from a source. For a loaded table that needs a relationship, use Connect tables; for a large table needing a rolling window, use Set up rolling refresh.
-  triggers=[create_import_table|set_column_data_type|set_incremental_refresh_policy]
-  tags=[]
-  step id=step-1 number=1 title=Choose the source and load the table
-    ops=[create_import_table]
-    instructions.len=363 instructions.hash=8D62DAA907D2AFD0
-    gate strictness=<null>
-    input name=sourceTable type=text required=required daxPurity=<null> question=Which source entity should be imported, and what final table name should it have?
-  step id=step-2 number=2 title=Review types and exposed fields
-    ops=[list_columns|set_column_data_type|set_column_hidden|set_summarize_by]
-    instructions.len=420 instructions.hash=A022DFECA50D7D84
-    gate=<null>
-  step id=step-3 number=3 title=Check a source control total
-    ops=[create_measure|probe_measure]
-    instructions.len=473 instructions.hash=C31343438F377F1F
-    gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The control measure ref, for example measure:Product/Product Row Count.
-    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=A row count or additive total from the source system for the same scope; decline when no independent value or source access is available.
-    verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the imported table
-    ops=[save_model]
-    instructions.len=245 instructions.hash=FEA626FC82F7C9B6
-    gate=<null>
 FILE Semanticus.Engine/workflows/incremental-refresh-setup.md
   error=<null>
   source=stock file=incremental-refresh-setup.md
@@ -189,95 +99,13 @@ FILE Semanticus.Engine/workflows/incremental-refresh-setup.md
     ops=[save_model]
     instructions.len=207 instructions.hash=D3B71E7FAEEC036F
     gate=<null>
-FILE Semanticus.Engine/workflows/make-ai-ready.md
-  error=<null>
-  source=stock file=make-ai-ready.md
-  name=make-ai-ready kind=<null> version=1 strictness=hard
-  title=Explain the model to assistants
-  description=Improve assistant-facing meaning for selected objects, review preparation settings, and show what remains unresolved.
-  whenToUse=Use when assistants need clearer definitions, vocabulary or instructions for selected model objects. For types, visibility or unused-object cleanup, use Tidy a model; for one description, use the direct description action.
-  triggers=[make_model_ai_ready|ai_readiness_scan|set_description]
-  tags=[]
-  step id=step-1 number=1 title=Scan and choose the content scope
-    ops=[ai_readiness_scan|list_objects]
-    instructions.len=294 instructions.hash=D9348FC9D701F511
-    gate strictness=<null>
-    input name=contentScope type=text required=required daxPurity=<null> question=Which selected tables, columns or measures need business descriptions, synonyms or assistant instructions in this pass?
-  step id=step-2 number=2 title=Add selected explanations and settings
-    ops=[get_ai_instructions|set_description|set_synonyms|set_ai_instructions|set_ai_data_schema|create_perspective|set_perspective_member|enable_qna]
-    instructions.len=536 instructions.hash=10B49467DCB51924
-    gate strictness=<null>
-    input name=qnaPath type=text required=answer-or-decline daxPurity=<null> question=Is Q&A or the linguistic schema relevant and supported for this model, or should this pass leave it unchanged?
-  step id=step-3 number=3 title=Rescan and report the remaining work
-    ops=[ai_readiness_scan|save_model]
-    instructions.len=436 instructions.hash=3AA8E9F7B7C052DB
-    gate strictness=hard
-    verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-FILE Semanticus.Engine/workflows/model-hygiene-pass.md
-  error=<null>
-  source=stock file=model-hygiene-pass.md
-  name=model-hygiene-pass kind=<null> version=1 strictness=hard
-  title=Tidy a model
-  description=Scan the model, apply only selected low-risk fixes, rescan the changed area and save with remaining findings visible.
-  whenToUse=Use for a bounded cleanup of model properties before review or publish. For authored descriptions and assistant preparation, use Explain the model to assistants; for deletion or a risky change, use Review a risky change.
-  triggers=[apply_safe_fixes|make_model_ai_ready]
-  tags=[]
-  step id=step-1 number=1 title=Scan and choose the work queue
-    ops=[ai_readiness_scan|bpa_scan|list_columns|unused_objects]
-    instructions.len=416 instructions.hash=AA9BD7D4FCCE8570
-    gate strictness=<null>
-    input name=selectedScope type=text required=required daxPurity=<null> question=Which selected objects or finding categories are in scope for this cleanup? Leave unrelated findings for a later pass.
-  step id=step-2 number=2 title=Review and apply selected fixes
-    ops=[apply_safe_fixes|set_column_hidden|set_summarize_by|set_measure_format|set_data_category|set_sort_by_column|set_property]
-    instructions.len=308 instructions.hash=9FDB72172FA08C60
-    gate=<null>
-  step id=step-3 number=3 title=Rescan the changed area
-    ops=[ai_readiness_scan|bpa_scan]
-    instructions.len=314 instructions.hash=E0D1108F4BBDE53F
-    gate strictness=hard
-    verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the selected cleanup
-    ops=[save_model]
-    instructions.len=248 instructions.hash=082D0BCBDA860323
-    gate=<null>
-FILE Semanticus.Engine/workflows/new-measure.md
-  error=<null>
-  source=stock file=new-measure.md
-  name=new-measure kind=<null> version=1 strictness=hard
-  title=Add a measure
-  description=Define a measure, check the cases that matter, and save the result with its meaning.
-  whenToUse=Use for a straightforward measure with a clear business meaning. For ratios, time logic or other context-sensitive measures, use Test a complex measure; to improve an existing measure, use Fix a slow measure.
-  triggers=[create_measure|update_measure]
-  tags=[]
-  step id=step-1 number=1 title=Define the question
-    ops=[]
-    instructions.len=368 instructions.hash=D05D73FC079AEFBE
-    gate strictness=<null>
-    input name=meaning type=text required=required daxPurity=<null> question=What business question does this measure answer, and which context or grain must it respect?
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for a useful context, including its context if it is not the grand total; decline with why none is available.
-  step id=step-2 number=2 title=Author and create the measure
-    ops=[get_grounding|validate_dax|lint_dax|create_measure|set_measure_format|set_description]
-    instructions.len=288 instructions.hash=B0186E0666835EEC
-    gate=<null>
-  step id=step-3 number=3 title=Check the selected case
-    ops=[probe_measure]
-    instructions.len=393 instructions.hash=4FEB0E3566E23D72
-    gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the measure just created, for example measure:Sales/Net Sales.
-    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-    verify kind=bpa_clean when=<null> probe=<null> scope=object intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the result
-    ops=[save_model]
-    instructions.len=224 instructions.hash=463EC97EBF37659B
-    gate=<null>
-FILE Semanticus.Engine/workflows/optimize-dax.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/optimize-dax.md
   error=<null>
   source=stock file=optimize-dax.md
   name=optimize-dax kind=<null> version=1 strictness=hard
   title=Fix a slow measure
   description=Freeze a measure, compare a rewrite across useful contexts, and keep it only when the evidence supports it.
-  whenToUse=Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose SPEED for measured timing work or READABILITY when the goal is a clearer equivalent expression. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure.
+  whenToUse=Use when an existing measure is slow or hard to maintain and its meaning should stay the same. Choose speed for measured timing work, or readability when the goal is a clearer formula that means the same. For a new measure, use Add a measure; for difficult context semantics, use Test a complex measure.
   triggers=[benchmark_dax|profile_dax|update_measure]
   tags=[]
   step id=step-1 number=1 title=Freeze the original and choose the goal
@@ -350,8 +178,8 @@ FILE Semanticus.Engine/workflows/refactor-to-calculation-group.md
     instructions.len=306 instructions.hash=013E7FFE09697E94
     gate=<null>
   step id=step-4 number=4 title=Compare outputs and review dependants
-    ops=[run_dax|impact_of|analyze_reports]
-    instructions.len=401 instructions.hash=7B7AE076430BBB4E
+    ops=[run_dax|impact_assessment|analyze_reports]
+    instructions.len=409 instructions.hash=C737122C98319233
     gate strictness=hard
     input name=comparisonResult type=text required=required daxPurity=<null> question=The after matrix against the same contexts, every mismatch, and each remaining model/report dependant.
     verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
@@ -360,7 +188,7 @@ FILE Semanticus.Engine/workflows/refactor-to-calculation-group.md
     instructions.len=341 instructions.hash=2B319B324269BB53
     gate strictness=<null>
     input name=retireDecision type=text required=required daxPurity=<null> question=Which selected variants were retired or kept, and why does each remaining dependant make a keep necessary?
-FILE Semanticus.Engine/workflows/secure-with-rls.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/secure-with-rls.md
   error=<null>
   source=stock file=secure-with-rls.md
   name=secure-with-rls kind=<null> version=1 strictness=hard
@@ -397,37 +225,7 @@ FILE Semanticus.Engine/workflows/secure-with-rls.md
     ops=[set_table_ols|set_column_ols|save_model]
     instructions.len=299 instructions.hash=1E6E1DA48F47F7A8
     gate=<null>
-FILE Semanticus.Engine/workflows/time-intelligence-variants.md
-  error=<null>
-  source=stock file=time-intelligence-variants.md
-  name=time-intelligence-variants kind=<null> version=1 strictness=hard
-  title=Add time comparisons
-  description=Select the needed variants for one trusted measure, generate them, check a representative context and save.
-  whenToUse=Use when one base measure needs selected prior-period or to-date measures. Set up a calendar first when date support is missing; for the same variants across many measures, use Replace repeated measures with a calculation group.
-  triggers=[generate_time_intelligence|create_measure]
-  tags=[]
-  step id=step-1 number=1 title=Choose the base and variants
-    ops=[]
-    instructions.len=292 instructions.hash=149FF820D1287D02
-    gate strictness=<null>
-    input name=baseMeasure type=objectRef required=required daxPurity=<null> question=The single trusted base measure to expand.
-    input name=variants type=text required=required daxPurity=<null> question=Which variants and naming convention should be created, and which calendar/date support does the model have?
-  step id=step-2 number=2 title=Generate only the selected variants
-    ops=[list_calendars|generate_time_intelligence|create_measure|set_measure_format|set_description]
-    instructions.len=239 instructions.hash=2E73F0E31A5C3EF2
-    gate=<null>
-  step id=step-3 number=3 title=Check one representative boundary
-    ops=[probe_measure|pivot_measure]
-    instructions.len=415 instructions.hash=2FCC55E38D3FCFE2
-    gate strictness=hard
-    input name=target type=objectRef required=required daxPurity=<null> question=The generated variant selected for the representative check.
-    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for the selected variant and boundary context; decline when unavailable.
-    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
-  step id=step-4 number=4 title=Save the family
-    ops=[save_model]
-    instructions.len=196 instructions.hash=BE15B1AD7177B763
-    gate=<null>
-FILE Semanticus.Engine/workflows/verified-measure.md
+FILE Semanticus.Engine/workflows-compat/v1.2.2/verified-measure.md
   error=<null>
   source=stock file=verified-measure.md
   name=verified-measure kind=<null> version=7 strictness=hard
@@ -440,7 +238,7 @@ FILE Semanticus.Engine/workflows/verified-measure.md
     ops=[get_grounding|get_model_graph]
     instructions.len=2359 instructions.hash=E3BF9E54473239DA
     gate strictness=<null>
-    input name=requirement type=text required=required daxPurity=<null> question=The metric and grain, restated, with additivity PER DIMENSION, and the model facts you read confirmed by the user.
+    input name=requirement type=text required=required daxPurity=<null> question=The metric and its grain in your own words, how it adds up across each dimension, and the model facts confirmed with you.
     input name=clarification type=text required=answer-or-decline daxPurity=<null> question=The ambiguous business meaning you had to settle and the user's quoted answer; decline when nothing was ambiguous.
   step id=step-2 number=2 title=Lock the expected values before any candidate exists
     ops=[]
@@ -449,9 +247,9 @@ FILE Semanticus.Engine/workflows/verified-measure.md
     input name=expectedValues type=text required=required daxPurity=<null> question=The locked anchors as one fenced JSON array of {context, optional axis, expect} objects. Cover each non-open grain type of equivalenceGrid: grand total, every bare axis, and cross. Include the diverging grain and one ordinary leaf. Outside the JSON fence, include each small GROUPED raw-row extract, the OUTSIDE-DAX arithmetic that produced its expected value, and which tier backed it: model raw rows, source SQL, or a user-stated reference.
     input name=equivalenceGrid type=text required=required daxPurity=<null> question=Machine field: the comma-separated qualified display columns that define the proof lattice, for example 'Product'[Category],'Product'[Subcategory]. The grid must list every display column the anchors exercise.
     input name=openGrains type=text required=answer-or-decline daxPurity=<null> question=Machine field: the requirement-silent grains, as a comma-separated list of canonical shape ids (grand_total | cross | axis:<column>) and nothing else. Decline only when every grain is anchored. This partition is declared before authoring and cannot later shrink.
-    input name=naiveForm type=text required=required daxPurity=<null> question=The tempting naive wrong form; the diverging grain; and whether that grain is anchored from a PINNED ledger entry or declared requirement-silent in openGrains.
+    input name=naiveForm type=text required=required daxPurity=<null> question=The tempting wrong formula, the total where it gives a different answer, and whether the requirement pins that total or leaves it open.
     verify kind=anchor_coverage when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=expectedValues
-  step id=step-3 number=3 title=Author ONE canonical candidate
+  step id=step-3 number=3 title=Write one candidate formula
     ops=[create_measure|update_measure]
     instructions.len=1116 instructions.hash=03F82530C3D4A8B6
     gate strictness=<null>
@@ -464,15 +262,15 @@ FILE Semanticus.Engine/workflows/verified-measure.md
     instructions.len=5116 instructions.hash=E268BE6DB0956F11
     gate strictness=hard
     input name=witnessDax type=text required=required daxPurity=no-bare-measures question=The raw-row witness, verbatim: ZERO bare measure references; every dependency rebuilt from qualified base columns; SARGable plain column filters, date ranges as predicates, grouped extracts; no bare FILTER over ALL of the fact table; no candidate idioms; it implements only the ledger. The engine refuses bare refs and this input may not be declined.
-    input name=battery type=text required=required daxPurity=<null> question=Candidate AND witness value, blank or error at every ledger context and both named layouts; each PINNED context's match against its pin; and the OPEN contexts' returned values, recorded and not acted on.
-    input name=adjudications type=text required=answer-or-decline daxPurity=<null> question=For each disagreement: the GROUPED row extract, the arithmetic verdict naming which side was convicted or INCONCLUSIVE, any witness revision with before and after expressions, and confirmation the FULL battery was re-run after every change. Decline when nothing disagreed.
-    input name=perfPass type=text required=answer-or-decline daxPurity=<null> question=The candidate against the MODEL FLOOR at its natural grid, with measure-faithful cold and warm timings and any zero-storage-engine reading discarded, plus the winning rewrite and its match against the locked anchors when one was applied. Decline when no comparable live environment was available; unmeasured is unverified.
-    input name=finalized type=text required=required daxPurity=<null> question=The production name, format string, description including the PINNED conventions, and display folder applied to the measure, with the checked grains and every unresolved OPEN observation.
+    input name=battery type=text required=required daxPurity=<null> question=What the candidate and the independent check each return at every listed case and both layouts, whether each pinned case matches, and what the open cases returned.
+    input name=adjudications type=text required=answer-or-decline daxPurity=<null> question=For each disagreement, the grouped rows, the arithmetic that settled it (or that it could not be settled), any change to the independent check, and that every case was run again after each change. Decline when nothing disagreed.
+    input name=perfPass type=text required=answer-or-decline daxPurity=<null> question=How fast the candidate is next to the simplest correct formula, timed cold and warm, and any faster rewrite with its match against the expected values. Decline when there was no live model to time it on.
+    input name=finalized type=text required=required daxPurity=<null> question=The final name, format, description and display folder given to the measure, which totals were checked, and anything the requirement left open.
     input name=countersign type=text required=optional daxPurity=<null> question=Machine exit: only after an open-mismatch block, copy the exact disputed cells array and provide one verbatim stated interpretation sentence. Leave unanswered when there is no current dispute. A decline is not a countersign.
     input name=certificate type=text required=required daxPurity=<null> question=Your certificate CLAIM: FULL, PARTIAL, or OVERRIDDEN, with any honest downgrade named. The engine computes the evidence-backed ceiling and the weaker level wins.
     verify kind=dax_equivalence when=<null> probe=witnessDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=openGrains openMismatch=countersign anchors=<null>
     verify kind=expected_values when=<null> probe=<null> scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=expectedValues
-FILE Semanticus.Engine/workflow-templates/deploy-freeze-guard.md
+FILE Semanticus.Engine/workflow-templates-compat/v1.2.2/deploy-freeze-guard.md
   error=<null>
   source=stock file=deploy-freeze-guard.md
   name=deploy-freeze-guard kind=template version=1 strictness=hard
@@ -500,13 +298,13 @@ FILE Semanticus.Engine/workflow-templates/deploy-freeze-guard.md
     instructions.len=204 instructions.hash=2AD37AFB29FA59AE
     gate strictness=<null>
     input name=authorisation type=text required=required daxPurity=<null> question=Who approved this deploy, the business reason, and the rollback plan (written down, not a formality).
-FILE Semanticus.Engine/workflow-templates/hard-measure.md
+FILE Semanticus.Engine/workflow-templates-compat/v1.2.2/hard-measure.md
   error=<null>
   source=stock file=hard-measure.md
   name=hard-measure kind=template version=5 strictness=hard
   title=Author "{{measure_goal}}" and reconcile it against the requirement at every grain
-  description=Set up the same requirement-anchored verified-authoring playbook as the built-in Author a hard DAX measure workflow. It pins conventions only from the requirement's own words, locks expected values from raw rows before authoring, reconciles one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicates disagreements cell-by-cell, and never lets a speed pick or an invented convention overwrite a correct answer.
-  whenToUse=One measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves. For a straightforward measure checked against one trusted number, use new-measure.
+  description=Set up the same requirement-anchored verified-authoring workflow as the built-in Author a hard DAX measure workflow. It pins conventions only from the requirement's own words, locks expected values from raw rows before authoring, reconciles one canonical candidate against a locked raw-row witness at the shapes where wrong-but-runs bugs live, adjudicates disagreements cell-by-cell, and never lets a speed pick or an invented convention overwrite a correct answer.
+  whenToUse=One measure whose correctness depends on filter context (ratios and shares, time intelligence, semi-additive logic, distinct counts), where a wrong form runs clean and looks right at the leaves. For a straightforward measure checked against one trusted number, describe the task in words instead (Workflows, New).
   triggers=[]
   tags=[]
   slot name=measure_goal type=text required=required default=<null> example=year-on-year revenue growth percentage hint=<null> values=[] question=What should the measure compute, in business terms?
@@ -554,7 +352,7 @@ FILE Semanticus.Engine/workflow-templates/hard-measure.md
     verify kind=dax_equivalence when=<null> probe=witnessDax scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=openShapes openMismatch=<null> anchors=<null>
   step id=step-7 number=7 title=Performance when attested, then finalize for production
     ops=[update_measure|rename_object|set_measure_format|set_description|set_display_folder]
-    instructions.len=1838 instructions.hash=78155663430190C4
+    instructions.len=1850 instructions.hash=686201D60B814AC2
     gate strictness=hard
     input name=perfPass type=text required=answer-or-decline daxPurity=<null> question=Either: the slowest observed query (context + elapsed) that triggered the pass, the measure-faithful cold/warm timings per candidate (noting any 0-SE readings discarded as cache artifacts), the winner, its match against the locked expected values, and the re-run pinned battery. Or DECLINE quoting the SLOWEST observed timing.
     input name=finalized type=text required=required daxPurity=<null> question=The production name, format string, description (including PINNED conventions), and display folder applied to the measure.
@@ -565,7 +363,7 @@ FILE Semanticus.Engine/workflow-templates/metric-certification.md
   name=metric-certification kind=template version=1 strictness=hard
   title=Certify {{surface_name}} against the business's numbers
   description=Check every KPI on {{surface_name}} against its owner's signed-off figure, raise any gaps with the named owner (never silently "fix" a certified number), and record where each passing measure's number comes from, so trust in the surface is evidence, not guesswork.
-  whenToUse=A recurring certification of a business-critical surface using YOUR KPI dictionary. For a one-off single measure verified against a known-good number, use new-measure.
+  whenToUse=A recurring certification of a business-critical surface using YOUR KPI dictionary. For a one-off single measure verified against a known-good number, describe the task in words instead (Workflows, New).
   triggers=[]
   tags=[]
   slot name=surface_name type=text required=required default=<null> example=the FY26 Exec Dashboard hint=<null> values=[] question=What are you certifying (e.g. 'the FY26 Exec Dashboard')?
@@ -594,7 +392,7 @@ FILE Semanticus.Engine/workflow-templates/metric-certification.md
     ops=[]
     instructions.len=206 instructions.hash=625A2B7CBDC6D8A6
     gate=<null>
-FILE Semanticus.Engine/workflow-templates/month-end-close.md
+FILE Semanticus.Engine/workflow-templates-compat/v1.2.2/month-end-close.md
   error=<null>
   source=stock file=month-end-close.md
   name=month-end-close kind=template version=1 strictness=hard
@@ -633,6 +431,35 @@ FILE Semanticus.Engine/workflow-templates/month-end-close.md
     input name=certifiedLabel type=text required=required daxPurity=<null> question=The label you captured the certified figures under (use the period, e.g. '{{period_label}}').
     input name=signoffConfirmed type=text required=required daxPurity=<null> question=Confirm sign-off from {{signoff_owner}} against the check log and the Step 3 proof (name and what they are confirming).
     verify kind=baseline_captured when=<null> probe=certifiedLabel scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+FILE Semanticus.Engine/workflows-parked/add-relationship.md
+  error=<null>
+  source=stock file=add-relationship.md
+  name=add-relationship kind=<null> version=1 strictness=hard
+  title=Connect tables
+  description=Inspect two endpoints, create the relationship with a deliberate shape, and check one meaningful result.
+  whenToUse=Use when loaded tables need a relationship, such as a fact and dimension. For a new source table, use Import a table; for broad cleanup, use Tidy a model.
+  triggers=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter]
+  tags=[]
+  step id=step-1 number=1 title=Choose the endpoints
+    ops=[get_model_graph]
+    instructions.len=434 instructions.hash=596AACC2DEAABAE3
+    gate strictness=<null>
+    input name=joinSpec type=text required=required daxPurity=<null> question=Which two key columns are joined, which side is ONE versus MANY, and why is the chosen filter direction safe?
+  step id=step-2 number=2 title=Create the relationship
+    ops=[create_relationship|set_relationship_cardinality|set_relationship_crossfilter|set_relationship_active|get_model_graph]
+    instructions.len=332 instructions.hash=D5806521C122CCE1
+    gate=<null>
+  step id=step-3 number=3 title=Check a representative aggregate
+    ops=[probe_measure]
+    instructions.len=418 instructions.hash=B9ADCBE269579733
+    gate strictness=hard
+    input name=target type=objectRef required=required daxPurity=<null> question=The existing measure to check through this relationship, for example measure:Sales/Net Sales.
+    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=An independently known result in a relationship-using context; decline when none is available.
+    verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the relationship
+    ops=[save_model]
+    instructions.len=216 instructions.hash=81429755BDB45752
+    gate=<null>
 FILE Semanticus.Engine/workflows-parked/adopt-source-control.md
   error=<null>
   source=stock file=adopt-source-control.md
@@ -695,6 +522,38 @@ FILE Semanticus.Engine/workflows-parked/author-a-workflow.md
     instructions.len=467 instructions.hash=8B4D5BE93749F662
     gate strictness=<null>
     input name=handoffConfirmed type=text required=answer-or-decline daxPurity=<null> question=Confirm the workflow is saved, admissible, and its whenToUse distinguishes it from existing workflows, and tell the user how to enable/require it.
+FILE Semanticus.Engine/workflows-parked/calendar-setup.md
+  error=<null>
+  source=stock file=calendar-setup.md
+  name=calendar-setup kind=<null> version=1 strictness=hard
+  title=Set up a calendar
+  description=Choose a calendar convention, create its mappings, and optionally check one time calculation before saving.
+  whenToUse=Use when the model needs a new or updated date calendar. For comparisons on an existing calendar, use Add time comparisons; for importing a date table, use Import a table.
+  triggers=[define_calendar_from_template|define_calendar|list_calendars]
+  tags=[]
+  step id=step-1 number=1 title=Choose the calendar shape
+    ops=[]
+    instructions.len=300 instructions.hash=8E314C6CA0C0EEC1
+    gate strictness=<null>
+    input name=template type=text required=required daxPurity=<null> question=Which calendar shape: gregorian, fiscal, iso, 445, or 13period?
+    input name=targetTable type=text required=optional daxPurity=<null> question=Which existing date table or new table name should receive the calendar? Leave blank only when Date is unambiguous.
+    input name=dateColumn type=text required=optional daxPurity=<null> question=Which date column should be mapped? Leave blank only when one DateTime column is unambiguous.
+    input name=fiscalStart type=number required=optional daxPurity=<null> question=For a fiscal calendar, the first month numbered 1-12; decline or leave blank for other shapes.
+  step id=step-2 number=2 title=Check compatibility and create the mapping
+    ops=[list_calendars|set_compatibility_level|define_calendar_from_template|define_calendar]
+    instructions.len=371 instructions.hash=0B78BC8961A1132A
+    gate=<null>
+  step id=step-3 number=3 title=Review the mapping and optionally check time logic
+    ops=[list_calendars|create_measure|probe_measure]
+    instructions.len=458 instructions.hash=E5529B3C998FC729
+    gate strictness=hard
+    input name=target type=objectRef required=optional daxPurity=<null> question=Optional ref of a calendar-aware time measure to check, for example measure:Sales/Sales YTD. Leave unanswered for metadata-only setup.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for that time measure and context; decline when no calculation was created or no trusted value exists.
+    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the calendar
+    ops=[save_model]
+    instructions.len=177 instructions.hash=37AABDDA67AAE99C
+    gate=<null>
 FILE Semanticus.Engine/workflows-parked/composite-model-setup.md
   error=<null>
   source=stock file=composite-model-setup.md
@@ -714,8 +573,8 @@ FILE Semanticus.Engine/workflows-parked/composite-model-setup.md
     instructions.len=747 instructions.hash=2D1929468D2D21F0
     gate=<null>
   step id=step-3 number=3 title=Wire and review every cross-source-group relationship
-    ops=[set_property|create_relationship|set_relationship_active|model_graph_summary]
-    instructions.len=626 instructions.hash=207531081DE7F8B9
+    ops=[set_property|create_relationship|set_relationship_active|get_model_graph]
+    instructions.len=632 instructions.hash=805B9EB1CD437AD7
     gate strictness=<null>
     input name=relationshipsReviewed type=text required=answer-or-decline daxPurity=<null> question=Have you reviewed every cross-source-group relationship in the graph and confirmed each same-source dimension on a DirectQuery fact is Dual (not Import), so the join is a single native query, not a limited relationship?
   step id=step-4 number=4 title=Prove a cross-mode figure
@@ -749,8 +608,8 @@ FILE Semanticus.Engine/workflows-parked/dimensional-design.md
     gate strictness=<null>
     input name=grainStatement type=text required=required daxPurity=<null> question=In one sentence, what does exactly one row of the fact table represent (e.g. 'one row per order line item per day')?
   step id=step-3 number=3 title=Identify dimensions and facts
-    ops=[get_model_graph|model_graph_summary]
-    instructions.len=756 instructions.hash=EA16384A86C5D292
+    ops=[get_model_graph]
+    instructions.len=746 instructions.hash=D94EF81BF52B935D
     gate strictness=<null>
     input name=classificationConfirmed type=text required=answer-or-decline daxPurity=<null> question=Have you classified every table strictly as a fact OR a dimension (no mixed-role tables), with dimensions planned as conformed across the facts?
   step id=step-4 number=4 title=Capture the expected numbers
@@ -786,7 +645,7 @@ FILE Semanticus.Engine/workflows-parked/document-model.md
     verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
   step id=step-5 number=5 title=Save the documented model
     ops=[save_model]
-    instructions.len=437 instructions.hash=56450AC7918F460C
+    instructions.len=431 instructions.hash=83ECCC02577F17DE
     gate=<null>
 FILE Semanticus.Engine/workflows-parked/field-parameters-setup.md
   error=<null>
@@ -807,8 +666,8 @@ FILE Semanticus.Engine/workflows-parked/field-parameters-setup.md
     instructions.len=789 instructions.hash=B7AF30FC47C3DD69
     gate=<null>
   step id=step-3 number=3 title=Confirm the structure and the advisory
-    ops=[model_graph_summary|ai_readiness_scan|waive_finding]
-    instructions.len=576 instructions.hash=42F30CF2D209FCD8
+    ops=[get_model_graph|ai_readiness_scan|waive_finding]
+    instructions.len=582 instructions.hash=C13770895522EEB6
     gate strictness=<null>
     input name=disconnectionUnderstood type=text required=answer-or-decline daxPurity=<null> question=Do you confirm the parameter table is intentionally disconnected, and have you either accepted (and waived, with a reason) or acted on the DAC-FIELD-PARAM-COMPLEXITY advisory?
   step id=step-4 number=4 title=Gate on the report-side visual test
@@ -819,6 +678,146 @@ FILE Semanticus.Engine/workflows-parked/field-parameters-setup.md
   step id=step-5 number=5 title=Save the model
     ops=[save_model]
     instructions.len=324 instructions.hash=BFCF97DFC2EC9F83
+    gate=<null>
+FILE Semanticus.Engine/workflows-parked/import-table.md
+  error=<null>
+  source=stock file=import-table.md
+  name=import-table kind=<null> version=1 strictness=hard
+  title=Import a table
+  description=Bring in one table, make its fields deliberate, and record an independent load check when available.
+  whenToUse=Use when adding a fact or dimension table from a source. For a loaded table that needs a relationship, use Connect tables; for a large table needing a rolling window, use Set up rolling refresh.
+  triggers=[create_import_table|set_column_data_type|set_incremental_refresh_policy]
+  tags=[]
+  step id=step-1 number=1 title=Choose the source and load the table
+    ops=[create_import_table]
+    instructions.len=363 instructions.hash=8D62DAA907D2AFD0
+    gate strictness=<null>
+    input name=sourceTable type=text required=required daxPurity=<null> question=Which source entity should be imported, and what final table name should it have?
+  step id=step-2 number=2 title=Review types and exposed fields
+    ops=[list_columns|set_column_data_type|set_column_hidden|set_summarize_by]
+    instructions.len=420 instructions.hash=A022DFECA50D7D84
+    gate=<null>
+  step id=step-3 number=3 title=Check a source control total
+    ops=[create_measure|probe_measure]
+    instructions.len=473 instructions.hash=C31343438F377F1F
+    gate strictness=hard
+    input name=target type=objectRef required=required daxPurity=<null> question=The control measure ref, for example measure:Product/Product Row Count.
+    input name=controlTotal type=verification required=answer-or-decline daxPurity=<null> question=A row count or additive total from the source system for the same scope; decline when no independent value or source access is available.
+    verify kind=dax_probe when=inputs.controlTotal.answered probe=controlTotal scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the imported table
+    ops=[save_model]
+    instructions.len=245 instructions.hash=FEA626FC82F7C9B6
+    gate=<null>
+FILE Semanticus.Engine/workflows-parked/make-ai-ready.md
+  error=<null>
+  source=stock file=make-ai-ready.md
+  name=make-ai-ready kind=<null> version=1 strictness=hard
+  title=Explain the model to assistants
+  description=Improve assistant-facing meaning for selected objects, review preparation settings, and show what remains unresolved.
+  whenToUse=Use when assistants need clearer definitions, vocabulary or instructions for selected model objects. For types, visibility or unused-object cleanup, use Tidy a model; for one description, use the direct description action.
+  triggers=[make_model_ai_ready|ai_readiness_scan|set_description]
+  tags=[]
+  step id=step-1 number=1 title=Scan and choose the content scope
+    ops=[ai_readiness_scan|list_objects]
+    instructions.len=294 instructions.hash=D9348FC9D701F511
+    gate strictness=<null>
+    input name=contentScope type=text required=required daxPurity=<null> question=Which selected tables, columns or measures need business descriptions, synonyms or assistant instructions in this pass?
+  step id=step-2 number=2 title=Add selected explanations and settings
+    ops=[get_ai_instructions|set_description|set_synonyms|set_ai_instructions|set_ai_data_schema|create_perspective|set_perspective_member]
+    instructions.len=477 instructions.hash=F5AD0E28E97B04BF
+    gate=<null>
+  step id=step-3 number=3 title=Rescan and report the remaining work
+    ops=[ai_readiness_scan|save_model]
+    instructions.len=382 instructions.hash=9E3DB6C9DB3D547F
+    gate strictness=hard
+    verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+FILE Semanticus.Engine/workflows-parked/model-hygiene-pass.md
+  error=<null>
+  source=stock file=model-hygiene-pass.md
+  name=model-hygiene-pass kind=<null> version=1 strictness=hard
+  title=Tidy a model
+  description=Scan the model, apply only selected low-risk fixes, rescan the changed area and save with remaining findings visible.
+  whenToUse=Use for a bounded cleanup of model properties before review or publish. For authored descriptions and assistant preparation, use Explain the model to assistants; for deletion or a risky change, use Review a risky change.
+  triggers=[apply_safe_fixes|make_model_ai_ready]
+  tags=[]
+  step id=step-1 number=1 title=Scan and choose the work queue
+    ops=[ai_readiness_scan|bpa_scan|list_columns|unused_objects]
+    instructions.len=416 instructions.hash=AA9BD7D4FCCE8570
+    gate strictness=<null>
+    input name=selectedScope type=text required=required daxPurity=<null> question=Which selected objects or finding categories are in scope for this cleanup? Leave unrelated findings for a later pass.
+  step id=step-2 number=2 title=Review and apply selected fixes
+    ops=[apply_safe_fixes|set_column_hidden|set_summarize_by|set_measure_format|set_data_category|set_sort_by_column|set_property]
+    instructions.len=316 instructions.hash=40C3B1D425132369
+    gate=<null>
+  step id=step-3 number=3 title=Rescan the changed area
+    ops=[ai_readiness_scan|bpa_scan]
+    instructions.len=314 instructions.hash=E0D1108F4BBDE53F
+    gate strictness=hard
+    verify kind=readiness_rescan when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+    verify kind=bpa_clean when=<null> probe=<null> scope=model intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the selected cleanup
+    ops=[save_model]
+    instructions.len=248 instructions.hash=082D0BCBDA860323
+    gate=<null>
+FILE Semanticus.Engine/workflows-parked/new-measure.md
+  error=<null>
+  source=stock file=new-measure.md
+  name=new-measure kind=<null> version=1 strictness=hard
+  title=Add a measure
+  description=Define a measure, check the cases that matter, and save the result with its meaning.
+  whenToUse=Use for a straightforward measure with a clear business meaning. For ratios, time logic or other context-sensitive measures, use Test a complex measure; to improve an existing measure, use Fix a slow measure.
+  triggers=[create_measure|update_measure]
+  tags=[]
+  step id=step-1 number=1 title=Define the question
+    ops=[]
+    instructions.len=368 instructions.hash=D05D73FC079AEFBE
+    gate strictness=<null>
+    input name=meaning type=text required=required daxPurity=<null> question=What business question does this measure answer, and which context or grain must it respect?
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for a useful context, including its context if it is not the grand total; decline with why none is available.
+  step id=step-2 number=2 title=Author and create the measure
+    ops=[get_grounding|validate_dax|lint_dax|create_measure|set_measure_format|set_description]
+    instructions.len=288 instructions.hash=B0186E0666835EEC
+    gate=<null>
+  step id=step-3 number=3 title=Check the selected case
+    ops=[probe_measure]
+    instructions.len=393 instructions.hash=4FEB0E3566E23D72
+    gate strictness=hard
+    input name=target type=objectRef required=required daxPurity=<null> question=The ref of the measure just created, for example measure:Sales/Net Sales.
+    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+    verify kind=bpa_clean when=<null> probe=<null> scope=object intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the result
+    ops=[save_model]
+    instructions.len=224 instructions.hash=463EC97EBF37659B
+    gate=<null>
+FILE Semanticus.Engine/workflows-parked/time-intelligence-variants.md
+  error=<null>
+  source=stock file=time-intelligence-variants.md
+  name=time-intelligence-variants kind=<null> version=1 strictness=hard
+  title=Add time comparisons
+  description=Select the needed variants for one trusted measure, generate them, check a representative context and save.
+  whenToUse=Use when one base measure needs selected prior-period or to-date measures. Set up a calendar first when date support is missing; for the same variants across many measures, use Replace repeated measures with a calculation group.
+  triggers=[generate_time_intelligence|create_measure]
+  tags=[]
+  step id=step-1 number=1 title=Choose the base and variants
+    ops=[]
+    instructions.len=292 instructions.hash=149FF820D1287D02
+    gate strictness=<null>
+    input name=baseMeasure type=objectRef required=required daxPurity=<null> question=The single trusted base measure to expand.
+    input name=variants type=text required=required daxPurity=<null> question=Which variants and naming convention should be created, and which calendar/date support does the model have?
+  step id=step-2 number=2 title=Generate only the selected variants
+    ops=[list_calendars|generate_time_intelligence|create_measure|set_measure_format|set_description]
+    instructions.len=239 instructions.hash=2E73F0E31A5C3EF2
+    gate=<null>
+  step id=step-3 number=3 title=Check one representative boundary
+    ops=[probe_measure|pivot_measure]
+    instructions.len=415 instructions.hash=2FCC55E38D3FCFE2
+    gate strictness=hard
+    input name=target type=objectRef required=required daxPurity=<null> question=The generated variant selected for the representative check.
+    input name=verificationValue type=verification required=answer-or-decline daxPurity=<null> question=An independently known result for the selected variant and boundary context; decline when unavailable.
+    verify kind=dax_probe when=inputs.verificationValue.answered probe=verificationValue scope=<null> intent=<null> pinned=[] open=[] openShapesFrom=<null> openMismatch=<null> anchors=<null>
+  step id=step-4 number=4 title=Save the family
+    ops=[save_model]
+    instructions.len=196 instructions.hash=BE15B1AD7177B763
     gate=<null>
 FILE Semanticus.Engine/workflows-parked/verify-measure.md
   error=<null>

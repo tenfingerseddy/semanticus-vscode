@@ -335,9 +335,9 @@ namespace Semanticus.Tests
             Assert.Contains("template", warn!.Message);
 
             // the control that stops this passing for the wrong reason: a real stock workflow is NOT warned
-            await e.SaveWorkflowAsync("caller-real", Caller("new-measure", "caller-real"), "human");
+            await e.SaveWorkflowAsync("caller-real", Caller("optimize-dax", "caller-real"), "human");
             var good = await e.CheckWorkflowAsync("caller-real");
-            Assert.DoesNotContain(good.Findings, f => f.Severity == "warn" && f.Message.Contains("new-measure"));
+            Assert.DoesNotContain(good.Findings, f => f.Severity == "warn" && f.Message.Contains("optimize-dax"));
         }
 
         // ---- §2.2a: the escape hatch is parsed and its VALUE is checked, though nothing honours it yet ----
@@ -520,7 +520,7 @@ namespace Semanticus.Tests
         {
             // the v1-forever guarantee at the LINT layer, not just the parse layer
             var (e, _) = Make();
-            foreach (var name in new[] { "verified-measure", "new-measure", "optimize-dax", "make-ai-ready" })
+            foreach (var name in new[] { "verified-measure", "deploy-to-production", "optimize-dax", "secure-with-rls" })
             {
                 var r = await e.CheckWorkflowAsync(name);
                 Assert.True(r.ParseError == null, $"{name} parse error: {r.ParseError}");

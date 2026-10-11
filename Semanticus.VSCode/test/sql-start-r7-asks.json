@@ -1,0 +1,341 @@
+{
+ "why": "The verifier's round 7 attack list for the SQL start (/tmp/semanticus-joint-review/lane-reports/v-sql-start-r7.md, run/attack.json): 40 asks about a model that exists (E01 to E40) and 8 asks to make one (M01 to M08), plus guards (G01 to G08) the m11 join added so the narrowed rule keeps what it should. opens is what the engine's words pass, with no decision service, must do: open the Model Spec (true) or not (false). At 0ad1c1be 15 of the 40 existing asks opened it by the words alone (E15 to E24, E26, E36 to E39): 'model' read as the thing made where it only names what is made (model documentation, model measures), the convert rule took a model as its source (turn the sql model into a direct lake model), and 'the model ... again' is a model that exists. Both doors read this file: Semanticus.Tests AskMakeIntentFixR7Tests and test/sql-start.test.mjs.",
+ "asks": [
+  {
+   "id": "E01",
+   "ask": "the new model from sql needs a date table",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E02",
+   "ask": "my new model from the warehouse is slow",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E03",
+   "ask": "create a measure in the model from the warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E04",
+   "ask": "make the model from my database faster",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E05",
+   "ask": "generate descriptions for the model from sql",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E06",
+   "ask": "new model from sql keeps timing out",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E07",
+   "ask": "get the sales table from the warehouse into this model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E08",
+   "ask": "get the new columns from sql into the model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E09",
+   "ask": "bring the new warehouse tables into my model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E10",
+   "ask": "get the new sql views into the model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E11",
+   "ask": "our new model from the warehouse has wrong totals",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E12",
+   "ask": "the new sql model shows blank dates",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E13",
+   "ask": "latest sql database changes into the model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E14",
+   "ask": "put my model into the fabric warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E15",
+   "ask": "turn the sql model into a direct lake model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E16",
+   "ask": "turn this sql model into a direct lake model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E17",
+   "ask": "convert the warehouse model to a composite model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E18",
+   "ask": "create a model perspective from the warehouse tables",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E19",
+   "ask": "create a model description from the warehouse metadata",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E20",
+   "ask": "generate model documentation from the sql database",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E21",
+   "ask": "generate model descriptions from the warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E22",
+   "ask": "build model relationships from the sql database keys",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E23",
+   "ask": "generate model measures from the warehouse tables",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E24",
+   "ask": "create model roles from the sql server",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E25",
+   "ask": "make a new version of the model from the warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E26",
+   "ask": "build the model from sql again",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E27",
+   "ask": "i want the new model from sql to refresh daily",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E28",
+   "ask": "new sql model, add a date table",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E29",
+   "ask": "the fresh model from the lakehouse lost its relationships",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E30",
+   "ask": "swap the model's source into the new sql database",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E31",
+   "ask": "point my model at the new sql endpoint",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E32",
+   "ask": "repoint the model to the new warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E33",
+   "ask": "migrate the model into a new sql server",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E34",
+   "ask": "our semantic model from the warehouse into production",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E35",
+   "ask": "new warehouse columns into the semantic model",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E36",
+   "ask": "draft model measures from the sql tables",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E37",
+   "ask": "generate a model diagram from the sql database",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E38",
+   "ask": "create a model report from the warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E39",
+   "ask": "make model changes from the sql source",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "E40",
+   "ask": "start model refresh from the warehouse",
+   "opens": false,
+   "why": "about a model that exists, or something made FROM a model: it must not open the Model Spec"
+  },
+  {
+   "id": "M01",
+   "ask": "set me up with a model from my sql db",
+   "opens": false,
+   "why": "the words cannot settle it (no main verb the rules know): only the decision service may open the Model Spec, and with none it does not"
+  },
+  {
+   "id": "M02",
+   "ask": "spin up a dataset off the lakehouse",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M03",
+   "ask": "Could you put together a semantic model from our Snowflake warehouse?",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M04",
+   "ask": "I'd like a new model built from the SQL endpoint",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M05",
+   "ask": "make a model out of my postgres database",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M06",
+   "ask": "new semantic model from the fabric warehouse, please",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M07",
+   "ask": "scaffold a model from the sql database tables",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "M08",
+   "ask": "please create a Power BI dataset from the SQL Server",
+   "opens": true,
+   "why": "a request to make a new model from a source"
+  },
+  {
+   "id": "G01",
+   "ask": "build a model please from my sql database",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G02",
+   "ask": "create a new model for me from the warehouse",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G03",
+   "ask": "build a model called Sales from my sql database",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G04",
+   "ask": "turn my sql database into a model",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G05",
+   "ask": "convert the warehouse tables to a new model",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G06",
+   "ask": "create a semantic model from the warehouse tables",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G07",
+   "ask": "generate a dataset from the sql endpoint",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  },
+  {
+   "id": "G08",
+   "ask": "build me a model from the sql database again",
+   "opens": true,
+   "why": "the narrowed rule keeps this: the model is the thing made, and the only thing asked"
+  }
+ ]
+}

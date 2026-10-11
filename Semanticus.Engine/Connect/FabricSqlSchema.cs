@@ -32,6 +32,26 @@ namespace Semanticus.Engine
         public string ToSchema { get; set; }
         public string ToTable { get; set; }
         public string ToColumn { get; set; }
+        /// <summary>The source's name for the key this column belongs to. A key with several columns comes back as
+        /// several rows that share it. Null when the source gave none (a schema written by hand), and then each row
+        /// stands alone as a one-column key.</summary>
+        public string ConstraintName { get; set; }
+        /// <summary>This column's place inside its key, counting from 1. 0 when the source gave none.</summary>
+        public int Ordinal { get; set; }
+    }
+
+    /// <summary>One declared foreign key, whole: every column pair of one constraint, in the key's own order. A
+    /// key with two or more column pairs is a composite key, which a Tabular link cannot be built on.</summary>
+    public sealed class FabricForeignKeyGroup
+    {
+        public string ConstraintName { get; set; }
+        public string FromSchema { get; set; }
+        public string FromTable { get; set; }
+        public string ToSchema { get; set; }
+        public string ToTable { get; set; }
+        public string[] FromColumns { get; set; } = Array.Empty<string>();
+        public string[] ToColumns { get; set; } = Array.Empty<string>();
+        public bool IsComposite => FromColumns.Length > 1;
     }
 
     /// <summary>A deterministic snapshot of a Fabric SQL endpoint's schema (read from INFORMATION_SCHEMA).</summary>
@@ -44,6 +64,39 @@ namespace Semanticus.Engine
         public string Error { get; set; }
 
         public static FabricSchema FromError(string e) => new FabricSchema { Error = e };
+
+        /// <summary>The declared foreign keys, one entry per constraint instead of one per column. Rows that share a
+        /// constraint name (and the table it sits on) are one key, ordered by <see cref="FabricForeignKey.Ordinal"/> and
+        /// then by the order the source listed them; a row with no constraint name is a key of one column. The groups
+        /// come back in the order their first row was listed, so the same schema always gives the same list.</summary>
+        public FabricForeignKeyGroup[] ForeignKeyGroups()
+        {
+            var groups = new List<(string Key, List<(FabricForeignKey Fk, int Pos)> Rows)>();
+            var byKey = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            var pos = 0;
+            foreach (var f in ForeignKeys ?? Array.Empty<FabricForeignKey>())
+            {
+                var key = string.IsNullOrEmpty(f.ConstraintName)
+                    ? "\u0001row" + pos
+                    : (f.FromSchema ?? "") + "\u001f" + (f.FromTable ?? "") + "\u001f" + f.ConstraintName;
+                if (!byKey.TryGetValue(key, out var at)) { at = groups.Count; byKey[key] = at; groups.Add((key, new())); }
+                groups[at].Rows.Add((f, pos++));
+            }
+            return groups.Select(g =>
+            {
+                // The same column pair twice is one pair: a catalog join that lists a key's row more than once must not turn a
+                // one-column key into a two-column one.
+                var rows = g.Rows.OrderBy(r => r.Fk.Ordinal).ThenBy(r => r.Pos).Select(r => r.Fk)
+                    .GroupBy(r => (r.FromColumn ?? "").ToLowerInvariant() + "\u001f" + (r.ToColumn ?? "").ToLowerInvariant()).Select(x => x.First()).ToArray();
+                var first = rows[0];
+                return new FabricForeignKeyGroup
+                {
+                    ConstraintName = first.ConstraintName,
+                    FromSchema = first.FromSchema, FromTable = first.FromTable, ToSchema = first.ToSchema, ToTable = first.ToTable,
+                    FromColumns = rows.Select(r => r.FromColumn).ToArray(), ToColumns = rows.Select(r => r.ToColumn).ToArray(),
+                };
+            }).ToArray();
+        }
     }
 
     /// <summary>
@@ -99,19 +152,12 @@ namespace Semanticus.Engine
                     r => keys.Add((Str(r, "TABLE_SCHEMA"), Str(r, "TABLE_NAME"), Str(r, "COLUMN_NAME"))));
 
                 var fks = new List<FabricForeignKey>();
-                await Query(conn, ct,
-                    @"SELECT fk.TABLE_SCHEMA AS FromSchema, fk.TABLE_NAME AS FromTable, fk.COLUMN_NAME AS FromColumn,
-                             pk.TABLE_SCHEMA AS ToSchema, pk.TABLE_NAME AS ToTable, pk.COLUMN_NAME AS ToColumn
-                      FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
-                      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE fk
-                        ON rc.CONSTRAINT_NAME = fk.CONSTRAINT_NAME AND rc.CONSTRAINT_SCHEMA = fk.CONSTRAINT_SCHEMA
-                      JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pk
-                        ON rc.UNIQUE_CONSTRAINT_NAME = pk.CONSTRAINT_NAME AND rc.UNIQUE_CONSTRAINT_SCHEMA = pk.CONSTRAINT_SCHEMA
-                       AND fk.ORDINAL_POSITION = pk.ORDINAL_POSITION",
+                await Query(conn, ct, ForeignKeySql,
                     r => fks.Add(new FabricForeignKey
                     {
                         FromSchema = Str(r, "FromSchema"), FromTable = Str(r, "FromTable"), FromColumn = Str(r, "FromColumn"),
                         ToSchema = Str(r, "ToSchema"), ToTable = Str(r, "ToTable"), ToColumn = Str(r, "ToColumn"),
+                        ConstraintName = Str(r, "ConstraintName"), Ordinal = Int(r, "Ordinal"),
                     }));
 
                 var colsByTable = columns.GroupBy(x => (x.Schema, x.Table));
@@ -128,6 +174,20 @@ namespace Semanticus.Engine
             }
             catch (Exception ex) { return FabricSchema.FromError(Scrub(ex.Message)); }
         }
+
+        // The constraint's name and each column's place in it come back with every pair, so a key of two or three columns
+        // can be told from two keys of one. Ordered, so the same endpoint always lists the same schema the same way.
+        internal const string ForeignKeySql =
+            @"SELECT rc.CONSTRAINT_NAME AS ConstraintName, fk.ORDINAL_POSITION AS Ordinal,
+                     fk.TABLE_SCHEMA AS FromSchema, fk.TABLE_NAME AS FromTable, fk.COLUMN_NAME AS FromColumn,
+                     pk.TABLE_SCHEMA AS ToSchema, pk.TABLE_NAME AS ToTable, pk.COLUMN_NAME AS ToColumn
+              FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+              JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE fk
+                ON rc.CONSTRAINT_NAME = fk.CONSTRAINT_NAME AND rc.CONSTRAINT_SCHEMA = fk.CONSTRAINT_SCHEMA
+              JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE pk
+                ON rc.UNIQUE_CONSTRAINT_NAME = pk.CONSTRAINT_NAME AND rc.UNIQUE_CONSTRAINT_SCHEMA = pk.CONSTRAINT_SCHEMA
+               AND fk.ORDINAL_POSITION = pk.ORDINAL_POSITION
+              ORDER BY fk.TABLE_SCHEMA, fk.TABLE_NAME, rc.CONSTRAINT_NAME, fk.ORDINAL_POSITION";
 
         private static async Task Query(SqlConnection conn, CancellationToken ct, string sql, Action<SqlDataReader> onRow)
         {

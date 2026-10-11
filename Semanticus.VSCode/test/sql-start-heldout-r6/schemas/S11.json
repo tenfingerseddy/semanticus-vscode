@@ -1,0 +1,166 @@
+{
+  "Server": "s11-sql.example.invalid",
+  "Database": "FulfilmentOrders",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_calendar",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DAY_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_item",
+      "KeyColumns": [
+        "ITEM_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ITEM_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_warehouse",
+      "KeyColumns": [
+        "WAREHOUSE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "WAREHOUSE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "WAREHOUSE_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_order",
+      "KeyColumns": [
+        "ORDER_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ORDER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ORDER_DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "SHIP_DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ORDER_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ORDER_VALUE",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_balance",
+      "KeyColumns": [
+        "ITEM_ID",
+        "WAREHOUSE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "WAREHOUSE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ON_HAND_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "RESERVED_QTY",
+          "DataType": "Int64"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order",
+      "FromColumn": "ORDER_DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_calendar",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order",
+      "FromColumn": "SHIP_DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_calendar",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_order",
+      "FromColumn": "ITEM_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_item",
+      "ToColumn": "ITEM_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_balance",
+      "FromColumn": "ITEM_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_item",
+      "ToColumn": "ITEM_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_balance",
+      "FromColumn": "WAREHOUSE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_warehouse",
+      "ToColumn": "WAREHOUSE_ID"
+    }
+  ]
+}

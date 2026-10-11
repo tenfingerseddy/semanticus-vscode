@@ -54,13 +54,13 @@ ops: [create_calculation_group, create_calculation_item, set_calc_group_preceden
 ## Step 4: Compare outputs and review dependants
 
 Run the same contexts again and compare every selected base by item with the before matrix. A mismatch is a
-refactor defect, not a reason to edit the old values to fit. Use `impact_of` and report inspection for each
-candidate retirement. Record the comparison and any unresolved report binding. The text matrix is useful
+refactor defect, not a reason to edit the old values to fit. Use `impact_assessment` and report inspection for
+each candidate retirement. Record the comparison and any unresolved report binding. The text matrix is useful
 review evidence, but it is not machine-equivalence proof in this engine version.
 
 ```yaml gate
 strictness: hard
-ops: [run_dax, impact_of, analyze_reports]
+ops: [run_dax, impact_assessment, analyze_reports]
 inputs:
   - name: comparisonResult
     question: "The after matrix against the same contexts, every mismatch, and each remaining model/report dependant."

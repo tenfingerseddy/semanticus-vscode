@@ -37,6 +37,9 @@ namespace Semanticus.Engine
         /// (set here, surfaced by <see cref="McpErrorBoundary"/>).</summary>
         internal const string HealthDataKey = "semanticus.healthDelta";
 
+        /// <summary>The fixed opening of the user-edit fold line (F-246).</summary>
+        internal const string FoldPrefix = "changed since your last call";
+
         private static readonly JsonSerializerOptions Terse = new JsonSerializerOptions
         {
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -59,6 +62,7 @@ namespace Semanticus.Engine
             var callId = Guid.NewGuid().ToString("N");
             CallToolResult result;
             using (HealthCorrelation.Begin(callId))
+            using (TaskCause(engine, ChangeJournal.InProcessReader))
             {
                 try { result = await next().ConfigureAwait(false); }
                 catch (Exception ex)
@@ -75,12 +79,75 @@ namespace Semanticus.Engine
             var delta = await DrainAsync(engine, callId).ConfigureAwait(false);
             if (delta != null && result != null)
                 Append(result, result.IsError == true ? FailureText(delta) : SuccessText(delta));
+            if (result != null)
+            {
+                // F-246: what somebody else changed since this assistant's previous call. A call that throws skips
+                // this, so the next call still carries it.
+                var fold = FoldText(await PullForeignAsync(engine).ConfigureAwait(false));
+                if (fold != null) Append(result, fold);
+                // Plan at the heart (contract 6.1): the tasks the person gave this assistant, only when the offer
+                // changed for this reader, so an unchanged offer costs nothing. The owner path asks the engine in
+                // this process; the attached path pulls the owner's answer for its own pipe connection.
+                var plan = await PullPlanOfferAsync(engine).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(plan)) Append(result, plan);
+            }
             if (result != null && result.IsError != true)
             {
                 var note = await WorkflowProfileNoteAsync(engine, toolName).ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(note)) Append(result, note);
             }
             return result;
+        }
+
+        /// <summary>The user-edit fold line (F-246), short and stable:
+        /// <c>changed since your last call (in Studio): measure:Sales/Amount, table:Date; rev 4812</c>.
+        /// Null when nothing changed, so the common case costs nothing.</summary>
+        internal static string FoldText(ForeignChanges c)
+        {
+            if (c == null) return null;
+            var model = ModelFoldText(c);
+            // The spec-first start plan (M11) rides the same take: a sentence the engine already worded, appended as its
+            // own line, so a plan change alone is still said and an older engine (no StartPlan) changes nothing here.
+            var plan = string.IsNullOrWhiteSpace(c.StartPlan) ? null : c.StartPlan;
+            return model == null ? plan : plan == null ? model : model + "\n" + plan;
+        }
+
+        private static string ModelFoldText(ForeignChanges c)
+        {
+            if (c.Items == null || c.Items.Length == 0) return null;
+            var who = c.Studio && c.Assistant ? "in Studio and by another assistant"
+                : c.Studio ? "in Studio" : "by another assistant";
+            var list = string.Join(", ", c.Items)
+                + (c.More > 0 ? $", and {c.More} more" : "")
+                + (c.Truncated ? ", and earlier changes" : "");
+            return $"{FoldPrefix} ({who}): {list}; rev {c.Revision}";
+        }
+
+        private static async Task<ForeignChanges> PullForeignAsync(IEngine engine)
+        {
+            try { return await engine.PullForeignChangesAsync().ConfigureAwait(false); }
+            catch { return null; }   // an owner that predates the fold, or a dropped pipe: the line is best-effort
+        }
+
+        /// <summary>Contract 8.4, lane E3: while this door's assistant holds a claim, its edits count toward the task it
+        /// claimed most recently; while this reader has a guided run on a step, toward the run instead
+        /// (LocalEngine.RunCause.cs). Read once, BEFORE the call runs, so a claim made inside this call starts counting on
+        /// the next one. The owner path only: an attached assistant's edits are stamped in the owner, per request, by
+        /// RpcServer. An explicit cause opened deeper (a plan approve) still wins, because it is the inner scope.</summary>
+        internal static IDisposable TaskCause(IEngine engine, string writer)
+        {
+            var local = engine as LocalEngine;
+            // Contract 8.4, lane m11/plan-gaps: a reader with a guided run on a step files its edits under the run.
+            var run = local?.RunCauseFor(writer);
+            if (run != null) return ChangeCause.Begin(run);
+            var task = local?.WorkingTaskFor(writer);
+            return task == null ? null : (IDisposable)ChangeCause.Begin(ChangeCauseKinds.Task, local.WorkingTaskTitleFor(writer), null, task);
+        }
+
+        private static async Task<string> PullPlanOfferAsync(IEngine engine)
+        {
+            try { return await engine.PullPlanOfferAsync().ConfigureAwait(false); }
+            catch { return null; }   // an owner that predates the queue, or a dropped pipe: the line is best-effort
         }
 
         private static string SuccessText(HealthDelta h) => "health: " + JsonSerializer.Serialize(h, Terse);
@@ -139,11 +206,15 @@ namespace Semanticus.Engine
                 var binding = policy?.Bindings?.FirstOrDefault(b => string.Equals(b.Op, toolName, StringComparison.OrdinalIgnoreCase));
                 if (binding == null || !string.Equals(binding.Mode, "warn", StringComparison.OrdinalIgnoreCase))
                     return null;
+                // Name the workflow ids the agent can pass to start_workflow. The profile's Effects are Studio copy
+                // written for people ("Every workflow stays available"), and they name no id the agent can act on.
+                var require = binding.Require ?? Array.Empty<string>();
+                if (require.Length == 0) return null;
                 var profiles = await engine.ListWorkflowProfilesAsync().ConfigureAwait(false);
-                var active = profiles?.FirstOrDefault(p => p.Selected);
-                var effects = active?.Effects;
-                if (effects == null || effects.Length == 0) return null;
-                return string.Join(". ", effects) + ".";
+                var title = profiles?.FirstOrDefault(p => p.Selected)?.Title ?? "The active";
+                return title + " workflow profile expects " + toolName + " to run inside the "
+                    + string.Join(" or ", require.Select(r => "'" + r + "'"))
+                    + " workflow (start it with start_workflow). This profile only warns, so work can continue without it.";
             }
             catch { return null; }
         }

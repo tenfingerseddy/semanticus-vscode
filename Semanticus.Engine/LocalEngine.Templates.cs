@@ -87,6 +87,7 @@ namespace Semanticus.Engine
         /// NOT a save-blocker — check_workflow warns on it (an author may add a slot before wiring its {{ref}}).</summary>
         public async Task<WorkflowTemplateInfo[]> SaveWorkflowTemplateAsync(string name, string markdown, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             name = (name ?? "").Trim();
             if (!KebabName.IsMatch(name))
@@ -111,6 +112,7 @@ namespace Semanticus.Engine
             var (userDir, _) = TemplateDirs();
             if (userDir == null)
                 throw new InvalidOperationException("No place to store user templates. Run open_model (or save_model after create_model) so the .semanticus sidecar has a home, or run the engine with a workspace.");
+            RequireApprovedBasis(nameof(SaveWorkflowTemplateAsync), GateFileState(Path.Combine(userDir, name + ".md")), "template");
             Directory.CreateDirectory(userDir);
             await Task.Run(() => File.WriteAllText(Path.Combine(userDir, name + ".md"), markdown));
             return await ListWorkflowTemplatesCoreAsync();
@@ -120,6 +122,7 @@ namespace Semanticus.Engine
         /// shadow reverts to stock) — deleting a stock name without a user copy is refused instructively.</summary>
         public async Task<WorkflowTemplateInfo[]> DeleteWorkflowTemplateAsync(string name, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             var (userDir, stockDir) = TemplateDirs();
             var trimmed = (name ?? "").Trim();
@@ -129,6 +132,8 @@ namespace Semanticus.Engine
                     File.Exists(Path.Combine(stockDir, trimmed + ".md"))
                         ? $"'{name}' is a stock template (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflow-templates."
                         : $"User template '{name}' not found: list_workflow_templates shows the shelf, and only your own copies (under .semanticus/workflow-templates) are deletable.");
+            // the file this delete removes, as it was when the person was asked (words a person wrote since are theirs)
+            RequireApprovedBasis(nameof(DeleteWorkflowTemplateAsync), GateFileState(file), "template");
             await Task.Run(() => File.Delete(file));
             return await ListWorkflowTemplatesCoreAsync();
         }
@@ -140,17 +145,23 @@ namespace Semanticus.Engine
         /// admission; (e) save through the workflow write path (library broadcast included). FREE.</summary>
         public async Task<WorkflowInfo[]> InstantiateWorkflowTemplateAsync(string templateName, string newName, string valuesJson, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
-            var tmpl = LoadTemplateDefs().FirstOrDefault(d => string.Equals(d.Name, templateName, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"Template '{templateName}' not found (list_workflow_templates shows the shelf).");
+            var tmpl = LoadTemplateDefs().FirstOrDefault(d => string.Equals(d.Name, templateName, StringComparison.OrdinalIgnoreCase));
+            if (tmpl == null) return await UseStockStarterAsync(templateName, newName, origin);
             if (tmpl.Error != null)
                 throw new InvalidOperationException($"Template '{templateName}' does not parse and cannot be instantiated: {tmpl.Error}");
             var markdown = File.ReadAllText(tmpl.FilePath);
+            RequireApprovedBasis(nameof(InstantiateWorkflowTemplateAsync), TemplateBasis(tmpl.FilePath, markdown), "template");
 
-            // (a) newName kebab-case + no collision with an existing workflow.
-            newName = (newName ?? "").Trim();
+            // (a) newName kebab-case (blank takes the starter's own name) + no collision with an existing workflow,
+            // and never a new file that would shadow a required workflow (contract 21.2).
+            newName = string.IsNullOrWhiteSpace(newName) ? tmpl.Name : newName.Trim();
             if (!KebabName.IsMatch(newName))
                 throw new InvalidOperationException($"'{newName}' is not a valid workflow name: kebab-case (e.g. 'fy26-metric-cert'); it becomes the new workflow's filename.");
+            var (userDir, stockDir) = WorkflowDirs();
+            if (WouldShadowRequiredWorkflow(newName, userDir, stockDir))
+                throw new InvalidOperationException($"{RequiredShadowRefusal} Nothing was written.");
             if (LoadWorkflowDefs().Any(d => string.Equals(d.Name, newName, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException($"A workflow named '{newName}' already exists. Pick a different name (or delete_workflow to replace it). list_workflows shows the library.");
 
@@ -202,7 +213,7 @@ namespace Semanticus.Engine
 
             // (b) render — deterministic substitution + provenance frontmatter.
             var slotValuesJson = JsonSerializer.Serialize(values);   // single-line by default (newlines are \n-escaped)
-            var rendered = RenderInstance(markdown, newName, tmpl.Name, tmpl.Version, slotValuesJson, values);
+            var rendered = RenderInstance(markdown, newName, tmpl.Name, tmpl.Version, slotValuesJson, values, tmpl.SchemaVersion);
 
             // (d) admission — the same dry-run an authored workflow gets; refuse on warns (or a parse fault).
             var renderedDef = WorkflowParser.Parse(rendered);
@@ -219,8 +230,73 @@ namespace Semanticus.Engine
             // (e) save through the workflow write path (parse-validates again + broadcasts the library).
             // The library broadcast is the full set; this result is the workflow just created so the caller
             // does not have to hunt through the shelf.
-            var library = await SaveWorkflowAsync(newName, rendered, origin);
+            var library = await SaveWorkflowAsync(newName, InCurrentFormat(newName, rendered), origin);
             return library.Where(w => string.Equals(w.Name, newName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        }
+
+        /// <summary>Contract 21.2 "Use" for a shipped workflow: the same op as a template, so one verb reaches both
+        /// doors. A starter a team rule requires is returned as it is and never copied (a copy would win resolution
+        /// and quietly replace it). Otherwise the shipped bytes are copied create-only into this model's workflows,
+        /// under the starter's own name or <paramref name="newName"/> (only the frontmatter name changes).</summary>
+        private async Task<WorkflowInfo[]> UseStockStarterAsync(string starterName, string newName, string origin)
+        {
+            var (userDir, stockDir) = WorkflowDirs();
+            var stock = WorkflowFiles(stockDir);
+            var required = RequiredWorkflowSet(userDir, stockDir);
+            // A parked starter a team rule still requires is returned as it is, like any required starter.
+            var parkedRequired = required.FirstOrDefault(r => string.Equals(r, (starterName ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                                                              && ParkedWorkflowSentence(r) != null && !stock.ContainsKey(r));
+            if (parkedRequired != null)
+                return (await BuildLibraryInfosAsync()).Where(w => string.Equals(w.Name, parkedRequired, StringComparison.Ordinal)).ToArray();
+            var name = stock.Keys.FirstOrDefault(k => string.Equals(k, (starterName ?? "").Trim(), StringComparison.OrdinalIgnoreCase))
+                ?? throw WorkflowNotFound(starterName, $"'{starterName}' is not a starter or a template. list_workflows marks the starters, and list_workflow_templates shows the templates.");
+            if (required.Contains(name))
+                return (await BuildLibraryInfosAsync()).Where(w => string.Equals(w.Name, name, StringComparison.Ordinal)).ToArray();
+
+            newName = string.IsNullOrWhiteSpace(newName) ? name : ValidateWorkflowDocumentName(newName);
+            var markdown = File.ReadAllText(stock[name]);
+            if (!string.Equals(newName, name, StringComparison.Ordinal)) markdown = WithFrontmatterName(markdown, newName);
+            var library = await SaveWorkflowAsync(newName, InCurrentFormat(newName, markdown), origin, createOnly: true);
+            return library.Where(w => string.Equals(w.Name, newName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        }
+
+        /// <summary>A starter's fresh copy is written in the current format (F11). The shipped starters stay in format 1
+        /// for the frozen v1 contract, and a byte copy of one opened under "This workflow uses an older format" at once.
+        /// This runs the same upgrade a person reviews in the Studio (WorkflowUpgrade.Preview), one version at a time,
+        /// and keeps a version only when its own check says the meaning is unchanged. Anything it cannot carry forward
+        /// is written as it was, and the older-format notice then offers the reviewed upgrade as before.</summary>
+        private static string InCurrentFormat(string name, string markdown)
+        {
+            var text = markdown;
+            for (var hop = 0; hop < WorkflowParser.MaxSchemaVersion; hop++)
+            {
+                try
+                {
+                    var doc = DescribeWorkflowDocument(name, "user", name + ".md", WorkflowDocumentUtf8.GetBytes(text));
+                    if (!doc.Metadata.Parses || doc.Metadata.SchemaVersion >= WorkflowParser.MaxSchemaVersion) return text;
+                    var next = WorkflowUpgrade.Preview(doc, dryRun: true);
+                    if (!next.CanApply || next.ProposedText == null) return text;
+                    text = next.ProposedText;
+                }
+                catch (Exception ex) when (ex is InvalidOperationException || ex is FormatException) { return text; }
+            }
+            return text;
+        }
+
+        /// <summary>Rewrite the top-level <c>name:</c> line of a workflow's frontmatter, leaving every other byte as it
+        /// was (line endings included), so a renamed copy of a starter differs from it only in its identity.</summary>
+        private static string WithFrontmatterName(string markdown, string newName)
+        {
+            var lines = markdown.Split('\n');
+            if (lines.Length == 0 || lines[0].TrimEnd('\r') != "---") return markdown;
+            for (int i = 1; i < lines.Length && lines[i].TrimEnd('\r') != "---"; i++)
+            {
+                if (lines[i].Length == 0 || char.IsWhiteSpace(lines[i][0])) continue;
+                if (FrontmatterKey(lines[i].Trim()).key != "name") continue;
+                lines[i] = "name: " + newName + (lines[i].EndsWith("\r", StringComparison.Ordinal) ? "\r" : "");
+                break;
+            }
+            return string.Join("\n", lines);
         }
 
         // ---- check_workflow for a TEMPLATE (§10.5) -----------------------------------------------
@@ -259,7 +335,7 @@ namespace Semanticus.Engine
                     findings.Add(new CheckFinding { Severity = "warn", Message = $"trial instantiation with the example values would change the enforced structure: {diff}" });
                 else
                 {
-                    var trial = await CheckWorkflowDefAsync(WorkflowParser.Parse(SubstituteSlots(markdown, examples)));
+                    var trial = await CheckWorkflowDefAsync(WorkflowParser.Parse(RenderSlots(markdown, examples, tmpl.SchemaVersion)));
                     if (trial.ParseError != null)
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"trial instantiation does not parse: {trial.ParseError}" });
                     foreach (var f in trial.Findings.Where(f => string.Equals(f.Severity, "warn", StringComparison.Ordinal)))
@@ -284,6 +360,84 @@ namespace Semanticus.Engine
         private static string SubstituteSlots(string text, IReadOnlyDictionary<string, string> values)
             => WorkflowParser.SlotRef.Replace(text ?? "", m => values.TryGetValue(m.Groups[1].Value, out var v) ? (v ?? "") : m.Value);
 
+        /// <summary>The substitution a template's format calls for. Format 1 is the plain text substitution it always
+        /// had (frozen). From format 2 the file is strict YAML, so a slot answer that lands in YAML is written as YAML
+        /// (lane l9-finish): inside a double-quoted scalar it is escaped, a plain scalar that holds one is written as a
+        /// double-quoted scalar, and a block scalar's lines keep their indent. An answer like "FY26: July # final" then
+        /// reads back exactly, and cannot end a scalar and start a key. Prose outside the YAML is substituted as it is.</summary>
+        private static string RenderSlots(string text, IReadOnlyDictionary<string, string> values, int schemaVersion)
+            => schemaVersion < 2 ? SubstituteSlots(text, values) : SubstituteSlotsYaml(text, values);
+
+        private static readonly System.Text.Encodings.Web.JavaScriptEncoder YamlQuoteEncoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+
+        /// <summary>A YAML double-quoted scalar, JSON's escapes being a subset of YAML's.</summary>
+        private static string YamlQuoted(string s) => JsonSerializer.Serialize(s ?? "", new JsonSerializerOptions { Encoder = YamlQuoteEncoder });
+
+        private static readonly System.Text.RegularExpressions.Regex YamlScalarLine = new System.Text.RegularExpressions.Regex(
+            @"^(?<lead>\s*(?:-\s+)?(?:[A-Za-z_][A-Za-z0-9_]*:\s+)?)(?<value>\S.*?)\s*$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static string SubstituteSlotsYaml(string text, IReadOnlyDictionary<string, string> values)
+        {
+            string Value(System.Text.RegularExpressions.Match m) => values.TryGetValue(m.Groups[1].Value, out var v) ? (v ?? "") : null;
+            var lines = (text ?? "").Split('\n');
+            var inFront = lines.Length > 0 && lines[0].TrimEnd('\r') == "---";
+            var inFence = false;
+            var blockIndent = -1;   // the indent of the key that opened a block scalar (| or >), while in one
+            for (var i = inFront ? 1 : 0; i < lines.Length; i++)
+            {
+                var raw = lines[i];
+                var cr = raw.EndsWith("\r", StringComparison.Ordinal) ? "\r" : "";
+                var line = cr.Length > 0 ? raw.Substring(0, raw.Length - 1) : raw;
+                if (inFront && line == "---") { inFront = false; blockIndent = -1; continue; }
+                if (!inFront)
+                {
+                    if (!inFence && line.StartsWith("```yaml", StringComparison.Ordinal)) { inFence = true; blockIndent = -1; continue; }
+                    if (inFence && line.StartsWith("```", StringComparison.Ordinal)) { inFence = false; blockIndent = -1; continue; }
+                }
+                var yaml = inFront || inFence;
+                if (!WorkflowParser.SlotRef.IsMatch(line))
+                {
+                    if (yaml) blockIndent = OpensBlock(line, blockIndent);
+                    continue;
+                }
+                if (!yaml) { lines[i] = SubstituteSlots(line, values) + cr; continue; }
+
+                var indent = line.Length - line.TrimStart().Length;
+                if (blockIndent >= 0 && indent > blockIndent)
+                {
+                    // A line of a block scalar: an answer's line breaks keep the block's indent.
+                    var pad = new string(' ', indent);
+                    lines[i] = WorkflowParser.SlotRef.Replace(line, m => Value(m) is string v ? v.Replace("\r\n", "\n").Replace("\n", "\n" + pad) : m.Value) + cr;
+                    continue;
+                }
+                blockIndent = -1;
+                var parts = YamlScalarLine.Match(line);
+                if (!parts.Success) { lines[i] = SubstituteSlots(line, values) + cr; continue; }
+                var lead = parts.Groups["lead"].Value;
+                var value = parts.Groups["value"].Value;
+                if (value.StartsWith("\"", StringComparison.Ordinal))
+                    // Inside a double-quoted scalar: the answer is escaped, so it cannot close the quote.
+                    lines[i] = lead + WorkflowParser.SlotRef.Replace(value, m => Value(m) is string v ? YamlQuoted(v).Substring(1, YamlQuoted(v).Length - 2) : m.Value) + cr;
+                else if (value.StartsWith("'", StringComparison.Ordinal))
+                    lines[i] = lead + WorkflowParser.SlotRef.Replace(value, m => Value(m) is string v ? v.Replace("'", "''").Replace("\r\n", " ").Replace("\n", " ") : m.Value) + cr;
+                else
+                    // A plain scalar: the whole value, answer included, is written double-quoted.
+                    lines[i] = lead + YamlQuoted(SubstituteSlots(value, values)) + cr;
+            }
+            return string.Join("\n", lines);
+
+            static int OpensBlock(string line, int current)
+            {
+                var t = line.TrimEnd();
+                if (t.EndsWith("|", StringComparison.Ordinal) || t.EndsWith(">", StringComparison.Ordinal)
+                    || t.EndsWith("|-", StringComparison.Ordinal) || t.EndsWith(">-", StringComparison.Ordinal)
+                    || t.EndsWith("|+", StringComparison.Ordinal) || t.EndsWith(">+", StringComparison.Ordinal))
+                    return line.Length - line.TrimStart().Length;
+                var indent = line.Length - line.TrimStart().Length;
+                return current >= 0 && (t.Length == 0 || indent > current) ? current : -1;
+            }
+        }
+
         /// <summary>THE injection defence (§10.4 step 3). Render the template with the real values AND with a
         /// canonical dummy for every slot, parse both, and require their SKELETONS identical — step count/order,
         /// gate presence + strictness, each gate's inputs (name/type/required) and verifies (kind/probe/when/scope),
@@ -294,16 +448,16 @@ namespace Semanticus.Engine
         {
             var slotNames = tmpl.Slots.Select(s => s.Name).ToArray();
             var dummy = slotNames.ToDictionary(n => n, _ => "SLOTVALUE", StringComparer.Ordinal);
-            var baseDef = WorkflowParser.Parse(SubstituteSlots(templateMarkdown, dummy));
+            var baseDef = WorkflowParser.Parse(RenderSlots(templateMarkdown, dummy, tmpl.SchemaVersion));
             var baseSkel = SkeletonOf(baseDef);
 
-            if (SkeletonOf(WorkflowParser.Parse(SubstituteSlots(templateMarkdown, values))) == baseSkel) return (true, null);
+            if (SkeletonOf(WorkflowParser.Parse(RenderSlots(templateMarkdown, values, tmpl.SchemaVersion))) == baseSkel) return (true, null);
 
             foreach (var slot in slotNames)
             {
                 var one = new Dictionary<string, string>(dummy, StringComparer.Ordinal);
                 if (values.TryGetValue(slot, out var rv)) one[slot] = rv;
-                var oneDef = WorkflowParser.Parse(SubstituteSlots(templateMarkdown, one));
+                var oneDef = WorkflowParser.Parse(RenderSlots(templateMarkdown, one, tmpl.SchemaVersion));
                 if (SkeletonOf(oneDef) != baseSkel) return (false, DescribeStructuralDiff(slot, baseDef, oneDef));
             }
             return (false, "a slot value changes the workflow's enforced structure: slot values can change wording and values, never checks.");
@@ -326,7 +480,17 @@ namespace Semanticus.Engine
                     sb.Append(" in=").Append(string.Join("|", g.Inputs.Select(i => $"{i.Name}/{i.Type}/{i.Required}")));
                     sb.Append(" vf=").Append(string.Join("|", g.Verify.Select(v => $"{v.Kind}/{v.Probe}/{v.When}/{v.Scope}")));
                 }
-                sb.Append(" ops=").Append(string.Join(",", s.Ops ?? Array.Empty<string>())).Append('\n');
+                sb.Append(" ops=").Append(string.Join(",", s.Ops ?? Array.Empty<string>()));
+                // Format 3 (lane l9-finish): who does the step, its phase, what Semanticus runs and with what, and what it
+                // asks and checks are what the engine ENFORCES too, so a slot may not change them either.
+                sb.Append(" perf=").Append(s.Performer ?? "").Append(" ph=").Append(s.Phase ?? "");
+                if (s.Action != null)
+                    sb.Append(" act=").Append(s.Action.Op).Append('(')
+                      .Append(string.Join(",", s.Action.Arguments.Select(a => a.Name + "=" + (a.Values != null ? string.Join("|", a.Values) : a.Value)))).Append(')');
+                sb.Append(" q=").Append(string.Join("|", s.Questions.Select(q => $"{q.Name}/{q.Type}/{q.By}/{q.Required}")));
+                sb.Append(" b=").Append(string.Join("|", s.Blanks.Select(b => $"{b.Name}/{b.Kind}/{b.Fills}/{b.By}")));
+                sb.Append(" chk=").Append(string.Join("|", s.Checks.Select(c => $"{c.Kind}/{c.Phase}/{c.Target}/{c.Min}/{c.Max}/{string.Join(",", c.Of ?? Array.Empty<string>())}/{c.When}")));
+                sb.Append('\n');
             }
             return sb.ToString();
         }
@@ -379,9 +543,9 @@ namespace Semanticus.Engine
         /// provenance keys (template / template_version / instantiated / slot_values). Unknown keys survive the
         /// re-parse into Provenance, which check_workflow surfaces as an info finding — exactly right.</summary>
         private static string RenderInstance(string templateMarkdown, string newName, string templateName, int templateVersion,
-            string slotValuesJson, IReadOnlyDictionary<string, string> values)
+            string slotValuesJson, IReadOnlyDictionary<string, string> values, int schemaVersion = 1)
         {
-            var substituted = SubstituteSlots(templateMarkdown, values);
+            var substituted = RenderSlots(templateMarkdown, values, schemaVersion);
             var lines = substituted.Replace("\r\n", "\n").Split('\n').ToList();
             int close = -1;
             for (int i = 1; i < lines.Count; i++) if (lines[i].TrimEnd() == "---") { close = i; break; }
@@ -413,10 +577,36 @@ namespace Semanticus.Engine
                 fm.Add(raw);
             }
             if (!nameSet) fm.Add("name: " + newName);
-            fm.Add("template: " + templateName);
-            fm.Add("template_version: " + templateVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            fm.Add("instantiated: " + DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture));
-            fm.Add("slot_values: " + slotValuesJson);
+            var version = templateVersion.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var day = DateTime.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+            if (schemaVersion >= 2)
+            {
+                // Format 2 and 3 have closed frontmatter keys, so the four provenance keys ride the format's own open
+                // `provenance:` map (lane l9-finish). The parser reads each back into WorkflowDef.Provenance by the same
+                // name, which is where month-end-close's certified totals are read from (ControlTotalsSlotText).
+                var mine = new[]
+                {
+                    "  template: " + YamlQuoted(templateName),
+                    "  template_version: " + version,
+                    "  instantiated: " + YamlQuoted(day),
+                    "  slot_values: " + YamlQuoted(slotValuesJson),
+                };
+                var at = fm.FindIndex(l => l.Length > 0 && !char.IsWhiteSpace(l[0]) && FrontmatterKey(l.Trim()).key == "provenance");
+                if (at < 0) { fm.Add("provenance:"); fm.AddRange(mine); }
+                else
+                {
+                    var end = at + 1;
+                    while (end < fm.Count && (fm[end].Length == 0 || char.IsWhiteSpace(fm[end][0]))) end++;
+                    fm.InsertRange(end, mine);
+                }
+            }
+            else
+            {
+                fm.Add("template: " + templateName);
+                fm.Add("template_version: " + version);
+                fm.Add("instantiated: " + day);
+                fm.Add("slot_values: " + slotValuesJson);
+            }
 
             var outLines = new List<string> { "---" };
             outLines.AddRange(fm);

@@ -57,9 +57,11 @@ namespace Semanticus.Tests
         /// the corpus the guard covers.</summary>
         private static readonly (string Dir, int Count)[] Corpora =
         {
-            ("Semanticus.Engine/workflows", 16),
+            // Contract 21.2 (lane W3): seven starters moved from workflows/ to workflows-parked/, so 16, 4, 7 became
+            // 9, 4, 14. The same files stay under this guard; only their directory changed.
+            ("Semanticus.Engine/workflows", 9),
             ("Semanticus.Engine/workflow-templates", 4),
-            ("Semanticus.Engine/workflows-parked", 7),
+            ("Semanticus.Engine/workflows-parked", 14),
         };
 
         private static string RepoRoot()
@@ -82,7 +84,8 @@ namespace Semanticus.Tests
         /// that actually diverge, in both directions, so it cannot silently widen and it cannot go stale.</summary>
         private static readonly (string Rel, string Why)[] V1Amendments =
         {
-            ("Semanticus.Engine/workflows/governed-rename.md",
+            // Lane author-gaps, L9: governed-rename moved to format 3, so the guard reads its frozen v1 bytes.
+            ("Semanticus.Engine/workflows-compat/v1.2.2/governed-rename.md",
              "D-090 (4c16b391): planItem joined the v1 gate-input types and this no-schemaVersion seed uses it; "
              + "the pinned pre-v2 parser predates the amendment and refuses the file today's parser reads."),
         };
@@ -96,10 +99,22 @@ namespace Semanticus.Tests
         private const int ShapesCount = 11;
         private static string ShapesGoldenPath() => Path.Combine(RepoRoot(), "Semanticus.Tests", "goldens", "workflow-v1-shapes.txt");
 
+        /// <summary>Lane author-gaps, L9 (coordinator's decision, reversible): a stock file converted to format 3 is no
+        /// longer a v1 file, so the guard does not read it. Its bytes from before the conversion were frozen into the
+        /// sibling "-compat/<see cref="ConvertedRelease"/>" folder first, and the guard reads THAT file in its place, in
+        /// the same position, so what the pinned parser proves is unchanged and the golden moves only in those paths.
+        /// The prev2 oracle (tools/prev2-oracle/Program.cs) makes the same substitution by the same rule.</summary>
+        private const string ConvertedRelease = "v1.2.2";
+        private const int ConvertedCount = 9;   // six starters (lane author-gaps) and three templates (lane l9-finish)
+
+        private static bool DeclaresV3(string file) =>
+            File.ReadLines(file).Skip(1).TakeWhile(l => l.TrimEnd() != "---").Any(l => l.Trim() == "schemaVersion: 3");
+
         private static List<(string Rel, WorkflowDef Def)> LoadEveryShippedFile()
         {
             var root = RepoRoot();
             var all = new List<(string, WorkflowDef)>();
+            var converted = 0;
             foreach (var (rel, expected) in Corpora)
             {
                 var dir = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
@@ -108,8 +123,17 @@ namespace Semanticus.Tests
                 Assert.True(files.Length == expected,
                     $"{rel} holds {files.Length} files, the guard was written against {expected}. "
                     + "Re-check the corpus and regenerate the golden deliberately.");
-                foreach (var f in files) all.Add((rel + "/" + Path.GetFileName(f), WorkflowParser.ParseFile(f, "stock")));
+                foreach (var f in files)
+                {
+                    if (!DeclaresV3(f)) { all.Add((rel + "/" + Path.GetFileName(f), WorkflowParser.ParseFile(f, "stock"))); continue; }
+                    var frozenRel = rel + "-compat/" + ConvertedRelease + "/" + Path.GetFileName(f);
+                    var frozen = Path.Combine(root, frozenRel.Replace('/', Path.DirectorySeparatorChar));
+                    Assert.True(File.Exists(frozen), $"{rel}/{Path.GetFileName(f)} is format 3, so its v1 bytes must be frozen at {frozenRel} for this guard to read.");
+                    all.Add((frozenRel, WorkflowParser.ParseFile(frozen, "stock")));
+                    converted++;
+                }
             }
+            Assert.True(converted == ConvertedCount, $"{converted} stock files are format 3; the guard was written against {ConvertedCount}. A file converted or put back changes what it reads.");
             return all;
         }
 

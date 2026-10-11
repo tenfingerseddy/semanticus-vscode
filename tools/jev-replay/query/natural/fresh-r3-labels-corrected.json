@@ -1,0 +1,5306 @@
+{
+ "point": "query.summarize",
+ "set": "fresh-r3",
+ "note": "60 everyday questions (35 Northstar raw, 25 Contoso asked of both copies) written on 29 Sep 2026 by a separate Claude Code session given only the two models' table, column and measure names (no code, no rules, no values, no reports), labelled by the round-3 builder before any code change and before any run; run once, at the end; nothing is tuned on it. Corrected in round 5 (29 Sep) for the items carrying a \"correction\" field: an accepted reading was added; nothing was removed.",
+ "items": [
+  {
+   "id": "nn3-001",
+   "words": "What were net sales last month?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[YearMonth]"
+       ],
+       "op": "is",
+       "values": [
+        "2025-09"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[MonthName]"
+       ],
+       "op": "is",
+       "values": [
+        "September"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-09-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-10-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[YearMonth]"
+       ],
+       "op": "is",
+       "values": [
+        "2025-12"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[MonthName]"
+       ],
+       "op": "is",
+       "values": [
+        "December"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-12-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales for September 2025, the last full month the data holds (it ends 11 October 2025). The data ends a year before today, so asking which month is meant is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[YearMonth]"
+      ],
+      "op": "is",
+      "values": [
+       "2025-09"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar",
+   "correction": "round 5, 29 Sep: date end 31 Dec 2025: last month is December 2025"
+  },
+  {
+   "id": "nn3-002",
+   "words": "Show gross profit by region for 2025",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Gross profit by region for 2025, by the store's or the customer's region; asking which region is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-003",
+   "words": "Which store had the highest net sales this year?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": {
+      "n": 1,
+      "by": [
+       "Net Sales"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": {
+      "n": 1,
+      "by": [
+       "Net Sales"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales by store for 2025 (the data's year), highest first or the top one. The data ends a year before today, so asking which year is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-004",
+   "words": "Top 10 products by units sold last quarter",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q3"
+       ]
+      }
+     ],
+     "top": {
+      "n": 10,
+      "by": [
+       "Units"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[ProductName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-07-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-10-01"
+       ]
+      }
+     ],
+     "top": {
+      "n": 10,
+      "by": [
+       "Units"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": true,
+   "why": "The 10 products with the most units in Q3 2025, the last full quarter the data holds. Asking which quarter is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     },
+     {
+      "column": [
+       "Date[Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "Q3"
+      ]
+     }
+    ],
+    "top": {
+     "n": 10,
+     "by": [
+      "Units"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-005",
+   "words": "Compare margin % this year vs last year by category",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025",
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Margin % by category with 2025 and 2024 side by side (the data holds only those two years).",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025",
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-006",
+   "words": "What's the return rate % by channel?",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Channel]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Return rate % split by store channel.",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-007",
+   "words": "Average order value by customer segment",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Segment]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Average order value split by customer segment.",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-008",
+   "words": "How many orders did we get in March?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[MonthName]"
+       ],
+       "op": "is",
+       "values": [
+        "March"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[MonthName]"
+       ],
+       "op": "is",
+       "values": [
+        "March"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[YearMonth]"
+       ],
+       "op": "is",
+       "values": [
+        "2025-03"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[MonthName]"
+       ],
+       "op": "is",
+       "values": [
+        "March"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Orders in March: the data holds March 2024 and March 2025, so each March on its own or the latest one; never the two added. Asking which is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[MonthName]"
+      ],
+      "op": "is",
+      "values": [
+       "March"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-009",
+   "words": "net sales by month for the last 12 months",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2024-11-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-11-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2024-10-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-10-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales month by month (each month of each year) for the latest 12 months of data, or every month to read them off.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-010",
+   "words": "Which brand has the worst margin?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Margin %",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Margin %",
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Margin %",
+       "Gross Profit"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Margin by brand, lowest first or the bottom one.",
+   "expect": {
+    "measures": [
+     [
+      "Margin %",
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-011",
+   "words": "Show total cost vs net sales by quarter",
+   "type": "two_numbers_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Cost"
+      ],
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Total cost and net sales side by side for each quarter of each year.",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ],
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ],
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-012",
+   "words": "Bottom 5 stores by gross profit in 2025",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": {
+      "n": 5,
+      "by": [
+       "Gross Profit"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 5 stores with the lowest gross profit in 2025.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": {
+     "n": 5,
+     "by": [
+      "Gross Profit"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-013",
+   "words": "what was our retrun rate last year",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Return rate % for 2024, the year before the data's latest year. Asking which year is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar",
+   "correction": "round 5, 29 Sep: date end 31 Dec 2025: last year is 2025, the year the data ends in"
+  },
+  {
+   "id": "nn3-014",
+   "words": "Net sales on weekends vs weekdays",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[IsWeekend]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Net sales for weekend days beside weekdays, split by IsWeekend.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[IsWeekend]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-015",
+   "words": "Which city brings in the most revenue?",
+   "type": "business_word",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[City]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[City]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[City]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Net Sales"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[City]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Net Sales"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales (revenue) by the store's or the customer's city, highest first or the top one; asking which city is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-016",
+   "words": "gross proft by subcategory for Q2",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ],
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q2"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Gross Profit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q2"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Gross profit by subcategory for Q2, each year's Q2 on its own or the latest (2025); never both years added.",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ],
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "Q2"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-017",
+   "words": "How did units sold change month over month this year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[MonthName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Units month by month in 2025, so the change can be read off; the model has no change measure, so asking is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-018",
+   "words": "Returns amount by store in the North region",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Region]"
+       ],
+       "op": "is",
+       "values": [
+        "North"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returns amount for each store in the North store region.",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "North"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-019",
+   "words": "Top 3 customers by net sales in 2026",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "The data holds no 2026, so this cannot be answered as asked.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-020",
+   "words": "What day of the week has the most orders?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[DayOfWeek]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[DayOfWeek]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Order Count"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Orders by day of the week, most first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-021",
+   "words": "Show margin % trend by month",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[YearMonth]",
+       "Date[MonthStart]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[MonthName]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Margin % for each month of each year.",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[YearMonth]",
+      "Date[MonthStart]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-022",
+   "words": "Compare net sales for Online vs In-Store channel",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Channel]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Channel]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[Channel]"
+       ],
+       "op": "is",
+       "values": [
+        "Online",
+        "Store"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "There is no In-Store channel, so net sales by channel lets them compare Online with the rest; asking is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar",
+   "correction": "round 5, 29 Sep: the fixture has a Store channel value, so \"In-Store\" is a slip of the word for it: Online and Store side by side is the right reading"
+  },
+  {
+   "id": "nn3-023",
+   "words": "Which category grew the most year over year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales by category for each year, so growth can be read off; the model has no growth measure, so asking is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-024",
+   "words": "average ordr value by region last quarter",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q3"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q3"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-07-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-10-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-07-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-10-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-10-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q4"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Average Order Value"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-10-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Average order value by region for Q3 2025, the last full quarter. Asking which region or quarter is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     },
+     {
+      "column": [
+       "Date[Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "Q3"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar",
+   "correction": "round 5, 29 Sep: date end 31 Dec 2025: last quarter is Q4 2025"
+  },
+  {
+   "id": "nn3-025",
+   "words": "How many units of each brand did we sell this year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "from",
+       "values": [
+        "2025-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Date[Date]"
+       ],
+       "op": "before",
+       "values": [
+        "2026-01-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Units by brand for 2025, the data's latest year.",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-026",
+   "words": "Net sales for stores that opened in 2024",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Store[OpenDate]"
+       ],
+       "op": "from",
+       "values": [
+        "2024-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Store[OpenDate]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-01-01"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[StoreName]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Store[OpenDate]"
+       ],
+       "op": "from",
+       "values": [
+        "2024-01-01"
+       ]
+      },
+      {
+       "column": [
+        "Store[OpenDate]"
+       ],
+       "op": "before",
+       "values": [
+        "2025-01-01"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Net sales of the stores whose open date falls in 2024, as a total or store by store. Not sales made in 2024.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[OpenDate]"
+      ],
+      "op": "from",
+      "values": [
+       "2024-01-01"
+      ]
+     },
+     {
+      "column": [
+       "Store[OpenDate]"
+      ],
+      "op": "before",
+      "values": [
+       "2025-01-01"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-027",
+   "words": "Rank subcategories by return rate %",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Return Rate %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Subcategory]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Return rate % by subcategory.",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-028",
+   "words": "Year to date net sales vs same period last year",
+   "type": "time",
+   "accept": "decline",
+   "askOk": true,
+   "why": "Year to date against the same days last year needs a date comparison the model cannot build in one reading.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-029",
+   "words": "Which products have the highest list price?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "List price is a column, not a number the model adds up, so there is no measure to rank products by.",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-030",
+   "words": "order count by customer city",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Count"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[City]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order count by customer city.",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-031",
+   "words": "What's the gross profit for the Premium segment this quarter?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "There is no Premium segment (only Retail and Trade).",
+   "expect": "decline",
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-032",
+   "words": "Show net sales by year and quarter",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ],
+      [
+       "Date[Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Net sales by year and quarter.",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ],
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-033",
+   "words": "top 5 regoins by margin %",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Margin %"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Margin %"
+      ],
+      "lowest": false
+     }
+    },
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Store[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Margin %"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Customer[Region]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Margin % by region, top 5 (there are only four regions); store or customer region, so asking is fair.",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Margin %"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-034",
+   "words": "How much did we lose to returns in Q1?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Date[Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q1"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Returns Amount"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Date[Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      },
+      {
+       "column": [
+        "Date[Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "Q1"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Returns amount in Q1, each year's Q1 on its own or the latest (2025); never both years added.",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "Q1"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "nn3-035",
+   "words": "Net sales by category sorted by category order",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Net Sales"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Product[CategorySortOrder]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Net sales by category (the order is not scored).",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "northstar"
+  },
+  {
+   "id": "ncr3-001",
+   "words": "What was total revenue last year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue for last year: 2024 if the data runs into 2025, or by year to read it off. Asking is fair: the model has no dates to tell.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-001"
+  },
+  {
+   "id": "nca3-001",
+   "words": "What was total revenue last year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue for last year: 2024 if the data runs into 2025, or by year to read it off. Asking is fair: the model has no dates to tell.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-001"
+  },
+  {
+   "id": "ncr3-002",
+   "words": "Top 10 products by total revenue",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 10,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 10 products with the most revenue.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso",
+   "pair": "nc3-002"
+  },
+  {
+   "id": "nca3-002",
+   "words": "Top 10 products by total revenue",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 10,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 10 products with the most revenue.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-002"
+  },
+  {
+   "id": "ncr3-003",
+   "words": "Revenue by country for 2025",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by country for 2025.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-003"
+  },
+  {
+   "id": "nca3-003",
+   "words": "Revenue by country for 2025",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by country for 2025.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-003"
+  },
+  {
+   "id": "ncr3-004",
+   "words": "Which state had the most returned units?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "Returned units reach only Product, so they cannot be split by state.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc3-004"
+  },
+  {
+   "id": "nca3-004",
+   "words": "Which state had the most returned units?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "Returned units reach only Product, so they cannot be split by state.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc3-004"
+  },
+  {
+   "id": "ncr3-005",
+   "words": "Compare total revenue this year vs last year",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025",
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue by year, this year beside last; the model has no dates to say which is this year.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025",
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-005"
+  },
+  {
+   "id": "nca3-005",
+   "words": "Compare total revenue this year vs last year",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2025",
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue by year, this year beside last; the model has no dates to say which is this year.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025",
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-005"
+  },
+  {
+   "id": "ncr3-006",
+   "words": "Order quantity by month name",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order quantity by month name, as asked.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-006"
+  },
+  {
+   "id": "nca3-006",
+   "words": "Order quantity by month name",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Month Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Order quantity by month name, as asked.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-006"
+  },
+  {
+   "id": "ncr3-007",
+   "words": "Revenue per unit by brand",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by brand.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-007"
+  },
+  {
+   "id": "nca3-007",
+   "words": "Revenue per unit by brand",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by brand.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-007"
+  },
+  {
+   "id": "ncr3-008",
+   "words": "Which promotion drove the most revenue?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by promotion, most first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-008"
+  },
+  {
+   "id": "nca3-008",
+   "words": "Which promotion drove the most revenue?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by promotion, most first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-008"
+  },
+  {
+   "id": "ncr3-009",
+   "words": "total revenu by color",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by colour.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-009"
+  },
+  {
+   "id": "nca3-009",
+   "words": "total revenu by color",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by colour.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-009"
+  },
+  {
+   "id": "ncr3-010",
+   "words": "Bottom 5 cities by order quantity",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[City]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 5 cities with the lowest order quantity.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Order Quantity"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "contoso",
+   "pair": "nc3-010"
+  },
+  {
+   "id": "nca3-010",
+   "words": "Bottom 5 cities by order quantity",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[City]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Order Quantity"
+      ],
+      "lowest": true
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 5 cities with the lowest order quantity.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Order Quantity"
+     ],
+     "lowest": true
+    }
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-010"
+  },
+  {
+   "id": "ncr3-011",
+   "words": "Show revenue by fiscal quarter",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by fiscal quarter.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-011"
+  },
+  {
+   "id": "nca3-011",
+   "words": "Show revenue by fiscal quarter",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by fiscal quarter.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-011"
+  },
+  {
+   "id": "ncr3-012",
+   "words": "How many units were returned in 2024?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "Returned units reach only Product, so they cannot be narrowed to a year.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc3-012"
+  },
+  {
+   "id": "nca3-012",
+   "words": "How many units were returned in 2024?",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "Returned units reach only Product, so they cannot be narrowed to a year.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc3-012"
+  },
+  {
+   "id": "ncr3-013",
+   "words": "Which category sells the most units?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Order Quantity"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Units by category, most first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-013"
+  },
+  {
+   "id": "nca3-013",
+   "words": "Which category sells the most units?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Order Quantity"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Units by category, most first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-013"
+  },
+  {
+   "id": "ncr3-014",
+   "words": "Revenue per unit by category and year",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by category and year.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-014"
+  },
+  {
+   "id": "nca3-014",
+   "words": "Revenue per unit by category and year",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by category and year.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-014"
+  },
+  {
+   "id": "ncr3-015",
+   "words": "top 3 brnads by revenue in Germany",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Germany"
+       ]
+      }
+     ],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The top 3 brands by revenue in Germany.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Germany"
+      ]
+     }
+    ],
+    "top": {
+     "n": 3,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso",
+   "pair": "nc3-015"
+  },
+  {
+   "id": "nca3-015",
+   "words": "top 3 brnads by revenue in Germany",
+   "type": "misspelling",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Brand]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "Germany"
+       ]
+      }
+     ],
+     "top": {
+      "n": 3,
+      "by": [
+       "Total Revenue"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The top 3 brands by revenue in Germany.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Germany"
+      ]
+     }
+    ],
+    "top": {
+     "n": 3,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-015"
+  },
+  {
+   "id": "ncr3-016",
+   "words": "What's the trend of total revenue by calendar year?",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by calendar year.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-016"
+  },
+  {
+   "id": "nca3-016",
+   "words": "What's the trend of total revenue by calendar year?",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by calendar year.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-016"
+  },
+  {
+   "id": "ncr3-017",
+   "words": "Returned units by product category",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned units by product category.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-017"
+  },
+  {
+   "id": "nca3-017",
+   "words": "Returned units by product category",
+   "type": "plain_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Category]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Returned units by product category.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-017"
+  },
+  {
+   "id": "ncr3-018",
+   "words": "Rank states by total revenue in the United States",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[State]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "United States"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by state within the United States.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "United States"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-018"
+  },
+  {
+   "id": "nca3-018",
+   "words": "Rank states by total revenue in the United States",
+   "type": "narrowed_total",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[State]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Geography[Country]"
+       ],
+       "op": "is",
+       "values": [
+        "United States"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue by state within the United States.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "United States"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-018"
+  },
+  {
+   "id": "ncr3-019",
+   "words": "order qty by promotion name last year",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Order quantity by promotion for last year (2024), or by year too to read it off.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-019"
+  },
+  {
+   "id": "nca3-019",
+   "words": "order qty by promotion name last year",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Calendar Year]"
+       ],
+       "op": "is",
+       "values": [
+        "2024"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Order Quantity"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Promotion[Promotion Name]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Order quantity by promotion for last year (2024), or by year too to read it off.",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-019"
+  },
+  {
+   "id": "ncr3-020",
+   "words": "Which color has the highest revenue per unit?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Revenue per Unit"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by colour, highest first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-020"
+  },
+  {
+   "id": "nca3-020",
+   "words": "Which color has the highest revenue per unit?",
+   "type": "best_worst",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Revenue per Unit"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Color]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 1,
+      "by": [
+       "Revenue per Unit"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "Revenue per unit by colour, highest first or the top one.",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-020"
+  },
+  {
+   "id": "ncr3-021",
+   "words": "Compare revenue in Q1 vs Q2 fiscal quarter",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Fiscal Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "FY Q1",
+        "FY Q2"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Fiscal Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "FY Q1",
+        "FY Q2"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue for FY Q1 beside FY Q2.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Fiscal Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "FY Q1",
+       "FY Q2"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-021"
+  },
+  {
+   "id": "nca3-021",
+   "words": "Compare revenue in Q1 vs Q2 fiscal quarter",
+   "type": "compare",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Fiscal Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "FY Q1",
+        "FY Q2"
+       ]
+      }
+     ],
+     "top": null
+    },
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ],
+      [
+       "Calendar[Fiscal Quarter]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Fiscal Quarter]"
+       ],
+       "op": "is",
+       "values": [
+        "FY Q1",
+        "FY Q2"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue for FY Q1 beside FY Q2.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Fiscal Quarter]"
+      ],
+      "op": "is",
+      "values": [
+       "FY Q1",
+       "FY Q2"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-021"
+  },
+  {
+   "id": "ncr3-022",
+   "words": "Top 5 products by returned units",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Returned Units"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 5 products with the most returned units.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Returned Units"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso",
+   "pair": "nc3-022"
+  },
+  {
+   "id": "nca3-022",
+   "words": "Top 5 products by returned units",
+   "type": "top_n_natural",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Returned Units"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Product[Product Name]"
+      ]
+     ],
+     "filters": [],
+     "top": {
+      "n": 5,
+      "by": [
+       "Returned Units"
+      ],
+      "lowest": false
+     }
+    }
+   ],
+   "askOk": false,
+   "why": "The 5 products with the most returned units.",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Returned Units"
+     ],
+     "lowest": false
+    }
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-022"
+  },
+  {
+   "id": "ncr3-023",
+   "words": "How much revenue did we make in December?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Month Name]"
+       ],
+       "op": "is",
+       "values": [
+        "December"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue in December, each year's December on its own (the model has no dates to say which is the latest); never the three added.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Month Name]"
+      ],
+      "op": "is",
+      "values": [
+       "December"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-023"
+  },
+  {
+   "id": "nca3-023",
+   "words": "How much revenue did we make in December?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [
+      {
+       "column": [
+        "Calendar[Month Name]"
+       ],
+       "op": "is",
+       "values": [
+        "December"
+       ]
+      }
+     ],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue in December, each year's December on its own (the model has no dates to say which is the latest); never the three added.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Month Name]"
+      ],
+      "op": "is",
+      "values": [
+       "December"
+      ]
+     }
+    ],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-023"
+  },
+  {
+   "id": "ncr3-024",
+   "words": "revenue by city in California",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "The data holds no California.",
+   "expect": "decline",
+   "model": "contoso",
+   "pair": "nc3-024"
+  },
+  {
+   "id": "nca3-024",
+   "words": "revenue by city in California",
+   "type": "not_in_model",
+   "accept": "decline",
+   "askOk": true,
+   "why": "The data holds no California.",
+   "expect": "decline",
+   "model": "contoso-ai",
+   "pair": "nc3-024"
+  },
+  {
+   "id": "ncr3-025",
+   "words": "Which country grew revenue the most year over year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue by country for each year, so growth can be read off; the model has no growth measure.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ],
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso",
+   "pair": "nc3-025"
+  },
+  {
+   "id": "nca3-025",
+   "words": "Which country grew revenue the most year over year?",
+   "type": "time",
+   "accept": [
+    {
+     "measures": [
+      [
+       "Total Revenue"
+      ]
+     ],
+     "groupBy": [
+      [
+       "Geography[Country]"
+      ],
+      [
+       "Calendar[Calendar Year]"
+      ]
+     ],
+     "filters": [],
+     "top": null
+    }
+   ],
+   "askOk": true,
+   "why": "Revenue by country for each year, so growth can be read off; the model has no growth measure.",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ],
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "model": "contoso-ai",
+   "pair": "nc3-025"
+  }
+ ]
+}

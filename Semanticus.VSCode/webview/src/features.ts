@@ -1,33 +1,43 @@
-// The Free and Pro line, by FEATURE (Kane, 2026-09-15). Pro is four whole features, not a list of big
-// buttons: if a feature is Pro, its tab is Pro and every tool behind it is Pro, reads included, on both
-// doors. Everything else is free, including every one-click bulk apply that used to be the moat.
+// The Free and Pro line, by FEATURE. Kane set it on 2026-09-15 as four features, and narrowed it to ONE on
+// 2026-09-22 (docs/redesign/ui-hierarchy.md, his answer 3): free is the tool, Pro is the tool that works
+// for you. Everything a person can do by hand, or with their own assistant, is free. Advanced modelling,
+// Validation, Reports, Model Spec, Docs, Model notes, Power Query and the advanced Publish tools were all
+// paid before that date and are free from it. What stays paid is the product DECIDING and DOING: the plan
+// ranked, scored and run, Build from a source, Fix in one click, the proposed defaults, the ask box, and
+// Workflows as a whole.
 //
 // This file is the page's half of that vocabulary and nothing more. The ENGINE is the authority: it keys
 // its own gate on the IEngine method, and it decides what an entitlement grants. The page uses this map to
 // choose what to RENDER, so a locked tool shows a preview instead of loading paid data. A page that
 // disagreed with the engine would only be wrong on screen; it could never open a door the engine shut.
 
-export type ProFeature = 'modelCreate' | 'tests' | 'publishedAdvanced' | 'workflows';
+// Ask your data joined on 26 September 2026 (Kane: build the page now). It is a whole page under Explore, and
+// the engine reports it as the wire id askData (ProFeatures.WireId).
+export type ProFeature = 'workflows' | 'askData';
 
-/** The four, in the order the entitlement lists them. An entitlement that carries no features array at all
- *  falls back to this whole list for a paid tier, because a token minted before the claim existed must not
- *  quietly become a new, emptier product tier. */
-export const PRO_FEATURES: ProFeature[] = ['modelCreate', 'tests', 'publishedAdvanced', 'workflows'];
+/** What a paid entitlement carries. get_entitlement.features will list exactly this (the engine lane).
+ *  An entitlement with no features array at all falls back to this whole list for a paid tier, because a
+ *  token minted before the claim existed must not quietly become a new, emptier product tier. */
+export const PRO_FEATURES: ProFeature[] = ['workflows', 'askData'];
+
+/** Features that USED to be Pro and are free from 22 September 2026.
+ *
+ *  They are a type and not a map on purpose: a caller that still asks about one gets 'granted', which is
+ *  the honest answer, instead of a compile error in a lane that does not own the file. Every name here is
+ *  a deletion waiting to happen; remove it the moment its last caller stops asking. Nothing in this list
+ *  can ever gate anything, because FEATURE_OF_TOOL below is the only gate and it names none of them. */
+export type RetiredProFeature = 'modelCreate' | 'tests' | 'publishedAdvanced';
+export const RETIRED_FEATURES: RetiredProFeature[] = ['modelCreate', 'tests', 'publishedAdvanced'];
+export function isRetiredFeature(feature: string): feature is RetiredProFeature {
+  return (RETIRED_FEATURES as string[]).includes(feature);
+}
 
 /** Which tool belongs to which feature. A tool that is not here is FREE, and that is the whole rule.
- *  `deploy` is deliberately absent: Publish, Promote, compare and restore points stay free, and only the
- *  Advanced mode inside that page is gated, by deploy.tsx itself. `dataagent` is the legacy route to that
- *  same Advanced mode, so it is gated here as well and has no side door. */
+ *  Two entries, because two whole tabs are paid (Ask your data joined on 26 September). `deploy` is free and so is its Advanced mode; `dataagent` is
+ *  the legacy route into that same Advanced mode and is free with it. */
 export const FEATURE_OF_TOOL: Record<string, ProFeature> = {
-  spec: 'modelCreate',
-  advmodels: 'modelCreate',
-  mcode: 'modelCreate',
-  docs: 'modelCreate',
-  knowledge: 'modelCreate',
-  tests: 'tests',
-  evidence: 'tests',
-  dataagent: 'publishedAdvanced',
   workflows: 'workflows',
+  askdata: 'askData',
 };
 
 /** The one place a caller asks "is this tool gated". Nobody rebuilds the map. */
@@ -37,16 +47,34 @@ export function featureOfTool(tool: string): ProFeature | null {
 
 /** What the feature is called on screen. Plain words, the same words the tabs use. */
 export const FEATURE_NAME: Record<ProFeature, string> = {
-  modelCreate: 'Create in Model',
-  tests: 'Tests',
-  publishedAdvanced: 'Advanced publishing',
   workflows: 'Workflows',
+  askData: 'Ask your data',
 };
+
+/**
+ * Does this tier get the Plan RANKED, SCORED and RUN? (Kane, 21 September, docs/redesign/ui-hierarchy.md
+ * item 3: "Free users see the plan's gaps in rule order with a do-it-by-hand jump on each; Pro ranks,
+ * scores and runs them.")
+ *
+ * This one is keyed on the TIER and NOT on a second ProFeature, and that is not a shortcut. The engine
+ * gates the ranking on Entitlement.FeatureGrants.IsProTier (Semanticus.Engine/LocalEngine.Plan.cs:842),
+ * because a registered decision point is not a Pro tab. get_entitlement.features only ever carries the
+ * wire ids of the paid TABS, so an id here would answer "denied" for a paying Pro customer and the page
+ * would show them an upsell for something they had already bought.
+ *
+ * Three answers, because unknown is a real state and not a loading detail: before the first
+ * get_entitlement lands, neither the ranked page nor the upsell is the honest thing to draw.
+ *
+ * Pure, so the page's tests can run it without React. The caller passes what useTier() gave it.
+ */
+export type PlanRankingGrant = 'unknown' | 'granted' | 'denied';
+export function planRankingOf(tier: string): PlanRankingGrant {
+  if (tier === 'unknown') return 'unknown';
+  return tier === 'pro' ? 'granted' : 'denied';
+}
 
 /** What a person on the free plan still has. Said on every preview, so a locked page is never a dead end. */
 export const FEATURE_STILL_FREE: Record<ProFeature, string> = {
-  modelCreate: 'Editing measures, columns and relationships stays free.',
-  tests: 'Model quality and AI understanding still check your whole model for free.',
-  publishedAdvanced: 'Publish, Promote, compare and restore points stay free.',
   workflows: 'The app still shows any run already going and anything waiting for you.',
+  askData: 'Queries still runs any query you write, and your own assistant can still write and run one for you.',
 };

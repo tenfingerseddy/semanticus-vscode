@@ -35,11 +35,11 @@ namespace Semanticus.Engine
     // WorkflowRunner replaces only the ratified [[loop.*]] tokens for an already-expanded iteration.
     // ============================================================================================
 
-    public static class WorkflowParser
+    public static partial class WorkflowParser
     {
         /// <summary>The highest <c>schemaVersion</c> this engine reads. Raising it is a format change:
         /// see docs/workflow-canvas-spec.md §1.2 before touching it.</summary>
-        public const int MaxSchemaVersion = 2;
+        public const int MaxSchemaVersion = 3;
 
         private static readonly string[] Strictnesses = { "hard", "warn", "off" };
         private static readonly string[] InputTypes = { "verification", "text", "enum", "number", "objectRef", "planItem" };
@@ -65,6 +65,32 @@ namespace Semanticus.Engine
         private static readonly string[] GateInputKeys = { "name", "question", "type", "required", "daxPurity", "scope" };
         private static readonly string[] GateVerifyKeys = { "kind", "when", "probe", "scope", "intent", "pinnedShapes", "openShapes", "openShapesFrom", "openMismatch", "anchors" };
         private static readonly string[] StepKeys = { "id", "when", "forEach", "call" };
+        // ---- format v3 (composer contract section 1): the v2 sets plus the composer keys. A v3 key in a
+        // v2 file is the v2 closed-set error, naming the key, the scope and the line, because the v2 sets
+        // above are still the ones a v2 file is read against.
+        private static readonly string[] FrontmatterKeysV3 = FrontmatterKeys.Concat(new[] { "assistantNotes", "inputs" }).ToArray();
+        private static readonly string[] StepKeysV3 = StepKeys.Concat(new[] { "performer", "phase", "action", "questions", "blanks", "instructions", "checks" }).ToArray();
+        private static readonly string[] QuestionKeys = { "name", "question", "type", "required", "by", "values", "from", "jev", "default" };
+        private static readonly string[] BlankKeys = { "name", "kind", "fills", "by", "dependsOn", "maxChars", "choices", "generator" };
+        private static readonly string[] CheckKeys = { "kind", "phase", "target", "min", "max", "of", "when" };
+        private static readonly string[] QuestionListKeys = { "values" };
+        private static readonly string[] BlankListKeys = { "dependsOn" };
+        private static readonly string[] CheckListKeys = { "of" };
+        private static readonly string[] QuestionTypes = { "text", "enum", "number", "objectRef" };   // verification and planItem stay gate-only
+        private static readonly string[] QuestionRequireds = { "required", "optional" };
+        private static readonly string[] QuestionBys = { "you", "assistant", "semanticus" };
+        private static readonly string[] BlankBys = { "assistant", "you" };
+        private static readonly string[] Phases = { OpParameterKinds.Change, OpParameterKinds.After };
+        /// <summary>Contract 1.7: every check kind of the first build, and the one phase it runs in.</summary>
+        internal static readonly IReadOnlyDictionary<string, string> CheckPhases = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["key_unique"] = "before", ["dates_within"] = "before", ["source_matches"] = "before", ["name_free"] = "before",
+            ["valid_dax"] = "written", ["dax_lint"] = "written", ["refs_within"] = "written", ["max_chars"] = "written",
+            ["no_formula_text"] = "written", ["valid_m"] = "written", ["choice_member"] = "written",
+            ["result_range"] = "after", ["row_count"] = "after", ["dax_probe"] = "after", ["dax_equivalence"] = "after",
+            ["expected_values"] = "after", ["tests_replay"] = "after", ["bpa_clean"] = "after", ["readiness_rescan"] = "after",
+        };
+        private const int MaxBriefChars = 2000;
         private static readonly string[] ForEachKeys = { "in", "as", "maxIterations" };
         private static readonly string[] CallKeys = { "workflow", "with", "returns" };
         // Which keys inside a LIST ITEM carry a LIST value, per scope. Everything else in an item is a
@@ -89,7 +115,7 @@ namespace Semanticus.Engine
         /// to prevent. Reserved is not implemented, and nothing here defines semantics.</summary>
         public static readonly IReadOnlyList<ReservedKeySpec> ReservedDestinationKeys = new[]
         {
-            new ReservedKeySpec { Key = "instructions", Scope = "step", Reason = "'instructions:' is reserved for a later version of this format. Custom instructions on a step are not built yet. Write the guidance in the step body instead." },
+            new ReservedKeySpec { Key = "instructions", Scope = "step", Reason = "'instructions:' is reserved for version 3 of this format, which reads it as the step's brief. Upgrade this workflow to version 3 to use it, or write the guidance in the step body." },
             new ReservedKeySpec { Key = "maxRunTime", Scope = "step", Reason = "'maxRunTime:' is reserved for a later version of this format. Nothing times a step out today." },
             new ReservedKeySpec { Key = "approvals", Scope = "step", Reason = "'approvals:' is reserved for a later version of this format. Requiring someone to approve a step before it runs is not built yet." },
             new ReservedKeySpec { Key = "agent", Scope = "step", Reason = "'agent:' is reserved for a later version of this format. Choosing which assistant runs a step is not built yet." },
@@ -210,6 +236,7 @@ namespace Semanticus.Engine
                 if (def.Steps.Length == 0) throw new FormatException("no '## Step N:' headings found.");
                 ValidateInputBindings(def);
                 if (def.SchemaVersion >= 2) ValidateV2(def);
+                if (def.SchemaVersion >= 3) ValidateV3(def);
             }
             catch (Exception ex) { def.Error = ex.Message; }
             return def;
@@ -337,6 +364,34 @@ namespace Semanticus.Engine
                 .Where(i => StepHeading.IsMatch(lines[i])).ToArray());
         }
 
+        /// <summary>The v2 to v3 upgrader's anchors (composer contract 11.3): the version line, and for each
+        /// step its heading line and the line of its `yaml step` fence, or -1 when it has none. The fence is
+        /// found the way <see cref="ExtractFences"/> finds it: the first anchored step fence in the step's body,
+        /// with a gate fence's interior skipped, so the upgrader and the reader agree on which fence is the
+        /// step's.</summary>
+        internal static (int VersionLine, (int Heading, int Fence)[] Steps) UpgradeV3Anchors(string text)
+        {
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            var start = Math.Min(FrontmatterEnd(lines) + 1, lines.Length);
+            var headings = Enumerable.Range(start, lines.Length - start).Where(i => StepHeading.IsMatch(lines[i])).ToArray();
+            var steps = new (int Heading, int Fence)[headings.Length];
+            for (var h = 0; h < headings.Length; h++)
+            {
+                var end = h + 1 < headings.Length ? headings[h + 1] : lines.Length;
+                var fence = -1;
+                for (var i = headings[h] + 1; i < end && fence < 0; i++)
+                {
+                    var isGate = GateFenceOpen.IsMatch(lines[i]);
+                    if (!isGate && !StepFenceOpen.IsMatch(lines[i])) continue;
+                    if (!isGate) { fence = i; break; }
+                    while (i + 1 < end && lines[i + 1].TrimEnd() != "```") i++;
+                    i++;   // the gate's closing line
+                }
+                steps[h] = (headings[h], fence);
+            }
+            return (VersionLineIndex(lines), steps);
+        }
+
         /// <summary>True when <paramref name="index"/> is the line the version scan would have read as the
         /// file's version: at column zero, and before the first nested line. <see cref="ParseFrontmatter"/>
         /// uses it to tell the ONE declaration that counts from every other `schemaVersion` in the file, so
@@ -458,10 +513,17 @@ namespace Semanticus.Engine
             if (versionEntry != null && !ReferenceEquals(first, versionEntry))
                 throw new FormatException($"schemaVersion must be the first key of the frontmatter, but '{first.Key}' comes before it (line {versionEntry.Line}). The version has to be known before any other key is read.");
 
+            var v3 = def.SchemaVersion >= 3;
             foreach (var e in map.Entries)
             {
                 switch (e.Key)
                 {
+                    case "assistantNotes" when v3:
+                        def.AssistantNotes = CappedText(e, "frontmatter");
+                        break;
+                    case "inputs" when v3:
+                        def.Inputs = SeqOfMaps(e, "inputs", QuestionListKeys).Select(m => ToQuestion(m, "inputs")).ToArray();
+                        break;
                     case "schemaVersion":
                         // The scan SELECTED this parser from the literal text `schemaVersion: 2` and that is
                         // all the scan does (read eight's ruling: the scan stays dumb). The value the YAML
@@ -507,7 +569,7 @@ namespace Semanticus.Engine
                         var reservedHere = Reservation("frontmatter", e.Key);
                         if (reservedHere != null)
                             throw new FormatException($"frontmatter: {reservedHere.Reason} Nothing was saved.");
-                        throw Unknown("frontmatter", "frontmatter", e.Key, e.Line, FrontmatterKeys);
+                        throw Unknown("frontmatter", "frontmatter", e.Key, e.Line, v3 ? FrontmatterKeysV3 : FrontmatterKeys);
                 }
             }
             return end + 1;
@@ -521,11 +583,16 @@ namespace Semanticus.Engine
             var steps = new List<WorkflowStep>();
             List<(int No, string Text)> body = null; WorkflowStep step = null; int lastNum = 0;
 
+            var v3 = def.SchemaVersion >= 3;
             void Flush()
             {
                 if (step == null) return;
-                var (instructions, gate, ops) = ExtractFences(body, step, strict);
+                // Contract 1.3: in v3 a step Semanticus runs is the default, so a step that says nothing about
+                // who does it is one, and needs an action. A v1 or v2 step keeps the guided default.
+                if (v3) step.Performer = WorkflowPerformers.Semanticus;
+                var (instructions, gate, ops, sawGate) = ExtractFences(body, step, strict, v3);
                 step.Instructions = instructions; step.Gate = gate; step.Ops = ops;
+                if (v3) FinishV3Step(step, sawGate);
                 steps.Add(step);
             }
 
@@ -573,8 +640,8 @@ namespace Semanticus.Engine
         /// In v1 a `yaml step` fence is ORDINARY TEXT, exactly as it is today: the v1-forever guarantee means
         /// a v1 file cannot start meaning something new. check_workflow warns that the block is inert, so the
         /// silence [T169] is about is broken by lint rather than by changing what a v1 file does.</summary>
-        private static (string instructions, GateSpec gate, string[] ops) ExtractFences(
-            List<(int No, string Text)> body, WorkflowStep step, bool strict)
+        private static (string instructions, GateSpec gate, string[] ops, bool sawGate) ExtractFences(
+            List<(int No, string Text)> body, WorkflowStep step, bool strict, bool v3)
         {
             var text = new List<string>(); GateSpec gate = null; string[] ops = null;
             var sawGate = false; var sawStepFence = false;
@@ -609,16 +676,16 @@ namespace Semanticus.Engine
                     // so the step stays outside HasEnforcedGate and submit skips gate evaluation entirely
                     if (gate.Strictness == null && gate.Inputs.Length == 0 && gate.Verify.Length == 0) gate = null;
                 }
-                else ParseStepFence(yaml, step);
+                else ParseStepFence(yaml, step, v3);
 
                 i = j;                  // the fence is excluded from the instruction text
             }
-            return (string.Join("\n", text).Trim(), gate, ops ?? Array.Empty<string>());
+            return (string.Join("\n", text).Trim(), gate, ops ?? Array.Empty<string>(), sawGate);
         }
 
         // ---- the v2 `yaml step` fence (§1.4-§1.7) ------------------------------------------------
 
-        private static void ParseStepFence(List<(int No, string Text)> yaml, WorkflowStep step)
+        private static void ParseStepFence(List<(int No, string Text)> yaml, WorkflowStep step, bool v3)
         {
             var ctx = $"Step {step.Number} step block";
             var map = RequireMap(ReadYamlBlock(yaml, ctx), ctx);
@@ -655,11 +722,34 @@ namespace Semanticus.Engine
                     case "forEach": step.ForEach = ToForEach(e, step); break;
                     case "call": step.Call = ToCall(e, step); break;
 
+                    // ---- v3 (composer contract 1.3). Each case is guarded, so a v2 file falls through to the
+                    // v2 closed-set refusal below, which is the whole of "a v3 key in a v2 file" (1.1).
+                    case "performer" when v3:
+                        step.Performer = EnumAt(ScalarOf(e, ctx), WorkflowPerformers.All, ctx, "performer", e.Line);
+                        break;
+                    case "phase" when v3:
+                        step.Phase = EnumAt(ScalarOf(e, ctx), Phases, ctx, "phase", e.Line);
+                        step.PhaseWritten = true;
+                        break;
+                    case "action" when v3: step.Action = ToAction(e, step); break;
+                    case "questions" when v3:
+                        step.Questions = SeqOfMaps(e, ctx, QuestionListKeys).Select(m => ToQuestion(m, $"Step {step.Number} question")).ToArray();
+                        break;
+                    case "blanks" when v3:
+                        step.Blanks = SeqOfMaps(e, ctx, BlankListKeys).Select(m => ToBlank(m, step)).ToArray();
+                        break;
+                    // The reserved key, claimed (1.3). It is the Brief, not the step body: the body has been
+                    // `Instructions` since v1 and keeps that meaning.
+                    case "instructions" when v3: step.Brief = CappedText(e, $"Step {step.Number}"); break;
+                    case "checks" when v3:
+                        step.Checks = SeqOfMaps(e, ctx, CheckListKeys).Select(m => ToCheck(m, step)).ToArray();
+                        break;
+
                     default:
                         var reserved = Reservation("step", e.Key);
                         if (reserved != null)
                             throw new FormatException($"Step {step.Number}: {reserved.Reason} Nothing was saved.");
-                        throw Unknown(ctx, "step block", e.Key, e.Line, StepKeys);
+                        throw Unknown(ctx, "step block", e.Key, e.Line, v3 ? StepKeysV3 : StepKeys);
                 }
             }
         }
@@ -951,7 +1041,8 @@ namespace Semanticus.Engine
         /// <summary>Every string on a step that an AUTHOR wrote, so a rule about "anything the author typed"
         /// is applied to all of it rather than to the one field the finding named. Derived from the step
         /// model rather than sampled: `WorkflowStep` plus the four objects it owns (`ForEachSpec`, `CallSpec`,
-        /// `GateSpec`'s inputs and verifies). The enum-validated fields (`kind`, `type`, `required`, `scope`,
+        /// `GateSpec`'s inputs and verifies), and in v3 the action, questions, blanks, checks and Brief
+        /// (<c>V3AuthoredStrings</c>). The enum-validated fields (`kind`, `type`, `required`, `scope`,
         /// `intent`, `openMismatch`, `strictness`) are deliberately left out — <c>RequireEnum</c> has already
         /// refused anything that is not one of a fixed set, so they cannot carry author text of any shape.</summary>
         private static IEnumerable<string> AuthoredStrings(WorkflowStep st)
@@ -979,6 +1070,7 @@ namespace Semanticus.Engine
                 foreach (var s in v.PinnedShapes ?? Array.Empty<string>()) yield return s;
                 foreach (var s in v.OpenShapes ?? Array.Empty<string>()) yield return s;
             }
+            foreach (var s in V3AuthoredStrings(st)) yield return s;
         }
 
         /// <summary>§2.2a, acceptance check 16b — the answers a repeating step may NOT collect.
@@ -1102,10 +1194,12 @@ namespace Semanticus.Engine
             return names;
         }
 
-        /// <summary>All parsed stage-1 control fields execute on the shared runner. Retained as the public
-        /// admission query; later reserved fields are still refused by the file parser.</summary>
+        /// <summary>The admission query: the parsed fields a guided run cannot honour. All stage-1 control
+        /// fields execute on the shared runner, so for v1 and v2 this is empty; the v3 composer fields are
+        /// listed until the composed run path lands (WorkflowParser.V3.cs). Steps come first, then any
+        /// frontmatter field, which carries step number 0 and the id "frontmatter".</summary>
         public static IReadOnlyList<(string StepId, int StepNumber, string Field)> UnexecutableControlFields(WorkflowDef def) =>
-            Array.Empty<(string StepId, int StepNumber, string Field)>();
+            V3UnrunFields(def).ToArray();
 
         /// <summary>The format-v2 findings for one workflow, given the library it sits in. Parse-level
         /// refusals (unknown keys, bad ids, a loop reading a list collected later) are NOT repeated here:

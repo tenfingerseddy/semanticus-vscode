@@ -20,7 +20,7 @@ namespace Semanticus.Engine
         private readonly System.Threading.SemaphoreSlim _knowledgeGate = new System.Threading.SemaphoreSlim(1, 1);
 
         // ---- scope → file (the ExperienceLog placement rule: sidecar beside the model, workspace fallback for
-        //      live/unsaved sessions; global = %USERPROFILE%/.semanticus/knowledge) ------------------------------
+        //      live/unsaved sessions; global = <SemanticusHome>/knowledge) -------------------------------------------
 
         private string ProjectKnowledgeDir()
         {
@@ -35,15 +35,9 @@ namespace Semanticus.Engine
             return sidecar == null ? GlobalKnowledgeDir() : Path.Combine(sidecar, KnowledgeStore.DirName);
         }
 
-        // Honor %USERPROFILE% literally (the spec's global-scope path) — the env var, not GetFolderPath(UserProfile),
-        // which on Windows reads the OS token and ignores the var (so it wouldn't be redirectable/testable). Fall back
-        // to GetFolderPath only if the var is unset.
-        private static string GlobalKnowledgeDir()
-        {
-            var home = Environment.GetEnvironmentVariable("USERPROFILE");
-            if (string.IsNullOrEmpty(home)) home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            return Path.Combine(home, LayoutStore.DirName, KnowledgeStore.DirName);
-        }
+        // The global scope lives in the one per-user home every store resolves through (SemanticusHome:
+        // SEMANTICUS_HOME, else ~/.semanticus), so a test run's scratch home keeps it out of the real one (F-232).
+        internal static string GlobalKnowledgeDir() => Path.Combine(SemanticusHome.Root(), KnowledgeStore.DirName);
 
         private string ScopeDir(string scope)
             => string.Equals(scope, "global", StringComparison.OrdinalIgnoreCase) ? GlobalKnowledgeDir() : ProjectKnowledgeDir();
@@ -126,7 +120,7 @@ namespace Semanticus.Engine
 
         public async Task<InsightRecord> AddInsightAsync(string text, string[] keys, string kind, string scope, bool fingerprintScoped, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             if (string.IsNullOrWhiteSpace(text))
                 throw new InvalidOperationException("An insight needs text: one actionable sentence-to-paragraph.");
             kind = string.Equals(kind, "post-mortem", StringComparison.OrdinalIgnoreCase) ? "post-mortem" : "insight";
@@ -159,34 +153,43 @@ namespace Semanticus.Engine
             }
             finally { _knowledgeGate.Release(); }
 
-            await EmitKnowledgeActivity("add_insight", true, $"Added {kind} {id} ({status}, {scope})", id, origin);
-            return MaterializeOne(file, scope, id);
+            var added = MaterializeOne(file, scope, id);
+            await EmitKnowledgeActivity("add_insight", true, $"Added {kind} {id} ({added?.Status ?? status}, {scope})", id, origin);
+            return added;
         }
 
         public async Task<InsightRecord> ApproveInsightAsync(string id, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             await _knowledgeGate.WaitAsync();
             try
             {
-                var (file, scope, _) = LocateInsight(id);
+                var (file, scope, current) = LocateInsight(id);
+                RequireApprovedBasis(nameof(ApproveInsightAsync), InsightBasis(current), "note");   // the note as the person was asked about it, checked under the knowledge gate
                 KnowledgeStore.Append(file, new KnowledgeStore.Delta { Op = "approve", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent" });
                 var rec = MaterializeOne(file, scope, id);
-                _ = EmitKnowledgeActivity("approve_insight", true, $"Approved insight {id}", id, origin);
+                // The agent door releases a lesson to recall as untrusted data; it cannot approve it (UAT-S06a-1-002).
+                if (rec != null && rec.Status != KnowledgeStore.Approved)
+                    rec.Note = "Released to recall as untrusted data. Only a person can approve it, in Model notes.";
+                _ = EmitKnowledgeActivity("approve_insight", true, rec?.Status == KnowledgeStore.Approved ? $"Approved insight {id}" : $"Released insight {id} to recall, not reviewed", id, origin);
                 return rec;
             }
             finally { _knowledgeGate.Release(); }
         }
 
-        public async Task<InsightRecord> EditInsightAsync(string id, string text, string[] keys, string origin)
+        public async Task<InsightRecord> EditInsightAsync(string id, string text, string[] keys, string origin, string expectedJson = null)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             if (text == null && keys == null)
                 throw new InvalidOperationException("Nothing to edit: provide new text and/or keys.");
             await _knowledgeGate.WaitAsync();
             try
             {
-                var (file, scope, _) = LocateInsight(id);
+                var (file, scope, current) = LocateInsight(id);
+                // The approval was for replacing the note as it read then. Notes do not move the model's revision, so look again here,
+                // under the knowledge gate, before anything is appended: words the person wrote since are theirs, not the assistant's to replace.
+                RequireApprovedBasis(nameof(EditInsightAsync), InsightBasis(current), "note");
+                GuardExpectedFields("lesson", expectedJson, current);   // the editor's starting point against the lesson as it stands inside this write
                 KnowledgeStore.Append(file, new KnowledgeStore.Delta { Op = "edit", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent", Text = text, Keys = keys });
                 var rec = MaterializeOne(file, scope, id);
                 _ = EmitKnowledgeActivity("edit_insight", true, $"Edited insight {id}", id, origin);
@@ -197,13 +200,13 @@ namespace Semanticus.Engine
 
         public Task<InsightRecord> UpvoteInsightAsync(string id, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             return VoteAsync(id, +1, origin);
         }
 
         public Task<InsightRecord> DownvoteInsightAsync(string id, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             return VoteAsync(id, -1, origin);
         }
 
@@ -236,11 +239,12 @@ namespace Semanticus.Engine
 
         public async Task<SetResult> DeleteInsightAsync(string id, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             await _knowledgeGate.WaitAsync();
             try
             {
-                var (file, _, _) = LocateInsight(id);   // throws if it isn't live
+                var (file, _, current) = LocateInsight(id);   // throws if it isn't live
+                RequireApprovedBasis(nameof(DeleteInsightAsync), InsightBasis(current), "note");
                 KnowledgeStore.Append(file, new KnowledgeStore.Delta { Op = "delete", Id = id, When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent" });
                 _ = EmitKnowledgeActivity("delete_insight", true, $"Deleted insight {id}", id, origin);
                 return new SetResult { Changed = true };
@@ -253,13 +257,14 @@ namespace Semanticus.Engine
         /// it in that scope become invisible on replay — the file is not rewritten).</summary>
         public async Task<PurgeResult> PurgeKnowledgeAsync(string scope, bool confirm, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             scope = NormalizeScope(scope);
             var file = ScopeFile(scope);
             await _knowledgeGate.WaitAsync();
             try
             {
                 var (live, _) = KnowledgeStore.Materialize(file, scope);
+                if (confirm) RequireApprovedBasis(nameof(PurgeKnowledgeAsync), GateHash(scope, string.Join("\u001e", live.OrderBy(r => r.Id, StringComparer.Ordinal).Select(InsightBasis))), "notes");
                 if (!confirm)
                     return new PurgeResult { Scope = scope, LiveCount = live.Count, Purged = false, Note = $"DRY RUN: {live.Count} live insight(s) in the '{scope}' scope would be purged. Re-run with confirm=true to erase them." };
                 KnowledgeStore.Append(file, new KnowledgeStore.Delta { Op = "purge", When = DateTime.UtcNow.ToString("o"), Origin = origin ?? "agent" });
@@ -273,7 +278,6 @@ namespace Semanticus.Engine
 
         public Task<InsightListResult> ListInsightsAsync(string scope, string status)
         {
-            RequireProFeature();
             var scopes = string.IsNullOrEmpty(scope) ? new[] { "project", "global" } : new[] { NormalizeScope(scope) };
             var all = new List<InsightRecord>();
             int skipped = 0;
@@ -307,7 +311,6 @@ namespace Semanticus.Engine
         /// read-filtering) discounts stale insights. Each RETURNED insight gets a `retrieve` delta (counter bump).</summary>
         public async Task<RecallResult> RecallExperienceAsync(string query, int maxResults)
         {
-            RequireProFeature();
             var s = _sessions.Require();
             var fp = await s.ReadAsync(m => KnowledgeStore.ComputeFingerprint(m));
             var cap = maxResults <= 0 ? 12 : maxResults;
@@ -323,7 +326,7 @@ namespace Semanticus.Engine
                 var file = ScopeFile(sc);
                 var (live, sk) = KnowledgeStore.Materialize(file, sc);
                 skipped += sk;
-                foreach (var r in live.Where(r => string.Equals(r.Status, "approved", StringComparison.Ordinal)))
+                foreach (var r in live.Where(KnowledgeStore.Recallable))
                 {
                     var keyTokens = (r.Keys ?? Array.Empty<string>()).SelectMany(KnowledgeStore.Words).ToHashSet(StringComparer.Ordinal);
                     var matched = (r.Keys ?? Array.Empty<string>())

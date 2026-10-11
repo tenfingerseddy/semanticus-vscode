@@ -73,7 +73,7 @@ public sealed class WorkflowLayoutTests : IDisposable
     public async Task Stock_override_does_not_shadow_content_and_layouts_are_isolated()
     {
         await Create();
-        var stock = await _engine.GetWorkflowAsync("new-measure");
+        var stock = await _engine.GetWorkflowAsync("optimize-dax");
         var original = File.ReadAllBytes(stock.FilePath);
         await _engine.SaveWorkflowLayoutAsync(stock.Name, Positions(stock.Steps[0].Id));
         Assert.Equal("stock", (await _engine.GetWorkflowAsync(stock.Name)).Source);
@@ -86,12 +86,12 @@ public sealed class WorkflowLayoutTests : IDisposable
     [Fact]
     public async Task Saved_models_use_their_own_sidecar_and_return_to_workspace_fallback_when_unsaved()
     {
-        const string name = "new-measure";
+        const string name = "optimize-dax";
         var stock = await _engine.GetWorkflowAsync(name);
         await _engine.SaveWorkflowLayoutAsync(name, Positions(stock.Steps[0].Id, 11));
         await _sessions.CreateAsync("saved-layout", 1604);
         var modelDir = Path.Combine(_workspace, "saved-model");
-        await _engine.SaveAsync(modelDir, "TMDL");
+        await _engine.SaveAsync(modelDir, "TMDL", false, "human");
         Assert.Empty((await _engine.GetWorkflowLayoutAsync(name)).Positions);
         await _engine.SaveWorkflowLayoutAsync(name, Positions(stock.Steps[0].Id, 22));
         Assert.True(File.Exists(Path.Combine(modelDir, ".semanticus", "workflow-layouts", name + ".json")));
@@ -116,7 +116,7 @@ public sealed class WorkflowLayoutTests : IDisposable
     [Fact]
     public async Task Queued_layout_operations_keep_their_location_across_same_session_save_as()
     {
-        const string name = "new-measure";
+        const string name = "optimize-dax";
         var stock = await _engine.GetWorkflowAsync(name);
         await _engine.SaveWorkflowLayoutAsync(name, Positions(stock.Steps[0].Id, 11));
         await _sessions.CreateAsync("queued-layout", 1604);
@@ -132,7 +132,7 @@ public sealed class WorkflowLayoutTests : IDisposable
             save = _engine.SaveWorkflowLayoutAsync(name, Positions(stock.Steps[0].Id, 22));
             Assert.False(read.IsCompleted);
             Assert.False(save.IsCompleted);
-            await _engine.SaveAsync(modelDir, "TMDL");
+            await _engine.SaveAsync(modelDir, "TMDL", false, "human");
         }
         finally { context.WorkflowGate.Release(); }
         Assert.Equal(11, (await read).Positions[stock.Steps[0].Id].X);
@@ -147,16 +147,16 @@ public sealed class WorkflowLayoutTests : IDisposable
     [Fact]
     public async Task Revision_from_another_project_is_refused_even_when_definition_and_layout_bytes_match()
     {
-        const string name = "new-measure";
+        const string name = "optimize-dax";
         var stock = await _engine.GetWorkflowAsync(name);
         await _sessions.CreateAsync("project-layout", 1604);
         var projectA = Path.Combine(_workspace, "project-a");
         var projectB = Path.Combine(_workspace, "project-b");
-        await _engine.SaveAsync(projectA, "TMDL");
+        await _engine.SaveAsync(projectA, "TMDL", false, "human");
         await _engine.SaveWorkflowLayoutAsync(name, Positions(stock.Steps[0].Id, 11));
         var readA = await _engine.GetWorkflowLayoutAsync(name);
         var fileA = Path.Combine(projectA, ".semanticus", "workflow-layouts", name + ".json");
-        await _engine.SaveAsync(projectB, "TMDL");
+        await _engine.SaveAsync(projectB, "TMDL", false, "human");
         var fileB = Path.Combine(projectB, ".semanticus", "workflow-layouts", name + ".json");
         Directory.CreateDirectory(Path.GetDirectoryName(fileB));
         File.Copy(fileA, fileB, overwrite: true);
@@ -223,7 +223,7 @@ public sealed class WorkflowLayoutTests : IDisposable
     public async Task Remote_agent_and_ui_rpc_share_positions_and_deliver_the_precise_notification()
     {
         await Create();
-        var pipeName = "smx-layout-" + Guid.NewGuid().ToString("N");
+        var pipeName = TestPipe.Mint("smx-layout-");
         const string challenge = "workflow-layout-ui-challenge-0123456789abcdef";
         using var server = new RpcServer(_sessions, _engine, pipeName, challenge);
         using var stop = new CancellationTokenSource();

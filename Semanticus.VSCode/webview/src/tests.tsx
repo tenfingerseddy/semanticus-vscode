@@ -4,6 +4,8 @@ import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResult
 import { useConnection } from './connection';
 import { openSqlSources, listSqlSources, type SqlSourceRecord } from './connectionshub';
 import { PathDisclosure } from './ui';
+import { resultText } from './testresulttext';
+import { evidenceCountsLine } from './evidencesummary.mjs';
 import {
   AuthorDrawer, NewCheckMenu, announceTestSuiteChanged, onTestSuiteChanged,
   type AuthorFocus, type AuthorShape, type MeasureValueParamsW, type ReconcileParamsW,
@@ -11,9 +13,8 @@ import {
 import {
   TABLE_COUNT_FOOTER, comparisonSummary, differenceSentence, familyRan, foldFamilyResult, foldRunResults,
   partRunSummary, relationshipChip, relationshipSummary, relationshipTally, resultChip, runOnlyLabel,
-  relationshipMenuCount, runScopeGroups, savedChecksHint, sectionsForGroup, skippedFamilyNote,
-  tickedMenuNote, tickedRunRefusal,
-  tickingIsPossible, toleranceSentence, unknownCellText,
+  relationshipMenuCount, runScopeGroups, sectionsForGroup, skippedFamilyNote,
+  tickedRunRefusal, toleranceSentence, unknownCellText,
   type RelationshipTally, type ResultChip, type RetainedFamily, type RunGroup, type StoredResult,
 } from './tests-model';
 
@@ -109,7 +110,7 @@ interface TestHistoryW { runs: TestRunRecordW[]; note?: string }
 interface TestReportResultW { markdown?: string; html?: string; json?: string; contentHash?: string; note?: string; error?: string }
 interface EvidenceItemW {
   id: string; kind?: string; title?: string; createdUtc?: string; producer?: string; modelName?: string;
-  verdict?: string; verified?: number; total?: number; unknowns?: number; contentHash?: string;
+  verdict?: string; verified?: number; total?: number; unknowns?: number; verdictCounts?: Record<string, number>; contentHash?: string;
   valid: boolean; note?: string; jsonPath?: string; htmlPath?: string; updatedUtc?: string;
 }
 interface EvidenceLibraryW { modelName?: string; directoryPath?: string; items: EvidenceItemW[]; invalidCount: number; note?: string }
@@ -146,8 +147,7 @@ const verdictKey = (value?: string, missing = false): VerdictKey => {
   return 'NotVerifiable';
 };
 const comparisonVerdict = (value: string): VerdictKey => value === 'Match' ? 'Pass' : value === 'Mismatch' ? 'Fail' : verdictKey(value);
-const plural = (n: number, singular: string, pluralForm = `${singular}s`) => `${n.toLocaleString()} ${n === 1 ? singular : pluralForm}`;
-const KIND_LABEL: Record<string, string> = { measureValue: 'Trusted answer', measureReconcile: 'Compare with source' };
+const KIND_LABEL: Record<string, string> = { measureValue: 'Trusted answer', measureReconcile: 'Check against SQL' };
 const kindLabel = (kind?: string) => (kind && KIND_LABEL[kind]) || 'Check';
 const formatDate = (value?: string, dateOnly = false) => {
   if (!value) return '·';
@@ -155,37 +155,38 @@ const formatDate = (value?: string, dateOnly = false) => {
   if (Number.isNaN(date.valueOf())) return '·';
   return dateOnly ? date.toLocaleDateString() : date.toLocaleString();
 };
-// Integers render plain; anything fractional keeps exactly two decimals so a column of money never drops
-// its trailing cents. A tiny non-zero goes scientific rather than rounding to a lying 0.00 beside Differs.
-const resultText = (value: number | null | undefined, delta = false) => {
-  if (value == null) return null;
-  if (value !== 0 && Math.abs(value) < 0.005) return value.toExponential(2);
-  return value.toLocaleString(undefined, delta || !Number.isInteger(value) ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : undefined);
-};
 const countText = (value?: number) => value == null ? '·' : value.toLocaleString();
 
+// A card on the page's grid. A card whose body is rows (overflow-hidden) is flush: the rows carry the padding.
 function Card({ children, className = '', style }: { children: ReactNode; className?: string; style?: CSSProperties }) {
-  return <div className={`rounded-[9px] border ${className}`} style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)', ...style }}>{children}</div>;
-}
-
-function Eyebrow({ children }: { children: ReactNode }) {
-  return <div className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
+  const flush = /\boverflow-hidden\b/.test(className);
+  return <div className={`sem-card ${flush ? 'sem-card-flush ' : ''}${className}`} style={style}>{children}</div>;
 }
 
 function Banner({ children, color }: { children: ReactNode; color: string }) {
-  return <div className="rounded-md border px-3 py-2 text-[12px]" style={{ color, borderColor: color, background: 'var(--sem-surface)' }}>{children}</div>;
+  // A notice is a line of plain text with a state dot, not a coloured box.
+  const dot = color === 'var(--sem-bad)' ? 'sem-chip-bad' : color === 'var(--sem-warn)' ? 'sem-chip-warn' : 'sem-chip-ok';
+  return <div className={`sem-chip ${dot}`} style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{children}</div>;
 }
 
+// A result is a word and a dot (Instrument): the dot carries the state's colour, the word stays readable text.
+// Off and Not run are quiet words with no dot; Could not check keeps its own colourless slate dot.
+function StateWord({ word, color, title }: { word: string; color: string; title?: string }) {
+  const quiet = color === 'var(--sem-muted)';
+  return <span className="sem-chip w-max" title={title} style={quiet ? undefined : { color: 'var(--sem-fg)' }}>
+    {!quiet && <StateDot color={color} />}{word}</span>;
+}
+// The state dot in a colour of the state's own. .sem-chip-ok/-warn/-bad fix the dot to three colours; the
+// not-checked slate needs its own, so the dot is drawn here at the primitive's size.
+function StateDot({ color }: { color: string }) {
+  return <span aria-hidden className="inline-block size-1 shrink-0 rounded-full" style={{ background: color }} />;
+}
 function Chip({ chip, title }: { chip: ResultChip; title?: string }) {
-  const color = CHIP_COLOR[chip];
-  const quiet = chip === 'Off' || chip === 'Not run';
-  return <span className="inline-flex w-max items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase leading-[18px] whitespace-nowrap"
-    title={title} style={{ color, borderColor: quiet ? 'var(--sem-border)' : color }}>{chip}</span>;
+  return <StateWord word={chip} color={CHIP_COLOR[chip]} title={title} />;
 }
 
 function CountPill({ chip, title }: { chip: CountChip; title?: string }) {
-  return <span className="inline-flex w-max items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase leading-[18px] whitespace-nowrap"
-    title={title} style={{ color: COUNT_CHIP_COLOR[chip], borderColor: chip === 'Not checked' ? 'var(--sem-border)' : COUNT_CHIP_COLOR[chip] }}>{chip}</span>;
+  return <StateWord word={chip} color={COUNT_CHIP_COLOR[chip]} title={title} />;
 }
 
 // A control inside a clickable row stops the ROW toggling, and nothing else. The WINDOW keydown the drawer
@@ -194,16 +195,21 @@ function CountPill({ chip, title }: { chip: CountChip; title?: string }) {
 const stopRowToggle = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
 function RowAction({ label, onClick, tone }: { label: string; onClick: () => void; tone?: string }) {
-  return <button type="button" className="rounded-md border px-2 py-1 text-[11px] font-semibold"
-    style={{ background: 'var(--sem-surface-2)', borderColor: tone ?? 'var(--sem-border)', color: tone ?? 'var(--sem-fg)' }}
+  void tone; // every row action is the same hairline button now; the accent belongs to the page's one primary
+  return <button type="button" className="sem-btn sem-btn-sm"
     onClick={(event) => { stopRowToggle(event); onClick(); }}>{label}</button>;
 }
 
-export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedReports }: {
+export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'checks', onPage }: {
   navTarget?: { ref: string; nonce: number } | null;
   onNavConsumed?: (nonce: number) => void;
   onOpenDaxLab?: (measureRef: string) => void;
   onOpenSavedReports?: () => void;
+  /** Which of Validation's two tabs is open. Reports used to be a page of its own in the Checks area; Kane
+   *  made it a tab on this page on 22 September 2026. It is still a ROUTE (`evidence`), so the shell owns
+   *  which tab is open and an old link still lands on it. */
+  page?: 'checks' | 'reports';
+  onPage?: (page: 'checks' | 'reports') => void;
 }) {
   const { conn, openConnections, connectionsOpen } = useConnection();
   const [run, setRun] = useState<TestRunW | null>(null);
@@ -211,7 +217,6 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
   const [sources, setSources] = useState<SqlSourceRecord[] | null>(null);
   const [mappings, setMappings] = useState<TableMappingListW | null>(null);
   const [history, setHistory] = useState<TestHistoryW | null>(null);
-  const [savedReports, setSavedReports] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadingSuite, setLoadingSuite] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
@@ -255,11 +260,9 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
   const loadSources = useCallback(() => listSqlSources().then(setSources).catch(() => setSources([])), []);
   const loadMappings = useCallback(() => rpc<TableMappingListW>('listTableMappings').then(setMappings).catch(() => setMappings({ rows: [] })), []);
   const loadHistory = useCallback(() => rpc<TestHistoryW>('listTestRuns', 20).then(setHistory).catch(() => setHistory({ runs: [] })), []);
-  const loadReportCount = useCallback(() => rpc<EvidenceLibraryW>('listEvidence')
-    .then((library) => setSavedReports(library.items.length)).catch(() => setSavedReports(null)), []);
   useEffect(() => {
-    void loadSuite(); void loadSources(); void loadMappings(); void loadHistory(); void loadReportCount();
-  }, [loadSuite, loadSources, loadMappings, loadHistory, loadReportCount]);
+    void loadSuite(); void loadSources(); void loadMappings(); void loadHistory();
+  }, [loadSuite, loadSources, loadMappings, loadHistory]);
   // The hub is the only place a SQL source can be added, so the list is re-read the moment it closes.
   // The drawer stays mounted throughout: nothing here closes it, and nothing reopens it.
   const hubWasOpen = useRef(false);
@@ -280,6 +283,8 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
   const countableTables = (mappings?.rows ?? []).filter((row) => row.canCount).length;
   const groups = runScopeGroups(enabledCount, relationshipCount, countableTables);
 
+  // The engine's runTests(persist, origin, only, sections): the origin is the second argument. Leaving it out sent the
+  // ticked ids into the origin string, so Run this one failed (UAT-F-S06b-2-012); rpc-argument-parity.test.mjs holds the shape.
   // ONE run path. `only` is null for everything; a named subset is the ticked ids, which the page has
   // already refused if empty. `sections` only ever carries a family the engine recognises, never a tab name.
   const runSuite = (options: { only?: string[] | null; sections?: string[] | null; persist?: boolean }) => {
@@ -287,7 +292,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
     setBusy(true);
     setErr(null);
     setRecordNote(null);
-    rpc<TestRunW>('runTests', options.persist ?? false, options.only ?? null, options.sections ?? null)
+    rpc<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null)
       .then((next) => {
         setRun(next);
         if (next.reconciles?.length) {
@@ -305,7 +310,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
         // A run re-reads the counts, and a recorded one changes the history it just wrote to. Astra found
         // History still showing July after a September recorded run because nothing invalidated it.
         void loadMappings();
-        if (options.persist) { void loadHistory(); void loadReportCount(); }
+        if (options.persist) void loadHistory();
       })
       .catch((error: unknown) => setErr(error instanceof Error ? error.message : String(error)))
       .finally(() => setBusy(false));
@@ -352,38 +357,42 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
         onSaved={() => { void loadSuite(); void loadMappings(); }} onAddSqlSource={addSqlSource} />}
       {mappingTable != null && <AuthorDrawer shape="tableRowCount" table={mappingTable} latestSources={sources} onClose={() => setMappingTable(null)}
         onSaved={() => { void loadMappings(); setMappingTable(null); }} onAddSqlSource={addSqlSource} />}
-      {reportOpen && <ReportExportDialog modelName={run?.modelName} onSaved={loadReportCount} onClose={() => setReportOpen(false)} />}
-      <main className="sem-centered-page w-full min-w-0 px-7 pt-4 pb-12">
+      {reportOpen && <ReportExportDialog modelName={run?.modelName} onClose={() => setReportOpen(false)} />}
+      <main className="sem-page">
 
-        {/* 1. One tool row. Everything that starts an action lives here and nowhere else. */}
-        <div className="sem-tests-toolrow mb-3 flex h-10 flex-wrap items-center gap-1.5">
-          <h1 className="m-0 mr-1.5 text-[13.5px] font-bold">Tests</h1>
-          <RunMenu busy={busy} groups={groups} tickedCount={ticked.size} savedCheckCount={definitions.length}
-            onRunAll={() => runEverything(false)} onRunAndRecord={() => runEverything(true)}
-            onRunTicked={runTicked} onRunGroup={runGroup} />
-          <NewCheckMenu onPick={(shape) => shape === 'tableRowCount' ? openTableMapping() : openAuthor(shape, null)} />
-          <ReportMenu disabled={!run} count={savedReports} onLatest={() => setReportOpen(true)} onSaved={onOpenSavedReports} />
-          <div className="ml-auto flex flex-wrap items-center gap-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-            <span>Runs on <strong style={{ color: 'var(--sem-fg)' }}>{testModelLabel ?? 'no test model'}</strong></span>
-            <span aria-hidden className="inline-block h-[18px] w-px" style={{ background: 'var(--sem-border)' }} />
-            <span>SQL sources: <strong style={{ color: 'var(--sem-fg)' }}>{sources == null ? '·' : sources.length}</strong></span>
-            <button type="button" className="font-semibold" style={{ color: 'var(--sem-accent)' }} onClick={addSqlSource}>Add SQL source</button>
-          </div>
+        {/* 0. The page's two tabs. Checks is what to run and what it said; Reports is what was kept. They are
+            real routes, not local state, so the area strip, a deep link and the Reports button on this page
+            all agree about which one is open. */}
+        <div className="sem-seg justify-self-start" aria-label="Validation">
+          <button type="button" className="sem-seg-item" data-page-tab="checks" aria-pressed={page === 'checks'}
+            onClick={() => onPage?.('checks')}>Checks</button>
+          <button type="button" className="sem-seg-item" data-page-tab="reports" aria-pressed={page === 'reports'}
+            onClick={() => onPage?.('reports')}>Reports</button>
         </div>
 
-        {err && <div className="mb-3"><Banner color="var(--sem-bad)">{err}</Banner></div>}
-        {recordNote && <div className="mb-3"><Banner color="var(--sem-warn)">{recordNote}</Banner></div>}
-        {refused && <div className="mb-3"><Banner color="var(--sem-warn)">{run?.note ?? 'That run asked for nothing, so nothing ran.'}</Banner></div>}
-        {run?.note && !refused && <div className="mb-3"><Banner color="var(--sem-warn)">{run.note}</Banner></div>}
-        {run && staleReason && <div className="mb-3"><Banner color="var(--sem-warn)">{staleReason === 'suite'
+        {page === 'reports' ? <EvidenceBody /> : <>
+
+        {/* 1. One tool row. Everything that starts an action lives here and nowhere else. */}
+        <div className="sem-tests-toolrow flex flex-wrap items-center gap-2">
+          <h1 className="sem-page-title mr-2">Validation</h1>
+          <RunMenu busy={busy} groups={groups} tickedCount={ticked.size}
+            onRunAll={() => runEverything(false)} onRunTicked={runTicked} onRunGroup={runGroup} />
+          <NewCheckMenu onPick={(shape) => shape === 'tableRowCount' ? openTableMapping() : openAuthor(shape, null)} onAddSqlSource={addSqlSource} />
+          <ReportButton disabled={!run} onClick={() => setReportOpen(true)} />
+        </div>
+
+        {err && <div><Banner color="var(--sem-bad)">{err}</Banner></div>}
+        {recordNote && <div><Banner color="var(--sem-warn)">{recordNote}</Banner></div>}
+        {refused && <div><Banner color="var(--sem-warn)">{run?.note ?? 'That run asked for nothing, so nothing ran.'}</Banner></div>}
+        {run?.note && !refused && <div><Banner color="var(--sem-warn)">{run.note}</Banner></div>}
+        {run && staleReason && <div><Banner color="var(--sem-warn)">{staleReason === 'suite'
           ? 'A saved check changed after this run. The results below still show the older check, so you can compare. Run again for current results.'
           : 'The model changed. These results may be out of date. Run again to check your latest changes.'}</Banner></div>}
 
         {/* 2. One status line: grade, counts, coverage, when, and whether it was kept. */}
         <StatusLine run={run} busy={busy} partRun={partRun} onRecord={recordThisRun} />
 
-        <div className="mt-3 grid gap-3">
-          <SavedChecks
+        <SavedChecks
             definitions={definitions} latest={latest} loading={loadingSuite} liveModel={!!testModelLabel}
             ticked={ticked} onTick={setTicked}
             onEdit={(def, focus) => openAuthor(def.kind === 'measureValue' ? 'measureValue' : 'measureReconcile', def, focus)}
@@ -391,15 +400,13 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
             onRunOne={runOne} onChanged={() => { void loadSuite(); void loadMappings(); }}
             onConnect={() => openConnections()} onOpenDaxLab={onOpenDaxLab} />
 
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit,minmax(420px,1fr))' }}>
-            <Relationships retained={relationships} skipped={!!run && !familyRan(run.scope, 'relationships')}
-              hasRun={!!run} liveModel={!!testModelLabel} onConnect={() => openConnections()} />
-            <TableRowCounts list={mappings} skipped={!!run && !familyRan(run.scope, 'table counts')} onMapSource={openTableMapping} />
-          </div>
+        {/* Two half-width cards on the page's own columns: six and six. */}
+        <Relationships retained={relationships} skipped={!!run && !familyRan(run.scope, 'relationships')}
+          hasRun={!!run} liveModel={!!testModelLabel} onConnect={() => openConnections()} />
+        <TableRowCounts list={mappings} skipped={!!run && !familyRan(run.scope, 'table counts')} onMapSource={openTableMapping} />
 
-          <History history={history} savedReports={savedReports} onOpenSavedReports={onOpenSavedReports}
-            onRecord={recordThisRun} latestRun={run} busy={busy} />
-        </div>
+        <History history={history} />
+        </>}
       </main>
     </div>
   );
@@ -408,9 +415,9 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, onOpenSavedR
 // ---------------------------------------------------------------------------------------------------
 // 1. Run, and the scope menu that says exactly what "all" includes.
 // ---------------------------------------------------------------------------------------------------
-function RunMenu({ busy, groups, tickedCount, savedCheckCount, onRunAll, onRunAndRecord, onRunTicked, onRunGroup }: {
-  busy: boolean; groups: RunGroup[]; tickedCount: number; savedCheckCount: number;
-  onRunAll: () => void; onRunAndRecord: () => void; onRunTicked: () => void; onRunGroup: (group: RunGroup) => void;
+function RunMenu({ busy, groups, tickedCount, onRunAll, onRunTicked, onRunGroup }: {
+  busy: boolean; groups: RunGroup[]; tickedCount: number;
+  onRunAll: () => void; onRunTicked: () => void; onRunGroup: (group: RunGroup) => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -423,92 +430,42 @@ function RunMenu({ busy, groups, tickedCount, savedCheckCount, onRunAll, onRunAn
     return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', escape); };
   }, [open]);
   const pick = (fn: () => void) => { setOpen(false); fn(); };
-  const refusal = tickedRunRefusal(tickedCount);
-  const canTick = tickingIsPossible(savedCheckCount);
+  // The one button runs what is ticked when something is ticked, and everything otherwise, so the menu
+  // has no ticked-only item. A recorded run is made from the status line ("Record it") after the run is on screen.
+  const ticked = tickedCount > 0;
   return (
     <div ref={wrap} className="relative inline-flex">
-      <button type="button" disabled={busy} className="inline-flex h-7 items-center rounded-l-md border px-3 text-[12px] font-semibold disabled:opacity-60"
-        onClick={onRunAll} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>
-        {busy ? 'Running…' : 'Run all enabled checks'}
+      <button type="button" disabled={busy} className="sem-btn sem-btn-primary"
+        onClick={ticked ? onRunTicked : onRunAll} style={{ borderRadius: 'var(--sem-radius-control) 0 0 var(--sem-radius-control)' }}>
+        {busy ? 'Running…' : ticked ? `Run ${tickedCount.toLocaleString()} ticked` : 'Run checks'}
       </button>
       <button ref={buttonRef} type="button" aria-label="What to run" aria-haspopup="menu" aria-expanded={open} disabled={busy}
-        className="inline-flex h-7 items-center rounded-r-md border border-l-0 px-2 text-[12px] disabled:opacity-60" onClick={() => setOpen((v) => !v)}
-        style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>▾</button>
+        className="sem-btn sem-btn-primary" onClick={() => setOpen((v) => !v)}
+        style={{ borderRadius: '0 var(--sem-radius-control) var(--sem-radius-control) 0', borderLeftColor: 'var(--sem-on-accent)', padding: '0 var(--sem-space-2)' }}>▾</button>
       {open && (
-        <div role="menu" aria-label="What to run" className="absolute left-0 top-9 z-20 w-[330px] rounded-md border p-2 text-[12px]"
-          style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-          <Eyebrow>Run all enabled checks includes</Eyebrow>
-          <ul className="mt-1.5 mb-2 list-none p-0">
-            {groups.length === 0
-              ? <li className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Nothing to run yet. Add a check, or map a table to a SQL source.</li>
-              : groups.map((group) => (
-                // Three buttons all reading "Only this" told nobody which one they were about to run, and
-                // two of them sent the same family anyway (Astra, finding 3). Each row says its own name.
-                <li key={group.id} className="mb-1">
-                  <button type="button" role="menuitem" aria-label={runOnlyLabel(group)}
-                    className="flex w-full items-center gap-2 rounded-md border px-2 py-1.5 text-left"
-                    style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}
-                    onClick={() => pick(() => onRunGroup(group))}>
-                    <span className="flex-1">
-                      <span className="block font-semibold">{group.label}</span>
-                      <span className="block text-[10px]" style={{ color: 'var(--sem-muted)' }}>{runOnlyLabel(group)}</span>
-                    </span>
-                    <span className="tnum text-[11px]" style={{ color: 'var(--sem-muted)' }}>{group.count ?? 'every one'}</span>
-                  </button>
-                </li>
-              ))}
-          </ul>
-          {/* Offered only while there is something to tick. With no saved checks there are no tick boxes on
-              the page at all, so this was a dead option (Kane, live on the Yoga, 2026-09-15). */}
-          {canTick && <button type="button" role="menuitem" className="mb-1 block w-full rounded-md border px-2 py-1.5 text-left"
-            style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }} onClick={() => pick(onRunTicked)}>
-            <span className="block font-semibold">Only what I ticked</span>
-            <span className="block text-[10px]" style={{ color: refusal ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>
-              {tickedMenuNote(tickedCount, savedCheckCount)}
-            </span>
-          </button>}
-          <button type="button" role="menuitem" className="block w-full rounded-md border px-2 py-1.5 text-left"
-            style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }} onClick={() => pick(onRunAndRecord)}>
-            <span className="block font-semibold">Run everything and record this run</span>
-            <span className="block text-[10px]" style={{ color: 'var(--sem-muted)' }}>Keeps the result in History. It needs room to store it.</span>
-          </button>
+        <div role="menu" aria-label="What to run" className="absolute left-0 top-9 z-20 w-[240px] rounded border p-2 text-(length:--sem-text-meta)"
+          style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-rule)' }}>
+          {groups.length === 0
+            ? <div className="px-2 py-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Nothing to run yet. Add a check, or map a table to a SQL source.</div>
+            : groups.map((group) => (
+              // Each row names its own family, so no two rows read the same (Astra, finding 3).
+              <button key={group.id} type="button" role="menuitem" aria-label={runOnlyLabel(group)}
+                className="flex w-full items-center gap-2 rounded px-2 py-2 text-left hover:bg-(--sem-hover)"
+                onClick={() => pick(() => onRunGroup(group))}>
+                <span className="flex-1">{group.label}</span>
+                <span className="tnum text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{group.count ?? 'every one'}</span>
+              </button>
+            ))}
         </div>
       )}
     </div>
   );
 }
 
-function ReportMenu({ disabled, count, onLatest, onSaved }: { disabled: boolean; count: number | null; onLatest: () => void; onSaved?: () => void }) {
-  const [open, setOpen] = useState(false);
-  const wrap = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const outside = (event: MouseEvent) => { if (!wrap.current?.contains(event.target as Node)) setOpen(false); };
-    const escape = (event: globalThis.KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
-    window.addEventListener('mousedown', outside); window.addEventListener('keydown', escape);
-    return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', escape); };
-  }, [open]);
-  return (
-    <div ref={wrap} className="relative">
-      <button type="button" aria-haspopup="menu" aria-expanded={open} className="inline-flex h-7 items-center rounded-md border px-3 text-[12px]"
-        onClick={() => setOpen((v) => !v)} style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>Report ▾</button>
-      {open && (
-        <div role="menu" aria-label="Report" className="absolute left-0 top-9 z-20 w-[260px] rounded-md border p-1.5 text-[12px]"
-          style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-          <button type="button" role="menuitem" disabled={disabled} className="mb-1 block w-full rounded-md px-2 py-1.5 text-left disabled:opacity-40"
-            onClick={() => { setOpen(false); onLatest(); }}>
-            <span className="block font-semibold">Latest</span>
-            <span className="block text-[10px]" style={{ color: 'var(--sem-muted)' }}>{disabled ? 'Run the checks first.' : 'Read, print or export the run above.'}</span>
-          </button>
-          <button type="button" role="menuitem" className="block w-full rounded-md px-2 py-1.5 text-left"
-            onClick={() => { setOpen(false); onSaved?.(); }}>
-            <span className="block font-semibold">Saved reports{count == null ? '' : ` ${count}`}</span>
-            <span className="block text-[10px]" style={{ color: 'var(--sem-muted)' }}>Reports already kept with this model.</span>
-          </button>
-        </div>
-      )}
-    </div>
-  );
+// One button: the latest run's report. The kept reports are the Reports tab beside Checks, so no second door here.
+function ReportButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  return <button type="button" className="sem-btn" disabled={disabled} onClick={onClick}
+    title={disabled ? 'Run the checks first.' : 'Read, print or export the run above.'}>Report</button>;
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -518,37 +475,35 @@ function StatusLine({ run, busy, partRun, onRecord }: {
   run: TestRunW | null; busy: boolean; partRun: boolean; onRecord: () => void;
 }) {
   if (!run) {
-    return <Card className="sem-tests-status flex flex-wrap items-center gap-3 px-3 py-2 text-[12.5px]">
-      <span style={{ color: 'var(--sem-muted)' }}>{busy ? 'Running the checks…' : 'No run yet. Run all enabled checks to see where this model stands.'}</span>
-    </Card>;
+    return <div className="sem-tests-status flex flex-wrap items-center gap-3 sem-text-meta">
+      <span>{busy ? 'Running the checks…' : 'No run yet.'}</span>
+    </div>;
   }
   const health = run.health;
   return (
-    <Card className="sem-tests-status flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[12.5px]">
+    <div className="sem-tests-status flex flex-wrap items-center gap-x-4 gap-y-1 text-(length:--sem-text-meta)">
       {/* H2. A part run's letter is REAL, and it is the grade of what ran. It is shown, and what it covers
           is said beside it, so it can never be read as the model's overall grade. */}
       {!health
-        ? <span className="inline-flex h-[22px] min-w-[30px] items-center justify-center rounded-md px-1.5 text-[11px] font-extrabold"
-          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>·</span>
-        : <span className="inline-flex h-[22px] min-w-[30px] items-center justify-center rounded-md text-[13px] font-extrabold"
-          style={{ background: partRun ? 'var(--sem-surface-2)' : 'var(--sem-accent-soft)', color: GRADE_COLOR[health.grade] ?? 'var(--sem-nv)' }}>{health.grade}</span>}
-      {partRun && run.scope?.gradeCovers && <span className="text-[11px]" style={{ color: 'var(--sem-warn)' }}>for {run.scope.gradeCovers}</span>}
+        ? <span className="sem-num" style={{ color: 'var(--sem-muted)' }}>·</span>
+        : <span className="sem-card-title sem-num" title={`Grade ${health.grade}`}>{health.grade}</span>}
+      {partRun && run.scope?.gradeCovers && <span className="sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)' }}>for {run.scope.gradeCovers}</span>}
       {health
         ? <span><strong>{health.passed.toLocaleString()} of {health.checked.toLocaleString()} pass</strong> · {health.failed.toLocaleString()} differ · {(health.notVerifiable + health.missing).toLocaleString()} could not check</span>
         : <span style={{ color: 'var(--sem-muted)' }}>No grade for this run.</span>}
       {health && <span style={{ color: 'var(--sem-muted)' }}>{health.coveragePct}% coverage</span>}
       {/* The engine's own sentences. The page used to prefix "Grade capped:" and join with commas, which
           read as a fragment beside a sentence that already says the grade cannot rise. */}
-      {health && health.gatedBy.length > 0 ? <span style={{ color: 'var(--sem-bad)' }}>{health.gatedBy.join(' ')}</span> : null}
+      {health && health.gatedBy.length > 0 ? <span className="sem-chip sem-chip-bad" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{health.gatedBy.join(' ')}</span> : null}
       <span className="ml-auto flex flex-wrap items-center gap-2" style={{ color: 'var(--sem-muted)' }}>
         <span>Last run {formatDate(run.when)}</span>
         {run.persisted
           ? <span>· recorded</span>
           : <span className="flex items-center gap-2">· this run is not recorded
-            <button type="button" disabled={busy} className="font-semibold disabled:opacity-50" style={{ color: 'var(--sem-accent)' }} onClick={onRecord}>Record it</button></span>}
+            <button type="button" disabled={busy} className="sem-btn sem-btn-sm sem-btn-quiet" onClick={onRecord}>Record it</button></span>}
       </span>
-      {partRun && <span className="basis-full text-[11px]" style={{ color: 'var(--sem-warn)' }}>{partRunSummary(run.scope?.gradeCovers, run.scope?.skipped ?? [])}</span>}
-    </Card>
+      {partRun && <span className="basis-full sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{partRunSummary(run.scope?.gradeCovers, run.scope?.skipped ?? [])}</span>}
+    </div>
   );
 }
 
@@ -556,6 +511,8 @@ function StatusLine({ run, busy, partRun, onRecord }: {
 // 3. ONE list of saved checks.
 // ---------------------------------------------------------------------------------------------------
 const CHIP_ORDER: ResultChip[] = ['Differs', 'Pass', 'Could not check', 'Off', 'Not run'];
+/** The search box is for a list long enough to need one. */
+const SEARCH_FROM = 11;
 const chipRank: Record<ResultChip, number> = { Differs: 0, 'Could not check': 1, 'Not run': 2, Pass: 3, Off: 4 };
 
 function parseValueParams(def?: TestDefinitionW): MeasureValueParamsW {
@@ -637,7 +594,11 @@ function SavedChecks({ definitions, latest, loading, liveModel, ticked, onTick, 
   const toggleTick = (id: string) => { const next = new Set(ticked); if (next.has(id)) next.delete(id); else next.add(id); onTick(next); };
   const toggleEnabled = (def: TestDefinitionW) => {
     setRowErrorFor(def.id, null);
-    rpc('saveTest', { ...def, enabled: !def.enabled }).then(() => { announceTestSuiteChanged(); onChanged(); })
+    // The switch changes one flag, so it flips it on the check as it stands NOW: the row may be older than an edit
+    // the assistant just saved (save_test), and writing the row's copy back would undo that edit.
+    rpc<TestSuiteInfoW>('listTests')
+      .then((suite) => { const live = (suite.definitions ?? []).find((d) => d.id === def.id) ?? def; return rpc('saveTest', { ...live, enabled: !def.enabled }); })
+      .then(() => { announceTestSuiteChanged(); onChanged(); })
       .catch((e: unknown) => setRowErrorFor(def.id, `Could not turn this check ${def.enabled ? 'off' : 'on'}: ${e instanceof Error ? e.message : String(e)}`));
   };
   const remove = (def: TestDefinitionW) => {
@@ -649,45 +610,41 @@ function SavedChecks({ definitions, latest, loading, liveModel, ticked, onTick, 
   const columns = '40px minmax(190px,1.5fr) 132px minmax(140px,1.1fr) 128px 118px 30px';
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3.5 py-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-        <h2 className="m-0 text-[13.5px] font-semibold">Saved checks</h2>
-        {/* Tick boxes only exist on these rows, so with no saved checks "Tick to run a subset" described a
-            control that was not on the page (Kane, live on the Yoga, 2026-09-15). */}
-        <span className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Each one compares a number in your model with an answer you trust.{' '}
-          {savedChecksHint(definitions.length)}</span>
+      <div className="sem-card-head flex-wrap">
+        <h2 className="sem-card-title">Saved checks</h2>
       </div>
-      <div className="flex flex-wrap items-center gap-1.5 border-b px-3.5 py-2" style={{ borderColor: 'var(--sem-border)' }}>
-        <input aria-label="Search checks and results" value={query} onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search checks and results…" className="h-6 min-w-[220px] rounded-md border px-2 text-[12px] outline-none"
-          style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-fg)' }} />
-        {(['All', ...CHIP_ORDER] as const).map((key) => (
-          <button key={key} type="button" onClick={() => setFilter(key)}
-            className="rounded-full border px-2.5 py-1 text-[11px]"
-            style={{
-              background: filter === key ? 'var(--sem-accent-soft)' : 'var(--sem-surface)',
-              borderColor: filter === key ? 'var(--sem-accent)' : 'var(--sem-border)',
-              color: key === 'All' ? 'var(--sem-fg)' : CHIP_COLOR[key],
-            }}>{key} <span className="tnum">{key === 'All' ? rows.length : chipCounts[key]}</span></button>
-        ))}
+      {/* A list of a few checks needs no search, and a result bucket with nothing in it is not a choice. */}
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2" style={{ borderColor: 'var(--sem-rule)' }}>
+        {rows.length >= SEARCH_FROM && (
+          <input aria-label="Search checks and results" value={query} onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search checks and results…" className="sem-field sem-field-sm min-w-[220px]" />
+        )}
+        {/* One segmented filter, words and counts. The six coloured pills it replaced repeated the result colours
+            the rows already carry. */}
+        <div className="sem-seg" role="group" aria-label="Show checks by result">
+          {(['All', ...CHIP_ORDER] as const).filter((key) => key === 'All' || chipCounts[key] > 0 || filter === key).map((key) => (
+            <button key={key} type="button" onClick={() => setFilter(key)} aria-pressed={filter === key}
+              className="sem-seg-item gap-1">{key} <span className="sem-num">{key === 'All' ? rows.length : chipCounts[key]}</span></button>
+          ))}
+        </div>
       </div>
 
-      {loading ? <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading your saved checks…</div>
+      {loading ? <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading your saved checks…</div>
         : definitions.length === 0 ? (
-          <div className="p-4 text-[12px]">
+          <div className="p-4 text-(length:--sem-text-meta)">
             <strong>No saved checks yet.</strong>
             <p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>
               Relationships and table row counts are checked when you run everything, so this model is not unchecked.
               A saved check adds the numbers only you know are right.
             </p>
-            <button type="button" className="mt-2 rounded-md border px-3 py-1 text-[12px] font-semibold"
-              style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}
-              onClick={onNew}>New check</button>
+            <button type="button" className="sem-btn sem-btn-sm mt-2" onClick={onNew}>New check</button>
           </div>
         ) : (
           <>
-            <div className="grid items-center border-b px-3.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
-              style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
-              <span title="Tick the checks you want to run on their own">Tick</span><span>Check</span><span>Kind</span><span>Expected · actual</span><span>Result</span><span>Last run</span><span />
+            <div className="grid items-center border-b px-4 py-2 sem-label"
+              style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
+              <span aria-hidden />
+              <span>Check</span><span>Kind</span><span>Expected · actual</span><span>Result</span><span>Last run</span><span />
             </div>
             {shown.map(({ def, outcome, whenIso, chip }) => (
               <CheckRow key={def.id} def={def} outcome={outcome} whenIso={whenIso} chip={chip} columns={columns}
@@ -699,10 +656,12 @@ function SavedChecks({ definitions, latest, loading, liveModel, ticked, onTick, 
                 onDelete={() => remove(def)} onToggleEnabled={() => toggleEnabled(def)}
                 onEdit={onEdit} onRunOne={() => onRunOne(def.id)} onConnect={onConnect} onOpenDaxLab={onOpenDaxLab} />
             ))}
-            {shown.length === 0 && <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>No checks match this search and filter.</div>}
-            <div className="px-3.5 py-2 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-              Showing {shown.length.toLocaleString()} of {rows.length.toLocaleString()}.
-            </div>
+            {shown.length === 0 && <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>No checks match this search and filter.</div>}
+            {shown.length < rows.length && shown.length > 0 && (
+              <div className="px-4 py-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
+                Showing {shown.length.toLocaleString()} of {rows.length.toLocaleString()}.
+              </div>
+            )}
           </>
         )}
     </Card>
@@ -732,53 +691,53 @@ function CheckRow(props: {
   };
   return <>
     <div role="button" tabIndex={0} aria-expanded={isOpen} onClick={props.onToggle} onKeyDown={onKeyDown}
-      className="grid min-h-[46px] cursor-pointer items-center border-b px-3.5 text-[12.5px]"
-      style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)', background: isOpen ? 'var(--sem-surface-2)' : 'var(--sem-surface)' }}>
+      className="grid min-h-[46px] cursor-pointer items-center border-b px-4 text-(length:--sem-text-meta)"
+      style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-rule)', background: isOpen ? 'var(--sem-surface-2)' : 'var(--sem-surface)' }}>
       <span onClick={stopRowToggle} className="flex items-center">
-        <input type="checkbox" className="h-[14px] w-[14px] cursor-pointer" checked={props.ticked} onChange={props.onTick}
+        <input type="checkbox" className="size-[var(--sem-space-4)] cursor-pointer" checked={props.ticked} onChange={props.onTick}
           title={`Tick ${def.title} to run it on its own`} aria-label={`Tick ${def.title} to run on its own`} />
       </span>
       <span className="min-w-0 pr-2">
         <span className="block truncate font-semibold">{def.title}</span>
-        <span className="block truncate text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
+        <span className="block truncate text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           {shortRef(def.targetRef)}{def.enabled ? '' : ' · turned off'}{asksSummary(def)}{authoredSuffix(def)}
         </span>
       </span>
-      <span className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>{kindLabel(def.kind)}</span>
+      <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{kindLabel(def.kind)}</span>
       {/* A row that could not be checked used to read "· · ·", so the one thing a person needed was only
           reachable by opening it. The headline reason goes in the cell; the engine's own words stay on the
           hover and in the opened row (Astra, question 1). */}
       {reason
-        ? <span className="truncate pr-2" title={outcome?.message} style={{ color: 'var(--sem-nv)' }}>{reason}</span>
+        ? <span className="truncate pr-2" title={outcome?.message} style={{ color: 'var(--sem-muted)' }}>{reason}</span>
         : <span className="tnum truncate pr-2">{expected ? <>{expected} · </> : null}<strong>{actual ?? '\u00b7'}</strong></span>}
       <span><Chip chip={chip} title={outcome?.message} /></span>
-      <span className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
+      <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         {chip === 'Could not check' && !props.liveModel ? 'No live connection' : whenIso ? formatDate(whenIso) : '·'}
       </span>
       <span className="relative" onClick={stopRowToggle}>
-        <button type="button" className="px-1 text-[14px]" aria-label={`More for ${def.title}`} aria-haspopup="menu" onClick={props.onMenu}>⋯</button>
+        <button type="button" className="px-1 text-(length:--sem-text-title)" aria-label={`More for ${def.title}`} aria-haspopup="menu" onClick={props.onMenu}>⋯</button>
         {props.menuOpen && (
-          <span role="menu" aria-label={`Actions for ${def.title}`} className="absolute right-0 z-20 mt-1 block w-[170px] rounded-md border p-1"
-            style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-[12px]" onClick={() => { props.onCloseMenu(); props.onRunOne(); }}>Run this one</button>
-            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-[12px]" onClick={() => { props.onCloseMenu(); props.onEdit(def); }}>Edit</button>
-            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-[12px]" onClick={() => { props.onCloseMenu(); props.onToggleEnabled(); }}>{def.enabled ? 'Turn off' : 'Turn on'}</button>
-            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-[12px]" style={{ color: 'var(--sem-bad)' }} onClick={() => { props.onCloseMenu(); props.onConfirm(); }}>Delete</button>
+          <span role="menu" aria-label={`Actions for ${def.title}`} className="absolute right-0 z-20 mt-1 block w-[170px] rounded border p-1"
+            style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-rule)' }}>
+            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-(length:--sem-text-meta)" onClick={() => { props.onCloseMenu(); props.onRunOne(); }}>Run this one</button>
+            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-(length:--sem-text-meta)" onClick={() => { props.onCloseMenu(); props.onEdit(def); }}>Edit</button>
+            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-(length:--sem-text-meta)" onClick={() => { props.onCloseMenu(); props.onToggleEnabled(); }}>{def.enabled ? 'Turn off' : 'Turn on'}</button>
+            <button type="button" role="menuitem" className="block w-full rounded px-2 py-1 text-left text-(length:--sem-text-meta)" style={{ color: 'var(--sem-bad)' }} onClick={() => { props.onCloseMenu(); props.onConfirm(); }}>Delete</button>
           </span>
         )}
       </span>
     </div>
     {props.error && (
-      <div className="border-b px-3.5 py-2 text-[12px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-bad)' }}>
+      <div className="border-b px-4 py-2 text-(length:--sem-text-meta)" style={{ borderColor: 'var(--sem-rule)', color: 'var(--sem-bad)' }}>
         {props.error} <button type="button" className="ml-2 underline" onClick={props.onDismissError}>Hide this</button>
       </div>
     )}
     {props.confirming && (
-      <div className="border-b px-3.5 py-2 text-[12px]" style={{ borderColor: 'var(--sem-border)' }}>
+      <div className="border-b px-4 py-2 text-(length:--sem-text-meta)" style={{ borderColor: 'var(--sem-rule)' }}>
         Delete the check &apos;{def.title}&apos;? Recorded runs keep their record. This cannot be undone.
         <span className="mt-2 flex gap-2">
-          <button type="button" className="rounded-md border px-2 py-1 text-[12px]" style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }} onClick={props.onDelete}>Delete</button>
-          <button type="button" className="text-[12px]" onClick={props.onCancelConfirm}>Keep it</button>
+          <button type="button" className="sem-btn sem-btn-sm" onClick={props.onDelete}>Delete</button>
+          <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={props.onCancelConfirm}>Keep it</button>
         </span>
       </div>
     )}
@@ -808,12 +767,12 @@ function CheckDetail({ def, outcome, liveModel, onConnect, onEdit, onRunOne, onD
   const matchCount = outcome?.matches ?? (rows.length - differing.length);
 
   if (!outcome) {
-    return <div className="border-b px-6 py-3 text-[12px]" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)' }}>
+    return <div className="border-b px-4 py-3 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)' }}>
       <div style={{ color: 'var(--sem-muted)' }}>
         {def.enabled ? 'This check has not run yet.' : 'This check is turned off, so it did not run.'}
         {!liveModel && ' There is no live test model to ask.'}
       </div>
-      <div className="mt-2 flex flex-wrap gap-1.5">
+      <div className="mt-2 flex flex-wrap gap-2">
         {!liveModel && <RowAction label="Connect a test model" onClick={onConnect} tone="var(--sem-accent)" />}
         <RowAction label="Edit this check" onClick={() => onEdit(def)} />
         <RowAction label="Run this one" onClick={onRunOne} />
@@ -822,9 +781,10 @@ function CheckDetail({ def, outcome, liveModel, onConnect, onEdit, onRunOne, onD
   }
 
   if (outcome.missing) {
-    return <div className="border-b px-6 py-3 text-[12px]" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)', color: 'var(--sem-nv)' }}>
+    return <div className="border-b px-4 py-3 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
+      <span className="sem-chip"><StateDot color="var(--sem-nv)" />Not checked</span>{' '}
       The calculation this check was about no longer exists, so there was nothing to ask.
-      <span className="mt-2 flex flex-wrap gap-1.5">
+      <span className="mt-2 flex flex-wrap gap-2">
         <RowAction label="Edit this check" onClick={() => onEdit(def)} />
         <RowAction label="Delete this check" onClick={onDelete} />
       </span>
@@ -832,9 +792,9 @@ function CheckDetail({ def, outcome, liveModel, onConnect, onEdit, onRunOne, onD
   }
 
   if (isBlankStandoff(outcome.message)) {
-    return <div className="border-b px-6 py-3 text-[12px]" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)', color: 'var(--sem-nv)' }}>
+    return <div className="border-b px-4 py-3 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
       {BLANK_STANDOFF}
-      <span className="mt-2 flex flex-wrap items-center gap-1.5">
+      <span className="mt-2 flex flex-wrap items-center gap-2">
         <RowAction label="Choose what a blank means" onClick={() => onEdit(def, 'blank')} />
         to check it.
       </span>
@@ -842,12 +802,12 @@ function CheckDetail({ def, outcome, liveModel, onConnect, onEdit, onRunOne, onD
   }
 
   return (
-    <div className="border-b px-6 py-3" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)' }}>
-      <div className="text-[12.5px] font-semibold">
+    <div className="border-b px-4 py-3" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)' }}>
+      <div className="text-(length:--sem-text-meta) font-semibold">
         {differenceSentence(outcome.expected ?? value?.expectedValue, outcome.actual, outcome.difference ?? null, sourceLabel)}
       </div>
-      {outcome.difference == null && outcome.message && <div className="mt-1 text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>{outcome.message}</div>}
-      <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[11.5px]">
+      {outcome.difference == null && outcome.message && <div className="mt-1 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{outcome.message}</div>}
+      <div className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-(length:--sem-text-meta)">
         <span style={{ color: 'var(--sem-muted)' }}>Expected <strong style={{ color: 'var(--sem-fg)' }}>{outcome.expected ?? value?.expectedValue ?? '·'}</strong>{isTrustedAnswer ? '' : ` from ${sourceLabel}`}</span>
         <span style={{ color: 'var(--sem-muted)' }}>Actual <strong style={{ color: 'var(--sem-fg)' }}>{outcome.actual ?? '·'}</strong> from the model</span>
         <span style={{ color: 'var(--sem-muted)' }}>{isTrustedAnswer
@@ -856,15 +816,15 @@ function CheckDetail({ def, outcome, liveModel, onConnect, onEdit, onRunOne, onD
         <span style={{ color: 'var(--sem-muted)' }}>Filter <strong style={{ color: 'var(--sem-fg)' }}>{filterSummary(def)}</strong></span>
       </div>
       {!isTrustedAnswer && rows.length > 0 && (
-        <div className="mt-2 text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>
+        <div className="mt-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
           {comparisonSummary(differCount, matchCount, rows.length, outcome.rowsTotal ?? rows.length)}
         </div>
       )}
       <WhereItRan outcome={outcome} />
-      {!liveModel && <div className="mt-2 flex items-center gap-2 text-[11.5px]" style={{ color: 'var(--sem-nv)' }}>
+      {!liveModel && <div className="mt-2 flex items-center gap-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
         This ran without a live test model.<RowAction label="Connect a test model" onClick={onConnect} tone="var(--sem-accent)" />
       </div>}
-      <div className="mt-2.5 flex flex-wrap gap-1.5">
+      <div className="mt-3 flex flex-wrap gap-2">
         {def.targetRef && onOpenDaxLab && <RowAction label="Open in DAX Lab" onClick={() => onOpenDaxLab(def.targetRef as string)} />}
         {!isTrustedAnswer && differing.length > 0 && <RowAction label="Show the differing comparisons" onClick={() => setShowRows((v) => !v)} />}
         <RowAction label="Edit this check" onClick={() => onEdit(def)} />
@@ -884,25 +844,25 @@ function WhereItRan({ outcome }: { outcome: ReconcileOutcomeW }) {
     : authored
       ? `Authored against ${authored}${ran ? ', and ran against it' : ''}.`
       : `Ran against ${ran}. No authoring connection was recorded for this check.`;
-  return <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{text}</div>;
+  return <div className="mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{text}</div>;
 }
 
 function CompareRows({ rows, total, sourceLabel }: { rows: CompareRowW[]; total: number; sourceLabel: string }) {
-  return <div className="mt-2.5 overflow-hidden rounded-md border" role="table" aria-label="The comparisons that differ" style={{ borderColor: 'var(--sem-border)' }}>
-    <div role="row" className="grid border-b px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.05em]"
-      style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+  return <div className="mt-3 overflow-hidden rounded border" role="table" aria-label="The comparisons that differ" style={{ borderColor: 'var(--sem-rule)' }}>
+    <div role="row" className="grid border-b px-3 py-2 sem-label"
+      style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', background: 'var(--sem-surface-2)', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
       <span role="columnheader">Where</span><span role="columnheader">{sourceLabel}</span><span role="columnheader">The model</span><span role="columnheader">Difference</span>
     </div>
     {rows.map((row, index) => (
-      <div role="row" key={`${row.context}-${index}`} className="grid border-b px-3 py-1.5 text-[11px] last:border-0"
-        title={row.explanation} style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-border)', borderLeft: '3px solid var(--sem-bad)' }}>
+      <div role="row" key={`${row.context}-${index}`} className="grid border-b px-3 py-2 text-(length:--sem-text-label) last:border-0"
+        title={row.explanation} style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-rule)', borderLeft: '3px solid var(--sem-bad)' }}>
         <span role="cell" className={row.grandTotal ? 'font-semibold' : ''}>{row.context}</span>
         <span role="cell" className="tnum">{resultText(row.sql) ?? 'no value'}</span>
         <span role="cell" className="tnum">{resultText(row.dax) ?? 'blank'}</span>
-        <span role="cell" className="tnum" style={{ color: 'var(--sem-bad)' }}>{resultText(row.delta, true) ?? '·'}</span>
+        <span role="cell" className="tnum" style={{ color: 'var(--sem-bad)' }}>{resultText(row.delta) ?? '·'}</span>
       </div>
     ))}
-    <div className="px-3 py-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
+    <div className="px-3 py-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
       {rows.length.toLocaleString()} of {total.toLocaleString()} comparisons are shown here.
     </div>
   </div>;
@@ -912,7 +872,7 @@ function CompareRows({ rows, total, sourceLabel }: { rows: CompareRowW[]; total:
 // 4. Relationships, in plain words. Every specialist term the UAT flagged is gone from what a person
 //    reads: no referential integrity, no orphans, no cardinality, no hidden blank row.
 // ---------------------------------------------------------------------------------------------------
-const BLANK_STANDOFF = 'Every cell is blank in the model and NULL in the source. This test does not treat those as equal.';
+const BLANK_STANDOFF = 'Every cell is blank in the model and NULL in the source. This check does not treat those as equal.';
 function isBlankStandoff(message?: string): boolean {
   return !!message && /^Nothing verifiable:/i.test(message) && /BLANK vs NULL/i.test(message);
 }
@@ -944,30 +904,29 @@ function Relationships({ retained, skipped, hasRun, liveModel, onConnect }: {
   // model, where every relationship read Could not check under a PASS header).
   const tally: RelationshipTally = relationshipTally(rels.map(relationshipChecks));
   return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3.5 py-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-        <h2 className="m-0 text-[13.5px] font-semibold">Relationships</h2>
-        <span className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Checked when you run everything. Nothing to set up.</span>
-        {rels.length > 0 && <span className="ml-auto flex items-center gap-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>
+    <Card className="overflow-hidden sem-span-6 self-start">
+      <div className="sem-card-head flex-wrap">
+        <h2 className="sem-card-title">Relationships</h2>
+        {rels.length > 0 && <span className="ml-auto flex items-center gap-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           <Chip chip={relationshipChip(tally)} title={relationshipSummary(tally)} />
           {relationshipSummary(tally)}
         </span>}
       </div>
       {/* A run that SKIPPED this family says so, and the rows below it keep their own earlier date. The old
           page rendered the skipped run's empty report and concluded the model has no relationships. */}
-      {skipped && <div className="border-b px-3.5 py-2 text-[11.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-warn)' }}>
-        {skippedFamilyNote('relationships', retained?.whenIso)}
+      {skipped && <div className="border-b px-4 py-2 text-(length:--sem-text-meta)" style={{ borderColor: 'var(--sem-rule)' }}>
+        <span className="sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{skippedFamilyNote('relationships', retained?.whenIso)}</span>
       </div>}
       {rels.length === 0 ? (
-        <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
-          {!hasRun ? 'Relationships are checked when you run everything. Run all enabled checks to see them.'
+        <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
+          {!hasRun ? 'Not run yet.'
             : skipped ? 'Run everything to check them.'
-            : !liveModel ? <>Relationships need a live test model to count rows. <button type="button" className="font-semibold underline" style={{ color: 'var(--sem-accent)' }} onClick={onConnect}>Connect a test model</button> and run again.</>
+            : !liveModel ? <>Relationships need a live test model to count rows. <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={onConnect}>Connect a test model</button> and run again.</>
               : 'This model has no relationships to check.'}
         </div>
       ) : <>
-        <div className="grid items-center border-b px-3.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
-          style={{ gridTemplateColumns: '1.2fr 1.1fr 0.9fr 108px 96px', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+        <div className="grid items-center border-b px-4 py-2 sem-label"
+          style={{ gridTemplateColumns: '1.2fr 1.1fr 0.9fr 108px 96px', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
           <span>Relationship</span><span>Rows that match</span><span>Lookup values unique</span><span>Result</span><span />
         </div>
         {rels.map((rel) => <RelationshipRow key={rel.name} rel={rel} open={open === rel.name} onToggle={() => setOpen(open === rel.name ? null : rel.name)} />)}
@@ -992,26 +951,25 @@ function RelationshipRow({ rel, open, onToggle }: { rel: RelationshipResultW; op
   // One rule for the row and the header: Pass means every check was decided and passed.
   const chip: ResultChip = relationshipChip(relationshipTally([relationshipChecks(rel)]));
   return <>
-    <div className="grid items-center border-b px-3.5 py-2 text-[12px]" style={{ gridTemplateColumns: '1.2fr 1.1fr 0.9fr 108px 96px', borderColor: 'var(--sem-border)' }}>
+    <div className="grid items-center border-b px-4 py-2 text-(length:--sem-text-meta)" style={{ gridTemplateColumns: '1.2fr 1.1fr 0.9fr 108px 96px', borderColor: 'var(--sem-rule)' }}>
       <span className="truncate">{rel.manyTable} → {rel.oneTable}</span>
       <span className="tnum truncate">{matchText(rel)}</span>
       <span>{unique === 'Pass' ? 'Yes' : unique === 'NotVerifiable' ? 'Could not check' : 'No'}</span>
       <span><Chip chip={chip} /></span>
-      <span><button type="button" className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }} onClick={onToggle}>{open ? 'Hide details' : 'Show details'}</button></span>
+      <span><button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={onToggle}>{open ? 'Hide details' : 'Show details'}</button></span>
     </div>
     {open && (
-      <div className="border-b px-6 py-2.5 text-[11.5px]" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)' }}>
+      <div className="border-b px-4 py-3 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)' }}>
         {/* There is no engine operation that returns the unmatched rows themselves, so this shows what the
             check actually COUNTED rather than promising records it cannot fetch (Astra point 7). */}
         <div style={{ color: 'var(--sem-muted)' }}>This is what the check counted.</div>
-        <ul className="mt-1.5 list-none p-0">
+        <ul className="mt-2 list-none p-0">
           <li className="mb-1"><strong>Rows that match:</strong> {rel.referentialIntegrity.message ?? matchText(rel)}</li>
           <li className="mb-1"><strong>Lookup values unique:</strong> {rel.keyUniqueness.message ?? (unique === 'Pass' ? 'Every lookup value occurs once.' : 'This was not checked.')}</li>
           <li><strong>Column types compatible:</strong> {rel.dataTypeMatch.message ?? (types === 'Pass' ? 'The joined columns use types that work together.' : 'This was not checked.')}</li>
         </ul>
-        {rel.referentialIntegrity.rootCause && <div className="mt-1.5" style={{ color: 'var(--sem-warn)' }}>This result depends on another problem first: {rel.referentialIntegrity.rootCause}</div>}
-        {attention && !unmatched && <button type="button" className="mt-2 rounded-md border px-2 py-1 text-[11px] font-semibold"
-          style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }} disabled={loadingRows}
+        {rel.referentialIntegrity.rootCause && <div className="mt-2 sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>This result depends on another problem first: {rel.referentialIntegrity.rootCause}</div>}
+        {attention && !unmatched && <button type="button" className="sem-btn sem-btn-sm mt-2" disabled={loadingRows}
           onClick={showRows}>{loadingRows ? 'Reading…' : 'Show the values that do not match'}</button>}
         {unmatched && <UnmatchedRows result={unmatched} oneTable={rel.oneTable} />}
       </div>
@@ -1022,24 +980,24 @@ function RelationshipRow({ rel, open, onToggle }: { rel: RelationshipResultW; op
 // Each row is one lookup value the other table does not have, with how much data hangs off it, biggest
 // first. Two hundred rows of the same value tell a person nothing; WHICH values are missing is the answer.
 function UnmatchedRows({ result, oneTable }: { result: UnmatchedRowsW; oneTable: string }) {
-  if (result.error) return <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-bad)' }}>{result.error}</div>;
+  if (result.error) return <div className="mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-bad)' }}>{result.error}</div>;
   const rows = result.rows ?? [];
-  if (rows.length === 0) return <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{result.note ?? 'No values came back.'}</div>;
+  if (rows.length === 0) return <div className="mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{result.note ?? 'No values came back.'}</div>;
   return <div className="mt-2">
-    <div className="overflow-hidden rounded-md border" style={{ borderColor: 'var(--sem-border)' }}>
-      <div className="grid border-b px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.05em]"
-        style={{ gridTemplateColumns: 'minmax(0,1fr) 140px', background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+    <div className="overflow-hidden rounded border" style={{ borderColor: 'var(--sem-rule)' }}>
+      <div className="grid border-b px-3 py-1 sem-label"
+        style={{ gridTemplateColumns: 'minmax(0,1fr) 140px', background: 'var(--sem-surface-2)', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
         <span>Value with no {oneTable}</span><span>Rows carrying it</span>
       </div>
       {rows.slice(0, 20).map((row, index) => (
-        <div key={index} className="grid border-b px-3 py-1 text-[11px] last:border-0"
-          style={{ gridTemplateColumns: 'minmax(0,1fr) 140px', borderColor: 'var(--sem-border)' }}>
+        <div key={index} className="grid border-b px-3 py-1 text-(length:--sem-text-label) last:border-0"
+          style={{ gridTemplateColumns: 'minmax(0,1fr) 140px', borderColor: 'var(--sem-rule)' }}>
           <span className="truncate">{row[0] == null ? 'blank' : String(row[0])}</span>
           <span className="tnum">{row[1] == null ? '·' : Number(row[1]).toLocaleString()}</span>
         </div>
       ))}
     </div>
-    <div className="mt-1 text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
+    <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
       {rows.length > 20 && `Showing 20 of ${rows.length.toLocaleString()}${result.truncated ? ' read' : ''}. `}
       {result.note ?? 'This reads the data as it is now, so it can differ from what the check counted when it ran.'}
     </div>
@@ -1070,27 +1028,26 @@ function TableRowCounts({ list, skipped, onMapSource }: {
     return counts;
   }, [rows]);
   return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3.5 py-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-        <h2 className="m-0 text-[13.5px] font-semibold">Table row counts</h2>
-        <span className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Model rows against the source table. Checked when you run everything.</span>
-        {rows.length > 0 && <span className="ml-auto text-[11px]" style={{ color: 'var(--sem-muted)' }}>
+    <Card className="overflow-hidden sem-span-6 self-start">
+      <div className="sem-card-head flex-wrap">
+        <h2 className="sem-card-title">Table row counts</h2>
+        {rows.length > 0 && <span className="ml-auto text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           {summary.Match} match · {summary['Counts differ']} differ · {summary['Not checked']} not checked
         </span>}
       </div>
-      {skipped && <div className="border-b px-3.5 py-2 text-[11.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-warn)' }}>
-        {skippedFamilyNote('table counts', lastCounted)}
+      {skipped && <div className="border-b px-4 py-2 text-(length:--sem-text-meta)" style={{ borderColor: 'var(--sem-rule)' }}>
+        <span className="sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{skippedFamilyNote('table counts', lastCounted)}</span>
       </div>}
-      {list == null ? <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the table mappings…</div>
-        : rows.length === 0 ? <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>{list.note ?? 'This model has no tables to count.'}</div>
+      {list == null ? <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the table mappings…</div>
+        : rows.length === 0 ? <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{list.note ?? 'This model has no tables to count.'}</div>
           : <>
-            <div className="grid items-center border-b px-3.5 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
-              style={{ gridTemplateColumns: '1.1fr 1fr 1.2fr 116px 106px', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+            <div className="grid items-center border-b px-4 py-2 sem-label"
+              style={{ gridTemplateColumns: '1.1fr 1fr 1.2fr 116px 106px', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
               <span>Table</span><span>Model</span><span>Source</span><span>Result</span><span />
             </div>
             {rows.map((row) => (
-              <div key={row.modelTable} className="grid items-center border-b px-3.5 py-2 text-[12px]"
-                style={{ gridTemplateColumns: '1.1fr 1fr 1.2fr 116px 106px', borderColor: 'var(--sem-border)' }}>
+              <div key={row.modelTable} className="grid items-center border-b px-4 py-2 text-(length:--sem-text-meta)"
+                style={{ gridTemplateColumns: '1.1fr 1fr 1.2fr 116px 106px', borderColor: 'var(--sem-rule)' }}>
                 <span className="truncate">{row.modelTable}</span>
                 <span className="tnum">{countText(row.lastModelCount)}</span>
                 <span className="tnum truncate" title={row.lastMessage ?? row.reason ?? undefined}>
@@ -1101,13 +1058,13 @@ function TableRowCounts({ list, skipped, onMapSource }: {
                 </span>
                 <span><CountPill chip={countChip(row)} title={row.lastMessage ?? row.reason ?? undefined} /></span>
                 <span>{row.editable
-                  ? <button type="button" className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}
+                  ? <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet"
                     onClick={() => onMapSource(row.modelTable)}>{row.sqlSourceId ? 'Change source' : 'Map source'}</button>
                   : null}</span>
               </div>
             ))}
           </>}
-      <div className="px-3.5 py-2 text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>{TABLE_COUNT_FOOTER}</div>
+      {summary['Counts differ'] > 0 && <div className="px-4 py-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{TABLE_COUNT_FOOTER}</div>}
     </Card>
   );
 }
@@ -1115,14 +1072,11 @@ function TableRowCounts({ list, skipped, onMapSource }: {
 // ---------------------------------------------------------------------------------------------------
 // 6. History: a dated list whose runs open to their own evidence.
 // ---------------------------------------------------------------------------------------------------
-function History({ history, savedReports, onOpenSavedReports, onRecord, latestRun, busy }: {
-  history: TestHistoryW | null; savedReports: number | null; onOpenSavedReports?: () => void;
-  onRecord: () => void; latestRun: TestRunW | null; busy: boolean;
-}) {
+function History({ history }: { history: TestHistoryW | null }) {
   const [openRun, setOpenRun] = useState<TestRunDetailW | null>(null);
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const runs = useMemo(() => [...(history?.runs ?? [])].sort((a, b) => new Date(b.when).valueOf() - new Date(a.when).valueOf()), [history]);
-  const columns = '180px 40px minmax(0,1fr) 110px 106px';
+  const columns = '180px 40px minmax(0,1fr) 106px';
   const openOne = (runId: string) => {
     setLoadingId(runId);
     rpc<TestRunDetailW>('getTestRun', runId).then(setOpenRun).catch(() => undefined).finally(() => setLoadingId(null));
@@ -1132,35 +1086,21 @@ function History({ history, savedReports, onOpenSavedReports, onRecord, latestRu
     : 'No grade was recorded.';
   return (
     <Card className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b px-3.5 py-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-        <h2 className="m-0 text-[13.5px] font-semibold">History</h2>
-        <span className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Recorded runs. Open one to see its evidence.</span>
-        <button type="button" className="ml-auto text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}
-          onClick={() => onOpenSavedReports?.()}>Saved reports{savedReports == null ? '' : ` ${savedReports}`} ›</button>
+      <div className="sem-card-head flex-wrap">
+        <h2 className="sem-card-title">History</h2>
       </div>
-      {latestRun && !latestRun.persisted && (
-        <div className="grid items-center border-b px-3.5 py-2 text-[12px]" style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)' }}>
-          <span>{formatDate(latestRun.when)}</span>
-          <span className="font-extrabold" style={{ color: GRADE_COLOR[latestRun.health?.grade ?? ''] ?? 'var(--sem-nv)' }}>{latestRun.health?.grade ?? '·'}</span>
-          <span className="truncate" style={{ color: 'var(--sem-muted)' }}>{counts(latestRun.health)}</span>
-          <span style={{ color: 'var(--sem-muted)' }}>not recorded</span>
-          <span><button type="button" disabled={busy} className="rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
-            style={{ borderColor: 'var(--sem-border)' }} onClick={onRecord}>Record</button></span>
-        </div>
-      )}
-      {history == null ? <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the recorded runs…</div>
-        : runs.length === 0 ? <div className="p-4 text-[12px]" style={{ color: 'var(--sem-muted)' }}>{history.note ?? 'No recorded runs yet. Record a run to keep it here.'}</div>
+      {history == null ? <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the recorded runs…</div>
+        : runs.length === 0 ? <div className="p-4 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{history.note ?? 'No recorded runs yet. Record a run to keep it here.'}</div>
           : runs.map((record) => (
-            <div key={record.runId} className="grid items-center border-b px-3.5 py-2 text-[12px]"
-              style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)' }}>
+            <div key={record.runId} className="grid items-center border-b px-4 py-2 text-(length:--sem-text-meta)"
+              style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-rule)' }}>
               <span>{formatDate(record.when)}</span>
-              <span className="font-extrabold" style={{ color: GRADE_COLOR[record.health?.grade ?? ''] ?? 'var(--sem-nv)' }}>{record.health?.grade ?? '·'}</span>
+              <span className="font-semibold sem-num">{record.health?.grade ?? '·'}</span>
               {/* No old-grade label here on purpose: listTestRuns strips outcomes from EVERY row, so a
                   missing outcomes field proves nothing about how that row was scored. The label lives in
                   the opened run, where the engine actually sends gradedBeforeSecurityLeftTests. */}
               <span className="truncate" style={{ color: 'var(--sem-muted)' }}>{counts(record.health)}</span>
-              <span style={{ color: 'var(--sem-muted)' }}>recorded</span>
-              <span><button type="button" className="rounded-md border px-2 py-1 text-[11px]" style={{ borderColor: 'var(--sem-border)' }}
+              <span><button type="button" className="sem-btn sem-btn-sm"
                 aria-label={`Open the run recorded on ${formatDate(record.when, true)}`}
                 onClick={() => openOne(record.runId)}>{loadingId === record.runId ? 'Opening…' : 'Open'}</button></span>
             </div>
@@ -1176,23 +1116,23 @@ function RecordedRun({ detail, onClose }: { detail: TestRunDetailW; onClose: () 
   const columns = 'minmax(0,1.4fr) 128px minmax(0,1fr) 168px';
   const kindWord = (kind: string) => kind === 'savedCheck' ? 'Saved check' : kind === 'relationship' ? 'Relationship' : 'Table row count';
   return (
-    <div className="border-t px-3.5 py-3" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-border)' }}>
+    <div className="border-t px-4 py-3" style={{ background: 'var(--sem-ground)', borderColor: 'var(--sem-rule)' }}>
       <div className="flex items-center gap-3">
-        <strong className="text-[12.5px]">{record ? formatDate(record.when) : 'That run'}</strong>
-        <button type="button" className="ml-auto text-[12px]" style={{ color: 'var(--sem-muted)' }} onClick={onClose}>Close</button>
+        <strong className="text-(length:--sem-text-meta)">{record ? formatDate(record.when) : 'That run'}</strong>
+        <button type="button" className="ml-auto text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }} onClick={onClose}>Close</button>
       </div>
-      {detail.gradedBeforeSecurityLeftTests && <div className="mt-1.5 text-[11.5px]" style={{ color: 'var(--sem-warn)' }}>
+      {detail.gradedBeforeSecurityLeftTests && <div className="mt-2 sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>
         This run was scored the old way, before access rules left this page. Read its letter on its own, not against a newer one.
       </div>}
-      {detail.note && <div className="mt-1.5 text-[11.5px]" style={{ color: 'var(--sem-warn)' }}>{detail.note}</div>}
-      {record?.scope?.gradeCovers && <div className="mt-1.5 text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>
+      {detail.note && <div className="mt-2 sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{detail.note}</div>}
+      {record?.scope?.gradeCovers && <div className="mt-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
         This grade is for {record.scope.gradeCovers}.
       </div>}
       {checks.length === 0
-        ? <div className="mt-1.5 text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>{record?.outcomes?.note ?? 'This run kept its grade and totals but not what each check found.'}</div>
+        ? <div className="mt-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{record?.outcomes?.note ?? 'This run kept its grade and totals but not what each check found.'}</div>
         : <>
-          <div className="mt-2 grid items-center border-b py-1 text-[10.5px] font-semibold uppercase tracking-[0.06em]"
-            style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+          <div className="mt-2 grid items-center border-b py-1 sem-label"
+            style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
             <span>Check</span><span>Kind</span><span>Expected · actual</span><span>Result</span>
           </div>
           {/* Every row opens to what the run actually kept: the comparisons it made, and the settings it was
@@ -1201,7 +1141,7 @@ function RecordedRun({ detail, onClose }: { detail: TestRunDetailW; onClose: () 
           {checks.map((check, index) => (
             <RecordedCheckRow key={`${check.name}-${check.check ?? ''}-${index}`} check={check} columns={columns} kindWord={kindWord} />
           ))}
-          {record?.outcomes?.note && <div className="mt-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{record.outcomes.note}</div>}
+          {record?.outcomes?.note && <div className="mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{record.outcomes.note}</div>}
         </>}
     </div>
   );
@@ -1230,45 +1170,45 @@ function RecordedCheckRow({ check, columns, kindWord }: {
   // three times over with no way to tell the rows apart.
   const name = check.check ? `${check.name} · ${RELATIONSHIP_CHECK_WORD[check.check] ?? check.check}` : check.name;
   return <>
-    <div className="grid items-center border-b py-1.5 text-[11.5px]"
-      style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-border)' }} title={check.note}>
+    <div className="grid items-center border-b py-2 text-(length:--sem-text-meta)"
+      style={{ gridTemplateColumns: columns, borderColor: 'var(--sem-rule)' }} title={check.note}>
       <span className="truncate">{name}</span>
       <span style={{ color: 'var(--sem-muted)' }}>{kindWord(check.kind)}</span>
       <span className="tnum truncate">{check.expected ?? '\u00b7'} · <strong>{check.actual ?? '\u00b7'}</strong></span>
       <span className="flex items-center gap-2">
         <Chip chip={resultChip(true, check)} />
-        {hasDetail && <button type="button" className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}
+        {hasDetail && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet"
           aria-label={`${open ? 'Hide' : 'Open'} what ${name} found`}
           onClick={() => setOpen((v) => !v)}>{open ? 'Hide' : 'Open'}</button>}
       </span>
     </div>
     {open && (
-      <div className="border-b px-3 py-2 text-[11px]" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>
-        {check.note && <div className="mb-1.5" style={{ color: 'var(--sem-muted)' }}>{check.note}</div>}
+      <div className="border-b px-3 py-2 text-(length:--sem-text-label)" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-rule)' }}>
+        {check.note && <div className="mb-2" style={{ color: 'var(--sem-muted)' }}>{check.note}</div>}
         {settings.length > 0 && (
           <dl className="m-0 mb-2 grid gap-x-4 gap-y-1" style={{ gridTemplateColumns: 'max-content minmax(0,1fr)' }}>
             {settings.map(([label, value]) => <Fragment key={label}>
               <dt style={{ color: 'var(--sem-muted)' }}>{label}</dt>
-              <dd className="m-0 break-words font-mono text-[10.5px]">{value}</dd>
+              <dd className="m-0 break-words font-mono text-(length:--sem-text-label)">{value}</dd>
             </Fragment>)}
           </dl>
         )}
         {contexts.length > 0 && <>
           <div className="mb-1" style={{ color: 'var(--sem-muted)' }}>What it compared, as it was saved with this run.</div>
-          <div className="overflow-hidden rounded-md border" role="table" aria-label={`Comparisons kept with ${name}`}
-            style={{ borderColor: 'var(--sem-border)' }}>
-            <div role="row" className="grid border-b px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.05em]"
-              style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+          <div className="overflow-hidden rounded border" role="table" aria-label={`Comparisons kept with ${name}`}
+            style={{ borderColor: 'var(--sem-rule)' }}>
+            <div role="row" className="grid border-b px-2 py-1 sem-label"
+              style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-rule)', color: 'var(--sem-muted)' }}>
               <span role="columnheader">Where</span><span role="columnheader">Expected</span>
               <span role="columnheader">The model</span><span role="columnheader">Difference</span>
             </div>
             {contexts.map((context, index) => (
               <div role="row" key={`${context.context}-${index}`} className="grid border-b px-2 py-1 last:border-0"
-                title={context.note} style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-border)' }}>
+                title={context.note} style={{ gridTemplateColumns: '1.5fr 1fr 1fr 1fr', borderColor: 'var(--sem-rule)' }}>
                 <span role="cell" className={context.grandTotal ? 'truncate font-semibold' : 'truncate'}>{context.context}</span>
                 <span role="cell" className="tnum">{resultText(context.expected) ?? '\u00b7'}</span>
                 <span role="cell" className="tnum">{resultText(context.actual) ?? '\u00b7'}</span>
-                <span role="cell" className="tnum">{resultText(context.difference, true) ?? '\u00b7'}</span>
+                <span role="cell" className="tnum">{resultText(context.difference) ?? '\u00b7'}</span>
               </div>
             ))}
           </div>
@@ -1284,7 +1224,10 @@ function RecordedCheckRow({ check, columns, kindWord }: {
 // ---------------------------------------------------------------------------------------------------
 // The Saved reports library. A peer view of Tests, not a sub-tab of it.
 // ---------------------------------------------------------------------------------------------------
-export function EvidenceView() {
+/** The Reports tab of Validation: every report kept with this model. It was a page of its own in the Checks
+ *  area until 22 September 2026; it is a tab now, so it renders INSIDE Validation's page shell and brings no
+ *  page padding of its own. `evidence` is still its route id, which is how an old link still reaches it. */
+export function EvidenceBody() {
   const [library, setLibrary] = useState<EvidenceLibraryW | null>(null);
   const [openEvidence, setOpenEvidence] = useState<EvidenceItemW | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -1297,62 +1240,64 @@ export function EvidenceView() {
     return onActivity((event) => { if (event.kind === 'save_evidence') loadEvidence(); });
   }, [loadEvidence]);
 
-  return <div className="h-full overflow-auto">
+  return <>
     {openEvidence && <EvidenceArtifactDialog
-      title={openEvidence.title || 'Saved evidence'}
-      subtitle={`${openEvidence.kind === 'workflow-run' ? 'Workflow' : 'Tests'} · ${formatDate(openEvidence.createdUtc)} · saved with ${openEvidence.modelName || 'the current model'}`}
+      title={openEvidence.title || 'Report'}
+      subtitle={`${openEvidence.kind === 'workflow-run' ? 'Workflow' : 'Validation'} · ${formatDate(openEvidence.createdUtc)} · saved with ${openEvidence.modelName || 'the current model'}`}
       baseName={`${(openEvidence.modelName || 'semanticus').replace(/[^\w.-]+/g, '_')}-${openEvidence.id}`}
       stateKey="tests.evidence.saved.format"
       load={() => rpc<EvidenceArtifactW>('getEvidence', openEvidence.id)}
       onClose={() => setOpenEvidence(null)} />}
-    <main className="sem-centered-page w-full min-w-0 px-7 pt-6 pb-12">
-      <header className="mb-4"><h1 className="m-0 text-[15px] font-semibold">Saved reports</h1><div className="mt-1 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Reports kept with this model. Each one says what was checked, when it ran and which model it describes.</div></header>
-      {err && <div className="mb-3"><Banner color="var(--sem-bad)">{err}</Banner></div>}
-      <EvidenceLibraryView library={library} onOpen={setOpenEvidence} />
-    </main>
-  </div>;
+    {err && <div><Banner color="var(--sem-bad)">{err}</Banner></div>}
+    <EvidenceLibraryView library={library} onOpen={setOpenEvidence} />
+  </>;
 }
 
-function ReportExportDialog({ modelName, onSaved, onClose }: { modelName?: string; onSaved?: () => void; onClose: () => void }) {
+function ReportExportDialog({ modelName, onClose }: { modelName?: string; onClose: () => void }) {
   const baseName = `${(modelName ?? 'semanticus').replace(/[^\w.-]+/g, '_')}-test-report`;
   return <EvidenceArtifactDialog
-    title="Test evidence"
-    subtitle={`Latest run for ${modelName ?? 'the current model'} · HTML and JSON are one sealed artifact; Markdown is the portable reading copy.`}
+    title="Check report"
+    subtitle={`Latest run for ${modelName ?? 'the current model'} · HTML and JSON are one sealed report; Markdown is the portable reading copy.`}
     baseName={baseName}
     stateKey="tests.report.format"
     load={() => rpc<TestReportResultW>('exportTestReport')}
     save={() => rpc<EvidenceSaveResultW>('saveEvidence', 'tests', null, 'human')}
-    onSaved={onSaved}
     includeMarkdown
     onClose={onClose}
   />;
 }
 
-function EvidenceLibraryView({ library, onOpen }: { library: EvidenceLibraryW | null; onOpen: (item: EvidenceItemW) => void }) {
+/** Why a report cannot be opened, in plain words. The engine's note is a verification detail (a signature check), so a
+ *  mismatch reads as a change after saving and every other cause reads as unreadable. */
+export function unreadableNote(note?: string | null): string {
+  return note && /signature|hash|does not match|changed/i.test(note) ? 'Changed after it was saved, so it cannot be opened.' : 'This report could not be read.';
+}
+
+export function EvidenceLibraryView({ library, onOpen }: { library: EvidenceLibraryW | null; onOpen: (item: EvidenceItemW) => void }) {
   const items = library?.items ?? [];
-  if (!library) return <Card className="p-4 text-[12px]"><span style={{ color: 'var(--sem-muted)' }}>Loading the saved reports…</span></Card>;
-  if (items.length === 0) return <Card className="p-4 text-[12px]">
-    <strong>No saved reports yet.</strong>
-    <p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>{library.note ?? 'Run the checks in Tests or a workflow, then use Report to keep one with this model.'}</p>
+  if (!library) return <Card className="text-(length:--sem-text-meta)"><span style={{ color: 'var(--sem-muted)' }}>Loading the reports…</span></Card>;
+  if (items.length === 0) return <Card className="text-(length:--sem-text-meta)">
+    <strong>No reports yet.</strong>
+    <p className="m-0 mt-1" style={{ color: 'var(--sem-muted)' }}>{library.note ?? 'Run the checks in Validation or a workflow, then use Report to keep one with this model.'}</p>
     {library.directoryPath && <div className="mt-2"><PathDisclosure label="Where these are kept" path={library.directoryPath} /></div>}
   </Card>;
   return <>
-    {library.invalidCount > 0 && <div className="mb-3"><Banner color="var(--sem-warn)">{plural(library.invalidCount, 'saved report')} could not be read. Those are listed below and cannot be opened.</Banner></div>}
-    <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))' }}>
-      {items.map((item) => (
-        <Card key={item.id} className="flex flex-col gap-1.5 p-3.5 text-[12px]">
-          <strong className="text-[12.5px]">{item.title || 'Saved report'}</strong>
-          <span style={{ color: 'var(--sem-muted)' }}>{item.kind === 'workflow-run' ? 'Workflow run' : 'Tests run'} · {formatDate(item.createdUtc)}</span>
-          <span style={{ color: 'var(--sem-muted)' }}>Saved with {item.modelName || 'the current model'}{item.producer ? ` by ${item.producer === 'agent' ? 'your assistant' : 'a person'}` : ''}</span>
-          {item.verified != null && item.total != null && <span style={{ color: 'var(--sem-muted)' }}>{item.verified} of {item.total} checked{item.unknowns ? ` · ${item.unknowns} could not be checked` : ''}</span>}
-          <span className="mt-1 flex items-center gap-2">
-            <button type="button" disabled={!item.valid} className="rounded-md border px-2.5 py-1 text-[12px] disabled:opacity-40"
-              style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }} onClick={() => onOpen(item)}>Open</button>
-            {!item.valid && <span style={{ color: 'var(--sem-warn)' }}>{item.note ?? 'This report could not be read.'}</span>}
+    {/* Every report is one card on the page's own columns: four across (span 3). */}
+    {items.map((item) => { const countsLine = evidenceCountsLine(item); return (
+        <Card key={item.id} className="sem-span-3 flex flex-col gap-2 text-(length:--sem-text-meta)">
+          <strong className="text-(length:--sem-text-meta)">{item.title || 'Report'}</strong>
+          <span style={{ color: 'var(--sem-muted)' }}>{item.kind === 'workflow-run' ? 'Workflow run' : 'Validation run'} · {formatDate(item.createdUtc)}</span>
+          {/* No "by" here: the record's producer is the op or workflow that made it, never who saved it. */}
+          {/* Said only when the report describes another model than the one that is open. */}
+          {item.modelName && library.modelName && item.modelName.toLocaleLowerCase() !== library.modelName.toLocaleLowerCase()
+            && <span style={{ color: 'var(--sem-muted)' }}>Saved with {item.modelName}</span>}
+          {countsLine && <span style={{ color: 'var(--sem-muted)' }} data-testid="evidence-counts">{countsLine}</span>}
+          <span className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+            <button type="button" disabled={!item.valid} className="sem-btn sem-btn-sm" onClick={() => onOpen(item)}>Open</button>
+            {!item.valid && <span className="sem-chip sem-chip-warn" style={{ color: 'var(--sem-fg)', whiteSpace: 'normal', height: 'auto' }}>{unreadableNote(item.note)}</span>}
           </span>
         </Card>
-      ))}
-    </div>
-    {library.directoryPath && <div className="mt-3"><PathDisclosure label="Where these are kept" path={library.directoryPath} /></div>}
+    ); })}
+    {library.directoryPath && <div><PathDisclosure label="Where these are kept" path={library.directoryPath} /></div>}
   </>;
 }

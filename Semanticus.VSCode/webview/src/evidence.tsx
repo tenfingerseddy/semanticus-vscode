@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { onActivity, type ActivityEvent } from './bridge';
-import type { VerifiedEditRecord } from './history';
+import type { VerifiedEditRecord } from './plan-history-model';
 import { ValueSparkline } from './sparkline';
 import { uiLabel } from './copy';
 
@@ -70,32 +70,29 @@ function parseEvidence(r: VerifiedEditRecord): unknown {
 // ---- small building blocks -----------------------------------------------------------------------
 
 function Chip({ label, value, tone }: { label: string; value: string; tone?: 'good' | 'warn' | 'bad' }) {
-  const color = tone === 'good' ? 'var(--sem-good)' : tone === 'warn' ? 'var(--sem-warn)' : tone === 'bad' ? 'var(--sem-bad)' : 'var(--sem-fg)';
+  // A fact is a label and a value, no box. A tone adds the state dot; the value stays readable text.
+  const dot = tone === 'good' ? 'sem-chip sem-chip-ok' : tone === 'warn' ? 'sem-chip sem-chip-warn' : tone === 'bad' ? 'sem-chip sem-chip-bad' : '';
   return (
-    <span className="inline-flex items-baseline gap-1 text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)' }}>
-      <span style={{ color: 'var(--sem-muted)' }}>{label}</span>
-      <span className="font-semibold tnum" style={{ color }}>{value}</span>
+    <span className="inline-flex items-baseline gap-1 sem-text-meta">
+      <span>{label}</span>
+      <span className={'font-semibold sem-num ' + dot} style={{ color: 'var(--sem-fg)' }}>{value}</span>
     </span>
   );
 }
 
 function VerdictPill({ text, tone }: { text: string; tone: 'good' | 'warn' | 'bad' | 'muted' }) {
-  const color = tone === 'good' ? 'var(--sem-good)' : tone === 'warn' ? 'var(--sem-warn)' : tone === 'bad' ? 'var(--sem-bad)' : 'var(--sem-muted)';
-  return (
-    <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full"
-      style={{ color, background: `color-mix(in srgb, ${color} 16%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 34%, transparent)` }}>
-      {text}
-    </span>
-  );
+  // A verdict is a word and a dot (Instrument), not a tinted pill.
+  const cls = tone === 'good' ? 'sem-chip sem-chip-ok' : tone === 'warn' ? 'sem-chip sem-chip-warn' : tone === 'bad' ? 'sem-chip sem-chip-bad' : 'sem-chip sem-chip-neutral';
+  return <span className={cls} style={tone === 'muted' ? undefined : { color: 'var(--sem-fg)' }}>{text}</span>;
 }
 
 function DaxBlock({ label, dax, highlight }: { label: string; dax: string; highlight?: boolean }) {
   return (
     <div className="min-w-0">
-      <div className="text-[9.5px] uppercase tracking-wide mb-0.5" style={{ color: highlight ? 'var(--sem-good)' : 'var(--sem-muted)' }}>{label}</div>
-      <pre className="text-[10.5px] leading-snug px-2 py-1.5 rounded overflow-auto max-h-40 whitespace-pre-wrap break-words"
-        style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', fontFamily: 'var(--vscode-editor-font-family, monospace)',
-          border: highlight ? '1px solid color-mix(in srgb, var(--sem-good) 45%, transparent)' : '1px solid var(--sem-border)' }}>{dax}</pre>
+      <div className={'sem-label mb-1' + (highlight ? ' sem-chip sem-chip-ok' : '')}>{label}</div>
+      <pre className="sem-inset sem-text-meta m-0 overflow-auto max-h-40 whitespace-pre-wrap break-words"
+        style={{ color: 'var(--sem-fg)', fontFamily: 'var(--sem-font-num)',
+          boxShadow: highlight ? 'inset 2px 0 0 var(--sem-mark)' : undefined }}>{dax}</pre>
     </div>
   );
 }
@@ -106,10 +103,10 @@ function MismatchGrid({ rows, aLabel, bLabel }: { rows: unknown[]; aLabel: strin
   if (rows.length === 0) return null;
   const shown = rows.slice(0, 12);
   return (
-    <div className="overflow-x-auto rounded" style={{ border: '1px solid var(--sem-border)' }}>
-      <table className="w-full text-[10.5px]" style={{ borderCollapse: 'collapse' }}>
+    <div className="overflow-x-auto" style={{ borderTop: '1px solid var(--sem-rule)', borderBottom: '1px solid var(--sem-rule)' }}>
+      <table className="w-full text-(length:--sem-text-label)" style={{ borderCollapse: 'collapse' }}>
         <thead>
-          <tr style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
+          <tr style={{ color: 'var(--sem-muted)' }}>
             <th className="text-left font-medium px-2 py-1">Filter context</th>
             <th className="text-right font-medium px-2 py-1">{aLabel}</th>
             <th className="text-right font-medium px-2 py-1">{bLabel}</th>
@@ -117,7 +114,7 @@ function MismatchGrid({ rows, aLabel, bLabel }: { rows: unknown[]; aLabel: strin
         </thead>
         <tbody>
           {shown.map((m, i) => (
-            <tr key={i} style={{ borderTop: '1px solid var(--sem-border)' }}>
+            <tr key={i} style={{ borderTop: '1px solid var(--sem-rule)' }}>
               <td className="px-2 py-1" style={{ color: 'var(--sem-fg)' }}>{str(pick(m, 'context', 'Context')) ?? 'Not recorded'}</td>
               <td className="px-2 py-1 text-right tnum" style={{ color: 'var(--sem-muted)' }}>{str(pick(m, 'valueA', 'ValueA')) ?? 'Not recorded'}</td>
               <td className="px-2 py-1 text-right tnum font-semibold" style={{ color: 'var(--sem-bad)' }}>{str(pick(m, 'valueB', 'ValueB')) ?? 'Not recorded'}</td>
@@ -126,7 +123,7 @@ function MismatchGrid({ rows, aLabel, bLabel }: { rows: unknown[]; aLabel: strin
         </tbody>
       </table>
       {rows.length > shown.length && (
-        <div className="px-2 py-1 text-[10px]" style={{ color: 'var(--sem-muted)', borderTop: '1px solid var(--sem-border)' }}>+{rows.length - shown.length} more differing context{rows.length - shown.length === 1 ? '' : 's'}</div>
+        <div className="px-2 py-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)', borderTop: '1px solid var(--sem-rule)' }}>+{rows.length - shown.length} more differing context{rows.length - shown.length === 1 ? '' : 's'}</div>
       )}
     </div>
   );
@@ -141,11 +138,11 @@ function BenchBars({ items }: { items: { label: string; ms?: number; winner?: bo
     <div className="flex flex-col gap-1">
       {shown.map((i, k) => (
         <div key={k} className="flex items-center gap-2">
-          <span className="text-[10px] w-24 shrink-0 truncate" style={{ color: i.winner ? 'var(--sem-good)' : 'var(--sem-muted)' }}>{i.label}</span>
+          <span className="text-(length:--sem-text-label) w-24 shrink-0 truncate" style={{ color: i.winner ? 'var(--sem-good)' : 'var(--sem-muted)' }}>{i.label}</span>
           <div className="flex-1 h-2 rounded" style={{ background: 'var(--sem-surface-2)' }}>
-            <div className="h-2 rounded" style={{ width: `${Math.max(3, ((i.ms as number) / max) * 100)}%`, background: i.winner ? 'var(--sem-good)' : 'var(--sem-accent)', opacity: i.winner ? 1 : 0.55 }} />
+            <div className="h-2 rounded" style={{ width: `${Math.max(3, ((i.ms as number) / max) * 100)}%`, background: i.winner ? 'var(--sem-mark)' : 'var(--sem-faint)' }} />
           </div>
-          <span className="text-[10px] tnum w-14 text-right shrink-0" style={{ color: 'var(--sem-fg)' }}>{i.ms}ms</span>
+          <span className="text-(length:--sem-text-label) tnum w-14 text-right shrink-0" style={{ color: 'var(--sem-fg)' }}>{i.ms}ms</span>
         </div>
       ))}
     </div>
@@ -156,7 +153,7 @@ function ShowMore({ label, children }: { label: string; children: React.ReactNod
   const [open, setOpen] = useState(false);
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)} className="text-[10px] underline decoration-dotted" style={{ color: 'var(--sem-muted)' }}>
+      <button onClick={() => setOpen((o) => !o)} className="sem-btn sem-btn-sm sem-btn-quiet" style={{ padding: 0 }}>
         {open ? `hide ${label}` : `show ${label}`}
       </button>
       {open && <div className="mt-1">{children}</div>}
@@ -168,8 +165,8 @@ function RawJson({ text }: { text: string }) {
   let pretty = text;
   try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch { /* verbatim */ }
   return (
-    <pre className="text-[10px] leading-snug px-2 py-1.5 rounded overflow-auto max-h-56"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', fontFamily: 'var(--vscode-editor-font-family, monospace)' }}>{pretty}</pre>
+    <pre className="sem-inset sem-text-meta m-0 overflow-auto max-h-56"
+      style={{ color: 'var(--sem-fg)', fontFamily: 'var(--sem-font-num)' }}>{pretty}</pre>
   );
 }
 
@@ -189,7 +186,7 @@ function OptimizeEvidence({ digest, rich }: { digest: unknown; rich: unknown }) 
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-1.5 items-center">
+      <div className="flex flex-wrap gap-2 items-center">
         {groupBy.length > 0 && <Chip label="equivalence grid" value={groupBy.join(' × ')} />}
         {baselineMs != null && <Chip label="baseline warm-median" value={baselineMs + 'ms'} />}
         {noiseMs != null && <Chip label="noise band" value={'±' + noiseMs + 'ms'} />}
@@ -213,10 +210,9 @@ function OptimizeEvidence({ digest, rich }: { digest: unknown; rich: unknown }) 
         const isWinner = winnerIdx != null && idx === winnerIdx && state === 'proven';
         const tone = state === 'proven' ? 'good' : state === 'failed' ? 'bad' : 'warn';
         return (
-          <div key={i} className="rounded-lg p-2 flex flex-col gap-1.5"
-            style={{ border: isWinner ? '1px solid color-mix(in srgb, var(--sem-good) 45%, transparent)' : '1px solid var(--sem-border)' }}>
+          <div key={i} className="py-2 flex flex-col gap-2" style={{ borderTop: '1px solid var(--sem-rule)' }}>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Candidate {idx}</span>
+              <span className="text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-fg)' }}>Candidate {idx}</span>
               <VerdictPill text={uiLabel(state)} tone={tone as 'good' | 'warn' | 'bad'} />
               {isWinner && <VerdictPill text="winner" tone="good" />}
               {rows != null && <Chip label="contexts compared" value={String(rows)} />}
@@ -226,7 +222,7 @@ function OptimizeEvidence({ digest, rich }: { digest: unknown; rich: unknown }) 
             </div>
             {dax && <DaxBlock label="candidate DAX" dax={dax} highlight={isWinner} />}
             {mms.length > 0 && <MismatchGrid rows={mms} aLabel="current body" bLabel="candidate" />}
-            {note && <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>{note}</div>}
+            {note && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{note}</div>}
             {query && <ShowMore label="comparison query"><RawJson text={query} /></ShowMore>}
           </div>
         );
@@ -257,7 +253,7 @@ function CompareEvidence({ digest, rich }: { digest: unknown; rich: unknown }) {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-1.5 items-center">
+      <div className="flex flex-wrap gap-2 items-center">
         {grid.length > 0 && <Chip label="grid" value={grid.join(' × ')} />}
         {measures != null && <Chip label="measures baselined" value={String(measures)} />}
         {moved != null && <Chip label="moved" value={String(moved)} tone={moved > 0 ? 'bad' : 'good'} />}
@@ -274,15 +270,15 @@ function CompareEvidence({ digest, rich }: { digest: unknown; rich: unknown }) {
         const note = str(pick(d, 'note'));
         const tone = verdict === 'unchanged' ? 'good' : verdict === 'moved' || verdict === 'missing' ? 'bad' : 'warn';
         return (
-          <div key={i} className="rounded-lg p-2 flex flex-col gap-1.5" style={{ border: '1px solid var(--sem-border)' }}>
+          <div key={i} className="py-2 flex flex-col gap-2" style={{ borderTop: '1px solid var(--sem-rule)' }}>
             <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{name}</span>
+              <span className="text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-fg)' }}>{name}</span>
               <VerdictPill text={uiLabel(verdict)} tone={tone as 'good' | 'warn' | 'bad'} />
               {rows != null && <Chip label="contexts" value={String(rows)} />}
               {mmCount != null && mmCount > 0 && <Chip label="moved in" value={mmCount + ' context' + (mmCount === 1 ? '' : 's')} tone="bad" />}
             </div>
             {mms.length > 0 && <MismatchGrid rows={mms} aLabel="captured (before)" bLabel="now (after)" />}
-            {note && <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>{note}</div>}
+            {note && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{note}</div>}
           </div>
         );
       })}
@@ -307,7 +303,7 @@ function ApplyPlanEvidence({ digest, rich }: { digest: unknown; rich: unknown })
   const truncated = bool(pick(src, 'itemsTruncated'));
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-wrap gap-1.5 items-center">
+      <div className="flex flex-wrap gap-2 items-center">
         {applied != null && <Chip label="applied" value={String(applied)} tone="good" />}
         {skipped != null && skipped > 0 && <Chip label="skipped" value={String(skipped)} tone="warn" />}
         {failed != null && failed > 0 && <Chip label="failed" value={String(failed)} tone="bad" />}
@@ -318,10 +314,10 @@ function ApplyPlanEvidence({ digest, rich }: { digest: unknown; rich: unknown })
         {bpaB != null && bpaA != null && <Chip label="BPA" value={`${bpaB} → ${bpaA}`} tone={bpaA <= bpaB ? 'good' : 'warn'} />}
       </div>
       {items.length > 0 && (
-        <div className="overflow-x-auto rounded" style={{ border: '1px solid var(--sem-border)' }}>
-          <table className="w-full text-[10.5px]" style={{ borderCollapse: 'collapse' }}>
+        <div className="overflow-x-auto" style={{ borderTop: '1px solid var(--sem-rule)', borderBottom: '1px solid var(--sem-rule)' }}>
+          <table className="w-full text-(length:--sem-text-label)" style={{ borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
+              <tr style={{ color: 'var(--sem-muted)' }}>
                 <th className="text-left font-medium px-2 py-1">Change</th>
                 <th className="text-left font-medium px-2 py-1">Object</th>
                 <th className="text-left font-medium px-2 py-1">Verify</th>
@@ -331,7 +327,7 @@ function ApplyPlanEvidence({ digest, rich }: { digest: unknown; rich: unknown })
               {items.slice(0, 15).map((it, i) => {
                 const vs = str(pick(it, 'verifyState', 'VerifyState'));
                 return (
-                  <tr key={i} style={{ borderTop: '1px solid var(--sem-border)' }}>
+                  <tr key={i} style={{ borderTop: '1px solid var(--sem-rule)' }}>
                     <td className="px-2 py-1" style={{ color: 'var(--sem-fg)' }}>{uiLabel(str(pick(it, 'kind', 'Kind')), 'Not recorded')}</td>
                     <td className="px-2 py-1" style={{ color: 'var(--sem-muted)' }}>{str(pick(it, 'objectRef', 'ObjectRef')) ?? 'Not recorded'}</td>
                     <td className="px-2 py-1">{vs ? <VerdictPill text={uiLabel(vs)} tone={vs === 'verified' ? 'good' : vs === 'failed' ? 'bad' : 'warn'} /> : <span style={{ color: 'var(--sem-muted)' }}>Not recorded</span>}</td>
@@ -341,8 +337,8 @@ function ApplyPlanEvidence({ digest, rich }: { digest: unknown; rich: unknown })
             </tbody>
           </table>
           {(items.length > 15 || truncated) && (
-            <div className="px-2 py-1 text-[10px]" style={{ color: 'var(--sem-muted)', borderTop: '1px solid var(--sem-border)' }}>
-              {items.length > 15 ? `+${items.length - 15} more item(s)` : ''}{truncated ? ' · the persisted digest is capped at 100 items' : ''}
+            <div className="px-2 py-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)', borderTop: '1px solid var(--sem-rule)' }}>
+              {items.length > 15 ? `+${items.length - 15} more item(s)` : ''}{truncated ? ' · the stored report is capped at 100 items' : ''}
             </div>
           )}
         </div>
@@ -362,18 +358,18 @@ function DeployEvidence({ digest }: { digest: unknown }) {
   const database = str(pick(digest, 'database'));
   const blockers = asArr(pick(digest, 'Blockers', 'blockers')).map(String);
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex flex-wrap gap-1.5 items-center">
-        {gatePass != null && <Chip label="gate" value={gatePass ? 'GREEN' : 'RED'} tone={gatePass ? 'good' : 'bad'} />}
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap gap-2 items-center">
+        {gatePass != null && <Chip label="check" value={gatePass ? 'GREEN' : 'RED'} tone={gatePass ? 'good' : 'bad'} />}
         {grade && <Chip label="grade" value={grade} />}
-        {bpa != null && <Chip label="BPA violations" value={String(bpa)} tone={bpa > 0 ? 'warn' : 'good'} />}
+        {bpa != null && <Chip label="Model quality (BPA) findings" value={String(bpa)} tone={bpa > 0 ? 'warn' : 'good'} />}
         {blocking != null && <Chip label="blocking" value={String(blocking)} tone={blocking > 0 ? 'bad' : 'good'} />}
-        {total != null && <Chip label="changes deployed" value={String(total)} />}
+        {total != null && <Chip label="changes published" value={String(total)} />}
         {database && <Chip label="target" value={database} />}
       </div>
-      {endpoint && <div className="text-[10px] truncate" style={{ color: 'var(--sem-muted)' }} title={endpoint}>{endpoint}</div>}
+      {endpoint && <div className="text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)' }} title={endpoint}>{endpoint}</div>}
       {blockers.length > 0 && (
-        <ul className="text-[10.5px] pl-4 list-disc" style={{ color: 'var(--sem-bad)' }}>
+        <ul className="text-(length:--sem-text-label) pl-4 list-disc" style={{ color: 'var(--sem-bad)' }}>
           {blockers.map((b, i) => <li key={i}>{b}</li>)}
         </ul>
       )}
@@ -405,8 +401,8 @@ function WhatMovedEvidence({ record, digest, rich, sessionId, onJump }: {
   })();
 
   const OP_PLAIN: Record<string, string> = {
-    apply_plan: 'Applied a change plan', optimize_measure: 'Optimized a measure',
-    deploy_live: 'Deployed to the service', save_model: 'Saved the model',
+    apply_plan: 'Applied a set of changes', optimize_measure: 'Optimized a measure',
+    deploy_live: 'Published to the service', save_model: 'Saved the model',
   };
   const opPlain = (op?: string) => (op ? OP_PLAIN[op] ?? op.replace(/_/g, ' ') : 'edit');
   const actor = (o?: string) => (o === 'agent' ? 'Your assistant' : o === 'system' ? 'System' : 'You');
@@ -428,8 +424,8 @@ function WhatMovedEvidence({ record, digest, rich, sessionId, onJump }: {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-[11px]" style={{ color: 'var(--sem-fg)' }}>{lead}</div>
-      <div className="flex flex-wrap gap-1.5 items-center">
+      <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-fg)' }}>{lead}</div>
+      <div className="flex flex-wrap gap-2 items-center">
         {before != null && after != null && <Chip label="value" value={`${before} → ${after}`} tone="warn" />}
         {context && context !== '(model context)' && <Chip label="slice" value={context} />}
         {cause === 'formula' && <Chip label="what changed" value="a formula behind it" tone="warn" />}
@@ -453,54 +449,52 @@ function WhatMovedEvidence({ record, digest, rich, sessionId, onJump }: {
             const canJump = onJump != null && rev != null && rev > 0 && cSession != null && sessionId != null && cSession === sessionId;
             const otherSession = onJump != null && rev != null && rev > 0 && !canJump;
             return (
-              <div key={i} className="group/cand flex items-center gap-2 flex-wrap rounded-lg px-2 py-1.5"
-                style={{ border: likely ? '1px solid color-mix(in srgb, var(--sem-accent) 45%, transparent)' : '1px solid var(--sem-border)' }}>
-                <span className="text-[11px] font-medium" style={{ color: 'var(--sem-fg)' }}>{actor(origin)} · {opPlain(op)}</span>
+              <div key={i} className="group/cand flex items-center gap-2 flex-wrap py-2" style={{ borderTop: '1px solid var(--sem-rule)' }}>
+                <span className="text-(length:--sem-text-label) font-medium" style={{ color: 'var(--sem-fg)' }}>{actor(origin)} · {opPlain(op)}</span>
                 {likely && <VerdictPill text={cands.length === 1 ? 'the edit in this window' : 'most likely'} tone="good" />}
                 {formula && <Chip label="changed" value="a formula" tone="warn" />}
                 {overlap > 0 && <Chip label="touches" value={`${overlap} of this number’s inputs`} />}
                 {canJump && (
-                  <button onClick={() => onJump(rev)} title="Scroll to this edit in the timeline above (you can undo to it there)."
-                    className="text-[10px] px-1.5 py-0.5 rounded"
-                    style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
+                  <button onClick={() => onJump(rev)} title="Open this edit in History, where you can undo to it."
+                    className="sem-btn sem-btn-sm">
                     Show this edit
                   </button>
                 )}
                 {otherSession && (
-                  <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}
+                  <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}
                     title="This edit isn’t on the current session’s timeline, so it can’t be shown (or undone) from here.">
                     not in this session’s timeline
                   </span>
                 )}
                 {/* apply/optimize records ARE the edit at that revision; a save/deploy just happened AFTER it */}
-                <span className="ml-auto text-[10px] tnum" style={{ color: 'var(--sem-muted)' }}>
+                <span className="ml-auto text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>
                   {rev != null && rev > 0 ? (op === 'apply_plan' || op === 'optimize_measure' ? `edit #${rev}` : `after edit #${rev}`) : ''}
                 </span>
               </div>
             );
           })}
-          {cands.length > 6 && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>+{cands.length - 6} more edit(s) in this window</div>}
+          {cands.length > 6 && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>+{cands.length - 6} more edit(s) in this window</div>}
         </div>
       )}
       {untracked > 0 && (
-        <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
-          {untracked} more edit{untracked === 1 ? '' : 's'} happened in this window without a recorded snapshot; they could be the cause too.
+        <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
+          {untracked} more edit{untracked === 1 ? '' : 's'} happened in this window without a recorded version; they could be the cause too.
         </div>
       )}
       {diffs.length > 0 && (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {diffs.slice(0, 2).map((d, i) => {
             const nm = friendly(str(pick(d, 'ref', 'Ref')));
             const b = str(pick(d, 'before', 'Before'));
             const a = str(pick(d, 'after', 'After'));
             return (
-              <div key={i} className="grid gap-1.5" style={{ gridTemplateColumns: b && a ? '1fr 1fr' : '1fr' }}>
-                {b != null ? <DaxBlock label={`${nm} (before)`} dax={b} /> : <div className="text-[10px] self-end" style={{ color: 'var(--sem-muted)' }}>{nm}: new formula (didn’t exist before)</div>}
-                {a != null ? <DaxBlock label={`${nm} (after)`} dax={a} highlight /> : <div className="text-[10px] self-end" style={{ color: 'var(--sem-muted)' }}>{nm}: removed (no longer used by this number)</div>}
+              <div key={i} className="grid gap-2" style={{ gridTemplateColumns: b && a ? '1fr 1fr' : '1fr' }}>
+                {b != null ? <DaxBlock label={`${nm} (before)`} dax={b} /> : <div className="text-(length:--sem-text-label) self-end" style={{ color: 'var(--sem-muted)' }}>{nm}: new formula (didn’t exist before)</div>}
+                {a != null ? <DaxBlock label={`${nm} (after)`} dax={a} highlight /> : <div className="text-(length:--sem-text-label) self-end" style={{ color: 'var(--sem-muted)' }}>{nm}: removed (no longer used by this number)</div>}
               </div>
             );
           })}
-          {diffs.length > 2 && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>+{diffs.length - 2} more changed formula(s), see the raw JSON below</div>}
+          {diffs.length > 2 && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>+{diffs.length - 2} more changed formula(s), see the raw JSON below</div>}
         </div>
       )}
       {record.objectRef && <ValueSparkline measureRef={record.objectRef} context={context ?? undefined} />}
@@ -526,8 +520,8 @@ function ExplainedNumberEvidence({ record, digest, rich }: { record: VerifiedEdi
   const rlsRoles = asArr(pick(src, 'rlsRoles')).map(String);
   return (
     <div className="flex flex-col gap-2">
-      {summary && <div className="text-[11px]" style={{ color: 'var(--sem-fg)' }}>{summary}</div>}
-      <div className="flex flex-wrap gap-1.5 items-center">
+      {summary && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-fg)' }}>{summary}</div>}
+      <div className="flex flex-wrap gap-2 items-center">
         {value != null && !isBlank && <Chip label="value" value={value} tone="good" />}
         {isBlank === true && <VerdictPill text="blank" tone="warn" />}
         {isBlank === true && likely && <Chip label="likely reason" value={likely.replace(/-/g, ' ')} tone="warn" />}
@@ -541,7 +535,7 @@ function ExplainedNumberEvidence({ record, digest, rich }: { record: VerifiedEdi
             const result = str(pick(c, 'result', 'Result'));
             const tone = result === 'cause' ? 'bad' : result === 'ok' ? 'good' : 'warn';
             return (
-              <div key={i} className="flex items-start gap-2 text-[10.5px]">
+              <div key={i} className="flex items-start gap-2 text-(length:--sem-text-label)">
                 <VerdictPill text={result === 'cause' ? 'Cause' : result === 'ok' ? 'Ruled out' : uiLabel(result, 'Not available')} tone={tone as 'good' | 'warn' | 'bad'} />
                 <span style={{ color: 'var(--sem-muted)' }}>{str(pick(c, 'finding', 'Finding'))}</span>
               </div>
@@ -550,9 +544,9 @@ function ExplainedNumberEvidence({ record, digest, rich }: { record: VerifiedEdi
         </div>
       )}
       {additive === true && contribRows.length > 0 && (
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-1">
           {contribRows.slice(0, 6).map((r, i) => (
-            <div key={i} className="flex items-baseline gap-2 text-[10.5px]">
+            <div key={i} className="flex items-baseline gap-2 text-(length:--sem-text-label)">
               <span className="truncate" style={{ color: 'var(--sem-fg)' }}>{str(pick(r, 'member', 'Member'))}</span>
               <span className="ml-auto tnum" style={{ color: 'var(--sem-fg)' }}>{str(pick(r, 'value', 'Value'))}</span>
               <span className="tnum w-10 text-right" style={{ color: 'var(--sem-muted)' }}>{num(pick(r, 'pct', 'Pct')) != null ? num(pick(r, 'pct', 'Pct')) + '%' : ''}</span>
@@ -560,7 +554,7 @@ function ExplainedNumberEvidence({ record, digest, rich }: { record: VerifiedEdi
           ))}
         </div>
       )}
-      {additive === false && contribNote && <div className="text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>{contribNote}</div>}
+      {additive === false && contribNote && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{contribNote}</div>}
     </div>
   );
 }
@@ -588,10 +582,10 @@ export function Evidence({ record, rich, sessionId, onJump }: {
   })();
   if (!body) return record.evidence ? <RawJson text={record.evidence} /> : null;
   return (
-    <div className="flex flex-col gap-1.5">
-      {rich != null && <div className="text-[9.5px] uppercase tracking-wide" style={{ color: 'var(--sem-muted)' }}>full evidence · captured live this session</div>}
+    <div className="flex flex-col gap-2">
+      {rich != null && <div className="sem-label">Full report, captured live this session</div>}
       {body}
-      {record.evidence && <ShowMore label="raw evidence JSON"><RawJson text={record.evidence} /></ShowMore>}
+      {record.evidence && <ShowMore label="the report as stored data"><RawJson text={record.evidence} /></ShowMore>}
     </div>
   );
 }

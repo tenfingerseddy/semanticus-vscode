@@ -39,6 +39,7 @@ namespace Semanticus.Tests
             catch (InvalidOperationException) { return false; }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Pro_sweep_removes_the_safe_set_atomically_and_one_undo_restores_all()
         {
@@ -47,6 +48,8 @@ namespace Semanticus.Tests
             var a = await engine.CreateMeasureAsync("table:" + table, "Sweep_A", "1", "human");
             var b = await engine.CreateMeasureAsync("table:" + table, "Sweep_B", "2", "human");
             var c = await engine.CreateCalculatedColumnAsync("table:" + table, "Sweep_Col", "1", "human");
+            // Hidden: the table is a dimension, where a visible unreferenced column is never "safe" (visibleAttribute).
+            await engine.SetObjectPropertyAsync(c, "IsHidden", "true", "human");
 
             var scan = await engine.UnusedObjectsAsync();
             foreach (var r in new[] { a, b, c })
@@ -69,6 +72,7 @@ namespace Semanticus.Tests
             Assert.True(await ExistsAsync(engine, c));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item_that_gained_a_dependent_after_the_scan_is_skipped_not_deleted()
         {
@@ -117,6 +121,7 @@ namespace Semanticus.Tests
             Assert.True(await ExistsAsync(engine, b));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_requested_item_that_is_in_use_is_skipped_with_a_reason_never_deleted()
         {
@@ -181,6 +186,7 @@ namespace Semanticus.Tests
             Assert.Equal(auditBefore, (await engine.ListVerifiedEditsAsync()).Records.Length);   // no phantom audit record
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Report_paths_supplied_but_NONE_readable_refuses_the_whole_sweep()
         {
@@ -248,6 +254,7 @@ namespace Semanticus.Tests
             finally { try { System.IO.Directory.Delete(root, true); } catch { /* best-effort temp cleanup */ } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Fully_readable_report_coverage_protects_report_used_fields_and_still_removes_true_orphans()
         {

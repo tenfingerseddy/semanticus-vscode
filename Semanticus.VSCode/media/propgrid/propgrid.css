@@ -1,50 +1,77 @@
-:root { --gap: 10px; }
-body { font: var(--vscode-font-size)/1.45 var(--vscode-font-family); color: var(--vscode-foreground); margin: 0; }
-.empty { padding: 12px; color: var(--vscode-descriptionForeground); font-size: 12px; }
-.hdr { padding: 7px var(--gap); font-weight: 600; font-size: 12px; background: var(--vscode-sideBar-background); position: sticky; top: 0; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Properties grid reads the visual-language tokens (media/studio/tokens.css, linked before this file).
+   Every length is a token (Instrument, 23 September 2026). The grid is a dense VS Code side panel, so rows use the
+   smallest steps: a row is split from the next by one --sem-space-1, and a category label is sentence case. */
+body { font: var(--sem-text-body)/var(--sem-lh-body) var(--sem-font-ui); color: var(--vscode-foreground); margin: 0; }
+.empty { padding: var(--sem-space-3); color: var(--vscode-descriptionForeground); font-size: var(--sem-text-body); }
+.hdr { padding: 0 var(--sem-space-3); line-height: var(--sem-control-h); font-weight: 600; font-size: var(--sem-text-body); background: var(--vscode-sideBar-background); position: sticky; top: 0; z-index: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .multi { color: var(--vscode-charts-blue, var(--vscode-textLink-foreground)); }
-.search { position: sticky; top: 28px; z-index: 2; padding: 4px var(--gap) 6px; background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
-.search input { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 3px 6px; font-size: 12px; border-radius: 3px; }
-.cat { display: flex; align-items: center; gap: 4px; padding: 6px var(--gap) 3px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); cursor: pointer; user-select: none; position: sticky; top: 58px; background: var(--vscode-sideBar-background); }
+.search { position: sticky; top: var(--sem-control-h); z-index: 2; padding: var(--sem-space-1) var(--sem-space-3) var(--sem-space-2); background: var(--vscode-sideBar-background); border-bottom: 1px solid var(--vscode-panel-border); }
+.search input { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); height: var(--sem-control-h-sm); padding: 0 var(--sem-space-2); font-size: var(--sem-text-body); border-radius: var(--sem-radius-control); }
+.cat { display: flex; align-items: center; gap: var(--sem-space-1); padding: var(--sem-space-2) var(--sem-space-3) var(--sem-space-1); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); font-weight: var(--sem-weight-strong); color: var(--sem-muted); cursor: pointer; user-select: none; position: sticky; top: calc(var(--sem-control-h) + var(--sem-space-1) + var(--sem-control-h-sm) + var(--sem-space-2)); background: var(--vscode-sideBar-background); }
 .cat:hover { color: var(--vscode-foreground); }
 .twist { display: inline-block; width: 9px; transition: transform .1s; }
 .collapsed .twist { transform: rotate(-90deg); }
-.rowx { display: grid; grid-template-columns: minmax(7rem, 42%) minmax(0, 1fr); align-items: start; gap: 6px; padding: 2px var(--gap); }
-.rowx label { font-size: 12px; white-space: normal; overflow-wrap: break-word; padding-top: 2px; cursor: help; }
+.rowx { display: grid; grid-template-columns: minmax(7rem, 42%) minmax(0, 1fr); align-items: start; gap: var(--sem-space-2); padding: var(--sem-space-1) var(--sem-space-3) 0; }
+.rowx label { font-size: var(--sem-text-body); white-space: normal; overflow-wrap: break-word; line-height: var(--sem-lh-body); padding-top: var(--sem-space-1); cursor: help; }
 .rowx.changed label { color: var(--vscode-charts-green, var(--vscode-foreground)); }
-input[type=text], input[type=number], select, textarea { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); padding: 2px 5px; font-size: 12px; border-radius: 3px; font-family: inherit; }
-textarea { resize: none; overflow: hidden; min-height: 22px; line-height: 1.4; }
-textarea[data-commit-enter] { max-height: 4.6em; overflow-y: auto; }
+input[type=text], input[type=number], select, textarea { width: 100%; box-sizing: border-box; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border, transparent); height: var(--sem-control-h); padding: 0 var(--sem-space-2); font-size: var(--sem-text-body); border-radius: var(--sem-radius-control); font-family: inherit; }
+textarea { height: auto; resize: none; overflow: hidden; min-height: var(--sem-control-h); padding: var(--sem-space-1) var(--sem-space-2); line-height: var(--sem-lh-body); }
+/* Grows with its text while the panel has room (the space rule, 27 September 2026): it used to stop at three lines and
+   hide a long description in a tiny scrolling box with most of the side panel empty. Past 60% of the panel it scrolls. */
+textarea[data-commit-enter] { max-height: 60vh; overflow-y: auto; }
 input::placeholder, textarea::placeholder { color: var(--vscode-input-placeholderForeground); font-style: italic; }
-input[type=checkbox] { accent-color: var(--vscode-checkbox-foreground); justify-self: start; margin: 2px 0 0; width: 15px; height: 15px; }
-.ro { font-size: 12px; color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 2px; }
+input[type=checkbox] { accent-color: var(--vscode-checkbox-foreground); justify-self: start; margin: var(--sem-space-1) 0 0; width: var(--sem-space-4); height: var(--sem-space-4); }
+.ro { font-size: var(--sem-text-body); color: var(--vscode-descriptionForeground); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: var(--sem-lh-body); padding-top: var(--sem-space-1); }
 input:focus, select:focus, textarea:focus { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
-.err { grid-column: 1 / -1; color: var(--vscode-errorForeground); font-size: 11px; padding: 1px 0 2px; }
+.err { grid-column: 1 / -1; color: var(--vscode-errorForeground); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); padding: 0; }
 .invalid { border-color: var(--vscode-errorForeground) !important; }
-.hint { grid-column: 1 / -1; color: var(--vscode-descriptionForeground); font-size: 11px; padding: 1px 0 2px; }
-.btn { font-family: inherit; font-size: 11px; padding: 2px 9px; border: none; border-radius: 3px; cursor: pointer; background: var(--vscode-button-secondaryBackground, var(--vscode-input-background)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
+.hint { grid-column: 1 / -1; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); padding: 0; }
+/* "Draft not saved": the quiet mark on a row that holds typed, unsaved words (the Studio's .sem-draft-mark, in the grid's dense steps).
+   The slot is always there for a text row so typing can fill it in place; empty, it takes no grid row. */
+.draft-slot { grid-column: 2 / -1; }
+.draft-slot:empty { display: none; }
+.draft-mark { display: inline-flex; align-items: center; gap: var(--sem-space-1); font-size: var(--sem-text-label); line-height: var(--sem-lh-label); color: var(--sem-muted); white-space: nowrap; }
+.draft-mark::before { content: ''; width: calc(var(--sem-space-1) * 1.5); height: calc(var(--sem-space-1) * 1.5); border-radius: 50%; background: var(--sem-warn); flex: none; }
+.btn { font-family: inherit; font-size: var(--sem-text-meta); height: var(--sem-control-h-sm); padding: 0 var(--sem-space-2); border: none; border-radius: var(--sem-radius-control); cursor: pointer; background: var(--vscode-button-secondaryBackground, var(--vscode-input-background)); color: var(--vscode-button-secondaryForeground, var(--vscode-foreground)); }
 .btn:hover { background: var(--vscode-button-secondaryHoverBackground, var(--vscode-input-background)); }
 .btn.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
 .btn.primary:hover { background: var(--vscode-button-hoverBackground, var(--vscode-button-background)); }
 /* Format String picker: input + a dropdown affordance; the popup lists the catalog's common entries per category. */
-.combo { position: relative; display: flex; gap: 2px; min-width: 0; }
+.combo { position: relative; display: flex; gap: var(--sem-space-1); min-width: 0; }
 .combo input { flex: 1; min-width: 0; }
-.combo-btn { flex: none; width: 18px; padding: 0; border: 1px solid var(--vscode-input-border, transparent); border-radius: 3px; background: var(--vscode-input-background); color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 9px; }
+.combo-btn { flex: none; width: var(--sem-control-h-sm); padding: 0; border: 1px solid var(--vscode-input-border, transparent); border-radius: var(--sem-radius-control); background: var(--vscode-input-background); color: var(--vscode-descriptionForeground); cursor: pointer; font-size: var(--sem-text-label); }
 .combo-btn:hover { color: var(--vscode-foreground); }
-.combo-pop { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin-top: 2px; max-height: 300px; overflow-y: auto; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border)); border-radius: 4px; box-shadow: 0 4px 10px rgba(0,0,0,.35); }
-.combo-cat { padding: 5px 8px 2px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--vscode-descriptionForeground); }
-.combo-item { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.combo-pop { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin-top: var(--sem-space-1); max-height: 300px; overflow-y: auto; background: var(--vscode-editorWidget-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border)); border-radius: var(--sem-radius-card); box-shadow: 0 4px 10px rgba(0,0,0,.35); }
+.combo-cat { padding: var(--sem-space-2) var(--sem-space-2) var(--sem-space-1); font-size: var(--sem-text-meta); font-weight: var(--sem-weight-strong); color: var(--sem-muted); }
+.combo-item { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sem-space-2); padding: var(--sem-space-1) var(--sem-space-2); font-size: var(--sem-text-body); cursor: pointer; }
 .combo-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,.15)); }
-.combo-item code { color: var(--vscode-descriptionForeground); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.combo-note { padding: 4px 8px 6px; font-size: 10px; color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border); }
+.combo-item code { color: var(--vscode-descriptionForeground); font-size: var(--sem-text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo-note { padding: var(--sem-space-1) var(--sem-space-2) var(--sem-space-2); font-size: var(--sem-text-meta); color: var(--vscode-descriptionForeground); border-top: 1px solid var(--vscode-panel-border); }
 /* Format expression (a measure's dynamic format): status + Edit, expanding into a lightweight DAX editor. */
-.fx-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.fx-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; background: var(--vscode-input-background); padding: 2px 5px; border-radius: 3px; }
-.fx-none { flex: 1; color: var(--vscode-descriptionForeground); font-size: 12px; }
+.fx-row { display: flex; align-items: center; gap: var(--sem-space-2); min-width: 0; }
+.fx-prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--vscode-editor-font-family, monospace); font-size: var(--sem-text-meta); background: var(--vscode-input-background); padding: var(--sem-space-1) var(--sem-space-2); border-radius: var(--sem-radius-control); }
+.fx-none { flex: 1; color: var(--vscode-descriptionForeground); font-size: var(--sem-text-body); }
 .fx-locked { white-space: normal; }
-.fx-panel { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; padding: 6px; border: 1px solid var(--vscode-panel-border); border-radius: 4px; background: var(--vscode-editor-background); }
-.fx-ta { font-family: var(--vscode-editor-font-family, monospace); font-size: 12px; }
-.fx-msg { color: var(--vscode-errorForeground); font-size: 11px; }
+.fx-panel { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--sem-space-2); margin: var(--sem-space-1) 0; padding: var(--sem-space-2); border: 1px solid var(--vscode-panel-border); border-radius: var(--sem-radius-card); background: var(--vscode-editor-background); }
+.fx-ta { font-family: var(--vscode-editor-font-family, monospace); font-size: var(--sem-text-body); }
+.fx-msg { color: var(--vscode-errorForeground); font-size: var(--sem-text-meta); }
 .fx-msg:empty { display: none; }
-.fx-actions { display: flex; align-items: center; gap: 6px; }
+.fx-actions { display: flex; align-items: center; gap: var(--sem-space-2); }
 .fx-actions .hint { padding: 0; }
+/* The newer stored value shown beside typed words that were over an older one (F11). */
+.moved-theirs { margin: var(--sem-space-1) 0; color: var(--vscode-foreground); }
+.moved-theirs code, .fx-msg code { white-space: pre-wrap; word-break: break-word; max-height: 140px; overflow: auto; display: block; font-family: var(--sem-font-num, monospace); }
+
+/* "Words kept for N other objects" (round 3): one quiet line under the grid, collapsed until the person opens it. */
+.kept { margin: var(--sem-space-2) 0 0; padding: var(--sem-space-1) var(--sem-space-3); font-size: var(--sem-text-label); line-height: var(--sem-lh-label); color: var(--sem-muted); border-top: 1px solid var(--vscode-widget-border, transparent); }
+.kept-toggle { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.kept-toggle:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.kept-row { margin-top: var(--sem-space-1); color: var(--vscode-foreground); }
+.kept-words { margin-top: var(--sem-space-1); }
+.kept-words code { white-space: pre-wrap; word-break: break-word; }
+.kept-acts { margin-top: var(--sem-space-1); display: flex; gap: var(--sem-space-1); }
+.kept-acts button { font: inherit; padding: 1px var(--sem-space-2); cursor: pointer; }
+
+/* The Enter hint is for the box being typed in, so it shows only while the row has focus. */
+.enter-hint { display: none; }
+.rowx:focus-within > .enter-hint { display: block; }

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,6 +20,13 @@ namespace Semanticus.Engine
         public string[] CheckTitles { get; set; } = Array.Empty<string>();
         /// <summary>The model tables whose mapping still points at this source. Sorted for the same reason.</summary>
         public string[] MappedTables { get; set; } = Array.Empty<string>();
+        /// <summary>The models that use this source as their SQL endpoint, by name, sorted. Any model, open or not:
+        /// the links live on this machine, so unlike checks they can all be seen.</summary>
+        public string[] LinkedModels { get; set; } = Array.Empty<string>();
+        /// <summary>The saved models whose own checks or table mappings still point at this source, by name, sorted.
+        /// Read from every saved model's stores, open or not, so a closed model's checks are never broken by a
+        /// delete made while it was closed.</summary>
+        public string[] UsingModels { get; set; } = Array.Empty<string>();
     }
 
     /// <summary>
@@ -30,7 +38,9 @@ namespace Semanticus.Engine
     public sealed class TableSourceMappingRow
     {
         public string ModelTable { get; set; }
-        /// <summary>"mapping" (the person chose it), "detected" (read from the table's own partition), or "none".</summary>
+        /// <summary>"mapping" (the person chose a source for this table), "endpoint" (the model's SQL endpoint, with
+        /// the schema and table read from the table's own partition), "detected" (read from the table's own
+        /// partition), or "none".</summary>
         public string Source { get; set; }
         public string SqlSourceId { get; set; }
         public string SqlSourceName { get; set; }
@@ -79,11 +89,11 @@ namespace Semanticus.Engine
         public string Note { get; set; }
     }
 
-    /// <summary>What one saved SQL source is used by, and nothing else. Tests and Saved reports are a Pro feature,
-    /// so the two listings Connections used to call are Pro: list_tests returns whole check definitions and
-    /// list_table_mappings returns saved verdicts and row counts. This is the shared FREE projection that keeps
-    /// Connections working: the source, and the names of what points at it. No definitions, no expected values, no
-    /// verdicts, no row counts. Adding a field here is adding a hole in the Tests gate.</summary>
+    /// <summary>What one saved SQL source is used by, and nothing else. It exists because Validation and Reports
+    /// were Pro until 22 September 2026, so the two listings Connections used to call (list_tests and
+    /// list_table_mappings) were shut to a free session. Both are free now and this stays the narrow projection
+    /// Connections actually wants: the source, and the names of what points at it. No definitions, no expected
+    /// values, no verdicts, no row counts.</summary>
     public sealed class SqlSourceUsage
     {
         public string Id { get; set; }
@@ -123,11 +133,12 @@ namespace Semanticus.Engine
         /// </summary>
         public async Task<TableSourceMappingList> ListTableSourceMappingsAsync()
         {
-            RequireProFeature();
             var s = _sessions.Current;
             if (s == null) return new TableSourceMappingList { Note = "No open model." };
 
             var mappings = await ScopedTableMappingsAsync(s);
+            var endpoint = await ModelSqlEndpointResolutionAsync(s);
+            var onPartitions = TablesOnPartitions(s);   // after the upgrade pass the line above ran
             var byTable = mappings.Where(m => !string.IsNullOrWhiteSpace(m.ModelTable))
                 .GroupBy(m => m.ModelTable, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.Last(), StringComparer.OrdinalIgnoreCase);
@@ -137,7 +148,7 @@ namespace Semanticus.Engine
                 m.Tables.Select(t => t.Name).ToArray(),
                 m.Tables.Where(t => t is CalculatedTable || t is CalculationGroupTable)
                     .Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase),
-                TableRowCountReconciliation.Discover(m, mappings)
+                TableRowCountReconciliation.Discover(m, mappings, endpoint, onPartitions)
                     .ToDictionary(d => d.ModelTable, d => d, StringComparer.OrdinalIgnoreCase)));
 
             // The last counts this session actually TOOK, for THIS model. Reading them off the last run meant a
@@ -162,7 +173,9 @@ namespace Semanticus.Engine
                 var row = new TableSourceMappingRow
                 {
                     ModelTable = name,
-                    Source = mapping != null ? "mapping" : (found != null && string.IsNullOrEmpty(found.DiscoveryError) ? "detected" : "none"),
+                    Source = mapping != null ? "mapping"
+                        : found != null && string.IsNullOrEmpty(found.DiscoveryError) ? (endpoint != null && !onPartitions.Contains(name) ? "endpoint" : "detected")
+                        : "none",
                     SqlSourceId = found?.SqlSourceId ?? mapping?.SqlSourceId,
                     SqlSourceName = found?.SqlSourceName,
                     Server = found?.Server,
@@ -254,39 +267,50 @@ namespace Semanticus.Engine
         /// <summary>Create a named SQL source, or update one by id. The registry refuses a connection string, an
         /// unknown sign-in mode and a duplicate name, all in plain words.</summary>
         public Task<SqlSourceRecord> SaveSqlSourceAsync(string id, string name, string server, string database,
-            string authMode, string tenantId, string origin = "human")
-            => Task.FromResult(SqlSourceRegistry.Save(id, name, server, database, authMode, tenantId));
+            string authMode, string tenantId, string origin = "human", string expectedJson = null)
+        {
+            GuardOutsideWrite(origin);
+            // an id replaces a saved source: it must be the one the person was asked about. No id adds a new one and replaces nothing.
+            using (string.IsNullOrWhiteSpace(id) ? null : GuardRegistry(nameof(SaveSqlSourceAsync), "SQL sources", SqlSourceRegistry.StatePath()))
+                return Task.FromResult(SqlSourceRegistry.Save(id, name, server, database, authMode, tenantId,
+                    expectedJson == null ? null : rec => GuardExpectedFields("SQL source", expectedJson, rec)));
+        }
 
         /// <summary>
-        /// Remove a named SQL source, REFUSED while the open model's checks or table mappings still point at it, with
-        /// the counts said out loud.
+        /// Remove a named SQL source, REFUSED while anything on this machine still points at it: a model that uses it
+        /// as its SQL endpoint, or a check or table mapping saved in ANY saved model, open or not. The refusal names
+        /// the checks, the tables and the models.
         ///
-        /// Honest limit: this can only see the model that is open. A source referenced by a model that is NOT open can
-        /// still be removed, and those checks then report "the SQL source this was set to use is no longer saved"
-        /// rather than running somewhere else. That is the safe failure, not a silent one.
+        /// It used to count the open model only, so a source used by a closed model's checks could be removed while
+        /// that model was closed (Codex on pull request 394, F-265). Which models count as saved, and the limit of
+        /// that, is <see cref="SqlSourceUsageAcrossSavedModelsAsync"/>.
         /// </summary>
         public async Task<SqlSourceDeleteResult> DeleteSqlSourceAsync(string id, string origin = "human")
         {
+            GuardOutsideWrite(origin);
             var rec = SqlSourceRegistry.Find(id);
             if (rec == null) return new SqlSourceDeleteResult { Deleted = false, Note = "There is no saved SQL source with that id." };
 
-            var s = _sessions.Current;
-            if (s == null)
+            // A model's SQL endpoint is known for every model on this machine, open or not, so this refusal needs no
+            // open model: removing the source would leave those models' checks pointing at nothing.
+            var linkedModels = ModelSqlEndpointRegistry.LinksTo(rec.Id)
+                .Select(l => string.IsNullOrWhiteSpace(l.ModelName) ? "a saved model" : l.ModelName)
+                .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (linkedModels.Length > 0)
                 return new SqlSourceDeleteResult
                 {
                     Deleted = false,
-                    Note = $"Open the model first. Until it is open, Semanticus cannot see which checks use '{rec.Name}', and removing it would break them silently.",
+                    LinkedModels = linkedModels,
+                    Note = $"'{rec.Name}' is the SQL endpoint for {Count(linkedModels.Length, "model")} ({string.Join(", ", linkedModels)}), so it was not removed. Give {(linkedModels.Length == 1 ? "that model" : "those models")} another SQL endpoint or none, then remove this source.",
                 };
 
-            var loaded = await LoadScopedTestDefinitionsAsync(s);
             // NAME what needs repair, not just how much of it there is (Astra's point 4): a person told "2 checks"
-            // has to go hunting, and a person told which two can go and fix them.
-            var checkTitles = SqlSources.TitlesOfChecksUsing(loaded.Defs, rec.Id);
-            var mappedTables = (await ScopedTableMappingsAsync(s))
-                .Where(m => string.Equals(m.SqlSourceId, rec.Id, StringComparison.OrdinalIgnoreCase))
-                .Select(m => m.ModelTable)
-                .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            // has to go hunting, and a person told which two, in which model, can go and fix them.
+            var usage = (await SqlSourceUsageAcrossSavedModelsAsync()).TryGetValue(rec.Id, out var u) ? u : new SqlSourceUse();
+            var checkTitles = usage.CheckTitles.OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToArray();
+            var mappedTables = usage.MappedTables.OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToArray();
+            var usingModels = usage.Models.ToArray();
             if (checkTitles.Length > 0 || mappedTables.Length > 0)
                 return new SqlSourceDeleteResult
                 {
@@ -295,14 +319,118 @@ namespace Semanticus.Engine
                     TableMappingsUsing = mappedTables.Length,
                     CheckTitles = checkTitles,
                     MappedTables = mappedTables,
-                    Note = $"'{rec.Name}' is still in use, so it was not removed. {Uses(checkTitles, mappedTables)} Point those at another source, or remove them, then remove this source.",
+                    UsingModels = usingModels,
+                    Note = $"'{rec.Name}' is still in use, so it was not removed. {Uses(checkTitles, mappedTables)} {In(usingModels)}Point those at another source, or remove them, then remove this source.",
                 };
 
+            bool deleted;
+            using (GuardRegistry(nameof(DeleteSqlSourceAsync), "SQL sources", SqlSourceRegistry.StatePath()))
+                deleted = SqlSourceRegistry.Delete(rec.Id);
             return new SqlSourceDeleteResult
             {
-                Deleted = SqlSourceRegistry.Delete(rec.Id),
+                Deleted = deleted,
                 Note = $"'{rec.Name}' was removed. Nothing was using it.",
             };
+        }
+
+        /// <summary>What one saved source is used by, across every saved model.</summary>
+        internal sealed class SqlSourceUse
+        {
+            public List<string> CheckTitles { get; } = new List<string>();
+            public List<string> MappedTables { get; } = new List<string>();
+            public SortedSet<string> Models { get; } = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Every saved source's checks and table mappings, read from every saved model's own stores, open or not
+        /// (Codex on pull request 394, F-265). The saved models are the ones Connections lists (a file or folder, and
+        /// the local copy of a workspace or Desktop model), the open model, and the workspace folder that holds the
+        /// checks of a live model with no folder of its own. Each store is read once however many models share it.
+        ///
+        /// Honest limit: a model this machine does not list is not read. That is a model saved to disk and never
+        /// opened again, or a file row that dropped off the end of the Connections list. Its checks then say "the
+        /// SQL source this was set to use is no longer saved" rather than run somewhere else.
+        /// </summary>
+        internal async Task<Dictionary<string, SqlSourceUse>> SqlSourceUsageAcrossSavedModelsAsync()
+        {
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+            var stores = new Dictionary<string, string>(pathComparer);          // store folder -> the model it belongs to, when known
+            var names = new Dictionary<string, string>(StringComparer.Ordinal);  // model identity -> its name
+            void AddStore(string dir, string modelName)
+            {
+                if (string.IsNullOrWhiteSpace(dir)) return;
+                string full;
+                try { full = Path.GetFullPath(dir); } catch { return; }
+                if (!Directory.Exists(full)) return;
+                if (!stores.TryGetValue(full, out var had) || had == null) stores[full] = modelName;
+            }
+            static string StoreFor(string modelPath)
+            {
+                try { return LayoutStore.DirFor(modelPath); } catch { return null; }
+            }
+
+            foreach (var r in ConnectionRegistry.List())
+            {
+                var name = !string.IsNullOrWhiteSpace(r.ModelName) ? r.ModelName
+                    : !string.IsNullOrWhiteSpace(r.Database) ? r.Database
+                    : SafeFileName(r.Endpoint);
+                var identity = IdentityForRecord(r);
+                if (identity != null && name != null) names.TryAdd(identity, name);
+                if (string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)) AddStore(StoreFor(r.Endpoint), name);
+                if (!string.IsNullOrWhiteSpace(r.WorkingFolder)) AddStore(StoreFor(r.WorkingFolder), name);
+            }
+            foreach (var l in ModelSqlEndpointRegistry.List())
+                if (!string.IsNullOrWhiteSpace(l.ModelIdentity) && !string.IsNullOrWhiteSpace(l.ModelName)) names.TryAdd(l.ModelIdentity, l.ModelName);
+
+            var s = _sessions.Current;
+            if (s != null)
+            {
+                var openName = await ReadModelNameAsync(s);
+                var openIdentity = PaneIdentity(s, null);
+                if (openIdentity != null && !string.IsNullOrWhiteSpace(openName)) names[openIdentity] = openName;
+                AddStore(TestsDirFor(s), openName);
+            }
+            if (_workspaceDir != null) AddStore(Path.Combine(_workspaceDir, LayoutStore.DirName), null);
+
+            var usage = new Dictionary<string, SqlSourceUse>(StringComparer.OrdinalIgnoreCase);
+            SqlSourceUse For(string sourceId) => usage.TryGetValue(sourceId, out var u) ? u : usage[sourceId] = new SqlSourceUse();
+            foreach (var (dir, storeModel) in stores)
+            {
+                // A store with no owner on record is named for the folder it sits in, which is what a person sees.
+                var fallback = storeModel ?? SafeFileName(Path.GetDirectoryName(dir)) ?? "a saved model";
+                string ModelOf(string identity) =>
+                    !string.IsNullOrEmpty(identity) && names.TryGetValue(identity, out var n) ? n : fallback;
+
+                foreach (var d in TestSuiteStore.LoadSuite(dir).Defs)
+                {
+                    if (d == null || !string.Equals(d.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase)
+                        || string.IsNullOrWhiteSpace(d.ParamsJson)) continue;
+                    var sourceId = TestSuiteStore.Deserialize<ReconcileRequest>(d.ParamsJson)?.SqlSourceId;
+                    if (string.IsNullOrWhiteSpace(sourceId)) continue;
+                    var use = For(sourceId.Trim());
+                    use.CheckTitles.Add(string.IsNullOrWhiteSpace(d.Title) ? d.Id : d.Title);
+                    use.Models.Add(ModelOf(d.ModelIdentity));
+                }
+                foreach (var m in TableSourceMappingStore.Load(dir).Mappings)
+                {
+                    if (m == null || string.IsNullOrWhiteSpace(m.SqlSourceId)) continue;
+                    var use = For(m.SqlSourceId.Trim());
+                    use.MappedTables.Add(m.ModelTable);
+                    use.Models.Add(ModelOf(m.ModelIdentity));
+                }
+            }
+            return usage;
+        }
+
+        private static string SafeFileName(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            try
+            {
+                var name = Path.GetFileNameWithoutExtension(path.TrimEnd('/', '\\'));
+                return string.IsNullOrWhiteSpace(name) ? null : name;
+            }
+            catch { return null; }
         }
 
         /// <summary>
@@ -331,9 +459,9 @@ namespace Semanticus.Engine
         /// <summary>Point one model table at a named SQL source and the table inside it. Replaces any mapping that
         /// table already had.</summary>
         public async Task<TableSourceMappingInfo> SetTableSourceMappingAsync(string table, string sqlSourceId,
-            string schema, string entity, string origin = "human")
+            string schema, string entity, string origin = "human", string expectedJson = null)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             var s = _sessions.Current ?? throw new InvalidOperationException("No open model. Use open_model, connect_local or connect_xmla first.");
             if (string.IsNullOrWhiteSpace(table)) throw new ArgumentException("Name the model table to map.", nameof(table));
             var source = SqlSourceRegistry.Find(sqlSourceId)
@@ -357,7 +485,8 @@ namespace Semanticus.Engine
                 Entity = string.IsNullOrWhiteSpace(entity) ? null : entity.Trim(),
                 SetWhenUtc = DateTime.UtcNow.ToString("o"),
                 SetBy = origin,
-            }) ?? throw new InvalidOperationException("The mapping could not be written to .semanticus/tests/table-sources.jsonl.");
+            }, FileBasisCheck(nameof(SetTableSourceMappingAsync), "table mapping"),
+                expectedJson == null ? null : prior => GuardExpectedFields("table mapping", expectedJson, prior)) ?? throw new InvalidOperationException("The mapping could not be written to .semanticus/tests/table-sources.jsonl.");
 
             var incomplete = string.IsNullOrWhiteSpace(mapping.Schema) || string.IsNullOrWhiteSpace(mapping.Entity);
             return new TableSourceMappingInfo
@@ -374,14 +503,14 @@ namespace Semanticus.Engine
         /// which is where it was before anyone mapped anything. False when there was no mapping.</summary>
         public async Task<bool> ClearTableSourceMappingAsync(string table, string origin = "human")
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             var s = _sessions.Current ?? throw new InvalidOperationException("No open model. Use open_model, connect_local or connect_xmla first.");
             if (string.IsNullOrWhiteSpace(table)) throw new ArgumentException("Name the model table to unmap.", nameof(table));
             var dir = TestsDirFor(s);
             if (dir == null) return false;
             var identity = PaneIdentity(s, null);
             var resolvedName = await s.ReadAsync(m => (ObjectRefs.Resolve(m, table) as Table)?.Name) ?? table.Trim();
-            return TableSourceMappingStore.Remove(dir, resolvedName, identity);
+            return TableSourceMappingStore.Remove(dir, resolvedName, identity, FileBasisCheck(nameof(ClearTableSourceMappingAsync), "table mapping"));
         }
 
         /// <summary>The open model's table mappings. A sidecar can be shared by more than one model, so a mapping is
@@ -409,5 +538,9 @@ namespace Semanticus.Engine
                 parts.Add($"{Count(mappedTables.Length, "table")} {(mappedTables.Length == 1 ? "is" : "are")} mapped to it ({string.Join(", ", mappedTables)})");
             return string.Join(", and ", parts) + ".";
         }
+
+        // "They are in Contoso Retail. " Said only when the use was found, so a person knows which model to open.
+        private static string In(string[] models) =>
+            models.Length == 0 ? "" : $"{(models.Length == 1 ? "They are in" : "They are in these models:")} {string.Join(", ", models)}. ";
     }
 }

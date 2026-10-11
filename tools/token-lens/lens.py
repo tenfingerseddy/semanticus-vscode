@@ -352,8 +352,7 @@ def json_schema(ops):
 # ---- results mode: DTO complexity proxy ------------------------------------
 # The highest-traffic READ ops (hardcoded per the task brief).
 READ_OPS = [
-    "get_model_summary", "ai_readiness_scan", "ai_readiness_summary",
-    "bpa_scan", "bpa_summary", "get_model_graph", "model_graph_summary",
+    "get_model_summary", "ai_readiness_scan", "bpa_scan", "get_model_graph",
     "list_measures", "list_columns", "list_objects", "get_grounding",
     "list_workflows", "get_workflow", "list_calendars", "harness_report",
 ]

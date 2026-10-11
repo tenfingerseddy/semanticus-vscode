@@ -1,0 +1,2336 @@
+{
+  "servedModelVersion": "jev-1.13.0",
+  "entries": [
+    {
+      "digest": "96a21a93dc4f2011b5818b6b8562509262e3c21b1a17003b6f53ced43bba8cc3",
+      "point": "query.summarize",
+      "id": "Verify3_C11_last_year_to_date_is_not_the_whole_of_last_year",
+      "question": "net sales last year to date",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year to date\u0027 are read as the span from the first day of the year before the latest year to the same day of that year as the last day the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 577,
+      "usage": {
+        "input_tokens": 1238,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.88,
+          "probabilities": {
+            "narrowing": 0,
+            "split": 0.01,
+            "future_or_stock": 0,
+            "period": 0.04,
+            "ranking": 0,
+            "none_or_only": 0,
+            "change": 0.05,
+            "share": 0,
+            "unnamed": 0,
+            "versions": 0,
+            "nothing": 0.9,
+            "other_number": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "7e559ae46906db0c619ed528311b1b8f93f91f8ca938064ffda87dc1dd1600a0",
+      "point": "query.summarize",
+      "id": "Verify2_A12_a_year_the_data_does_not_hold_is_not_answered_with_the_all_time_total",
+      "question": "net sales in 2023",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 245,
+      "usage": {
+        "input_tokens": 1175,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.94,
+          "probabilities": {
+            "share": 0,
+            "period": 0.95,
+            "versions": 0,
+            "unnamed": 0,
+            "change": 0,
+            "nothing": 0.04,
+            "narrowing": 0.01,
+            "none_or_only": 0,
+            "ranking": 0,
+            "future_or_stock": 0,
+            "other_number": 0,
+            "split": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "6193dcb9f8229e543c013301967f11330277f3a6540a0f95bac6afbb2c6191ca",
+      "point": "query.summarize",
+      "id": "Verify3_C14_the_first_two_months_are_not_the_two_best",
+      "question": "net sales for the first 2 months of 2025",
+      "stated_reading": "It shows Net Sales. It is split by MonthName, one row for each. It is split by a period, so the rows hold only the periods named below, one row each, and no other period. It is narrowed to rows where Year is \u00272025\u0027. It keeps only the top 2 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 260,
+      "usage": {
+        "input_tokens": 1283,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.4,
+          "probabilities": {
+            "nothing": 0.25,
+            "change": 0.04,
+            "share": 0,
+            "versions": 0,
+            "ranking": 0.19,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "split": 0.02,
+            "narrowing": 0.05,
+            "period": 0.45
+          }
+        }
+      }
+    },
+    {
+      "digest": "5eb666c59a946d3561d1b410780a45733d831597d041f492e24a8d4e76c33130",
+      "point": "query.summarize",
+      "id": "Verify3_C14_the_first_two_months_are_not_the_two_best",
+      "question": "net sales for the first 2 months of 2025",
+      "stated_reading": "It shows Net Sales. It is split by MonthName, one row for each. It is split by a period, so the rows hold only the periods named below, one row each, and no other period. It is narrowed to rows where Year is \u00272025\u0027. It keeps only the top 2 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 213,
+      "usage": {
+        "input_tokens": 637,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.52
+        }
+      }
+    },
+    {
+      "digest": "aebe9dcc6322a36b196a0916c8462033f7e6de051cc8e31cd4968e5a749a7c20",
+      "point": "query.summarize",
+      "id": "Verify3_C14_the_first_two_months_are_not_the_two_best",
+      "question": "net sales for the first 2 months of 2025",
+      "stated_reading": "It shows Net Sales. It is split by MonthName, one row for each. It is split by a period, so the rows hold only the periods named below, one row each, and no other period. It is narrowed to rows where Year is \u00272025\u0027. It keeps only the top 2 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 288,
+      "usage": {
+        "input_tokens": 649,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.48
+        }
+      }
+    },
+    {
+      "digest": "4fba40a08aeb4d732706739f1fb746bcec0066c197a2ba3aeb59bc9254d0833b",
+      "point": "query.summarize",
+      "id": "Verify3_C13_did_not_sell_any_is_not_everything_but_that_category",
+      "question": "which cities did not sell any kitchen products last year?",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is narrowed to rows where Category is not \u0027kitchen\u0027. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 259,
+      "usage": {
+        "input_tokens": 1293,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "none_or_only",
+          "confidence": 0.71,
+          "probabilities": {
+            "ranking": 0,
+            "period": 0,
+            "narrowing": 0.27,
+            "other_number": 0,
+            "change": 0,
+            "share": 0,
+            "unnamed": 0,
+            "nothing": 0,
+            "split": 0,
+            "future_or_stock": 0,
+            "versions": 0,
+            "none_or_only": 0.73
+          }
+        }
+      }
+    },
+    {
+      "digest": "3d21de1dc85a96f0941291a439ff6163f1238700b3524a7ab8efbbe9e5a301e7",
+      "point": "query.summarize",
+      "id": "A_city_against_a_region_is_stopped_by_the_check_and_two_values_of_one_column_run",
+      "question": "net sales coast vs north",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is narrowed to rows where Region is \u0027coast\u0027 or \u0027north\u0027. \u0027coast\u0027 and \u0027north\u0027 are shown side by side, one row each, so the person reads the difference off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 211,
+      "usage": {
+        "input_tokens": 1236,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.48,
+          "probabilities": {
+            "split": 0.01,
+            "change": 0.53,
+            "future_or_stock": 0,
+            "period": 0.04,
+            "none_or_only": 0,
+            "narrowing": 0.03,
+            "share": 0,
+            "nothing": 0.38,
+            "other_number": 0,
+            "unnamed": 0,
+            "versions": 0.01,
+            "ranking": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "43bc55368b02eb9b183f9ca9fc9f809578d964b8b63b57a02a2989b85b5530e4",
+      "point": "query.summarize",
+      "id": "Verify3_C01_only_is_not_a_plain_word_when_it_means_nowhere_else",
+      "question": "which products did we only sell in the coast region?",
+      "stated_reading": "It shows Net Sales. It is split by ProductName, one row for each. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 234,
+      "usage": {
+        "input_tokens": 1240,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "none_or_only",
+          "confidence": 0.88,
+          "probabilities": {
+            "share": 0,
+            "period": 0,
+            "versions": 0,
+            "unnamed": 0,
+            "change": 0,
+            "other_number": 0,
+            "narrowing": 0.06,
+            "none_or_only": 0.9,
+            "future_or_stock": 0,
+            "nothing": 0.04,
+            "ranking": 0,
+            "split": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "77bad867d586e29bb3e09e7aec10fa3806893c6c77cd6539b37419d89d0e4ce5",
+      "point": "query.summarize",
+      "id": "Verify2_A02_south_and_coast_leaning_to_customer_region_is_not_read_on_two_tables",
+      "question": "net sales for south and coast",
+      "stated_reading": "It shows Net Sales. It is split by Store Region, one row for each. It is narrowed to rows where Store Region is \u0027south\u0027 or \u0027coast\u0027. \u0027south\u0027 and \u0027coast\u0027 are shown side by side, one row each, so the person reads the difference off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 246,
+      "usage": {
+        "input_tokens": 1239,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.76,
+          "probabilities": {
+            "unnamed": 0,
+            "share": 0,
+            "narrowing": 0.01,
+            "versions": 0,
+            "change": 0.13,
+            "nothing": 0.79,
+            "split": 0.01,
+            "period": 0.06,
+            "other_number": 0,
+            "future_or_stock": 0,
+            "ranking": 0,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "fe715bf83e1836f8976cfd988b6c195a48395180f34e222c298a14e7cc25a6fa",
+      "point": "query.summarize",
+      "id": "Verify3_every_answer_names_the_measures_and_columns_it_used",
+      "question": "largest sale in each city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, largest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 328,
+      "usage": {
+        "input_tokens": 1211,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "ranking",
+          "confidence": 0.46,
+          "probabilities": {
+            "none_or_only": 0,
+            "nothing": 0.28,
+            "change": 0.01,
+            "ranking": 0.51,
+            "future_or_stock": 0,
+            "narrowing": 0.13,
+            "versions": 0,
+            "share": 0,
+            "period": 0.01,
+            "unnamed": 0,
+            "other_number": 0.03,
+            "split": 0.03
+          }
+        }
+      }
+    },
+    {
+      "digest": "d6776f7ecdb0fb6f1b0e10aec974d5dbf3474a0ea720fc26700b3d8427650d05",
+      "point": "query.summarize",
+      "id": "Verify3_every_answer_names_the_measures_and_columns_it_used",
+      "question": "largest sale in each city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, largest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 245,
+      "usage": {
+        "input_tokens": 577,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.61
+        }
+      }
+    },
+    {
+      "digest": "4eb2eb9c4956073e890a438e16e9b6f20690127398ad8b58512ba54499e6d629",
+      "point": "query.summarize",
+      "id": "Verify3_every_answer_names_the_measures_and_columns_it_used",
+      "question": "largest sale in each city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, largest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 272,
+      "usage": {
+        "input_tokens": 564,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.64
+        }
+      }
+    },
+    {
+      "digest": "2d88a203cc81e10af190a1af30026b07c2d4dd6e64713dae64df229a844c50dc",
+      "point": "query.summarize",
+      "id": "Verify2_A21_this_year_vs_last_year_by_month_keeps_the_month_split",
+      "question": "net sales this year vs last year by month",
+      "stated_reading": "It shows Net Sales. It is split by Year and MonthName, one row for each. Because it is split by a period, every period is a row of its own and the person reads any change from one row to the next. The question\u0027s words \u0027this year\u0027 are read as the latest year the data holds, the whole of it, so the period is stated. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. The values are shown side by side, one row each, so the person reads the difference off the rows. The periods the question names are shown side by side, one row each, so the person reads any change off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 216,
+      "usage": {
+        "input_tokens": 1361,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.79,
+          "probabilities": {
+            "share": 0.02,
+            "other_number": 0,
+            "unnamed": 0,
+            "period": 0.02,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "versions": 0.01,
+            "split": 0.05,
+            "change": 0.08,
+            "nothing": 0.81,
+            "narrowing": 0,
+            "ranking": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "033e5bd7625647e62eb18f9e52746297a3dff5ef623325ac1762f0ce235d2ed9",
+      "point": "query.summarize",
+      "id": "Verify2_A03_a_city_vs_a_region_is_not_one_total_for_their_overlap",
+      "question": "net sales Pinecrest vs the Coast region",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where City is \u0027Pinecrest\u0027. It is narrowed to rows where Region is \u0027Coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 269,
+      "usage": {
+        "input_tokens": 1246,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "split",
+          "confidence": 0.31,
+          "probabilities": {
+            "narrowing": 0.23,
+            "split": 0.38,
+            "ranking": 0,
+            "other_number": 0.01,
+            "share": 0,
+            "versions": 0.24,
+            "change": 0.11,
+            "nothing": 0.03,
+            "future_or_stock": 0,
+            "period": 0,
+            "none_or_only": 0,
+            "unnamed": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "27fb633ca29fdff1136d1f3738cf29fabd99dc16e41be663e79a8dcefe8f0389",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales and units for Pinecrest vs Coast",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is narrowed to rows where City is \u0027Pinecrest\u0027. It is narrowed to rows where Region is \u0027Coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 244,
+      "usage": {
+        "input_tokens": 1267,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "split",
+          "confidence": 0.53,
+          "probabilities": {
+            "narrowing": 0.32,
+            "change": 0.05,
+            "share": 0,
+            "split": 0.57,
+            "ranking": 0,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "versions": 0.03,
+            "none_or_only": 0,
+            "nothing": 0.03,
+            "other_number": 0,
+            "period": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "b7be0f76397dafb93bd6cf4bfc761fab82adc50d35406263d762a5cec4668cc5",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales and units for Pinecrest vs Coast",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is narrowed to rows where City is \u0027Pinecrest\u0027. It is narrowed to rows where Region is \u0027Coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 261,
+      "usage": {
+        "input_tokens": 630,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.73
+        }
+      }
+    },
+    {
+      "digest": "4f2271fc9a1ccec43239a86688f6d2d6787c1a0eb12352fbbdb62b4f0ffc6a92",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales and units for Pinecrest vs Coast",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is narrowed to rows where City is \u0027Pinecrest\u0027. It is narrowed to rows where Region is \u0027Coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 277,
+      "usage": {
+        "input_tokens": 620,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.48
+        }
+      }
+    },
+    {
+      "digest": "85d2beefafc421540c7e3938de913ee4af179b710d4a1c5bb58d6f209826d3f2",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales vs units",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 228,
+      "usage": {
+        "input_tokens": 1191,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.47,
+          "probabilities": {
+            "ranking": 0,
+            "other_number": 0,
+            "narrowing": 0,
+            "period": 0.01,
+            "versions": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "nothing": 0.27,
+            "split": 0.04,
+            "share": 0.15,
+            "change": 0.53,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "9bc08ed2f3db5eb51e357045bf42be2368f2b0193f40cf888650334b829a8f33",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales vs units",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 230,
+      "usage": {
+        "input_tokens": 549,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.61
+        }
+      }
+    },
+    {
+      "digest": "53c56f022c2c950aa36fdcbbf5155690d4dd2484fc29cd96a15e99721315abeb",
+      "point": "query.summarize",
+      "id": "Two_numbers_and_a_vs_between_places_is_stopped_by_the_check_and_between_the_numbers_runs",
+      "question": "net sales vs units",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 240,
+      "usage": {
+        "input_tokens": 545,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.48
+        }
+      }
+    },
+    {
+      "digest": "7daeb71a0485053f98a7144adac9c567afbbad64500498537e31b182599434f1",
+      "point": "query.summarize",
+      "id": "Verify3_C02_down_is_not_a_plain_word_when_it_means_fell",
+      "question": "which regions were down in 2025?",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is narrowed to rows where Year is \u00272025\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 228,
+      "usage": {
+        "input_tokens": 1238,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.95,
+          "probabilities": {
+            "other_number": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "split": 0,
+            "narrowing": 0,
+            "share": 0,
+            "period": 0,
+            "ranking": 0,
+            "none_or_only": 0,
+            "change": 0.96,
+            "nothing": 0.04,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "72f48c6726a2bbfedd8a6e12dd3eba4ede51c6776da6bc5472466fd7b1bdeea3",
+      "point": "query.summarize",
+      "id": "A_split_named_only_through_a_typo_is_named_in_the_statement_and_runs",
+      "question": "county sales by county",
+      "stated_reading": "It shows County Sales. It is split by Country, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 263,
+      "usage": {
+        "input_tokens": 1198,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "split",
+          "confidence": 0.59,
+          "probabilities": {
+            "narrowing": 0.05,
+            "period": 0,
+            "ranking": 0,
+            "other_number": 0.01,
+            "versions": 0,
+            "share": 0,
+            "unnamed": 0,
+            "nothing": 0.29,
+            "split": 0.63,
+            "future_or_stock": 0,
+            "change": 0.02,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "d0a03dac80fc0523046902b5b1d4e5402504082c827d4330baa0a3f1d2bd8a76",
+      "point": "query.summarize",
+      "id": "A_split_named_only_through_a_typo_is_named_in_the_statement_and_runs",
+      "question": "county sales by county",
+      "stated_reading": "It shows County Sales. It is split by Country, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 210,
+      "usage": {
+        "input_tokens": 551,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.27
+        }
+      }
+    },
+    {
+      "digest": "7a27b08fed478e5453c76b37836d7aabd69cdc7463e306b0a527620e0c149dba",
+      "point": "query.summarize",
+      "id": "A_split_named_only_through_a_typo_is_named_in_the_statement_and_runs",
+      "question": "county sales by county",
+      "stated_reading": "It shows County Sales. It is split by Country, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 237,
+      "usage": {
+        "input_tokens": 561,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.47
+        }
+      }
+    },
+    {
+      "digest": "c4ddd9e48cd78f9eb71d3b916b2a6b0698f24796d54bb8249bad6d2eb4f4d403",
+      "point": "query.summarize",
+      "id": "Verify2_A11_year_over_year_with_hyphens_is_not_the_all_time_total_unsaid",
+      "question": "net sales year-over-year",
+      "stated_reading": "It shows Net Sales. It is split by Year, one row for each. Because it is split by a period, every period is a row of its own and the person reads any change from one row to the next. The question\u0027s words \u0027year over year\u0027 name a year the reading could not pin down. The year words could not be pinned to one year, so every year is shown side by side and the person reads off the one they meant, and any change between them. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 227,
+      "usage": {
+        "input_tokens": 1275,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.86,
+          "probabilities": {
+            "nothing": 0.88,
+            "change": 0.08,
+            "share": 0.02,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "narrowing": 0,
+            "period": 0.02,
+            "ranking": 0,
+            "split": 0,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "80913927e0557a5b018deee79dfa82b618efd529e6f709e3acb53a67b0fb7b33",
+      "point": "query.summarize",
+      "id": "A_top_few_ranked_by_another_number_than_the_one_named_is_stopped_by_the_check",
+      "question": "net sales for the top 3 products by units",
+      "stated_reading": "It shows Net Sales and Units. It is split by ProductName, one row for each. It is not narrowed by anything. It keeps only the top 3 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 232,
+      "usage": {
+        "input_tokens": 1242,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "ranking",
+          "confidence": 0.91,
+          "probabilities": {
+            "none_or_only": 0,
+            "change": 0,
+            "versions": 0,
+            "narrowing": 0.07,
+            "period": 0,
+            "other_number": 0,
+            "share": 0,
+            "nothing": 0.02,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "split": 0,
+            "ranking": 0.91
+          }
+        }
+      }
+    },
+    {
+      "digest": "9006bee4b7e9eab9a2c45ace59adb0001f56986a35decca608f5365a66cec1fd",
+      "point": "query.summarize",
+      "id": "A_bound_that_is_not_the_one_the_words_say_is_stopped_by_the_check",
+      "question": "net sales after 2024",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Year is \u00272024\u0027 or later. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 243,
+      "usage": {
+        "input_tokens": 1210,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.49,
+          "probabilities": {
+            "nothing": 0.54,
+            "change": 0.39,
+            "share": 0,
+            "none_or_only": 0,
+            "future_or_stock": 0.01,
+            "unnamed": 0,
+            "other_number": 0,
+            "narrowing": 0.01,
+            "period": 0.04,
+            "ranking": 0,
+            "split": 0.01,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "e6c83a59398806f8f6f9585bb11821717c9cd9cb126fedb92d29fc91a12af247",
+      "point": "query.summarize",
+      "id": "A_bound_that_is_not_the_one_the_words_say_is_stopped_by_the_check",
+      "question": "net sales after 2024",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Year is \u00272024\u0027 or later. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 217,
+      "usage": {
+        "input_tokens": 568,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.54
+        }
+      }
+    },
+    {
+      "digest": "d3f126b44c9dcb3927959650e30bce357e75f8c5d17b0c18c111965fa6188e8c",
+      "point": "query.summarize",
+      "id": "A_union_and_a_ratio_are_stopped_by_the_check",
+      "question": "net sales in coast or for outdoor",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. It is narrowed to rows where Category is \u0027outdoor\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 236,
+      "usage": {
+        "input_tokens": 1243,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.65,
+          "probabilities": {
+            "nothing": 0.6900000000000001,
+            "change": 0.03,
+            "share": 0,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "narrowing": 0.18,
+            "period": 0.01,
+            "ranking": 0,
+            "split": 0.05,
+            "versions": 0.04
+          }
+        }
+      }
+    },
+    {
+      "digest": "b8dd5ee56b29567abfb152f9dddd70a4c8e467b5f5346d1aa912327e8a474d11",
+      "point": "query.summarize",
+      "id": "A_union_and_a_ratio_are_stopped_by_the_check",
+      "question": "net sales in coast or for outdoor",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. It is narrowed to rows where Category is \u0027outdoor\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 234,
+      "usage": {
+        "input_tokens": 596,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.28
+        }
+      }
+    },
+    {
+      "digest": "d96785b5f20f1303a7c2182e7a120b3372c642668f0fc5ed9ac24689f68d1903",
+      "point": "query.summarize",
+      "id": "A_union_and_a_ratio_are_stopped_by_the_check",
+      "question": "net sales in coast or for outdoor",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. It is narrowed to rows where Category is \u0027outdoor\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 391,
+      "usage": {
+        "input_tokens": 606,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.4
+        }
+      }
+    },
+    {
+      "digest": "91c48138f4e4edbba23bccb428d919fcd7915363676ebd26094eb5768cc649e8",
+      "point": "query.summarize",
+      "id": "A_union_and_a_ratio_are_stopped_by_the_check",
+      "question": "net sales per unit",
+      "stated_reading": "It shows Net Sales and Units. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 316,
+      "usage": {
+        "input_tokens": 1191,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "share",
+          "confidence": 0.77,
+          "probabilities": {
+            "future_or_stock": 0,
+            "narrowing": 0,
+            "change": 0.01,
+            "share": 0.79,
+            "unnamed": 0,
+            "versions": 0,
+            "nothing": 0.06,
+            "period": 0,
+            "other_number": 0.02,
+            "split": 0.12,
+            "ranking": 0,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "78226ee87ca5ee282ff20496ac8544d42cef3a41bb6ab02b9a872ac9ce66ac13",
+      "point": "query.summarize",
+      "id": "Readings_the_word_check_used_to_stop_are_stopped_by_the_check",
+      "question": "net sales last FY",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 236,
+      "usage": {
+        "input_tokens": 1171,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.92,
+          "probabilities": {
+            "other_number": 0,
+            "ranking": 0,
+            "none_or_only": 0,
+            "change": 0.02,
+            "split": 0,
+            "versions": 0,
+            "unnamed": 0,
+            "narrowing": 0.01,
+            "share": 0,
+            "nothing": 0.05,
+            "period": 0.92,
+            "future_or_stock": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "802e55a577ff7db87cd33ad7a0f0e184961fdd86aadaf8d3501acb84ee587d6c",
+      "point": "query.summarize",
+      "id": "Verify2_A17_three_regions_where_one_is_in_one_table_are_not_read_on_two_tables",
+      "question": "net sales coast, north and south",
+      "stated_reading": "It shows Net Sales. It is split by Store Region, one row for each. It is narrowed to rows where Store Region is \u0027coast\u0027 or \u0027north\u0027 or \u0027south\u0027. \u0027coast\u0027, \u0027north\u0027 and \u0027south\u0027 are shown side by side, one row each, so the person reads the difference off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 235,
+      "usage": {
+        "input_tokens": 1247,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.51,
+          "probabilities": {
+            "versions": 0,
+            "other_number": 0,
+            "share": 0,
+            "change": 0.56,
+            "future_or_stock": 0,
+            "nothing": 0.3,
+            "ranking": 0,
+            "none_or_only": 0,
+            "narrowing": 0.05,
+            "split": 0.01,
+            "unnamed": 0,
+            "period": 0.08
+          }
+        }
+      }
+    },
+    {
+      "digest": "c771d965ed1011a0c1e8a7f06c35a9969dcb8fab643fc87630afa0b560aa72c7",
+      "point": "query.summarize",
+      "id": "Verify2_A01_south_vs_coast_where_only_coast_is_in_both_tables_is_not_read_on_two_tables",
+      "question": "net sales south vs coast",
+      "stated_reading": "It shows Net Sales. It is split by Store Region, one row for each. It is narrowed to rows where Store Region is \u0027south\u0027 or \u0027coast\u0027. \u0027south\u0027 and \u0027coast\u0027 are shown side by side, one row each, so the person reads the difference off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 231,
+      "usage": {
+        "input_tokens": 1238,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.5,
+          "probabilities": {
+            "unnamed": 0,
+            "nothing": 0.37,
+            "future_or_stock": 0,
+            "period": 0.05,
+            "share": 0.01,
+            "ranking": 0,
+            "none_or_only": 0,
+            "split": 0.01,
+            "narrowing": 0.01,
+            "change": 0.54,
+            "versions": 0.01,
+            "other_number": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "50ae40656c92b81e1587afff2fd974c5c7af64e5306088a43117a740e2e15a7c",
+      "point": "query.summarize",
+      "id": "A_threshold_read_as_a_top_few_is_stopped_by_the_check",
+      "question": "which cities have net sales over 100",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. It keeps only the top 100 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 237,
+      "usage": {
+        "input_tokens": 1220,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.93,
+          "probabilities": {
+            "other_number": 0,
+            "ranking": 0.02,
+            "period": 0,
+            "nothing": 0.04,
+            "narrowing": 0.93,
+            "future_or_stock": 0,
+            "split": 0,
+            "none_or_only": 0,
+            "share": 0,
+            "change": 0,
+            "unnamed": 0,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "a875f4ba60013fcc0ba33617dba6882a6df6d3be3a2bed276b8eec18e64f27e6",
+      "point": "query.summarize",
+      "id": "Verify3_C15_units_sold_are_not_the_units_we_have",
+      "question": "how many camp stoves do we have in the coast?",
+      "stated_reading": "It shows Units. It is one total, split by nothing. It is narrowed to rows where ProductName is \u0027camp stoves\u0027. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 232,
+      "usage": {
+        "input_tokens": 1250,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "future_or_stock",
+          "confidence": 0.84,
+          "probabilities": {
+            "other_number": 0.01,
+            "ranking": 0,
+            "none_or_only": 0,
+            "change": 0,
+            "split": 0,
+            "share": 0,
+            "unnamed": 0,
+            "narrowing": 0.01,
+            "versions": 0,
+            "period": 0,
+            "nothing": 0.12,
+            "future_or_stock": 0.86
+          }
+        }
+      }
+    },
+    {
+      "digest": "5a8205526cff0f23297f7c1eb8f8fdaa01119e431236be8b630f2600a623dc8f",
+      "point": "query.summarize",
+      "id": "Verify3_the_studio_and_the_assistant_give_the_same_answer",
+      "question": "net sales in the coast region last month",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. The question\u0027s words \u0027last month\u0027 are read as the whole of the month before the latest month the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 238,
+      "usage": {
+        "input_tokens": 1263,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.96,
+          "probabilities": {
+            "period": 0.02,
+            "split": 0,
+            "nothing": 0.96,
+            "versions": 0,
+            "none_or_only": 0,
+            "ranking": 0,
+            "other_number": 0,
+            "narrowing": 0.01,
+            "change": 0.01,
+            "share": 0,
+            "future_or_stock": 0,
+            "unnamed": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "186c69c11fad10f20bfdf82b1aa58c77d7ed8fbe66ed28624950c5510e88fc30",
+      "point": "query.summarize",
+      "id": "Verify2_A18_our_slowest_store_is_not_one_total_for_every_store",
+      "question": "our slowest store?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 219,
+      "usage": {
+        "input_tokens": 1173,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "ranking",
+          "confidence": 0.34,
+          "probabilities": {
+            "narrowing": 0.24,
+            "ranking": 0.4,
+            "change": 0,
+            "none_or_only": 0,
+            "split": 0.36,
+            "future_or_stock": 0,
+            "share": 0,
+            "nothing": 0,
+            "period": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "0537d3405c1db74b4985bede6556691d9bd4d2739cc20a39e94b59b11735a38f",
+      "point": "query.summarize",
+      "id": "Verify3_C10_coats_read_as_the_coast_region_is_said_or_not_run",
+      "question": "how many coats did we sell?",
+      "stated_reading": "It shows Units. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coats\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 245,
+      "usage": {
+        "input_tokens": 1202,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.71,
+          "probabilities": {
+            "change": 0.01,
+            "none_or_only": 0,
+            "nothing": 0.22,
+            "other_number": 0.01,
+            "period": 0.01,
+            "share": 0,
+            "future_or_stock": 0,
+            "split": 0.01,
+            "versions": 0,
+            "ranking": 0,
+            "unnamed": 0,
+            "narrowing": 0.74
+          }
+        }
+      }
+    },
+    {
+      "digest": "6549c9a129055eb3632b75670bfe0d41e947350b84cbc912c316471bf11f6624",
+      "point": "query.summarize",
+      "id": "Verify3_C05_a_percent_sign_is_part_of_the_question",
+      "question": "what % of our net sales is from the coast?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 494,
+      "usage": {
+        "input_tokens": 1208,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "share",
+          "confidence": 1,
+          "probabilities": {
+            "other_number": 0,
+            "ranking": 0,
+            "none_or_only": 0,
+            "change": 0,
+            "split": 0,
+            "versions": 0,
+            "unnamed": 0,
+            "narrowing": 0,
+            "share": 1,
+            "nothing": 0,
+            "period": 0,
+            "future_or_stock": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "415b0f31b87a45fd9914c5e16cc55c099a80189cb3f29d64dbe5a55ab280e912",
+      "point": "query.summarize",
+      "id": "A_name_matched_through_a_typo_is_named_in_the_statement_and_runs",
+      "question": "net sales by regoin",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 243,
+      "usage": {
+        "input_tokens": 1199,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.94,
+          "probabilities": {
+            "share": 0,
+            "versions": 0,
+            "ranking": 0,
+            "future_or_stock": 0,
+            "period": 0.01,
+            "unnamed": 0,
+            "nothing": 0.95,
+            "narrowing": 0,
+            "split": 0,
+            "change": 0.04,
+            "none_or_only": 0,
+            "other_number": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "2f419af142e39e547a0b4b7f1f1ade308dea2a21610849a48112fce7411de1b7",
+      "point": "query.summarize",
+      "id": "A_vs_between_unrelated_filters_is_stopped_by_the_check",
+      "question": "net sales coast and north, Pinecrest vs kitchen",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is narrowed to rows where Region is \u0027coast\u0027 or \u0027north\u0027. It is narrowed to rows where City is \u0027Pinecrest\u0027. It is narrowed to rows where Category is \u0027kitchen\u0027. \u0027coast\u0027 and \u0027north\u0027 are shown side by side, one row each, so the person reads the difference off the rows. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 259,
+      "usage": {
+        "input_tokens": 1320,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.54,
+          "probabilities": {
+            "narrowing": 0.07,
+            "split": 0.03,
+            "other_number": 0,
+            "period": 0.05,
+            "ranking": 0,
+            "change": 0.59,
+            "none_or_only": 0,
+            "versions": 0.01,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "nothing": 0.25,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "5adf656e45b9e93a504529bc2844e9e6c94b0ee693746225c28af0cb03fe9191",
+      "point": "query.summarize",
+      "id": "Per_a_thing_with_no_split_by_it_is_stopped_by_the_check",
+      "question": "net sales per store in the coast region",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 228,
+      "usage": {
+        "input_tokens": 1205,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "split",
+          "confidence": 0.96,
+          "probabilities": {
+            "split": 0.97,
+            "ranking": 0,
+            "versions": 0,
+            "share": 0.01,
+            "narrowing": 0,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "nothing": 0.01,
+            "period": 0,
+            "change": 0,
+            "other_number": 0.01,
+            "unnamed": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "bb59ddc623c423c2e06af202d6d00d73af45b2e02ff75cb60ad183298673e601",
+      "point": "query.summarize",
+      "id": "A_value_that_filters_the_wrong_way_is_stopped_by_the_check",
+      "question": "net sales since 2024 or in coast",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Year is \u00272024\u0027 or later. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 273,
+      "usage": {
+        "input_tokens": 1251,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.52,
+          "probabilities": {
+            "narrowing": 0.04,
+            "period": 0.01,
+            "share": 0,
+            "change": 0.36,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "other_number": 0,
+            "ranking": 0,
+            "unnamed": 0,
+            "nothing": 0.5700000000000001,
+            "versions": 0,
+            "split": 0.02
+          }
+        }
+      }
+    },
+    {
+      "digest": "373a4f34a5441abdb8c8686aeb29ed4b8c653632f47e77760a014d364eae44be",
+      "point": "query.summarize",
+      "id": "A_value_that_filters_the_wrong_way_is_stopped_by_the_check",
+      "question": "net sales since 2024 or in coast",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Year is \u00272024\u0027 or later. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 240,
+      "usage": {
+        "input_tokens": 609,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.46
+        }
+      }
+    },
+    {
+      "digest": "881bad66339ce6cdef7a441d728e897933ea7bbd3fda173796cafa21217872e0",
+      "point": "query.summarize",
+      "id": "A_value_that_filters_the_wrong_way_is_stopped_by_the_check",
+      "question": "net sales in coast or north",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is not \u0027coast\u0027 or \u0027north\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 376,
+      "usage": {
+        "input_tokens": 1208,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.97,
+          "probabilities": {
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "nothing": 0,
+            "period": 0,
+            "share": 0,
+            "ranking": 0,
+            "other_number": 0,
+            "split": 0.03,
+            "narrowing": 0.97,
+            "change": 0,
+            "versions": 0,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "1e5dd2fdbfa4647d388414822abae84683d9459a9ab4af79b9ed2a4c113e0741",
+      "point": "query.summarize",
+      "id": "Verify3_C17_with_and_without_is_two_numbers_not_one",
+      "question": "net sales per region with and without kitchen products",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is narrowed to rows where Category is not \u0027kitchen\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 252,
+      "usage": {
+        "input_tokens": 1235,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "versions",
+          "confidence": 0.91,
+          "probabilities": {
+            "nothing": 0,
+            "none_or_only": 0,
+            "share": 0,
+            "other_number": 0,
+            "period": 0,
+            "unnamed": 0,
+            "versions": 0.92,
+            "ranking": 0,
+            "narrowing": 0.07,
+            "change": 0.01,
+            "split": 0,
+            "future_or_stock": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "236ad42d607f4ffff90bc30b84f1718c0ef3eb755cd95fa46466085b22fce902",
+      "point": "query.summarize",
+      "id": "Verify2_A10_top_3_products_per_region_is_not_the_top_3_pairs_unsaid",
+      "question": "top 3 products per region",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is not narrowed by anything. It keeps only the top 3 rows, ranked by Net Sales. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 260,
+      "usage": {
+        "input_tokens": 1261,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "ranking",
+          "confidence": 0.55,
+          "probabilities": {
+            "ranking": 0.6,
+            "change": 0,
+            "versions": 0,
+            "narrowing": 0.1,
+            "period": 0,
+            "other_number": 0,
+            "share": 0,
+            "nothing": 0.14,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "split": 0.16,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "5b37102a55d2bcaf74303bfcea43a71745f4cd77d8407858eed40524d1ff4b44",
+      "point": "query.summarize",
+      "id": "Verify2_A10_top_3_products_per_region_is_not_the_top_3_pairs_unsaid",
+      "question": "top 3 products per region",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is not narrowed by anything. It keeps only the top 3 rows, ranked by Net Sales. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 232,
+      "usage": {
+        "input_tokens": 627,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.81
+        }
+      }
+    },
+    {
+      "digest": "5491d96d69b25bad08e524b6fcf7a4ddeeafebb2e780ead7309fdacd218883ae",
+      "point": "query.summarize",
+      "id": "Verify2_A10_top_3_products_per_region_is_not_the_top_3_pairs_unsaid",
+      "question": "top 3 products per region",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is not narrowed by anything. It keeps only the top 3 rows, ranked by Net Sales. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 259,
+      "usage": {
+        "input_tokens": 624,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.61
+        }
+      }
+    },
+    {
+      "digest": "2ca87362fa805ed196439bc039b0d530813b0d7a030d8e42ec18b6827bebfa96",
+      "point": "query.summarize",
+      "id": "Verify2_A04_top_3_products_coast_vs_north_does_not_rank_across_both_places_unsaid",
+      "question": "top 3 products, coast vs north",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is narrowed to rows where Region is \u0027coast\u0027 or \u0027north\u0027. It keeps only the top 3 rows, ranked by Net Sales. \u0027coast\u0027 and \u0027north\u0027 are shown side by side, one row each, so the person reads the difference off the rows. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 228,
+      "usage": {
+        "input_tokens": 1300,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.58,
+          "probabilities": {
+            "nothing": 0.63,
+            "change": 0.15,
+            "share": 0.01,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "narrowing": 0.05,
+            "period": 0.02,
+            "ranking": 0.06,
+            "split": 0.06,
+            "versions": 0.02
+          }
+        }
+      }
+    },
+    {
+      "digest": "671ee0cde506df6bd01183dbe88d5f529033707daf020bfb99a26fc3264337d2",
+      "point": "query.summarize",
+      "id": "Verify2_A04_top_3_products_coast_vs_north_does_not_rank_across_both_places_unsaid",
+      "question": "top 3 products, coast vs north",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is narrowed to rows where Region is \u0027coast\u0027 or \u0027north\u0027. It keeps only the top 3 rows, ranked by Net Sales. \u0027coast\u0027 and \u0027north\u0027 are shown side by side, one row each, so the person reads the difference off the rows. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 214,
+      "usage": {
+        "input_tokens": 663,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.32
+        }
+      }
+    },
+    {
+      "digest": "c0afde91100509c985d19695e385984643141b3a675565a00d2d93082286b864",
+      "point": "query.summarize",
+      "id": "Verify2_A04_top_3_products_coast_vs_north_does_not_rank_across_both_places_unsaid",
+      "question": "top 3 products, coast vs north",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is narrowed to rows where Region is \u0027coast\u0027 or \u0027north\u0027. It keeps only the top 3 rows, ranked by Net Sales. \u0027coast\u0027 and \u0027north\u0027 are shown side by side, one row each, so the person reads the difference off the rows. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 298,
+      "usage": {
+        "input_tokens": 666,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.17
+        }
+      }
+    },
+    {
+      "digest": "911be6b01c0aaf0d0ed2c64acc609491014f82325c1c836b18ed640040710739",
+      "point": "query.summarize",
+      "id": "Verify3_C16_it_is_not_the_whole_business",
+      "question": "how did it sell last year?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 238,
+      "usage": {
+        "input_tokens": 1222,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.49,
+          "probabilities": {
+            "change": 0.41,
+            "future_or_stock": 0,
+            "nothing": 0.54,
+            "other_number": 0,
+            "split": 0.02,
+            "share": 0,
+            "none_or_only": 0,
+            "period": 0,
+            "ranking": 0,
+            "versions": 0,
+            "narrowing": 0,
+            "unnamed": 0.03
+          }
+        }
+      }
+    },
+    {
+      "digest": "df0a855695c972058c4208b529d65e6c458bf721851409414fe12087bf9c1af1",
+      "point": "query.summarize",
+      "id": "Verify3_C16_it_is_not_the_whole_business",
+      "question": "how did it sell last year?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 211,
+      "usage": {
+        "input_tokens": 580,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.81
+        }
+      }
+    },
+    {
+      "digest": "065929146ae7505699e96d5a60a13dbb6467dde90dff8be265086fa654c32265",
+      "point": "query.summarize",
+      "id": "Verify3_C07_on_sale_is_not_used_by_the_sales_table_name",
+      "question": "how many units did we sell on sale?",
+      "stated_reading": "It shows Units. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 220,
+      "usage": {
+        "input_tokens": 1174,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.99,
+          "probabilities": {
+            "ranking": 0,
+            "period": 0,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "other_number": 0,
+            "change": 0,
+            "split": 0,
+            "versions": 0,
+            "narrowing": 1,
+            "nothing": 0,
+            "none_or_only": 0,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "a989caa9553e896fcce4e9f5ed7f8796e86c4b66d5c4ccff55dc70a076cd3fc8",
+      "point": "query.summarize",
+      "id": "Verify2_A15_a_typo_in_last_month_is_not_the_all_time_total_unsaid",
+      "question": "how did net sales do lsat month",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 275,
+      "usage": {
+        "input_tokens": 1175,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.93,
+          "probabilities": {
+            "share": 0,
+            "change": 0.93,
+            "narrowing": 0,
+            "other_number": 0,
+            "ranking": 0,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "period": 0.07,
+            "unnamed": 0,
+            "versions": 0,
+            "split": 0,
+            "nothing": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "d4ee8af626831d26fdcc73d15595c04a17698e7ba1cca4c12a058f757b168ba6",
+      "point": "query.summarize",
+      "id": "Verify2_A06_before_last_year_is_not_read_as_last_year",
+      "question": "net sales before last year",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 243,
+      "usage": {
+        "input_tokens": 1220,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.3,
+          "probabilities": {
+            "change": 0.34,
+            "versions": 0.01,
+            "ranking": 0,
+            "other_number": 0,
+            "split": 0.01,
+            "period": 0.21,
+            "share": 0,
+            "none_or_only": 0,
+            "narrowing": 0.06,
+            "unnamed": 0,
+            "nothing": 0.37,
+            "future_or_stock": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "278d1c142a3acbf2a73b701d40233492e0846d1f79b9bbf8d622ec88f8ec7c04",
+      "point": "query.summarize",
+      "id": "Verify2_A06_before_last_year_is_not_read_as_last_year",
+      "question": "net sales before last year",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 256,
+      "usage": {
+        "input_tokens": 573,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.45
+        }
+      }
+    },
+    {
+      "digest": "a8ebdd28ada36697e3fec44c61449b46f737e22b9cb893bbae594b892bb0d872",
+      "point": "query.summarize",
+      "id": "Verify2_A06_before_last_year_is_not_read_as_last_year",
+      "question": "net sales before last year",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 275,
+      "usage": {
+        "input_tokens": 578,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.5
+        }
+      }
+    },
+    {
+      "digest": "92974b07109696f5adae6a1ffa5a871c3d8a594c8af3497bb2d222531b0ba9cf",
+      "point": "query.summarize",
+      "id": "Verify2_A20_net_sales_per_month_does_not_add_every_years_month_unsaid",
+      "question": "net sales per month",
+      "stated_reading": "It shows Net Sales. It is split by Year and MonthName, one row for each. Because it is split by a period, every period is a row of its own and the person reads any change from one row to the next. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 216,
+      "usage": {
+        "input_tokens": 1257,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.78,
+          "probabilities": {
+            "future_or_stock": 0,
+            "nothing": 0.8,
+            "change": 0.05,
+            "versions": 0,
+            "other_number": 0.03,
+            "split": 0.03,
+            "ranking": 0,
+            "period": 0.01,
+            "share": 0.07,
+            "none_or_only": 0,
+            "unnamed": 0,
+            "narrowing": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "529f15ad18073ca021842830bc310cd64224bc59a643a81fc916f709cd198b2e",
+      "point": "query.summarize",
+      "id": "Verify3_C08_a_table_synonym_does_not_make_units_a_count_of_orders",
+      "question": "how many orders did we get from the coast?",
+      "stated_reading": "It shows Units. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 240,
+      "usage": {
+        "input_tokens": 1205,
+        "output_tokens": 115
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "other_number",
+          "confidence": 0.98,
+          "probabilities": {
+            "ranking": 0,
+            "versions": 0,
+            "nothing": 0.01,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "unnamed": 0,
+            "period": 0,
+            "split": 0,
+            "change": 0,
+            "narrowing": 0,
+            "other_number": 0.99,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "7cc3769a9b86fd1c1fd386d9644b9723f141007bb16ed689f02391318e6e80d4",
+      "point": "query.summarize",
+      "id": "Verify3_C03_will_is_not_a_plain_word_when_it_asks_for_a_forecast",
+      "question": "how much will the coast region sell?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 219,
+      "usage": {
+        "input_tokens": 1205,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.68,
+          "probabilities": {
+            "unnamed": 0,
+            "future_or_stock": 0.12,
+            "nothing": 0.72,
+            "period": 0.1,
+            "share": 0,
+            "ranking": 0,
+            "other_number": 0,
+            "split": 0,
+            "narrowing": 0.01,
+            "change": 0.05,
+            "versions": 0,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "fc1e076958992849949b485c8c3d419991a3f2d6c70b02ebb26612d374fa9b4c",
+      "point": "query.summarize",
+      "id": "Verify3_C03_will_is_not_a_plain_word_when_it_asks_for_a_forecast",
+      "question": "how much will the coast region sell?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 240,
+      "usage": {
+        "input_tokens": 559,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.29
+        }
+      }
+    },
+    {
+      "digest": "368ea35954523e020d50bc4bfc75c029a5eb68c8d01d9b794c3e21ed20e69dcf",
+      "point": "query.summarize",
+      "id": "Verify3_C03_will_is_not_a_plain_word_when_it_asks_for_a_forecast",
+      "question": "how much will the coast region sell?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 242,
+      "usage": {
+        "input_tokens": 561,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.57
+        }
+      }
+    },
+    {
+      "digest": "1666bab32c1cf28ad4f7176e09004d73e2e64ef310b3db371252a3bb4963bf96",
+      "point": "query.summarize",
+      "id": "Verify3_C09_net_as_a_verb_is_not_the_net_of_net_sales",
+      "question": "what did we net in the coast region last year?",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 258,
+      "usage": {
+        "input_tokens": 1264,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.93,
+          "probabilities": {
+            "none_or_only": 0,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "narrowing": 0.01,
+            "split": 0.01,
+            "period": 0.04,
+            "versions": 0,
+            "nothing": 0.94,
+            "ranking": 0,
+            "other_number": 0,
+            "change": 0,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "a8b20abbd85ff86d026292162623da033e49b2cece9768c81bc16f9fcc30612b",
+      "point": "query.summarize",
+      "id": "A_ranking_word_with_no_ranking_or_the_wrong_way_is_stopped_by_the_check",
+      "question": "our slowest city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 263,
+      "usage": {
+        "input_tokens": 1199,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "ranking",
+          "confidence": 0.8,
+          "probabilities": {
+            "narrowing": 0.05,
+            "other_number": 0,
+            "versions": 0,
+            "change": 0.05,
+            "split": 0,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "ranking": 0.83,
+            "nothing": 0.07,
+            "unnamed": 0,
+            "share": 0,
+            "period": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "74f884ea9ee1b3c82422531b095349aa9ae321cc689c30b75e75dffd0c5f0708",
+      "point": "query.summarize",
+      "id": "A_ranking_word_with_no_ranking_or_the_wrong_way_is_stopped_by_the_check",
+      "question": "our slowest city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, smallest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 252,
+      "usage": {
+        "input_tokens": 1210,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "nothing",
+          "confidence": 0.64,
+          "probabilities": {
+            "share": 0,
+            "period": 0.05,
+            "versions": 0,
+            "unnamed": 0,
+            "change": 0.08,
+            "other_number": 0,
+            "nothing": 0.67,
+            "none_or_only": 0,
+            "ranking": 0.14,
+            "future_or_stock": 0,
+            "narrowing": 0.05,
+            "split": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "f6bed9b70f20cf3b66a11ed0203ae390fdef142df16036faf77bf40921eafca3",
+      "point": "query.summarize",
+      "id": "A_ranking_word_with_no_ranking_or_the_wrong_way_is_stopped_by_the_check",
+      "question": "our slowest city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, smallest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 220,
+      "usage": {
+        "input_tokens": 576,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.19
+        }
+      }
+    },
+    {
+      "digest": "042c2f6349453f156a1f855327e08242df4a56059eb53b7f28fe00de848949dc",
+      "point": "query.summarize",
+      "id": "A_ranking_word_with_no_ranking_or_the_wrong_way_is_stopped_by_the_check",
+      "question": "our slowest city",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. The rows are ordered by Net Sales, smallest first. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 258,
+      "usage": {
+        "input_tokens": 568,
+        "output_tokens": 25
+      },
+      "answers": {
+        "q:check:real": {
+          "type": "noul",
+          "noul": 0.36
+        }
+      }
+    },
+    {
+      "digest": "5531980320cb30d663b0f1f2de92d02175d6db245943d8b561b890f6175b4055",
+      "point": "query.summarize",
+      "id": "Verify2_A16_a_product_named_with_a_typo_is_not_answered_with_every_products_total",
+      "question": "net sales for rain jakets",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 216,
+      "usage": {
+        "input_tokens": 1173,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.95,
+          "probabilities": {
+            "ranking": 0,
+            "change": 0,
+            "versions": 0,
+            "narrowing": 0.96,
+            "period": 0,
+            "other_number": 0,
+            "share": 0,
+            "nothing": 0.03,
+            "unnamed": 0,
+            "split": 0.01,
+            "future_or_stock": 0,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "a54299b1fd2ff398bd93956f9231981ad6cff70fcf6104788adc04b51c922a94",
+      "point": "query.summarize",
+      "id": "Each_thing_split_by_its_tables_region_instead_is_stopped_by_the_check",
+      "question": "net sales for each store in all regions",
+      "stated_reading": "It shows Net Sales. It is split by Region, one row for each. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 245,
+      "usage": {
+        "input_tokens": 1202,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "split",
+          "confidence": 0.88,
+          "probabilities": {
+            "ranking": 0,
+            "nothing": 0.02,
+            "versions": 0,
+            "future_or_stock": 0,
+            "none_or_only": 0,
+            "change": 0,
+            "period": 0,
+            "other_number": 0,
+            "split": 0.9,
+            "narrowing": 0.08,
+            "unnamed": 0,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "4b2968877b9dd46365c2095e4c7ec39036f8e18f89d7fa4b62380f10f0163249",
+      "point": "query.summarize",
+      "id": "All_time_over_a_measure_for_today_is_stopped_by_the_check",
+      "question": "our all-time sales",
+      "stated_reading": "It shows Sales Today. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 215,
+      "usage": {
+        "input_tokens": 1171,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.91,
+          "probabilities": {
+            "narrowing": 0.01,
+            "split": 0,
+            "other_number": 0.01,
+            "period": 0.92,
+            "ranking": 0,
+            "change": 0.02,
+            "none_or_only": 0,
+            "versions": 0,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "nothing": 0.04,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "70d26682a6351ba9df346a423b110101641e666a3093c5c87d4fb418e495a92c",
+      "point": "query.summarize",
+      "id": "Verify3_C18_went_south_is_not_the_south_region",
+      "question": "which products went south in 2025?",
+      "stated_reading": "It shows Net Sales. It is split by ProductName, one row for each. It is narrowed to rows where Region is \u0027south\u0027. It is narrowed to rows where Year is \u00272025\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 225,
+      "usage": {
+        "input_tokens": 1279,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.96,
+          "probabilities": {
+            "unnamed": 0,
+            "nothing": 0.01,
+            "ranking": 0,
+            "share": 0,
+            "versions": 0,
+            "none_or_only": 0,
+            "change": 0.97,
+            "period": 0,
+            "other_number": 0,
+            "split": 0,
+            "future_or_stock": 0,
+            "narrowing": 0.02
+          }
+        }
+      }
+    },
+    {
+      "digest": "2ac4a1e89499a2f76ea4c4c5c1970d0a16ac9aaa49fd8e2ea481b1bdf97d0d3b",
+      "point": "query.summarize",
+      "id": "Verify3_C06_number_of_stores_is_a_count_not_a_plain_phrase",
+      "question": "number of stores in the coast region",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 260,
+      "usage": {
+        "input_tokens": 1204,
+        "output_tokens": 115
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "other_number",
+          "confidence": 0.99,
+          "probabilities": {
+            "ranking": 0,
+            "period": 0,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "other_number": 1,
+            "change": 0,
+            "split": 0,
+            "versions": 0,
+            "narrowing": 0,
+            "nothing": 0,
+            "none_or_only": 0,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "1dec870946ae6b4a6849ba4528b0bae4b739f4c20223e2e48d4116d6cd97581e",
+      "point": "query.summarize",
+      "id": "Verify2_A05_since_last_year_is_not_read_as_last_year_alone",
+      "question": "net sales since last year",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. The question\u0027s words \u0027last year\u0027 are read as the whole of the year before the latest year the data holds, so the period is stated. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 204,
+      "usage": {
+        "input_tokens": 1220,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "change",
+          "confidence": 0.99,
+          "probabilities": {
+            "nothing": 0,
+            "change": 1,
+            "share": 0,
+            "none_or_only": 0,
+            "future_or_stock": 0,
+            "unnamed": 0,
+            "other_number": 0,
+            "narrowing": 0,
+            "period": 0,
+            "ranking": 0,
+            "split": 0,
+            "versions": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "96a20419da4df45e43dfb9c8b923e0b0d704e3276df1ed9abe85162a6a6dbf1d",
+      "point": "query.summarize",
+      "id": "A_threshold_with_a_ranking_word_read_as_a_top_few_is_stopped_by_the_check",
+      "question": "which cities have net sales over 100, highest first",
+      "stated_reading": "It shows Net Sales. It is split by City, one row for each. It is not narrowed by anything. It keeps only the top 100 rows, ranked by Net Sales. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 221,
+      "usage": {
+        "input_tokens": 1223,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.8,
+          "probabilities": {
+            "other_number": 0,
+            "split": 0,
+            "change": 0,
+            "ranking": 0.11,
+            "future_or_stock": 0,
+            "nothing": 0.07,
+            "versions": 0,
+            "share": 0,
+            "period": 0,
+            "unnamed": 0,
+            "narrowing": 0.81,
+            "none_or_only": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "6aa3be541d72a185a4a9e4f43420e8ff1f0ba8b549b9c3bf05f7924e6611fa1e",
+      "point": "query.summarize",
+      "id": "Verify3_C19_the_best_region_is_not_absorbed_by_the_top_three",
+      "question": "top 3 products in our best region",
+      "stated_reading": "It shows Net Sales. It is split by ProductName and Region, one row for each. It is not narrowed by anything. It keeps only the top 3 rows, ranked by Net Sales. The top rows are taken over every ProductName and Region pair together. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 240,
+      "usage": {
+        "input_tokens": 1263,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "narrowing",
+          "confidence": 0.87,
+          "probabilities": {
+            "none_or_only": 0,
+            "unnamed": 0,
+            "versions": 0,
+            "other_number": 0,
+            "change": 0,
+            "ranking": 0.05,
+            "future_or_stock": 0,
+            "nothing": 0.05,
+            "share": 0,
+            "split": 0.01,
+            "period": 0,
+            "narrowing": 0.89
+          }
+        }
+      }
+    },
+    {
+      "digest": "2eef47aaae257c80a2e7433dda9f2528c6559def68972ecdc1f1dd163abc8e21",
+      "point": "query.summarize",
+      "id": "All_time_over_a_measure_that_is_a_period_is_stopped_by_the_check",
+      "question": "our all-time sales",
+      "stated_reading": "It shows Sales YTD. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 210,
+      "usage": {
+        "input_tokens": 1173,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.86,
+          "probabilities": {
+            "ranking": 0,
+            "period": 0.88,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "other_number": 0.02,
+            "change": 0.01,
+            "split": 0,
+            "versions": 0,
+            "narrowing": 0.01,
+            "nothing": 0.08,
+            "none_or_only": 0,
+            "share": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "1cc942dd781da143414d207b379a33e99cb0f579d501bd14163fccc76a520629",
+      "point": "query.summarize",
+      "id": "Verify3_C04_cant_is_a_negation_not_two_plain_words",
+      "question": "which products can\u0027t we sell in the coast region?",
+      "stated_reading": "It shows Net Sales. It is split by ProductName, one row for each. It is narrowed to rows where Region is \u0027coast\u0027. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 213,
+      "usage": {
+        "input_tokens": 1240,
+        "output_tokens": 116
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "none_or_only",
+          "confidence": 0.9,
+          "probabilities": {
+            "period": 0,
+            "split": 0,
+            "nothing": 0.03,
+            "versions": 0,
+            "none_or_only": 0.91,
+            "ranking": 0,
+            "other_number": 0,
+            "narrowing": 0.06,
+            "unnamed": 0,
+            "share": 0,
+            "future_or_stock": 0,
+            "change": 0
+          }
+        }
+      }
+    },
+    {
+      "digest": "5841907cc1869a6556a1abdf64f94b43a8a93a57d6bd6373973e67fbc8a46fe5",
+      "point": "query.summarize",
+      "id": "Verify2_A09_the_month_before_last_is_not_the_all_time_total_or_last_month_unsaid",
+      "question": "net sales the month before last",
+      "stated_reading": "It shows Net Sales. It is one total, split by nothing. It is not narrowed by anything. Apart from what is said above, it shows totals only. It works out no change of its own between periods, no share or percent of its own, and nothing about things with no rows.",
+      "ms": 287,
+      "usage": {
+        "input_tokens": 1173,
+        "output_tokens": 114
+      },
+      "answers": {
+        "q:check:gap": {
+          "type": "choice",
+          "choice": "period",
+          "confidence": 0.92,
+          "probabilities": {
+            "ranking": 0,
+            "period": 0.93,
+            "unnamed": 0,
+            "future_or_stock": 0,
+            "other_number": 0,
+            "change": 0.04,
+            "split": 0,
+            "versions": 0,
+            "narrowing": 0.03,
+            "nothing": 0,
+            "none_or_only": 0,
+            "share": 0
+          }
+        }
+      }
+    }
+  ]
+}

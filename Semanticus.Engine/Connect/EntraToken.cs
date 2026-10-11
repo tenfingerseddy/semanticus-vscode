@@ -151,12 +151,28 @@ namespace Semanticus.Engine
             return mode switch
             {
                 "serviceprincipal" or "sp" => ClientSecret(tenant),
-                "interactive" or "entra" or "entramfa" or "mfa" => new InteractiveBrowserCredential(InteractiveOptions(tenant, savedRecord, disableInteractive, loginHint)),
+                "interactive" or "entra" or "entramfa" or "mfa" => BrowserCredential(tenant, savedRecord, disableInteractive, loginHint),
                 "devicecode" => new DeviceCodeCredential(DeviceCodeOptions(tenant, savedRecord, disableInteractive)),
                 "token" => throw new InvalidOperationException("BuildCredential does not handle 'token' mode (the caller supplies the token)."),
                 _ => new AzureCliCredential(new AzureCliCredentialOptions { TenantId = tenant }),
             };
         }
+
+        // A browser credential. For a caller allowed to prompt (the person) in an engine that may not open a browser
+        // (InteractiveSignIn: every test, smoke and tool run), it is built unable to prompt all the same, and remembered,
+        // so the two places a prompt would begin (GetTokenAsync, BuildCredentialAsync's capture) refuse in plain words
+        // instead of the agent's refusal. With the opt-in it is exactly the credential it always was.
+        private static TokenCredential BrowserCredential(string tenant, AuthenticationRecord savedRecord, bool disableInteractive, string loginHint)
+        {
+            var gate = !disableInteractive && InteractiveSignIn.MustGate;
+            var cred = new InteractiveBrowserCredential(InteractiveOptions(tenant, savedRecord, disableInteractive || gate, loginHint));
+            if (gate) BrowserGated.AddOrUpdate(cred, null);
+            return cred;
+        }
+
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TokenCredential, object> BrowserGated = new();
+
+        private static bool IsBrowserGated(TokenCredential cred) => cred != null && BrowserGated.TryGetValue(cred, out _);
 
         // The saved-record FAMILY for an auth mode — the interactive modes share one MSAL record slot, devicecode has its
         // own, and azcli / serviceprincipal / token keep NO AuthenticationRecord. ONE source of truth for RecordPath keys,
@@ -187,15 +203,25 @@ namespace Semanticus.Engine
         // must set BOTH. Null in production.
         internal static string TokenCacheNameOverride { get; set; }
         private static string TokenCacheName =>
-            string.IsNullOrWhiteSpace(TokenCacheNameOverride) ? ProductionTokenCacheName : TokenCacheNameOverride;
+            !string.IsNullOrWhiteSpace(TokenCacheNameOverride) ? TokenCacheNameOverride : CacheNameFor(SemanticusHome.SignInDir());
+
+        // The encrypted cache is named, not pathed, so a sign-in store that moved (a run given its own state folder)
+        // needs its own NAME too, or it would read and refresh the person's cached tokens under the person's name. The
+        // person's own store keeps the production name, so a real install is unchanged.
+        internal static string CacheNameFor(string signInDir) =>
+            SemanticusHome.SameFolder(signInDir, SemanticusHome.TryDefaultSignInDir())
+                ? ProductionTokenCacheName
+                : ProductionTokenCacheName + "-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(Path.TrimEndingDirectorySeparator(Path.GetFullPath(signInDir)))))[..12].ToLowerInvariant();
 
         // Test seam ONLY: point the record + profile store at a scratch dir so tests never touch the user's real auth
-        // dir. Null in production (the encrypted-cache LocalAppData path). Same discipline as ConnectionRegistry.RootOverride.
+        // dir. Null in production, where the store is SemanticusHome.SignInDir(): LocalAppData/Semanticus/auth, or
+        // <state folder>/auth for a run given its own home. Same discipline as ConnectionRegistry.RootOverride.
         // NOTE: this covers the record JSON only. The encrypted token cache is named, not pathed — see TokenCacheNameOverride.
         internal static string PersistDirOverride { get; set; }
         private static string PersistDir()
         {
-            var dir = PersistDirOverride ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Semanticus", "auth");
+            var dir = PersistDirOverride ?? SemanticusHome.SignInDir();
             Directory.CreateDirectory(dir);
             return dir;
         }
@@ -640,6 +666,8 @@ namespace Semanticus.Engine
             // the saved account untouched, with no silent re-prompt.
             if (cred is InteractiveBrowserCredential ibc)
             {
+                // A first sign-in or a switch opens the browser. Not in an engine that may not (InteractiveSignIn).
+                if (IsBrowserGated(ibc)) throw InteractiveSignIn.Refuse("a first sign-in, " + mode);
                 // The chooser hang lives here: closing the tab does not cancel MSAL, so without a ceiling the page
                 // waited until the 10 minute webview guard (D-014). SignInWait names cancel vs timeout and logs an id.
                 prepared.PendingRecord = await SignInWait.RunAsync(
@@ -786,12 +814,20 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Acquire a token for the XMLA scope from a (possibly reused) credential.</summary>
-        public static async Task<AccessToken> GetTokenAsync(TokenCredential cred, CancellationToken ct)
-            => await cred.GetTokenAsync(new TokenRequestContext(Scopes), ct).ConfigureAwait(false);
+        public static Task<AccessToken> GetTokenAsync(TokenCredential cred, CancellationToken ct)
+            => GetTokenAsync(cred, Scopes, ct);
 
-        /// <summary>Acquire a token for an arbitrary scope set (e.g. the SQL/database resource) from a credential.</summary>
+        /// <summary>Acquire a token for an arbitrary scope set (e.g. the SQL/database resource) from a credential. Every
+        /// token the engine acquires comes through here, so this is where a browser credential that could not get one
+        /// silently would have opened the browser; in an engine that may not, it refuses (InteractiveSignIn).</summary>
         public static async Task<AccessToken> GetTokenAsync(TokenCredential cred, string[] scopes, CancellationToken ct)
-            => await cred.GetTokenAsync(new TokenRequestContext(scopes), ct).ConfigureAwait(false);
+        {
+            try { return await cred.GetTokenAsync(new TokenRequestContext(scopes), ct).ConfigureAwait(false); }
+            catch (AuthenticationRequiredException ex) when (IsBrowserGated(cred))
+            {
+                throw InteractiveSignIn.Refuse("a token for " + string.Join(" ", scopes), ex);
+            }
+        }
 
         /// <summary>Bearer token for a Fabric SQL endpoint (TDS) — the same auth modes as XMLA, but the
         /// SQL/database scope. Used as <c>SqlConnection.AccessToken</c> for deterministic schema introspection.
@@ -845,6 +881,11 @@ namespace Semanticus.Engine
         private static readonly string[] SpClientIdEnvNames = { "AZURE_CLIENT_ID", "FABRIC_CLIENT", "POWERBI_CLIENT_ID" };
         private static readonly string[] SpSecretEnvNames = { "AZURE_CLIENT_SECRET", "FABRIC_SECRET", "POWERBI_CLIENT_SECRET" };
         private static readonly string[] SpTenantEnvNames = { "AZURE_TENANT_ID", "FABRIC_TENANT", "POWERBI_TENANT_ID" };
+
+        /// <summary>Every name a service principal is read from, for the test-run net that drops them
+        /// (InteractiveSignIn.CutCloudSignInForTestRun).</summary>
+        internal static string[] ServicePrincipalVariables =>
+            System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Concat(System.Linq.Enumerable.Concat(SpClientIdEnvNames, SpSecretEnvNames), SpTenantEnvNames));
 
         private static TokenCredential ClientSecret(string tenantId)
         {

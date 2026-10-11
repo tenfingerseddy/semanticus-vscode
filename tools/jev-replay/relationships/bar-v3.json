@@ -1,0 +1,12 @@
+{
+ "point": "relationship.join",
+ "version": 3,
+ "set": "2026-09-26",
+ "recordedAfterRun": 3,
+ "note": "Kane's switch-on bar for every Jev decision (26 September), passed on by the coordinator. It replaces bar-v2's 5-point margin. It arrived after run 3 had been scored, so run 3 is judged under it here and this change is recorded with its date; no answer was re-asked.",
+ "rule": "Jev goes on for Pro when the Jev-when-sure path (the Pro path) beats the name rule, the win is not luck (exact McNemar p < 0.05 on the paired units), and the Pro path makes no more harmful mistakes than the rule. The size of the win does not matter.",
+ "harmful": "For relationships, a harmful mistake is a wrong join, a wrong cardinality or a wrong filter direction on a relationship the arm proposes (every rule proposal and every Pro-path proposal counts as proposed as sure).",
+ "unit": "D1 join decides whether the family goes live, as in bar-v2; D0 and D2 to D4 are reported.",
+ "maxP": 0.05,
+ "minPointsOverRule": 0
+}

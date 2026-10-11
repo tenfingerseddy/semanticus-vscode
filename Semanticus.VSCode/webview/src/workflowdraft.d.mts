@@ -9,12 +9,26 @@ export interface WorkflowEditStep {
   forEach?: { source: { kind: 'literal' | 'input'; values?: string[]; name?: string | null }; as: string; maxIterations: number } | null;
   call?: { workflow: string; with: WorkflowEditMapEntry[]; returns: string[] } | null;
   gate?: { strictness?: string | null; inputs: WorkflowEditInput[]; verify: WorkflowEditVerify[] } | null;
+  // Format 3 (composer contract 1.3 to 1.7; lane author-gaps, B7). Null and empty on a v1 or v2 step.
+  performer?: 'semanticus' | 'assistant' | 'person' | null;
+  phase?: string | null;
+  action?: WorkflowEditAction | null;
+  questions?: WorkflowEditQuestion[];
+  blanks?: WorkflowEditBlank[];
+  brief?: string | null;
+  checks?: WorkflowEditCheck[];
 }
+export interface WorkflowEditQuestion { name: string; question: string | null; type: string | null; required: string | null; by: string | null; values: string[]; from: string | null; jev: string | null; default: string | null }
+export interface WorkflowEditBlank { name: string; kind: string | null; fills: string | null; by: string | null; dependsOn: string[]; maxChars: number | null; choices: string | null; generator: string | null }
+export interface WorkflowEditCheck { kind: string; phase: string | null; target: string | null; min: string | null; max: string | null; of: string[]; when: string | null }
+export interface WorkflowEditAction { op: string; args: { name: string; value: string | null; values: string[] | null }[] }
 export interface WorkflowEditModel {
   format: 'v1' | 'v2';
-  definition: { key: string; schemaVersion: number; name: string; kind: string; title: string; description: string; whenToUse?: string | null; version: number; strictness?: string | null; triggers: string[]; tags: string[]; provenance: WorkflowEditMapEntry[]; slots: WorkflowEditSlot[]; steps: WorkflowEditStep[] };
+  definition: { key: string; schemaVersion: number; name: string; kind: string; title: string; description: string; whenToUse?: string | null; version: number; strictness?: string | null; triggers: string[]; tags: string[]; provenance: WorkflowEditMapEntry[]; slots: WorkflowEditSlot[]; steps: WorkflowEditStep[]; assistantNotes?: string | null; inputs?: WorkflowEditQuestion[] };
   restrictions: WorkflowEditRestriction[];
-  choices: { strictness: string[]; kinds: string[]; inputTypes: string[]; slotTypes: string[]; inputRequired: string[]; inputScopes: string[]; daxPurity: string[]; slotRequired: string[]; verifyKinds: string[]; verifyScopes: string[]; verifyIntents: string[]; shapeIds: string[]; openMismatch: string[]; defaultMaxIterations: number; maxIterations: number };
+  choices: { strictness: string[]; kinds: string[]; inputTypes: string[]; slotTypes: string[]; inputRequired: string[]; inputScopes: string[]; daxPurity: string[]; slotRequired: string[]; verifyKinds: string[]; verifyScopes: string[]; verifyIntents: string[]; shapeIds: string[]; openMismatch: string[]; defaultMaxIterations: number; maxIterations: number;
+    performers?: string[]; phases?: string[]; questionTypes?: string[]; questionBy?: string[]; blankKinds?: string[]; blankBy?: string[];
+    checkKinds?: Record<string, string[]>; executableOps?: string[] };
 }
 export interface WorkflowDocument { name: string; library: 'user' | 'stock'; path: string; exactText: string; byteHash: string; metadata: { schemaVersion: number; title: string; version: number; stepIds: string[]; explicitIds: boolean; parses: boolean; parseError?: string | null }; editModel?: WorkflowEditModel | null }
 export interface WorkflowEditIssue { code: string; severity: 'error' | 'warning' | 'info'; target?: string | null; field?: string | null; relatedTargets: string[]; message: string }

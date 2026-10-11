@@ -120,20 +120,18 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Display_folder_suggestions_cap_holds_even_when_one_table_exceeds_it()
         {
-            using var engine = NewEngine();
+            // Lean suite (8 Oct): the 65 measures and their folders used to be made by 130 engine calls (13 s); one batch writes the same model.
+            var sm = new SessionManager();
+            using var engine = new LocalEngine(sm, new Fake(false));
             await engine.CreateModelAsync("PrefillCap", 1604);
-            await engine.CreateTableAsync("Big", "human");
-            await engine.CreateTableAsync("Other", "human");
-
-            string firstRef = null;
-            for (var i = 0; i < 65; i++)   // 65 distinct HOME-table folders — more than the 60 cap on its own
+            await sm.Require().MutateAsync("human", "seed", m =>
             {
-                var r = await engine.CreateMeasureAsync("table:Big", $"M{i:D2}", "1", "human");
-                firstRef ??= r;
-                await engine.SetObjectPropertyAsync(r, "DisplayFolder", $"Folder {i:D2}", "human");
-            }
-            var om = await engine.CreateMeasureAsync("table:Other", "Elsewhere", "1", "human");
-            await engine.SetObjectPropertyAsync(om, "DisplayFolder", "AAA Elsewhere", "human");   // would sort first if it got in
+                var big = m.AddTable("Big");
+                for (var i = 0; i < 65; i++)   // 65 distinct HOME-table folders, more than the 60 cap on its own
+                    big.AddMeasure($"M{i:D2}", "1").DisplayFolder = $"Folder {i:D2}";
+                m.AddTable("Other").AddMeasure("Elsewhere", "1").DisplayFolder = "AAA Elsewhere";   // would sort first if it got in
+            });
+            var firstRef = "measure:Big/M00";
 
             var folder = (await engine.GetObjectPropertiesAsync(firstRef)).Single(p => p.Name == "DisplayFolder");
             // Exactly the documented cap — the home loop enforces it too (this payload rides EVERY get_properties),

@@ -390,19 +390,21 @@ verify:
             Assert.DoesNotContain("Tamper-evident record", altered);
         }
 
-        // D-097 superseded on 2026-09-15: Tests and Saved reports became one whole Pro feature, reads included, so
-        // the free "reading copy" of the evidence no longer exists. The honesty point survives in a stronger form:
-        // free is refused in one sentence before any work, and every report a Pro user gets is sealed, so there is
-        // no unsigned copy of an evidence document in circulation.
+        // D-097, third position. It was a free "reading copy" of the evidence; on 2026-09-15 Tests became a whole
+        // Pro feature and the reading copy went away; on 2026-09-22 Validation went free again. The honesty point
+        // is the one that survived all three: there is no unsigned copy of an evidence document in circulation,
+        // so what a free run produces is sealed exactly like a paid one.
         [Fact]
-        public async Task Test_evidence_is_refused_on_free_and_always_sealed_on_pro()
+        public async Task Test_evidence_is_always_sealed_on_either_tier()
         {
             using var freeSessions = new SessionManager();
             using var freeEngine = new LocalEngine(freeSessions, new Free());
             await freeEngine.OpenAsync(TestModels.FindBim());
-            var refused = await Assert.ThrowsAsync<EntitlementException>(() => freeEngine.RunTestSuiteAsync(false, "human"));
-            Assert.Contains("Tests is a Semanticus Pro feature", refused.Message);
-            await Assert.ThrowsAsync<EntitlementException>(() => freeEngine.ExportTestReportAsync());
+            var freeRun = await freeEngine.RunTestSuiteAsync(false, "human");
+            Assert.Null(freeRun.Error);
+            var freeReport = await freeEngine.ExportTestReportAsync();
+            Assert.Null(freeReport.Error);
+            Assert.False(string.IsNullOrWhiteSpace(freeReport.ContentHash));
 
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new Pro());

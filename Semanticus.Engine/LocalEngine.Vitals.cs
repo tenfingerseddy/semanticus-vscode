@@ -47,7 +47,7 @@ namespace Semanticus.Engine
             // GLOBAL fallback — ephemeral anchor (live/XMLA/unsaved) AND no workspace open: a live model with no
             // folder, the highest-value Pro case, where capture used to be silently DROPPED (dir == null). Mirror
             // the SENSITIVE half of PR #112 (its project-insight store), NOT experience.jsonl: a PER-FINGERPRINT
-            // file under the shared %USERPROFILE%/.semanticus home, so MaxRecords/MaxBytes retention stays PER-MODEL
+            // file under the shared per-user Semanticus home (SemanticusHome), so MaxRecords/MaxBytes retention stays PER-MODEL
             // (a busy model never prunes another's history) and one model's file can never be read as another's —
             // cross-contamination closed by construction, not by a read-time filter. A session with NO stable
             // identity (ephemeral + no LiveOrigin → fingerprint null) can't be keyed OR read back reliably, so it is
@@ -241,6 +241,24 @@ namespace Semanticus.Engine
 
         // ---- the ops (both doors; free on every tier since 2026-09-15) ------------------------------
 
+        /// <summary>The refusal for a ref that names no measure in the open model AND was never recorded under that
+        /// ref, or null when the ref is answerable. Answering such a ref "ok, no recorded history" reads as a real
+        /// measure that has not moved (UAT-S05b-1-003). A deleted measure with recorded history stays answerable
+        /// by the ref it was recorded under, which is why "not in the model" alone is not enough to refuse.</summary>
+        private static async Task<string> NamesNoMeasureAsync(Session s, string measureRef, IReadOnlyList<VitalsRecord> records, string canonical)
+        {
+            var live = await s.ReadAsync(m =>
+            {
+                try { return ObjectRefs.Resolve(m, measureRef) is Measure; }
+                catch { return false; }
+            });
+            if (live) return null;
+            var recorded = records.Any(r => (r.Measures ?? Array.Empty<VitalsMeasure>())
+                .Any(x => string.Equals(x.Ref, canonical, StringComparison.OrdinalIgnoreCase)));
+            return recorded ? null
+                : $"No measure '{measureRef.Trim()}' exists in this model, and no history was ever recorded under that ref. Call list_measures to find the measure's ref (for example 'measure:Sales/Total Sales').";
+        }
+
         /// <summary>"What moved this number?" — deterministic attribution over the recorded vital-signs
         /// history. Verdict semantics (honesty non-negotiable): a single recorded edit in the movement
         /// window is "attributed"; multiple are an "interval" with candidates RANKED by dependency overlap
@@ -261,6 +279,8 @@ namespace Semanticus.Engine
             }) ?? measureRef.Trim();
 
             var (records, unreadable) = VitalsStore.Read(VitalsFileFor(s), VitalsFingerprintFor(s));
+            if (await NamesNoMeasureAsync(s, measureRef, records, canonical) is string missing)
+                return new BlameResult { Status = "error", Verdict = "inconclusive", MeasureRef = canonical, Note = missing };
             var ctx = string.IsNullOrWhiteSpace(context) ? VitalSigns.TotalContext : context.Trim();
             var core = ValueBlame.Analyze(records, canonical, ctx, sinceCheckpoint);
 
@@ -402,6 +422,8 @@ namespace Semanticus.Engine
             }) ?? measureRef.Trim();
 
             var (records, unreadable) = VitalsStore.Read(VitalsFileFor(s), VitalsFingerprintFor(s));
+            if (await NamesNoMeasureAsync(s, measureRef, records, canonical) is string missing)
+                return new ValueHistoryResult { Status = "error", MeasureRef = canonical, Note = missing };
             var ctx = string.IsNullOrWhiteSpace(context) ? VitalSigns.TotalContext : context.Trim();
             var series = ValueBlame.Series(records, canonical, ctx);
             var pruned = records.Sum(r => r.Pruned);

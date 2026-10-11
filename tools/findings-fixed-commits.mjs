@@ -136,6 +136,37 @@ const RUNNING_SUITES = [
             ['Semanticus.VSCode/test/release-mirror-gate.test.mjs', 'spawnSync(process.execPath, [join(root, rel)]'],
         ],
     },
+    // THE RELAY SUITE. Its files sit outside Semanticus.VSCode/test, so `npm test` never discovered them and
+    // nothing else invoked them: the suite was green locally and unrun in CI, which is the F-019 and F-024
+    // family and which is why every FIXED row naming it was correctly refused (F-178, F-196). The
+    // build-and-smoke linux leg now runs it by name, so its cases are real cover.
+    //
+    // THE PATTERN IS `*.test.mjs`, NOT THE DIRECTORY, because the invocation is a glob and the directory holds
+    // more than the glob reaches: tools/relay/test/fakes.mjs is a helper that `node --test` does not execute,
+    // and a row naming a case in it would claim coverage from a file nothing runs.
+    {
+        pattern: /^tools\/relay\/test\/[^/]+\.test\.mjs$/,
+        runner: 'node --test tools/relay/test/*.test.mjs on the linux leg of build-and-smoke in ci.yml',
+        proof: [['.github/workflows/ci.yml', 'run: node --test tools/relay/test/*.test.mjs']],
+    },
+    // THE FULFILLMENT WORKER SELF-TEST. Same history as the relay's, with one extra hazard of its own that the
+    // proof below has to bind: selftest.mjs EXITS 0 WHEN IT SKIPS. Section A needs a buildable
+    // Semanticus.License and reports SKIP with a reason when it has none, which is the honest behaviour on a
+    // node-only box and a silent hole in CI, where a green step would then prove nothing about the token the
+    // shipped engine verifies. So two needles: the invocation, and the grep that turns a skip into a failure.
+    // Without the second, this entry could go on claiming cover for a step that had quietly stopped running
+    // half the suite, which is precisely the F-145 defect one file over.
+    //
+    // The exact file, not the directory: mint.mjs, worker.mjs and stripe.mjs live beside it and are the code
+    // under test, not suites, and a second suite added there would need its own invocation.
+    {
+        pattern: /^tools\/fulfillment\/worker\/selftest\.mjs$/,
+        runner: 'node tools/fulfillment/worker/selftest.mjs on the linux leg of build-and-smoke in ci.yml, with skips refused',
+        proof: [
+            ['.github/workflows/ci.yml', 'node tools/fulfillment/worker/selftest.mjs'],
+            ['.github/workflows/ci.yml', "grep -q '^SKIP'"],
+        ],
+    },
     // One entry per smoke project rather than one alternation, so each is bound to its OWN `dotnet run` line.
     // A single grouped pattern would have let a project with no invocation ride on its siblings' proof.
     ...['Smoke', 'RpcSmoke', 'McpSmoke', 'LearnSmoke', 'LearnBench', 'AirSmoke', 'CicdSmoke'].map(name => ({

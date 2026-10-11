@@ -63,8 +63,8 @@ namespace Semanticus.Engine
         /// capturable (see <see cref="LiveOrigin.LocalName"/> for why it exists). Null for cloud XMLA, real SSAS,
         /// and uncapturable. Stamped once by connect_local/open_local; never re-derived.</summary>
         public string DesktopName { get; internal set; }
-        /// <summary>The full .pbix PATH behind this LOCAL connection, when the owning Desktop's command line exposed
-        /// it (see <see cref="LiveOrigin.LocalPath"/>). Stamped once by connect_local/open_local.</summary>
+        /// <summary>A .pbix path for this LOCAL connection. Never set (see <see cref="LiveOrigin.LocalPath"/>): Desktop's
+        /// command-line path is not an identity.</summary>
         public string DesktopPath { get; internal set; }
 
         private LiveConnection(string kind, string dataSource, Adomd.AdomdConnection conn, string connectionString,
@@ -255,7 +255,64 @@ namespace Semanticus.Engine
             return await operation().ConfigureAwait(false);
         }
 
-        private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds,
+        /// <summary>What a person reads when the query connection dropped and could not be opened again. ADOMD's own "The
+        /// connection is not open." is never shown (K18, Kane 8 Oct).</summary>
+        internal const string ConnectionDroppedLine = "The live connection dropped and could not be opened again. Connect again to continue.";
+
+        /// <summary>ADOMD's two words for a connection that is gone: "The connection is not open." once it is closed, and "The connection
+        /// either timed out or was lost." on the query that was running when it dropped.</summary>
+        internal static bool IsClosedConnectionError(string message) =>
+            message != null && (message.IndexOf("connection is not open", StringComparison.OrdinalIgnoreCase) >= 0
+                                || message.IndexOf("connection either timed out or was lost", StringComparison.OrdinalIgnoreCase) >= 0);
+
+        /// <summary>Run once; when the connection turns out to be closed (an idle drop, a server restart), open it again with
+        /// the sign-in this connection already holds and run once more. Never a second retry, and the closed-connection
+        /// words never leave here.</summary>
+        internal static ResultSet RunReopeningOnce(Func<ResultSet> run, Func<bool> reopen)
+        {
+            var result = run();
+            if (!IsClosedConnectionError(result?.Error)) return result;
+            bool opened;
+            try { opened = reopen(); } catch { opened = false; }
+            if (opened) result = run();
+            if (IsClosedConnectionError(result?.Error)) result.Error = ConnectionDroppedLine;
+            return result;
+        }
+
+        // Query thread only (the connection is thread-affine). The token the connection holds is already on _conn, and
+        // the silent renew before each query keeps it fresh, so opening again needs no sign-in prompt.
+        private bool ReopenOnQueryThread()
+        {
+            try
+            {
+                try { _conn.Close(); } catch { /* already closed */ }
+                // The sign-in this connection holds, renewed first when it can be: a token that ran out is why a connection closes.
+                if (_silentCredential != null)
+                {
+                    try
+                    {
+                        var fresh = FreshTokenAsync(force: true).GetAwaiter().GetResult();
+                        _conn.AccessToken = new Microsoft.AnalysisServices.AccessToken(fresh.Token, fresh.ExpiresOn);
+                    }
+                    catch { /* open with the token already held */ }
+                }
+                _conn.Open();
+                try { Database = _conn.Database; } catch { }
+                try { SessionId = _conn.SessionID; } catch { }
+                Spid = null;
+                CaptureSpid(_conn);
+                return _conn.State == System.Data.ConnectionState.Open;
+            }
+            catch { return false; }
+        }
+
+        private ResultSet Execute(string query, int maxRows, int commandTimeoutSeconds, CancellationToken ct = default)
+        {
+            if (_conn.State != System.Data.ConnectionState.Open) ReopenOnQueryThread();
+            return RunReopeningOnce(() => ExecuteOnce(query, maxRows, commandTimeoutSeconds, ct), ReopenOnQueryThread);
+        }
+
+        private ResultSet ExecuteOnce(string query, int maxRows, int commandTimeoutSeconds,
             CancellationToken ct = default)
         {
             var sw = Stopwatch.StartNew();

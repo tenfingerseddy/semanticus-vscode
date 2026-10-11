@@ -1,0 +1,210 @@
+{
+  "Server": "s14-sql.example.invalid",
+  "Database": "SubscriptionCharges",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_billing_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "BILL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_customer",
+      "KeyColumns": [
+        "CUSTOMER_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CUSTOMER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CUSTOMER_SEGMENT",
+          "DataType": "String"
+        },
+        {
+          "Name": "ACTIVE",
+          "DataType": "Boolean"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_plan",
+      "KeyColumns": [
+        "PLAN_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "PLAN_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "PLAN_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "BASE_FEE",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_charge",
+      "KeyColumns": [
+        "CHARGE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CHARGE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CUSTOMER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "PLAN_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CHARGE_AMT",
+          "DataType": "Decimal"
+        },
+        {
+          "Name": "UNITS",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_adjustment",
+      "KeyColumns": [
+        "ADJUSTMENT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ADJUSTMENT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CUSTOMER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ADJUST_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_case",
+      "KeyColumns": [
+        "CASE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CASE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CUSTOMER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "OPENED_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "CONTACTS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "HANDLE_MIN",
+          "DataType": "Double"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_charge",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_billing_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_charge",
+      "FromColumn": "CUSTOMER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_customer",
+      "ToColumn": "CUSTOMER_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_charge",
+      "FromColumn": "PLAN_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_plan",
+      "ToColumn": "PLAN_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_adjustment",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_billing_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_adjustment",
+      "FromColumn": "CUSTOMER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_customer",
+      "ToColumn": "CUSTOMER_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_case",
+      "FromColumn": "CUSTOMER_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_customer",
+      "ToColumn": "CUSTOMER_ID"
+    }
+  ]
+}

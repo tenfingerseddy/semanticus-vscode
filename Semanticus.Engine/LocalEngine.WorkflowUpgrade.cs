@@ -9,11 +9,13 @@ namespace Semanticus.Engine
         public async Task<WorkflowUpgradeResult> UpgradeWorkflowAsync(string name, bool dryRun = true,
             string expectByteHash = null, string expectPath = null, string origin = "human", string sessionId = null)
         {
+            if (!dryRun) GuardOutsideWrite(origin);
             RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
             var (userDir, stockDir) = WorkflowDirs(context);
             WorkflowUpgradeResult result;
+            var upgradedTo = 0;
             await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -65,12 +67,15 @@ namespace Semanticus.Engine
                     result.Document = DescribeWorkflowDocument(name, "user", current.Path, bytes);
                     result.Changed = true;
                     result.CanApply = false;
-                    result.Reason = "Upgraded the workflow to version 2. Existing instructions and gates are preserved.";
+                    // The version the file now declares, read off what was written: a version 1 file becomes 2 and a
+                    // version 2 file becomes 3 (WorkflowUpgrade.Preview), so the receipt never names the wrong one.
+                    upgradedTo = result.Document.Metadata.SchemaVersion;
+                    result.Reason = "Upgraded the workflow to version " + upgradedTo + ". Existing instructions and gates are preserved.";
                 }
                 _sessions.Bus.PublishActivity(new ActivityEvent
                 {
                     Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
-                    Kind = "upgrade_workflow", Target = name, Label = $"Upgraded workflow '{name}' to version 2", Ok = true,
+                    Kind = "upgrade_workflow", Target = name, Label = $"Upgraded workflow '{name}' to version {upgradedTo}", Ok = true,
                 });
             }
             finally { context.WorkflowGate.Release(); }

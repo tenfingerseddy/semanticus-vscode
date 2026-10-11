@@ -33,7 +33,7 @@ benchmark and get comparably produced candidates: same prompts, same tool policy
 > loop: draft, then `probe_measure` across contexts (grand total, single member, multi member, empty,
 > boundary) and judge the behavior against the task's intent; use `verify_dax_equivalence` when you
 > refactor a passing candidate; if more than one candidate behaves correctly, pick the faster one
-> with `benchmark_dax_coldwarm`. You may revise on this engine-computed evidence, up to {attemptCap}
+> with `benchmark_dax` (mode `coldWarm`). You may revise on this engine-computed evidence, up to {attemptCap}
 > candidate expressions in total. When satisfied (or out of attempts), emit your final measure
 > expression in a fenced block tagged FINAL.
 

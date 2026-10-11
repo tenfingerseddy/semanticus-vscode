@@ -50,25 +50,25 @@ namespace Semanticus.Engine
             throw new ArgumentException($"{name} must be a list of text values. Check the action's description, then call again.");
         }
 
-        [McpServerTool(Name = "model_overview"), Description("Summarize the open semantic model: name, source, table/measure counts, and whether there are unsaved changes. Call this first.")]
+        [McpServerTool(Name = "model_overview"), Description("Summarize the open semantic model: name, source, sessionId, table/measure counts, and whether there are unsaved changes. A cheap check of which model is open. For session-start orientation (connection, tier, grade, in-flight work, next actions) use get_model_summary.")]
         public static Task<SessionInfo> ModelOverview(IEngine engine) => engine.SessionInfoAsync();
 
-        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids this installation may use: modelCreate (Model Spec, Advanced Modelling, Power Query, Docs, Model notes), tests (Tests and Saved reports), publishedAdvanced (source control, Fabric Git, CI/CD publish, Data agent) and workflows. Free carries an empty array. Everything else is free, every bulk apply included. Check this before calling a tool behind one of those features, so a refusal is never a surprise.")]
+        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids for the TABS this installation may open: today that is workflows and askData (Ask your data: ask_data, list_data_questions and pick_chart_kind), so a Pro session reports [\"workflows\",\"askData\"] and a free session reports []. Two more things are paid and carry no wire id because neither is a tab: route_ask, and the ranked and run model plan. Read the tier for those. Everything else is free, every read and every bulk apply included. Check this before calling a workflow tool, ask_data or route_ask, so a refusal is never a surprise.")]
         public static Task<Entitlement.EntitlementInfo> GetEntitlement(IEngine engine) => engine.GetEntitlementAsync();
 
-        [McpServerTool(Name = "get_verified_mode"), Description("Is Verified Mode on? When ON, DAX writes (set_dax + create measure/calc column/calc table/calc item/function + apply_dax_script) are strictly validated before they commit. Invalid syntax OR an unknown table/column/measure reference is refused (validity only, not an equivalence/drift proof). Session-scoped (resets on reconnect). 'available' is always true: Verified Mode is free. Check this so you know whether an edit will be gated.")]
+        [McpServerTool(Name = "get_verified_mode"), Description("Is Record verified edits on? This tool keeps its older name so existing assistants and scripts still work. The switch only adds an audit record: every DAX write (update_measure, apply_dax_script, and creating a measure, calculated column, calculated table, calculation item or function) is checked offline whether it is on or off, and malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written. When on, each single-object DAX write that passes is also recorded in the Verified Edits audit trail (list_verified_edits). The record states validity only, not an equivalence or drift proof. Session-scoped (resets on reconnect). 'available' is always true: Record verified edits is free.")]
         public static Task<VerifiedModeState> GetVerifiedMode(IEngine engine) => engine.GetVerifiedModeAsync();
 
-        [McpServerTool(Name = "set_verified_mode"), Description("Turn Verified Mode on/off. When ON, single-edit DAX (set_dax + create measure/calc column/calc table/calc item/function) is strictly validated before it commits. Invalid syntax or unknown table/column/measure refs refused (validity only, not an equivalence proof). This is the human's guarantee switch, free on any tier. Prefer the human sets this; if you turn it off, do so deliberately.")]
+        [McpServerTool(Name = "set_verified_mode"), Description("Turn Record verified edits on or off. This tool keeps its older name so existing assistants and scripts still work. It does not change what is refused: every DAX write is checked offline either way (malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written). When on, each single-object DAX write that passes (update_measure and creating a measure, calculated column, calculated table, calculation item or function) is also recorded in the Verified Edits audit trail (list_verified_edits). The record states validity only, not an equivalence proof. This is the human's audit switch, free on any tier. As the assistant you can turn it on but not off: the audit switch is the person's, and you are told to ask them.")]
         public static Task<VerifiedModeState> SetVerifiedMode(IEngine engine,
-            [Description("true = enable Verified Mode, false = disable")] bool on) => engine.SetVerifiedModeAsync(on, "agent");
+            [Description("true = turn Record verified edits on, false = turn it off")] bool on) => engine.SetVerifiedModeAsync(on, "agent");
 
         [McpServerTool(Name = "open_model"), Description("Open a semantic model from a Power BI PBIP (point at the .pbip file, the project folder, or the .SemanticModel folder), a TMDL folder, or a .bim file path. Returns basic counts. Refuses while the open model has unsaved edits unless discardUnsaved is true.")]
         public static async Task<OpenResult> OpenModel(IEngine engine,
             [Description("Absolute path to a .bim file, a TMDL folder, or a PBIP semantic-model folder")] string path,
             [Description("true = throw away unsaved edits and open anyway; default false refuses while unsaved")] bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved, "agent", "open the model at " + path);
             return await engine.OpenAsync(path, discardUnsaved);
         }
 
@@ -78,7 +78,7 @@ namespace Semanticus.Engine
             [Description("Compatibility level; default 1604 (>=1604 is required for Direct Lake). Use the default unless you have a reason.")] int compatibilityLevel = 1604,
             [Description("true = throw away unsaved edits and create anyway; default false refuses while unsaved")] bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved, "agent", "start a new empty model" + (string.IsNullOrWhiteSpace(name) ? "" : " named " + name));
             return await engine.CreateModelAsync(name, compatibilityLevel, discardUnsaved);
         }
 
@@ -88,7 +88,7 @@ namespace Semanticus.Engine
             [Description("Optional database/dataset name; empty = the instance's first/only model")] string database = null,
             [Description("true = throw away unsaved edits and open anyway; default false refuses while unsaved")] bool discardUnsaved = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved, "agent", "open the model that is running in Power BI Desktop");
             return await engine.OpenLocalAsync(dataSource, database, discardUnsaved);
         }
 
@@ -102,15 +102,20 @@ namespace Semanticus.Engine
             [Description("Object ref")] string objRef)
             => engine.GetObjectAsync(objRef);
 
-        [McpServerTool(Name = "get_model_graph"), Description("Get the model's structure as a graph for relationship/ER analysis: every table (with column/measure counts, key columns, date-table & hidden flags) and every relationship (endpoints, cardinality, cross-filter direction, active/inactive). Use it to reason about the star schema, find isolated tables, or audit bidirectional/inactive relationships. On a LARGE model, model_graph_summary is the cheaper first call.")]
+        [McpServerTool(Name = "get_model_graph"), Description("Get the model's structure as a graph, for relationship and star-schema checks. detail='summary' returns counts only: tables and relationships, tables by type (date, calculated, hidden), the relationship breakdown (many-to-many, bidirectional, inactive) and the names of visible tables that sit in no relationship. It is the lighter first call on a large model. detail='full' (the default) returns every table (column and measure counts, key columns, date-table and hidden flags) and every relationship (both ends, cardinality, cross-filter direction, active or not). Read-only; works offline.")]
+        public static async Task<object> GetModelGraphOp(IEngine engine,
+            [Description("full (the default: every table and relationship) or summary (counts only)")] string detail = "full")
+            => IsSummary(detail) ? await ModelGraphSummary(engine) : (object)await GetModelGraph(engine);
+
+        /// <summary>The whole graph: get_model_graph with detail='full'.</summary>
         public static Task<ModelGraph> GetModelGraph(IEngine engine) => engine.GetModelGraphAsync();
 
-        [McpServerTool(Name = "get_layout"), Description("Get the saved diagram positions for the model's tables (x/y, and width/height when set). Returns only tables that HAVE a stored position. Tables not listed are unplaced (auto-laid-out by the UI). Positions are engine-owned (a .semanticus/layout.json sidecar beside the model), keyed by a stable LineageTag so a position survives a table RENAME, and excluded from the model diff. Read it to render or reason about the table layout the human sees.")]
+        [McpServerTool(Name = "get_layout"), Description("Get the saved diagram positions for the model's tables (x/y, and width/height when set). Returns only tables that HAVE a stored position. Tables not listed are unplaced (auto-laid-out by the UI). keep=true marks a table the Diagram leaves where it is when it moves tables apart to make room for the lines; the Diagram may otherwise move tables it finds too close for their lines and save the new spots. Positions are engine-owned (a .semanticus/layout.json sidecar beside the model), keyed by a stable LineageTag so a position survives a table RENAME, and excluded from the model diff. Read it to render or reason about the table layout the human sees.")]
         public static Task<LayoutData> GetLayout(IEngine engine) => engine.GetLayoutAsync();
 
-        [McpServerTool(Name = "save_layout"), Description("Persist diagram positions for tables (x/y, optional width/height). Identify each table by its `ref` (preferred) or `name`. MERGES with existing positions (tables you omit keep theirs; deleted tables are pruned) and the engine re-keys each by its stable LineageTag, so the layout survives renames. Writes the .semanticus/layout.json sidecar beside the model. This is NOT a model edit (it does not touch the model definition or its diff). The model must be saved on disk first; otherwise returns an Error.")]
+        [McpServerTool(Name = "save_layout"), Description("Persist diagram positions for tables (x/y, optional width/height). Identify each table by its `ref` (preferred) or `name`. Set keep=true on a table to keep that exact spot: otherwise, when tables sit on top of each other or too close for the lines between them, the Diagram moves them apart just enough and saves the new spots (read them back with get_layout). A table saved without keep loses an earlier keep. MERGES with existing positions (tables you omit keep theirs; deleted tables are pruned) and the engine re-keys each by its stable LineageTag, so the layout survives renames. Writes the .semanticus/layout.json sidecar beside the model. This is NOT a model edit (it does not touch the model definition or its diff). The model must be saved on disk first; otherwise returns an Error.")]
         public static Task<SaveLayoutResult> SaveLayout(IEngine engine,
-            [Description("Tables to position. Each: ref (preferred) or name, plus x and y (and optional width/height).")] LayoutNode[] tables,
+            [Description("Tables to position. Each: ref (preferred) or name, plus x and y (and optional width/height, and keep=true to keep exactly that spot).")] LayoutNode[] tables,
             [Description("Originating driver tag for the change (default 'agent')")] string origin = "agent")
             => engine.SaveLayoutAsync(tables, origin);
 
@@ -179,10 +184,10 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_model_objects"), Description("One-call browser dataset: every table + its measures, columns, and hierarchies (with the level names, in order), each with its display folder, data type, and hidden/key flags. Backs the Advanced-Modelling object browser (perspective/field-parameter/RLS pickers). Prefer this over separate list_measures + list_columns when you need the WHOLE object surface at once (it also carries hierarchies, which those omit). Read-only metadata; works offline.")]
         public static Task<ModelObjects> GetModelObjects(IEngine engine) => engine.GetModelObjectsAsync();
 
-        [McpServerTool(Name = "model_graph_summary"), Description("CHEAP structural overview: START HERE on a large model before get_model_graph. Table/relationship counts, tables by type (date/calculated/hidden), relationship breakdown (many-to-many, bidirectional, inactive counts), and the names of DISCONNECTED visible tables (in no relationship, the key star-schema smell), without the full per-table/per-relationship detail. Call get_model_graph for the full graph when you need it.")]
+        /// <summary>The graph counts: get_model_graph with detail='summary'.</summary>
         public static async Task<ModelGraphSummary> ModelGraphSummary(IEngine engine) => Semanticus.Engine.ModelGraphSummary.From(await engine.GetModelGraphAsync());
 
-        [McpServerTool(Name = "get_model_summary"), Description("CALL THIS FIRST: the blessed session-start orientation for a fresh session, post-compaction or handoff. ONE round-trip, token-budgeted (≤~2k tokens), giving connection state · entitlement · model overview · a compact excerpt from the model's declared Primer · AI-readiness · structural graph · in-flight work · recent activity · deterministic next actions. Drill down with get_model_primer, connection_status, get_entitlement, ai_readiness_scan, get_model_graph, get_workflow_run, get_plan, get_spec and list_calendars. It omits full findings, object detail and DAX bodies.")]
+        [McpServerTool(Name = "get_model_summary"), Description("Session-start orientation for a fresh session, after a context compaction, or at a handoff. One round-trip, token-budgeted (≤~2k tokens), giving connection state · entitlement · model overview · a compact excerpt from the model's declared Primer · AI-readiness · structural graph · in-flight work · recent activity · deterministic next actions. Drill down with get_model_primer, connection_status, get_entitlement, ai_readiness_scan, get_model_graph, get_workflow_run, get_plan, get_spec and list_calendars. It omits full findings, object detail and DAX bodies.")]
         public static Task<ModelSummary> GetModelSummary(IEngine engine) => engine.GetOrientationAsync();
 
         [McpServerTool(Name = "get_dax"), Description("Get the DAX expression of a measure or calculated column/table by ref (e.g. 'measure:Sales/Total Sales').")]
@@ -190,7 +195,7 @@ namespace Semanticus.Engine
             [Description("Ref of a measure or calculated column/table")] string objRef)
             => engine.GetDaxAsync(objRef);
 
-        [McpServerTool(Name = "update_measure"), Description("Set the DAX expression of a measure (or calculated column/table). Invalid DAX (unbalanced brackets) is refused before anything is written. The change is applied to the live shared session, appears immediately in the VS Code UI, and is a single undoable step.")]
+        [McpServerTool(Name = "update_measure"), Description("Set the DAX expression of a measure, calculated column, calculated table, calculation item or DAX function (a function takes a lambda such as (x: INT64) => x + 1). The expression is validated offline first: malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written, whatever the Record verified edits setting. An unchanged expression is a no-op. The change is applied to the live shared session, appears immediately in the VS Code UI, and is a single undoable step.")]
         public static Task<SetResult> UpdateMeasure(IEngine engine,
             [Description("Ref of the measure/calculated object, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("The new DAX expression")] string expression,
@@ -225,7 +230,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_functions"), Description("List the model's DAX user-defined functions (UDFs). Each has a ref like 'function:MyFunc'. Read its body with get_dax, edit with update_measure, rename with rename_object.")]
         public static Task<TreeNode[]> ListFunctions(IEngine engine) => engine.ListFunctionsAsync();
 
-        [McpServerTool(Name = "create_function"), Description("Create a DAX user-defined function (UDF). The expression is a lambda, e.g. '(x: INT64, y: INT64) => x + y'. Names cannot contain spaces. Requires model compatibility level >= 1702 (call set_compatibility_level first if needed). Returns the new ref ('function:Name'). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_function"), Description("Create a DAX user-defined function (UDF). The expression is a lambda, e.g. '(x: INT64, y: INT64) => x + y'. Names cannot contain spaces. Requires model compatibility level >= 1702 (call set_compatibility_level first if needed). Returns the new ref ('function:Name'). Undoable.")]
         public static Task<string> CreateFunction(IEngine engine,
             [Description("Function name (no spaces; letters/digits/_/. only)")] string name,
             [Description("Lambda expression, e.g. '(x: INT64) => x * 2'")] string expression)
@@ -233,34 +238,34 @@ namespace Semanticus.Engine
 
         // ---- DaxLib package manager (Advanced Modelling): browse + install DAX UDF packages from daxlib.org ----
 
-        [McpServerTool(Name = "daxlib_search"), Description("Search the DaxLib feed (daxlib.org, the 'app store for DAX UDFs') for packages. Anonymous + read-only; no model needs to be open. Omit 'text' to list all. Returns package summaries (id, latest version, description, authors, downloads). Then use daxlib_package_info to preview a package's functions, and daxlib_install to add them. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_search"), Description("Search the DaxLib feed (daxlib.org, the 'app store for DAX UDFs') for packages. Anonymous + read-only; no model needs to be open. Omit 'text' to list all. Returns package summaries (id, latest version, description, authors, downloads). Then use daxlib_package_info to preview a package's functions, and daxlib_install to add them.")]
         public static Task<DaxLibPackage[]> DaxLibSearch(IEngine engine,
             [Description("Free-text filter over id/description; omit to list everything")] string text = null,
             [Description("Page offset (default 0)")] int skip = 0,
             [Description("Page size 1..100; 0 = fetch all pages")] int take = 0)
             => engine.DaxLibSearchAsync(text, skip, take);
 
-        [McpServerTool(Name = "daxlib_versions"), Description("List the published versions of a DaxLib package (newest-first, including -prerelease tags). Anonymous + read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_versions"), Description("List the published versions of a DaxLib package (newest-first, including -prerelease tags). Anonymous + read-only.")]
         public static Task<string[]> DaxLibVersions(IEngine engine, [Description("Package id, e.g. 'Daxlib.Sample'")] string id)
             => engine.DaxLibVersionsAsync(id);
 
-        [McpServerTool(Name = "daxlib_package_info"), Description("Get a DaxLib package's detail: metadata, dependencies, and the list of UDF names it would install (the blast radius to review before installing). Anonymous + read-only. Omit 'version' for the latest stable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_package_info"), Description("Get a DaxLib package's detail: metadata, dependencies, and the list of UDF names it would install (the blast radius to review before installing). Anonymous + read-only. Omit 'version' for the latest stable.")]
         public static Task<DaxLibPackageDetail> DaxLibPackageInfo(IEngine engine,
             [Description("Package id")] string id,
             [Description("Version (omit for latest stable)")] string version = null)
             => engine.DaxLibPackageInfoAsync(id, version);
 
-        [McpServerTool(Name = "daxlib_install"), Description("Install a DaxLib package's DAX UDFs into the OPEN model as ONE atomic, undoable transaction (raises compatibility level to 1702 if needed; pulls in dependency packages, deps-first). By default existing functions of the same name are left untouched (reported as skipped); pass replaceExisting=true to overwrite. Provenance is recorded so daxlib_list_installed / daxlib_uninstall work. Undoable in one step. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_install"), Description("Install a DaxLib package's DAX UDFs into the OPEN model as ONE atomic, undoable transaction (raises compatibility level to 1702 if needed; pulls in dependency packages, deps-first). By default existing functions of the same name are left untouched (reported as skipped); pass replaceExisting=true to overwrite. Provenance is recorded so daxlib_list_installed / daxlib_uninstall work. Undoable in one step.")]
         public static Task<DaxLibInstallResult> DaxLibInstall(IEngine engine,
             [Description("Package id")] string id,
             [Description("Version (omit for latest stable)")] string version = null,
             [Description("Overwrite functions of the same name (default false = skip them)")] bool replaceExisting = false)
             => engine.DaxLibInstallAsync(id, version, replaceExisting, "agent");
 
-        [McpServerTool(Name = "daxlib_list_installed"), Description("List the DaxLib packages installed in the open model (from the Semanticus_DaxLibInstalled provenance annotation): id, version, and the UDF names each owns. Offline, no network. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_list_installed"), Description("List the DaxLib packages installed in the open model (from the Semanticus_DaxLibInstalled provenance annotation): id, version, and the UDF names each owns. Offline, no network.")]
         public static Task<DaxLibInstalledRecord[]> DaxLibListInstalled(IEngine engine) => engine.DaxLibListInstalledAsync();
 
-        [McpServerTool(Name = "daxlib_uninstall"), Description("Remove a DaxLib package previously installed by Semanticus: deletes the UDFs it owns (per provenance) in one undoable batch and clears its provenance record. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "daxlib_uninstall"), Description("Remove a DaxLib package previously installed by Semanticus: deletes the UDFs it owns (per provenance) in one undoable batch and clears its provenance record.")]
         public static Task<SetResult> DaxLibUninstall(IEngine engine, [Description("Package id to remove")] string id)
             => engine.DaxLibUninstallAsync(id, "agent");
 
@@ -278,45 +283,45 @@ namespace Semanticus.Engine
             [Description("Underlying physical/source column (defaults to name)")] string sourceColumn = null)
             => engine.CreateColumnAsync(tableRef, name, dataType, sourceColumn, "agent");
 
-        [McpServerTool(Name = "create_data_source"), Description("Create a structured (M) data source pointing at a Fabric SQL endpoint / Lakehouse-or-Warehouse SQL analytics endpoint (protocol 'tds'). Needs compatibility level >= 1400. Referenced by NAME from create_directlake_table or inside an M expression. Returns the data source name. Undoable. (Credentials are supplied out-of-band at refresh. None are stored here.). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_data_source"), Description("Create a structured (M) data source pointing at a Fabric SQL endpoint / Lakehouse-or-Warehouse SQL analytics endpoint (protocol 'tds'). Needs compatibility level >= 1400. Referenced by NAME from create_directlake_table or inside an M expression. Returns the data source name. Undoable. (Credentials are supplied out-of-band at refresh. None are stored here.).")]
         public static Task<string> CreateDataSource(IEngine engine,
             [Description("Data source name (unique), e.g. 'FabricSql'")] string name,
             [Description("Server, e.g. 'xxxxx.datawarehouse.fabric.microsoft.com'")] string server = null,
             [Description("Database / Lakehouse / Warehouse name")] string database = null)
             => engine.CreateDataSourceAsync(name, server, database, "agent");
 
-        [McpServerTool(Name = "create_named_expression"), Description("Create a shared (model-level) M expression / parameter: the source target for a Direct Lake partition, or reusable M referenced by name (#\"Name\") inside import partitions. Returns the expression name. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_named_expression"), Description("Create a shared (model-level) M expression / parameter: the source target for a Direct Lake partition, or reusable M referenced by name (#\"Name\") inside import partitions. Returns the expression name. Undoable.")]
         public static Task<string> CreateNamedExpression(IEngine engine,
             [Description("Expression name (unique), e.g. 'Lakehouse'")] string name,
             [Description("The M expression, e.g. 'let s = Sql.Database(\"x.datawarehouse.fabric.microsoft.com\",\"LH\") in s'")] string expression = null)
             => engine.CreateNamedExpressionAsync(name, expression, "agent");
 
-        [McpServerTool(Name = "list_partitions"), Description("List a table's partitions (ref, mode, source type, data source). Read a partition's M with get_partition_m, edit it with set_partition_m. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_partitions"), Description("List a table's partitions (ref, mode, source type, data source). Read a partition's M with get_partition_m, edit it with set_partition_m.")]
         public static Task<PartitionInfo[]> ListPartitions(IEngine engine,
             [Description("Table ref or bare table name, e.g. 'table:Sales' or 'Sales'")] string tableRef)
             => engine.ListPartitionsAsync(tableRef);
 
-        [McpServerTool(Name = "get_partition_m"), Description("Get a partition's M source expression. Errors if the partition is not an M source (e.g. a Direct Lake Entity or DAX calculated partition). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_partition_m"), Description("Get a partition's M source expression. Errors if the partition is not an M source (e.g. a Direct Lake Entity or DAX calculated partition).")]
         public static Task<string> GetPartitionM(IEngine engine,
             [Description("Partition ref, e.g. 'partition:Sales/Sales'")] string partitionRef)
             => engine.GetPartitionMAsync(partitionRef);
 
-        [McpServerTool(Name = "set_partition_m"), Description("Replace a partition's M source expression (M partitions only). Use to add an incremental-refresh RangeStart/RangeEnd date filter, or to edit the query. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_partition_m"), Description("Replace a partition's M source expression (M partitions only). Use to add an incremental-refresh RangeStart/RangeEnd date filter, or to edit the query. Undoable.")]
         public static Task<SetResult> SetPartitionM(IEngine engine,
             [Description("Partition ref, e.g. 'partition:Sales/Sales'")] string partitionRef,
             [Description("The full M expression (a let … in … query)")] string mExpression)
             => engine.SetPartitionMAsync(partitionRef, mExpression, "agent");
 
-        [McpServerTool(Name = "list_named_expressions"), Description("List the model's shared M expressions + parameters (name, kind, M, description). RangeStart/RangeEnd parameters show here. Edit one with update_named_expression, create with create_named_expression. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_named_expressions"), Description("List the model's shared M expressions + parameters (name, kind, M, description). RangeStart/RangeEnd parameters show here. Edit one with update_named_expression, create with create_named_expression.")]
         public static Task<DocExpression[]> ListNamedExpressions(IEngine engine)
             => engine.ListNamedExpressionsAsync();
 
-        [McpServerTool(Name = "get_named_expression"), Description("Get one shared M expression / parameter's M text by name (e.g. 'RangeStart'). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_named_expression"), Description("Get one shared M expression / parameter's M text by name (e.g. 'RangeStart').")]
         public static Task<string> GetNamedExpression(IEngine engine,
             [Description("Expression name")] string name)
             => engine.GetNamedExpressionAsync(name);
 
-        [McpServerTool(Name = "update_named_expression"), Description("Replace the M of an existing shared expression / parameter (create it first with create_named_expression). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "update_named_expression"), Description("Replace the M of an existing shared expression / parameter (create it first with create_named_expression). Undoable.")]
         public static Task<SetResult> UpdateNamedExpression(IEngine engine,
             [Description("Expression name")] string name,
             [Description("The new M expression")] string expression)
@@ -342,7 +347,7 @@ namespace Semanticus.Engine
             [Description("DAX table expression, e.g. 'CALENDARAUTO()' or \"SUMMARIZE(Sales,Sales[Region])\"")] string expression)
             => engine.CreateCalculatedTableAsync(name, expression, "agent");
 
-        [McpServerTool(Name = "create_field_parameter"), Description("Create a Power BI FIELD PARAMETER: a calculated table of NAMEOF(...) rows that drives a slicer to swap which measures/columns a visual shows. Builds the full Power-BI-Desktop-identical structure (the 3 columns, the ParameterMetadata marker, sort-by, hidden plumbing columns, and the field-switch key). Items are measure/column refs in display order; each label defaults to the object's name. Requires a Power BI-mode model at compatibility level >= 1400. Returns the table ref ('table:Name'). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_field_parameter"), Description("Create a Power BI FIELD PARAMETER: a calculated table of NAMEOF(...) rows that drives a slicer to swap which measures/columns a visual shows. Builds the full Power-BI-Desktop-identical structure (the 3 columns, the ParameterMetadata marker, sort-by, hidden plumbing columns, and the field-switch key). Items are measure/column refs in display order; each label defaults to the object's name. Requires a Power BI-mode model at compatibility level >= 1400. Returns the table ref ('table:Name'). Undoable.")]
         public static Task<string> CreateFieldParameter(IEngine engine,
             [Description("Field-parameter table name (unique)")] string name,
             [Description("Fields in display order. Each is {objectRef: 'measure:…' or 'column:…', label?: 'optional display name'}")] FieldParameterItem[] items)
@@ -354,14 +359,14 @@ namespace Semanticus.Engine
             [Description("String | Int64 | Decimal | Double | DateTime | Boolean")] string dataType)
             => engine.SetColumnDataTypeAsync(columnRef, dataType, "agent");
 
-        [McpServerTool(Name = "get_source_schema"), Description("Update-Schema step 1: re-read a table's SOURCE columns (names + data types) schema-only, WITHOUT importing data, by probing the SQL/Fabric endpoint its partition query reads (server/database/schema/table parsed from the partition M, or read off a Direct-Lake entity partition) over TDS. Returns the source columns mapped to TOM types (String|Int64|Decimal|Double|DateTime|Boolean). Needs a reachable source: for an OFFLINE snapshot, a non-SQL source, or a native-query partition it returns Reachable=false with a clear message (never throws). Use diff_schema to compare against the model. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_source_schema"), Description("Update-Schema step 1: re-read a table's SOURCE columns (names + data types) schema-only, WITHOUT importing data, by probing the SQL/Fabric endpoint its partition query reads (server/database/schema/table parsed from the partition M, or read off a Direct-Lake entity partition) over TDS. Returns the source columns mapped to TOM types (String|Int64|Decimal|Double|DateTime|Boolean). Needs a reachable source: for an OFFLINE snapshot, a non-SQL source, or a native-query partition it returns Reachable=false with a clear message (never throws). Use diff_schema to compare against the model.")]
         public static Task<SourceSchema> GetSourceSchema(IEngine engine,
             [Description("Table ref or name, e.g. 'table:Sales'")] string tableRef,
             [Description("Entra auth mode for the SQL endpoint: azcli (default) | interactive | devicecode | serviceprincipal | token")] string authMode = "azcli",
             [Description("Optional Entra tenant id/domain to target")] string tenantId = null)
             => engine.GetSourceSchemaAsync(tableRef, authMode, tenantId, "agent");
 
-        [McpServerTool(Name = "diff_schema"), Description("Update-Schema step 2: diff a table's SOURCE columns against its CURRENT model columns: ADDED at the source, REMOVED from it, or TYPE-CHANGED. Each item carries a stable id for per-item selection. By default it probes the live source (like get_source_schema); pass sourceColumns to diff a SUPPLIED/synthesized schema instead (the offline/manual path, no connection needed). Calculated columns are never flagged (they're DAX-derived, not source-driven). Returns Reachable=false + a message when the live source can't be read. Feed the accepted items to apply_schema_update. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "diff_schema"), Description("Update-Schema step 2: diff a table's SOURCE columns against its CURRENT model columns: ADDED at the source, REMOVED from it, or TYPE-CHANGED. Each item carries a stable id for per-item selection. By default it probes the live source (like get_source_schema); pass sourceColumns to diff a SUPPLIED/synthesized schema instead (the offline/manual path, no connection needed). Calculated columns are never flagged (they're DAX-derived, not source-driven). Returns Reachable=false + a message when the live source can't be read. Feed the accepted items to apply_schema_update.")]
         public static Task<SchemaDiff> DiffSchema(IEngine engine,
             [Description("Table ref or name, e.g. 'table:Sales'")] string tableRef,
             [Description("Optional SUPPLIED source columns to diff against (skips the live probe). Each: {name, dataType (TOM type), sqlType?}. Omit/empty to probe the live source.")] SourceColumn[] sourceColumns = null,
@@ -369,7 +374,7 @@ namespace Semanticus.Engine
             [Description("Optional Entra tenant id/domain to target when probing live")] string tenantId = null)
             => engine.DiffSchemaAsync(tableRef, sourceColumns, authMode, tenantId, "agent");
 
-        [McpServerTool(Name = "apply_schema_update"), Description("Update-Schema step 3: apply a chosen SUBSET of a schema diff as ONE undoable change: add the source columns you accept, retype the ones whose type drifted, remove the ones the source dropped. Each item: {change: Added|Removed|TypeChanged, column, dataType? (TOM type, for Added/TypeChanged), sourceColumn? (physical name for Added, defaults to column)}. Items that can't apply (a calculated column, a name clash, an unknown column) are SKIPPED with a reason. The accepted changes still commit atomically. Returns per-kind counts + the applied/skipped lists. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "apply_schema_update"), Description("Update-Schema step 3: apply a chosen SUBSET of a schema diff as ONE undoable change: add the source columns you accept, retype the ones whose type drifted, remove the ones the source dropped. Each item: {change: Added|Removed|TypeChanged, column, dataType? (TOM type, for Added/TypeChanged), sourceColumn? (physical name for Added, defaults to column)}. Items that can't apply (a calculated column, a name clash, an unknown column) are SKIPPED with a reason. The accepted changes still commit atomically. Returns per-kind counts + the applied/skipped lists.")]
         public static Task<ApplySchemaResult> ApplySchemaUpdate(IEngine engine,
             [Description("Table ref or name, e.g. 'table:Sales'")] string tableRef,
             [Description("The accepted diff items to apply. Each: {change, column, dataType?, sourceColumn?}.")] SchemaUpdateItem[] items)
@@ -397,44 +402,44 @@ namespace Semanticus.Engine
             [Description("Ordered column names for the levels (top first), e.g. ['Year','Quarter','Month']")] string[] levelColumns)
             => engine.CreateHierarchyAsync(tableRef, name, levelColumns, "agent");
 
-        [McpServerTool(Name = "create_calculation_group"), Description("Create a calculation group (a special table). Add calculation items with create_calculation_item. Requires compatibility level >= 1470. Returns the new ref ('table:Name'). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_calculation_group"), Description("Create a calculation group (a special table). Add calculation items with create_calculation_item. Requires compatibility level >= 1470. Returns the new ref ('table:Name'). Undoable.")]
         public static Task<string> CreateCalculationGroup(IEngine engine, [Description("Calculation group name (unique)")] string name)
             => engine.CreateCalculationGroupAsync(name, "agent");
 
-        [McpServerTool(Name = "create_calculation_item"), Description("Add a calculation item to a calculation group. The expression typically uses SELECTEDMEASURE(), e.g. 'CALCULATE(SELECTEDMEASURE(), DATESYTD(...))'. Returns the new ref. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_calculation_item"), Description("Add a calculation item to a calculation group. The expression typically uses SELECTEDMEASURE(), e.g. 'CALCULATE(SELECTEDMEASURE(), DATESYTD(...))'. Returns the new ref. Undoable.")]
         public static Task<string> CreateCalculationItem(IEngine engine,
             [Description("Calculation group ref or name, e.g. 'table:Time Intelligence'")] string calcGroupRef,
             [Description("Calculation item name")] string name,
             [Description("DAX expression (usually wraps SELECTEDMEASURE())")] string expression)
             => engine.CreateCalculationItemAsync(calcGroupRef, name, expression, "agent");
 
-        [McpServerTool(Name = "set_calc_item_format_string"), Description("Set (or clear) a calculation item's DYNAMIC format-string expression: the DAX that overrides the format string of measures evaluated under this item (e.g. a '% of Total' item rendering 0.0%, or a currency item). Pass an empty string to clear it (the item falls back to the base/model format). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_calc_item_format_string"), Description("Set (or clear) a calculation item's DYNAMIC format-string expression: the DAX that overrides the format string of measures evaluated under this item (e.g. a '% of Total' item rendering 0.0%, or a currency item). Pass an empty string to clear it (the item falls back to the base/model format). Undoable.")]
         public static Task<SetResult> SetCalcItemFormatString(IEngine engine,
             [Description("Calculation item ref, e.g. 'calcitem:Time Intelligence/YTD'")] string calcItemRef,
             [Description("Format-string DAX expression; empty clears it")] string formatExpression)
             => engine.SetCalcItemFormatStringAsync(calcItemRef, formatExpression, "agent");
 
-        [McpServerTool(Name = "set_calc_group_precedence"), Description("Set a calculation group's precedence (an integer; a HIGHER precedence is applied FIRST when multiple calculation groups combine). Give each calc group a distinct precedence so their combination order is deterministic. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_calc_group_precedence"), Description("Set a calculation group's precedence (an integer; a HIGHER precedence is applied FIRST when multiple calculation groups combine). Give each calc group a distinct precedence so their combination order is deterministic. Undoable.")]
         public static Task<SetResult> SetCalcGroupPrecedence(IEngine engine,
             [Description("Calculation group ref, e.g. 'calcgroup:Time Intelligence' or 'table:Time Intelligence'")] string calcGroupRef,
             [Description("Precedence integer (higher applies first)")] int precedence)
             => engine.SetCalcGroupPrecedenceAsync(calcGroupRef, precedence, "agent");
 
-        [McpServerTool(Name = "create_perspective"), Description("Create a perspective: a named, curated subset of the model's tables/columns/measures/hierarchies (a focused Q&A or report view). Add members with set_perspective_member; delete with delete_object and rename with rename_object. Returns the new ref ('perspective:Name'). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_perspective"), Description("Create a perspective: a named, curated subset of the model's tables/columns/measures/hierarchies (a focused Copilot or report view). Add members with set_perspective_member; delete with delete_object and rename with rename_object. Returns the new ref ('perspective:Name'). Undoable.")]
         public static Task<string> CreatePerspective(IEngine engine, [Description("Perspective name (unique)")] string name)
             => engine.CreatePerspectiveAsync(name, "agent");
 
-        [McpServerTool(Name = "set_perspective_member"), Description("Include (or exclude) one object in a perspective. The object ref is a table/column/measure/hierarchy. Including a TABLE cascades to all its columns/measures/hierarchies. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_perspective_member"), Description("Include (or exclude) one object in a perspective. The object ref is a table/column/measure/hierarchy. Including a TABLE cascades to all its columns/measures/hierarchies. Undoable.")]
         public static Task<SetResult> SetPerspectiveMember(IEngine engine,
             [Description("Perspective ref or name, e.g. 'perspective:Finance'")] string perspectiveRef,
             [Description("Object ref to include/exclude: table:/column:/measure:/hierarchy:")] string objectRef,
             [Description("true to include in the perspective, false to exclude")] bool include)
             => engine.SetPerspectiveMemberAsync(perspectiveRef, objectRef, include, "agent");
 
-        [McpServerTool(Name = "get_perspectives"), Description("List the model's perspectives and the object refs currently shown in each (the objects×perspectives membership matrix). Read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_perspectives"), Description("List the model's perspectives and the object refs currently shown in each (the objects×perspectives membership matrix). Read-only.")]
         public static Task<PerspectiveInfo[]> GetPerspectives(IEngine engine) => engine.GetPerspectivesAsync();
 
-        [McpServerTool(Name = "list_calculation_groups"), Description("List the model's calculation groups with their precedence and ordered items (each item's DAX expression + dynamic format-string). Read-only. Author with create_calculation_group / create_calculation_item / set_calc_group_precedence / set_calc_item_format_string. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_calculation_groups"), Description("List the model's calculation groups with their precedence and ordered items (each item's DAX expression + dynamic format-string). Read-only. Author with create_calculation_group / create_calculation_item / set_calc_group_precedence / set_calc_item_format_string.")]
         public static Task<CalcGroupInfo[]> ListCalculationGroups(IEngine engine) => engine.ListCalculationGroupsAsync();
 
         [McpServerTool(Name = "delete_object"), Description("Delete any model object by ref (measure/column/table/hierarchy/relationship/calculation-group/calculation-item/role…). Deleting an absent ref is a net-zero no-op. DAX references to a deleted object are NOT auto-rewritten. They will error; check dependents first. Undoable.")]
@@ -489,10 +494,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_lineage"), Description("Read-only LINEAGE GRAPH of the open model (offline, from TOM): every node (data source, table, column, measure) and every directed edge: source→table (resolved from partition M / shared expressions), table→column/measure (contains), dependant→dependency (DAX), and FK→PK (relationship). Use it to trace where a field comes from and what flows from it. NOTE (Phase 1): model-only. Published-report field usage is not yet included (see .Caveat).")]
         public static Task<LineageResult> GetLineage(IEngine engine) => engine.GetLineageAsync();
 
-        [McpServerTool(Name = "impact_of"), Description("Read-only forward IMPACT analysis: everything that breaks (transitively) if the given object changes or is removed: its DAX dependents (measures/calc columns/calc tables/calc items/KPIs/RLS) plus, for a column, the relationships, hierarchies, and sort-by columns that use it. Returns the impacted set with BFS depth + counts by kind. Call BEFORE editing or deleting a measure/column. NOTE (Phase 1): downstream published reports/visuals are not yet included (see .Caveat).")]
-        public static Task<ImpactResult> ImpactOf(IEngine engine, [Description("Object ref, e.g. 'column:Sales/Amount' or 'measure:Sales/Total Sales'")] string objRef) => engine.ImpactOfAsync(objRef);
-
-        [McpServerTool(Name = "unused_objects"), Description("Read-only reverse SAFE-TO-REMOVE sweep (the 'Measure Killer'): every measure/column that NO model object references, a deletion-candidate list. CONSERVATIVE: a column used by a relationship, hierarchy, sort-by, or RLS is never listed. Tri-state verdict per item: 'safe' (nothing references it), 'usedByUnusedOnly' (referenced only by other unused/dead objects, surfaced with BlockedBy), 'caution' (report read failed, Phases 2-3). IMPORTANT (Phase 1): MODEL-ONLY. A field used ONLY by a published report (not by any model object) will still appear here; verify report usage before deleting (see .Caveat).")]
+        [McpServerTool(Name = "unused_objects"), Description("Read-only reverse SAFE-TO-REMOVE sweep (the 'Measure Killer'): every measure/column that NO model object references, a deletion-candidate list. CONSERVATIVE: a column used by a relationship, hierarchy, sort-by, or RLS is never listed. Verdict per item: 'safe' (nothing references it), 'usedByUnusedOnly' (referenced only by other unused/dead objects, surfaced with BlockedBy), 'caution' (a report reading could not rule it out), 'visibleAttribute' (a visible column of a dimension table with no model reference: people query by it in reports, Q&A and Copilot, so a sweep never takes it. That is not a refusal of the person: a reviewed removal still removes it, through add_plan_item kind 'delete_if_unused' + apply_plan, or delete_object). It reads this model's report scope (set_report_scope, check_reports): with no report chosen it is a model-only sweep, so a field used only by a published report still appears as 'safe'; when every chosen report has been checked, fields those reports use are excluded; while any chosen report is still unchecked, every would-be 'safe' item comes back as 'caution'. .Caveat names the basis the list carries.")]
         public static Task<UnusedResult> UnusedObjects(IEngine engine) => engine.UnusedObjectsAsync();
 
         [McpServerTool(Name = "analyze_reports"), Description("REPORT-AWARE lineage (the safe-to-remove gap-closer): parse one or more LOCAL Power BI report definitions in PBIR format (a PBIP '<Report>.Report' folder, its 'definition' folder, a .pbip file, or a project root) and return which model fields each report uses, PLUS a safe-to-remove sweep that EXCLUDES anything a report uses. This closes the model-only blind spot where a descriptive column a report displays (but no measure references) wrongly looks unused. Report field references are reconciled to the open model BY NAME (the model must be the one the reports bind to). Offline (local files); the cloud 'Get Report Definition' path will reuse the same parser. Legacy .pbix / RDL are not parsed yet (reported as unreadable → result stays model-only with a caveat).")]
@@ -500,9 +502,9 @@ namespace Semanticus.Engine
             [Description("Local PBIR report path(s): a '<Report>.Report' folder, a 'definition' folder, a .pbip file, or a PBIP project root.")] string[] paths)
             => engine.AnalyzeReportsAsync(paths);
 
-        [McpServerTool(Name = "remove_safe_objects"), Description("The safe-to-remove sweep's ACT half: delete the verified-safe objects (unused measures/columns) as ONE undoable transaction. The safe set is RECOMPUTED server-side and each item RE-VERIFIED at apply time. An item whose status changed since your scan (something now references it) is SKIPPED with the reason, never deleted stale. refs (optional) narrows the sweep to those candidates from unused_objects/analyze_reports; omit to remove every currently-safe item. reportPaths (optional, local PBIR, same forms as analyze_reports) makes the verification report-aware, so a field a report displays is never removed. Returns removed[] / skipped[{ref,reason}] / count; writes ONE audit record with the evidence; undo_change reverses the whole sweep in one step.")]
+        [McpServerTool(Name = "remove_safe_objects"), Description("The safe-to-remove sweep's ACT half: delete the verified-safe objects (unused measures/columns) as ONE undoable transaction. The safe set is RECOMPUTED server-side and each item RE-VERIFIED at apply time. An item whose status changed since your scan (something now references it) is SKIPPED with the reason, never deleted stale. refs (optional) narrows the sweep to those candidates from unused_objects/analyze_reports; omit to remove every currently-safe item. A 'visibleAttribute' item is never swept, named or not; its skip reason names the reviewed route that does remove it. reportPaths (optional, local PBIR, same forms as analyze_reports) makes the verification report-aware, so a field a report displays is never removed. Returns removed[] / skipped[{ref,reason}] / count; writes ONE audit record with the evidence; undo_change reverses the whole sweep in one step.")]
         public static Task<RemoveSafeReport> RemoveSafeObjects(IEngine engine,
-            [Description("Optional candidate refs (e.g. 'measure:Sales/Old Total'); omit/empty = every currently verified-safe item")] string[] refs = null,
+            [Description("Optional candidate refs (e.g. 'measure:Sales/Old Total'); omit/empty = every currently verified-safe item. A 'visibleAttribute' ref skips here; the reason names the route that removes it.")] string[] refs = null,
             [Description("Optional local PBIR report path(s): verification then also requires each item to be unused by these reports")] string[] reportPaths = null)
             => engine.RemoveSafeObjectsAsync(refs, reportPaths, "agent");
 
@@ -547,15 +549,17 @@ namespace Semanticus.Engine
             [Description("Output format: dax | tmdl | tmsl (default dax)")] string format = "dax")
             => engine.ScriptObjectsAsync(refs, format);
 
-        [McpServerTool(Name = "apply_dax_script"), Description("Apply an edited DAX script (the 'dax' output of script_objects, with '// @object <ref>' headers) back to the model: each block's expression is set on its object in ONE undoable batch. Lets you bulk-edit many measures/calc columns/calc items in one document and commit together. All-or-nothing: a missing ref or invalid DAX refuses the whole script and writes nothing. Returns {applied[], skipped[]}.")]
+        [McpServerTool(Name = "apply_dax_script"), Description("Apply an edited DAX script (the 'dax' output of script_objects, with '// @object <ref>' headers) back to the model: each block's expression is set on its object in ONE undoable batch. Lets you bulk-edit many measures/calc columns/calc items in one document and commit together. All-or-nothing: a missing ref or invalid DAX refuses the whole script and writes nothing. Keep each block's '@base:' marker on its header. When someone changed an object after the script was made: a block you did not edit is left as the object is now (leftAsIs[]); a block you edited too is a conflict and nothing is written for it (conflicts[]); lines of two versions are never mixed. notes[] says so in plain words. To write your version of a conflict anyway, call again with the same script and applyAnyway=[the refs from conflicts[]]: only those blocks are applied, as written. Returns {applied[], skipped[], leftAsIs[], conflicts[], notes[]}.")]
         public static Task<ApplyScriptResult> ApplyDaxScript(IEngine engine,
-            [Description("The DAX script text (with // @object <ref> headers, as produced by script_objects format='dax')")] string script)
-            => engine.ApplyDaxScriptAsync(script, "agent");
+            [Description("The DAX script text (with // @object <ref> headers, as produced by script_objects format='dax')")] string script,
+            [Description("Optional. Refs from a previous result's conflicts[] to write anyway. When given, ONLY those blocks are applied, as written.")] string[] applyAnyway = null)
+            => engine.ApplyDaxScriptAsync(script, "agent", applyAnyway);
 
-        [McpServerTool(Name = "apply_tmdl"), Description("Apply edited output from script_objects(format='tmdl') back to the model IN PLACE. Existing table/role documents and individually scripted measures round-trip through TOM's native partial-update path in ONE undoable batch. Measure ownership is pinned by the emitted // @object ref; changing its header/parent is refused (use rename_object/create_measure for structural changes). A brand-new top-level object is skipped (use its typed create op). Returns {applied[], skipped[]}.")]
+        [McpServerTool(Name = "apply_tmdl"), Description("Apply edited output from script_objects(format='tmdl') back to the model IN PLACE. Existing table/role documents and individually scripted measures round-trip through TOM's native partial-update path in ONE undoable batch. Measure ownership is pinned by the emitted // @object ref; changing its header/parent is refused (use rename_object/create_measure for structural changes). A brand-new top-level object is skipped (use its typed create op). Keep each block's '@base:' marker on its header. When someone changed an object after the script was made: a block you did not edit is left as the object is now (leftAsIs[]); a block you edited too is a conflict and nothing is written for it (conflicts[]); lines of two versions are never mixed. notes[] says so in plain words. To write your version of a conflict anyway, call again with the same script and applyAnyway=[the refs from conflicts[]]: only those blocks are applied, as written. Returns {applied[], skipped[], leftAsIs[], conflicts[], notes[]}.")]
         public static Task<ApplyScriptResult> ApplyTmdl(IEngine engine,
-            [Description("TMDL text produced by script_objects: top-level table/role documents or sentinel-owned measure blocks")] string script)
-            => engine.ApplyTmdlScriptAsync(script, "agent");
+            [Description("TMDL text produced by script_objects: top-level table/role documents or sentinel-owned measure blocks")] string script,
+            [Description("Optional. Refs from a previous result's conflicts[] to write anyway. When given, ONLY those blocks are applied, as written.")] string[] applyAnyway = null)
+            => engine.ApplyTmdlScriptAsync(script, "agent", applyAnyway);
 
         [McpServerTool(Name = "set_compatibility_level"), Description("Raise the model's compatibility level (a ONE-WAY upgrade). Needed for newer features. DAX user-defined functions require 1702+. Refuses to lower it. Undoable within the session, but re-deploying an upgraded model to an older runtime may fail.")]
         public static Task<SetResult> SetCompatibilityLevel(IEngine engine,
@@ -570,31 +574,56 @@ namespace Semanticus.Engine
             // T172: the same fence as update_measure. See the note there for why the engine, not a preflight, owns it.
             => engine.RenameObjectAsync(objRef, newName, "agent", sessionId);
 
-        [McpServerTool(Name = "save_model"), Description("Save the model. Omit path to overwrite the file or folder you opened. Pass a folder path to save as TMDL (tabular model definition language), or a .bim file path. format defaults to TMDL; when overwriting, a .bim stays a .bim. If the files on disk changed after this model was opened, the save is refused unless overwrite is true.")]
+        [McpServerTool(Name = "save_model"), Description("Save the model. Omit path to overwrite the file or folder you opened. Pass a folder path to save as TMDL (tabular model definition language), or a .bim file path. format defaults to TMDL; when overwriting, a .bim stays a .bim. If the files on disk changed after this model was opened, the save is refused unless overwrite is true. A model that has never been saved is never written into another model or over an existing .bim: it goes into a new folder (or a new .bim) next to it, and the result's Note says where.")]
         public static Task<SaveResult> SaveModel(IEngine engine,
             [Description("Target path. Omit or pass null to overwrite the source.")] string path = null,
             [Description("Format: TMDL (default), bim, or folder. Ignored when overwriting a .bim source.")] string format = null,
             [Description("true = replace files that changed on disk after this model was opened; default false refuses that overwrite")] bool overwrite = false)
-            => engine.SaveAsync(path, format, overwrite);
+            => engine.SaveAsync(path, format, overwrite, "agent");
 
-        [McpServerTool(Name = "undo_change"), Description("Undo the most recent change on the shared session: steps back one entry on the model's SINGLE undo timeline. A whole batch (apply_plan / bpa_fix_all / apply_safe_fixes / a generator) undoes as ONE step. The timeline is shared across both drivers, so this reverts the last change regardless of who made it (your edits or the human's in the VS Code UI). The revert is live. It broadcasts to the UI immediately. Returns CanUndo / CanRedo / AtCheckpoint. Use it to back out a change you just applied.")]
-        public static Task<UndoState> UndoChange(IEngine engine) => engine.UndoAsync("agent");
+        [McpServerTool(Name = "undo_change"), Description("Undo the most recent change on the shared session: steps back one entry on the model's SINGLE undo timeline. A whole batch (apply_plan / apply_safe_fixes / a generator) undoes as ONE step. The timeline is shared across both drivers, so this reverts the last change regardless of who made it (your edits or the human's in the VS Code UI). The revert is live. It broadcasts to the UI immediately. toEntry (optional): an entry id from get_plan_history; undoes that change and every later one in ONE step, one broadcast. Refused with a sentence when the entry is from before this session or already undone. Returns CanUndo / CanRedo / AtCheckpoint / Steps / RedoSteps. Use it to back out a change you just applied.")]
+        public static Task<UndoState> UndoChange(IEngine engine, [Description("Optional: the get_plan_history entry id to undo back to, including it. Omit for one step.")] string toEntry = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? engine.UndoAsync("agent") : engine.UndoToEntryAsync(toEntry, "agent");
 
-        [McpServerTool(Name = "redo_change"), Description("Re-apply the change most recently undone with undo_change: steps forward one entry on the shared undo timeline. Live (broadcasts to the UI). Returns CanUndo / CanRedo / AtCheckpoint. Making a NEW edit after an undo clears the redo stack.")]
-        public static Task<UndoState> RedoChange(IEngine engine) => engine.RedoAsync("agent");
+        [McpServerTool(Name = "redo_change"), Description("Re-apply the change most recently undone with undo_change: steps forward one entry on the shared undo timeline. Live (broadcasts to the UI). toEntry (optional): an undone entry id from get_plan_history; redoes every undone change up to and including it in ONE step. Returns CanUndo / CanRedo / AtCheckpoint / Steps / RedoSteps. Making a NEW edit after an undo clears the redo stack.")]
+        public static Task<UndoState> RedoChange(IEngine engine, [Description("Optional: the undone get_plan_history entry id to redo up to, including it. Omit for one step.")] string toEntry = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? engine.RedoAsync("agent") : engine.RedoToEntryAsync(toEntry, "agent");
+
+        [McpServerTool(Name = "get_plan_history"), Description("The model's History, newest first: every edit with who made it (By: you, assistant, semanticus, workflow), what it changed with before and after values (secrets and Power Query text hidden), and what it served (Cause: a plan item, workflow run, draft or task, whose edits nest under one parent row); Plan decisions that changed nothing; saved and restored versions; finished workflow runs with their report. Each row says whether it is Undoable (pass its Id to undo_change toEntry), how many later changes that would also take back (LaterCount), its Verified word, and whether it is from before this session (never undoable). Filters: by, objectRef (one object), before (a row's When, to page back), limit (default 50). Kept=false means the model has nowhere to keep history yet (save it) and it lasts this session. Free. Read-only.")]
+        public static Task<PlanHistoryView> GetPlanHistory(IEngine engine,
+            [Description("Optional: only rows by 'you', 'assistant', 'semanticus' or 'workflow'.")] string by = null,
+            [Description("Optional: only rows that touched this object, e.g. 'measure:Sales/Total'.")] string objectRef = null,
+            [Description("Optional: only rows older than this When (ISO time from an earlier page).")] string before = null,
+            [Description("Optional: how many rows, default 50, at most 500.")] int limit = 50) =>
+            engine.GetPlanHistoryAsync(by, objectRef, before, limit);
 
         // ---- Best Practice Analyzer (general-purpose) ------------------------------------------
 
-        [McpServerTool(Name = "bpa_summary"), Description("CHEAP overview: START HERE on a large model. Rule count, total violation count, auto-fixable count, any rule errors, and violation COUNTS by category / rule / severity, WITHOUT the (potentially large) violations list. Then call bpa_scan with a category / ruleId / autoFixableOnly filter to pull only the violations you'll act on (or bpa_fix_all for all deterministic fixes).")]
+        /// <summary>The BPA counts: bpa_scan with detail='summary'.</summary>
         public static async Task<BpaSummary> BpaScanSummary(IEngine engine) => BpaSummary.From(await engine.BpaScanAsync());
 
-        [McpServerTool(Name = "bpa_scan"), Description("Run the Best Practice Analyzer (general modeling best practices: performance, DAX, formatting, naming, layout). Uses the bundled Power BI standard ruleset merged with any rules embedded in the model (load your own with load_bpa_rules / clear them with reset_bpa_rules). Returns violations (rule, category, severity, object, message) flagged CanAutoFix (deterministic) or not. For AI-specific readiness use ai_readiness_scan instead. On a LARGE model call bpa_summary first, then filter here. Optional filters: category, ruleId, severityMin (Info|Warning|Error: that severity and above), autoFixableOnly (true = only deterministically fixable), maxViolations (0 = all, the default; capping is explicit so nothing is hidden silently). RuleCount/ViolationCount/AutoFixable are always for the FULL model; only the returned violations list is filtered.")]
-        public static async Task<BpaScorecard> BpaScan(IEngine engine,
+        [McpServerTool(Name = "bpa_scan"), Description("Check the model against the Best Practice Analyzer: general modelling rules for performance, DAX, formatting, naming and layout. Both details carry the Best practice letter, A to F, as bestPractice with bestPracticeWhy (ai_readiness_scan's grade is the other letter, AI readiness). The rule: " + BpaGrading.Rule + " It uses the bundled Power BI rule set plus any custom rules saved on the model (load_rules and reset_rules with system='bpa'). detail='summary' returns counts only: rule count, violation count, auto-fixable count, rule errors, orphaned waivers, and counts by category, rule and severity. It is the lighter first call on a large model. detail='full' (the default) also returns the violations, each with rule, category, severity, object, message and whether it can be fixed automatically (CanAutoFix). The filters narrow only the returned violations, and the counts always cover the whole model. A filter given with detail='summary' is refused, because a summary has no list to narrow. For AI readiness use ai_readiness_scan. Read-only.")]
+        public static async Task<object> BpaScanOp(IEngine engine,
+            [Description("full (the default: counts plus the violations) or summary (counts only)")] string detail = "full",
             [Description("Only return violations in this BPA category. Null/empty = all.")] string category = null,
             [Description("Only return violations of this BPA rule id. Null/empty = all.")] string ruleId = null,
             [Description("Only return violations at this severity or higher: Info|Warning|Error. Null/empty = all.")] string severityMin = null,
             [Description("true = only return deterministically auto-fixable violations.")] bool autoFixableOnly = false,
             [Description("Cap the returned violations to this many (0 = no cap, the default).")] int maxViolations = 0)
+        {
+            if (!IsSummary(detail)) return await BpaScan(engine, category, ruleId, severityMin, autoFixableOnly, maxViolations);
+            RefuseSummaryFilter(!string.IsNullOrWhiteSpace(category) || !string.IsNullOrWhiteSpace(ruleId)
+                || !string.IsNullOrWhiteSpace(severityMin) || autoFixableOnly || maxViolations > 0);
+            return await BpaScanSummary(engine);
+        }
+
+        /// <summary>bpa_scan with detail='full': the scorecard with its violations filtered.</summary>
+        public static async Task<BpaScorecard> BpaScan(IEngine engine,
+            string category = null,
+            string ruleId = null,
+            string severityMin = null,
+            bool autoFixableOnly = false,
+            int maxViolations = 0)
         {
             var c = await engine.BpaScanAsync();
             IEnumerable<BpaViolation> vs = c.Violations;
@@ -626,33 +655,55 @@ namespace Semanticus.Engine
             _ => 0,
         };
 
-        [McpServerTool(Name = "bpa_fix"), Description("Apply a BPA rule's deterministic fix to ONE violating object (only for CanAutoFix violations, e.g. bi-directional relationship -> single, key column SummarizeBy -> None). For non-auto-fixable rules use bpa_get_fix_prompt. Undoable.")]
-        public static Task<SetResult> BpaFix(IEngine engine,
-            [Description("Rule id from bpa_scan")] string ruleId,
-            [Description("Object ref the violation is on")] string objRef)
-            => engine.BpaFixAsync(ruleId, objRef, "agent");
-
-        [McpServerTool(Name = "bpa_fix_all"), Description("Apply ALL deterministic BPA auto-fixes in one undoable batch, then return how many were applied + the new scorecard. It sweeps until a pass changes nothing, so one call clears findings that a fix of its own creates (hiding a foreign-key column is what makes that column need IsAvailableInMDX=false). READ 'unfixed' BEFORE CLAIMING THE MODEL IS CLEAN: it lists every auto-fixable finding still on the model after the batch, each with the reason it survived, and 'remaining' is its length. Empty unfixed (remaining 0) is the only state where the batch did everything it said. A non-empty unfixed means those fixes ran but the finding is still there, so report them instead of a clean run. Does not touch content/naming rules (those need bpa_get_fix_prompt).")]
-        public static Task<BpaFixAllResult> BpaFixAll(IEngine engine) => engine.BpaFixAllAsync("agent");
-
-        [McpServerTool(Name = "bpa_get_fix_prompt"), Description("Get a remediation instruction (with the rule + object context) for a NON-auto-fixable BPA violation, so you can fix it with the right tool (set_description / set_measure_format / update_measure / rename_object). This is how Semanticus exceeds Tabular Editor: every rule is fixable, deterministically or by you.")]
-        public static Task<FixPrompt> BpaGetFixPrompt(IEngine engine,
-            [Description("Rule id from bpa_scan")] string ruleId,
-            [Description("Object ref the violation is on")] string objRef)
-            => engine.BpaGetFixPromptAsync(ruleId, objRef);
-
-        [McpServerTool(Name = "load_bpa_rules"), Description("Load Best Practice rules from a file path, an http(s) URL, or inline JSON (standard BPARules.json schema: an array of {ID, Name, Category, Severity, Scope, Expression, FixExpression?, Description}). They layer on TOP of the bundled Power BI standard ruleset and are persisted on the model (so they travel with it and are undoable). replace=false MERGES with any rules already on the model (by id); replace=true sets the model's custom rules to exactly this set. Use reset_bpa_rules to clear them. Returns the new active rule counts.")]
-        public static Task<BpaRulesInfo> LoadBpaRules(IEngine engine,
+        [McpServerTool(Name = "load_rules"), Description("Save custom rules on the model, from a file path, an http(s) URL or inline JSON. They travel with the model, the load is undoable, and they add to the built-in rules without ever replacing them. replace=false merges with the model's existing custom rules by id; replace=true makes them exactly this set. system='bpa' takes the standard BPARules.json schema: an array of {ID, Name, Category, Severity, Scope, Expression, FixExpression?, Description}. system='air' takes AI-readiness rules: {ID, Name?, Category (an existing readiness category: Naming, Descriptions, Synonyms, Relationships, Visibility, Formatting, CopilotLimits, DataAgentConfig or BestPractice), Severity? (Info, Medium, High or Critical; default Medium), Scope (the BPA scope words, such as Measure, Column, Table), Expression (the violation test, in the BPA expression language), AppliesTo? (the population; an empty population leaves the rule dormant), Message?, Description?, FixKind? (None, AiContent or Proposal; SafeFix is refused)}. Readiness rules are checked against the open model before anything is written, a built-in rule id is refused, and a custom rule cannot set a hard gate. Preview first with validate_rule, list what is saved with get_custom_rules, clear with reset_rules. Returns the new rule counts.")]
+        public static async Task<object> LoadRules(IEngine engine,
+            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system,
             [Description("A file path, an http(s) URL, or inline JSON array of rules")] string source,
             [Description("false = merge with the model's existing custom rules; true = replace them")] bool replace = false)
+            => RuleSystem(system) == "bpa"
+                ? await LoadBpaRules(engine, source, replace)
+                : (object)await LoadReadinessRules(engine, source, replace);
+
+        [McpServerTool(Name = "reset_rules"), Description("Remove every custom rule of one system from the model, so scans use only the built-in rules again: the bundled Power BI set for system='bpa', the built-in readiness rules for system='air'. Undoable.")]
+        public static async Task<object> ResetRules(IEngine engine,
+            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system)
+            => RuleSystem(system) == "bpa" ? await ResetBpaRules(engine) : (object)await ResetReadinessRules(engine);
+
+        /// <summary>load_rules with system='bpa'.</summary>
+        public static Task<BpaRulesInfo> LoadBpaRules(IEngine engine, string source, bool replace = false)
             => engine.LoadBpaRulesAsync(source, replace, "agent");
 
-        [McpServerTool(Name = "reset_bpa_rules"), Description("Clear all custom/model-embedded BPA rules, reverting bpa_scan to the bundled Power BI standard ruleset only. Undoable.")]
+        /// <summary>reset_rules with system='bpa'.</summary>
         public static Task<BpaRulesInfo> ResetBpaRules(IEngine engine) => engine.ResetBpaRulesAsync("agent");
+
+        /// <summary>The rule system a system argument names: "bpa" or "air" ('readiness' is read as 'air', the word
+        /// validate_rule uses). One parse for every merged tool, so one refusal sentence.</summary>
+        private static string RuleSystem(string system) => (system ?? "").Trim().ToLowerInvariant() switch
+        {
+            "bpa" => "bpa",
+            "air" or "readiness" => "air",
+            _ => throw new ArgumentException("system must be 'bpa' (Best Practice Analyzer) or 'air' (AI readiness).", nameof(system)),
+        };
+
+        /// <summary>Whether a detail argument asks for the counts-only shape. Empty reads as the default, full.</summary>
+        private static bool IsSummary(string detail) => (detail ?? "").Trim().ToLowerInvariant() switch
+        {
+            "" or "full" => false,
+            "summary" => true,
+            _ => throw new ArgumentException("detail must be 'full' or 'summary'.", nameof(detail)),
+        };
+
+        /// <summary>A summary has no list to narrow, so a filter beside detail='summary' is refused rather than
+        /// silently ignored (the same stance severityMin takes on a word it does not know).</summary>
+        private static void RefuseSummaryFilter(bool anyFilter)
+        {
+            if (anyFilter)
+                throw new ArgumentException("A filter was given with detail='summary', but a summary has no list to narrow. Drop the filter, or use detail='full'.");
+        }
 
         // ---- Custom rule authoring (both kinds) --------------------------------------------------
 
-        [McpServerTool(Name = "validate_rule"), Description("Compile + TEST-RUN a custom rule (or a whole set) against the open model WITHOUT saving: the authoring preview for both rule kinds. kind='bpa' or 'readiness'; rules = inline JSON (one rule object or an array, the same schema the matching load op accepts). Per rule you get: compile errors from the real expression parser (with the failing position), the would-be Applicable population, the violation count, the first few flagged object names, and a dormant flag (empty population = the rule would never move a score). Save with load_bpa_rules / load_readiness_rules once valid.")]
+        [McpServerTool(Name = "validate_rule"), Description("Compile + TEST-RUN a custom rule (or a whole set) against the open model WITHOUT saving: the authoring preview for both rule kinds. kind='bpa' or 'readiness'; rules = inline JSON (one rule object or an array, the same schema the matching load op accepts). Per rule you get: compile errors from the real expression parser (with the failing position), the would-be Applicable population, the violation count, the first few flagged object names, and a dormant flag (empty population = the rule would never move a score). Save with load_rules (system='bpa' or 'air') once valid.")]
         public static Task<RuleValidationResult> ValidateRule(IEngine engine,
             [Description("Which rule system: 'bpa' or 'readiness'")] string kind,
             [Description("Inline JSON: one rule object or an array of rules")] string rules)
@@ -661,35 +712,49 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_custom_rules"), Description("List the custom (user-authored) rules embedded on the model, both kinds: BPA rules (BestPracticeAnalyzer annotation) and AI-readiness rules (Semanticus_ReadinessRules annotation), plus the valid readiness Category list and the supported Scope vocabulary. Read-only; the manage view behind the Studio 'Custom rules' panels.")]
         public static Task<CustomRulesInfo> GetCustomRules(IEngine engine) => engine.GetCustomRulesAsync();
 
-        [McpServerTool(Name = "load_readiness_rules"), Description("Load custom AI-READINESS rules from a file path, an http(s) URL, or inline JSON, persisted on the model (they travel with it; undoable). Schema: array of {ID, Name?, Category (an EXISTING readiness category: Naming|Descriptions|Synonyms|Relationships|Visibility|Formatting|CopilotLimits|DataAgentConfig|BestPractice), Severity? (Info|Medium|High|Critical, default Medium), Scope (same vocabulary as BPA rules, e.g. Measure/Column/Table), Expression (violation predicate, same expression language as BPA rules), AppliesTo? (population filter: Applicable = objects matching it; an EMPTY population leaves the rule dormant, never inflating its category), Message?, Description?, FixKind? (None|AiContent|Proposal: advisory; SafeFix is refused)}. Rules are validated strictly against the open model BEFORE anything is written (preview first with validate_rule). Merged by id with the model's existing custom rules (replace=true swaps them); a built-in rule id is refused. Custom rules can never override built-ins or register hard gates. Findings from these rules are tagged custom:true; waivers work on them like any finding. reset_readiness_rules clears them.")]
-        public static Task<ReadinessRulesInfo> LoadReadinessRules(IEngine engine,
-            [Description("A file path, an http(s) URL, or inline JSON array of rules")] string source,
-            [Description("false = merge with the model's existing custom rules; true = replace them")] bool replace = false)
+        /// <summary>load_rules with system='air'.</summary>
+        public static Task<ReadinessRulesInfo> LoadReadinessRules(IEngine engine, string source, bool replace = false)
             => engine.LoadReadinessRulesAsync(source, replace, "agent");
 
-        [McpServerTool(Name = "reset_readiness_rules"), Description("Clear all custom AI-readiness rules from the model, reverting ai_readiness_scan to the built-in rule set only. Undoable.")]
+        /// <summary>reset_rules with system='air'.</summary>
         public static Task<ReadinessRulesInfo> ResetReadinessRules(IEngine engine) => engine.ResetReadinessRulesAsync("agent");
 
         // ---- AI-readiness ("BPA for AI") -------------------------------------------------------
 
-        [McpServerTool(Name = "ai_readiness_summary"), Description("CHEAP overview: START HERE on a large model. Returns the A-F grade + 0-100 overall, per-category score/applicable/violations, coverage KPIs, gating reasons, the total finding count, and counts by severity / fix-kind / top rule, WITHOUT the (potentially large) findings list. Token-light regardless of model size. Then call ai_readiness_scan with a category or severityMin filter to pull only the findings you'll act on.")]
+        /// <summary>The readiness counts: ai_readiness_scan with detail='summary'.</summary>
         public static async Task<ReadinessSummary> AiReadinessSummary(IEngine engine)
             => ReadinessSummary.From(await engine.AiReadinessScanAsync());
 
-        [McpServerTool(Name = "ai_readiness_scan"), Description("Score the open model A-F for AI readiness (Copilot / Q&A / Fabric data agents): overall grade + 0-100, per-category scores, coverage KPIs, gating reasons, and a prioritized findings list. Each finding is tagged SafeFix (deterministic), AiContent (you generate it), or Proposal (human review). On a LARGE model call ai_readiness_summary first, then filter here. Optional filters: category (e.g. 'Naming','Descriptions','DataAgentConfig'), severityMin ('Info'|'Medium'|'High'|'Critical': keep this severity and above), maxFindings (cap the returned findings; 0 = all, the default. Capping is explicit so nothing is hidden silently). Scores/categories/counts are always for the FULL model; only the returned findings list is filtered.")]
-        public static async Task<Scorecard> AiReadinessScan(IEngine engine,
+        [McpServerTool(Name = "ai_readiness_scan"), Description("Score the open model A to F for AI readiness, meaning how well Copilot and Fabric data agents can use it. It returns the overall grade and 0-100 score, per-category scores, coverage KPIs and the reasons any hard gate holds the grade down. detail='summary' adds the total finding count and counts by severity, fix kind and top rule, with no findings list, and stays small on any model. detail='full' (the default) also returns the findings in priority order, each tagged SafeFix (a deterministic fix exists), AiContent (you write it) or Proposal (a person should review it). live=true adds the live cardinality rules: it reads each column's distinct-value count (COLUMNSTATISTICS) from the connected model and checks the Copilot index limits (SCALE-QNA-INDEX, the 5,000,000-value index ceiling, and SCALE-HICARD-COLUMN). live=true needs a live connection (connect_xmla or connect_local) and is refused without one. The filters narrow only the returned findings; scores and counts always cover the whole model, and a filter given with detail='summary' is refused. Read-only.")]
+        public static async Task<object> AiReadinessScanOp(IEngine engine,
+            [Description("full (the default: scores plus the findings) or summary (scores and counts only)")] string detail = "full",
+            [Description("true = also run the live cardinality rules on the connected model (needs a live connection)")] bool live = false,
             [Description("Only return findings in this category (e.g. 'Naming'). Null/empty = all categories.")] string category = null,
             [Description("Only return findings at this severity or higher: Info|Medium|High|Critical. Null/empty = all.")] string severityMin = null,
             [Description("Cap the returned findings to this many (0 = no cap, the default). Capping is opt-in so findings are never hidden silently.")] int maxFindings = 0)
         {
-            var c = await engine.AiReadinessScanAsync();
+            var summary = IsSummary(detail);
+            if (summary)
+                RefuseSummaryFilter(!string.IsNullOrWhiteSpace(category) || !string.IsNullOrWhiteSpace(severityMin) || maxFindings > 0);
+            var card = live ? await engine.AiReadinessScanLiveAsync() : await engine.AiReadinessScanAsync();
+            return summary ? ReadinessSummary.From(card) : FilterFindings(card, category, severityMin, maxFindings);
+        }
+
+        /// <summary>ai_readiness_scan with detail='full' and live=false: the scorecard with its findings filtered.</summary>
+        public static async Task<Scorecard> AiReadinessScan(IEngine engine, string category = null, string severityMin = null, int maxFindings = 0)
+            => FilterFindings(await engine.AiReadinessScanAsync(), category, severityMin, maxFindings);
+
+        /// <summary>Narrow the returned findings of either scorecard (offline or live). Scores and counts are left
+        /// whole, so they always describe the full model.</summary>
+        private static Scorecard FilterFindings(Scorecard c, string category, string severityMin, int maxFindings)
+        {
             IEnumerable<ReadinessFinding> fs = c.Findings;
             if (!string.IsNullOrWhiteSpace(category))
                 fs = fs.Where(f => string.Equals(f.Category, category, StringComparison.OrdinalIgnoreCase));
             if (!string.IsNullOrWhiteSpace(severityMin))
             {
                 var min = ReadinessSummary.SevRank(severityMin);
-                // Fail loudly on an unrecognised value (e.g. 'Low' — this scale has no Low) instead of silently
+                // Fail loudly on an unrecognised value (e.g. 'Low', this scale has no Low) instead of silently
                 // returning EVERYTHING, which would be the opposite of the intended narrowing.
                 if (min == 0)
                     throw new ArgumentException($"severityMin '{severityMin}' is not recognised; use Info, Medium, High, or Critical.", nameof(severityMin));
@@ -700,19 +765,19 @@ namespace Semanticus.Engine
             return c;
         }
 
-        [McpServerTool(Name = "ai_readiness_scan_live"), Description("Like ai_readiness_scan, PLUS the live cardinality rules: it reads per-column distinct-value counts (COLUMNSTATISTICS) from the attached connection and applies the Q&A-index rules: SCALE-QNA-INDEX (total indexed unique values vs the Microsoft-documented 5,000,000-value Q&A ceiling, beyond which Copilot/Q&A drop values) and SCALE-HICARD-COLUMN (a single visible column whose cardinality dominates the index). Requires a live connection (connect_xmla / connect_local), read-only. Use this instead of ai_readiness_scan when connected to grade scale/cardinality too.")]
-        public static Task<Scorecard> AiReadinessScanLive(IEngine engine) => engine.AiReadinessScanLiveAsync();
+        [McpServerTool(Name = "apply_safe_fixes"), Description("Apply every deterministic fix for one rule system as one undoable batch, then return what changed and the new scorecard. system='air' applies the AI-readiness safe fixes: hide foreign-key columns, set SummarizeBy to None on key, relationship and identifier columns, set geographic data categories, and mark each dimension's row label. It renames nothing and writes no content. system='bpa' applies every Best Practice Analyzer auto-fix, repeating until a pass changes nothing, so a fix that creates another finding is cleared in the same call. For system='bpa', read 'unfixed' before you report the model clean: it lists each auto-fixable finding still present with the reason it survived (including one left alone because the person accepted the same change under another rule), and 'remaining' is how many. The batch did everything it said only when remaining is 0. A data type change, and a key on a table that already has one, are left for the person: they stay in 'unfixed' with the reason, and apply_fix still makes them one at a time. Content findings, and naming findings that need a new name, are left alone; get_fix_prompt covers those. For the readiness fixes plus a queue of content to write, use make_model_ai_ready.")]
+        public static async Task<object> ApplySafeFixes(IEngine engine,
+            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system)
+            => RuleSystem(system) == "bpa" ? await engine.BpaFixAllAsync("agent") : (object)await engine.ApplySafeFixesAsync("agent");
 
-        [McpServerTool(Name = "apply_safe_fixes"), Description("Apply ALL deterministic, low-risk AI-readiness fixes (hide foreign-key columns, set SummarizeBy=None on key/relationship + non-additive identifier columns, set geographic data categories) in one undoable batch, then return what was applied + the new scorecard. No renames, no generated content.")]
-        public static Task<SafeFixResult> ApplySafeFixes(IEngine engine) => engine.ApplySafeFixesAsync("agent");
-
-        [McpServerTool(Name = "apply_fix"), Description("Apply the deterministic safe fix for ONE finding (by ruleId + objRef). Supports VIS-FK (hide a foreign-key column), FMT-SUMMARIZE / SUMMARIZE-DIMENSION (SummarizeBy=None), CAT-GEO (geographic data category). For content findings use get_fix_prompt + the matching tool instead. Undoable.")]
+        [McpServerTool(Name = "apply_fix"), Description("Apply the deterministic fix for one finding on one object, as one undoable change. system='bpa' fixes a Best Practice Analyzer violation that bpa_scan marks CanAutoFix, for example a bi-directional relationship made single, or SummarizeBy set to None on a key column. system='air' fixes an AI-readiness SafeFix finding: VIS-FK (hide a foreign-key column), FMT-SUMMARIZE and SUMMARIZE-DIMENSION (SummarizeBy None), CAT-GEO (geographic data category), DIM-PRIMARY-NAME (mark the column that names each row of a dimension as its row label). A finding with no deterministic fix is refused; get its instruction from get_fix_prompt with the same system, rule and object.")]
         public static Task<SetResult> ApplyFix(IEngine engine,
-            [Description("Rule id, e.g. 'VIS-FK', 'FMT-SUMMARIZE', 'SUMMARIZE-DIMENSION', 'CAT-GEO'")] string ruleId,
-            [Description("Object ref the finding is about")] string objRef)
-            => engine.ApplyFixAsync(ruleId, objRef, "agent");
+            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system,
+            [Description("Rule id from bpa_scan or ai_readiness_scan, e.g. 'VIS-FK' for air")] string ruleId,
+            [Description("Object ref the finding is on")] string objRef)
+            => RuleSystem(system) == "bpa" ? engine.BpaFixAsync(ruleId, objRef, "agent") : engine.ApplyFixAsync(ruleId, objRef, "agent");
 
-        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Q&A scale ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move.")]
+        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Copilot index ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move.")]
         public static Task<SetResult> WaiveFinding(IEngine engine,
             [Description("Which system the rule belongs to: 'bpa' or 'air'")] string system,
             [Description("Rule id (e.g. 'UNNECESSARY_COLUMNS' for bpa, 'NAME-MEASURE' for air)")] string ruleId,
@@ -727,32 +792,34 @@ namespace Semanticus.Engine
             [Description("Object ref, or empty/'*' for the rule-level waiver")] string objRef)
             => engine.UnwaiveFindingAsync(system, ruleId, objRef, "agent");
 
-        [McpServerTool(Name = "list_waivers"), Description("List every accepted (waived) finding on the model: system, rule id, object ref (null = rule-level/model-wide), the reason, who waived it and when. The audit trail behind the scorecard's waived count. This is the RAW store, so it can include waivers whose rule id is no longer in the loaded rule set: those accept nothing, and bpa_scan / bpa_summary / ai_readiness_scan / ai_readiness_summary report them as OrphanedWaivers with a count. Compare the two before you trust a waiver.")]
+        [McpServerTool(Name = "list_waivers"), Description("List every accepted (waived) finding on the model: system, rule id, object ref (null = rule-level/model-wide), the reason, who waived it and when. The audit trail behind the scorecard's waived count. This is the RAW store, so it can include waivers whose rule id is no longer in the loaded rule set: those accept nothing, and bpa_scan and ai_readiness_scan report them as OrphanedWaivers with a count. Compare the two before you trust a waiver.")]
         public static Task<Semanticus.Analysis.WaiverRecord[]> ListWaivers(IEngine engine) => engine.ListWaiversAsync();
 
-        [McpServerTool(Name = "get_fix_prompt"), Description("Get a ready-made remediation instruction (with grounding baked in) for an AI-content finding: which tool to call and what to author (description/name/format/synonyms). Useful when iterating a scorecard's findings.")]
+        [McpServerTool(Name = "get_fix_prompt"), Description("Get a ready-made instruction for fixing one finding that has no deterministic fix: which tool to call and what to write, with the rule and the object's context. system='bpa' covers Best Practice Analyzer violations. system='air' covers AI-readiness content findings such as DESC-MEASURE, NAME-COLUMN, FMT-MEASURE and SYN-FIELD, and includes grounding (DAX, table, sibling names). Read-only; it changes nothing.")]
         public static Task<FixPrompt> GetFixPrompt(IEngine engine,
-            [Description("Rule id, e.g. 'DESC-MEASURE', 'NAME-COLUMN', 'FMT-MEASURE', 'SYN-FIELD'")] string ruleId,
-            [Description("Object ref the finding is about")] string objRef)
-            => engine.GetFixPromptAsync(ruleId, objRef);
+            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system,
+            [Description("Rule id from bpa_scan or ai_readiness_scan, e.g. 'DESC-MEASURE' for air")] string ruleId,
+            [Description("Object ref the finding is on")] string objRef)
+            => RuleSystem(system) == "bpa" ? engine.BpaGetFixPromptAsync(ruleId, objRef) : engine.GetFixPromptAsync(ruleId, objRef);
 
         [McpServerTool(Name = "get_grounding"), Description("Get grounding context for an object (name, table, DAX expression, format string, existing description, sibling names) so YOU can author a high-quality business description or a clearer name. Call this before set_description.")]
         public static Task<GroundingBundle> GetGrounding(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales' or 'column:Customer/City'")] string objRef)
             => engine.GetGroundingAsync(objRef);
 
-        [McpServerTool(Name = "validate_dax"), Description("Validate a DAX expression against the OPEN model BEFORE you write it (create_measure/set_dax). Catches unbalanced brackets (error) and unknown table/column/measure references (warning), with line:column. Offline/read-only, no live engine needed. Valid=false only on a structural error.")]
+        [McpServerTool(Name = "validate_dax"), Description("Validate a DAX expression against the OPEN model BEFORE you write it (create_measure/update_measure). Catches unbalanced brackets (error) and unknown table/column/measure references (warning), with line:column. Offline/read-only, no live engine needed. By default valid=false only on a structural error. strict=true judges it the way a DAX write does: every warning, such as a missing column, is an error and valid is false.")]
         public static Task<DaxValidation> ValidateDax(IEngine engine,
-            [Description("The DAX expression to check, e.g. \"CALCULATE ( SUM ( Sales[Amount] ), Sales[Year] = 2024 )\"")] string expression)
-            => engine.ValidateDaxAsync(expression);
+            [Description("The DAX expression to check, e.g. \"CALCULATE ( SUM ( Sales[Amount] ), Sales[Year] = 2024 )\"")] string expression,
+            [Description("true = treat every warning (a missing column or measure, an arity problem) as an error, the same verdict a write would give. Default false.")] bool strict = false)
+            => engine.ValidateDaxAsync(expression, strict);
 
-        [McpServerTool(Name = "set_description"), Description("Set an object's description (measure/table/column). Keep it <=200 chars and front-loaded: Copilot truncates. Applies as a reviewable, undoable change tagged as the agent. Use after get_grounding.")]
+        [McpServerTool(Name = "set_description"), Description("Set an object's description: a measure, table, column, hierarchy, perspective, calculation item or any other object that has one. Keep it <=200 chars and front-loaded: Copilot truncates. Applies as a reviewable, undoable change tagged as the agent. Use after get_grounding.")]
         public static Task<SetResult> SetDescription(IEngine engine,
             [Description("Object ref")] string objRef,
             [Description("Business description, <=200 chars, front-loaded")] string text)
             => engine.SetDescriptionAsync(objRef, text, "agent");
 
-        [McpServerTool(Name = "make_model_ai_ready"), Description("The one-shot flow: apply ALL deterministic safe fixes, then return the new scorecard PLUS a prioritized AI-content work queue (each item has the finding + grounding: DAX, table, siblings). Iterate the queue: for each, author a description/name and call set_description (renames need review). Re-scan when done.")]
+        [McpServerTool(Name = "make_model_ai_ready"), Description("Applies every deterministic AI-readiness safe fix (the same set as apply_safe_fixes) as one undoable batch, then returns the new scorecard plus a prioritized work queue of up to maxQueue AI-content findings (accepted ones left out, and so is any change the person declined by accepting another finding about the same thing; do not make a change that is not in the queue), each with its grounding (DAX, table, sibling names). It writes no descriptions, names or synonyms itself: the queue is for you to author with set_description, rename_object or set_synonyms, or to stage for review with propose_plan.")]
         public static Task<ReadinessPlan> MakeModelAiReady(IEngine engine,
             [Description("Max AI-content items to return with grounding (default 40)")] int maxQueue = 40)
             => engine.MakeAiReadyAsync("agent", maxQueue);
@@ -781,13 +848,13 @@ namespace Semanticus.Engine
             [Description("Data category")] string dataCategory)
             => engine.SetColumnMetadataAsync(objRef, null, null, dataCategory, null, "agent");
 
-        [McpServerTool(Name = "set_summarize_by"), Description("Set a column's default aggregation (None/Sum/Average/Min/Max/Count/DistinctCount). Use None for keys/years/codes. Deterministic, undoable.")]
+        [McpServerTool(Name = "set_summarize_by"), Description("Set a column's default aggregation (None/Sum/Average/Min/Max/Count/DistinctCount). Use None for keys/years/codes. Deterministic, undoable. On Pro the Plan can propose an explicit base measure for a number column in place of the column adding up by itself (the column.summarize point); this op is the same setting done by hand.")]
         public static Task<SetResult> SetSummarizeBy(IEngine engine,
             [Description("Column ref")] string objRef,
             [Description("Aggregate: None, Sum, Average, Min, Max, Count, DistinctCount")] string summarizeBy)
             => engine.SetColumnMetadataAsync(objRef, null, summarizeBy, null, null, "agent");
 
-        [McpServerTool(Name = "set_column_hidden"), Description("Show/hide a column. Hidden columns are excluded from Copilot/Q&A/data-agent grounding. Hide technical/key/FK columns. Deterministic, undoable.")]
+        [McpServerTool(Name = "set_column_hidden"), Description("Show/hide a column. Hidden columns are excluded from Copilot/data-agent grounding. Hide technical/key/FK columns. Deterministic, undoable.")]
         public static Task<SetResult> SetColumnHidden(IEngine engine,
             [Description("Column ref")] string objRef,
             [Description("true to hide, false to show")] bool hidden)
@@ -799,18 +866,18 @@ namespace Semanticus.Engine
             [Description("Name of the column to sort by (same table)")] string sortByColumnName)
             => engine.SetColumnMetadataAsync(objRef, null, null, null, sortByColumnName, "agent");
 
-        [McpServerTool(Name = "mark_date_table"), Description("Mark a table as the model's date table (DataCategory='Time'). Required for good time-intelligence and Copilot date handling. Deterministic, undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "mark_date_table"), Description("Mark a table as the model's date table (DataCategory='Time'). Required for good time-intelligence and Copilot date handling. Deterministic, undoable.")]
         public static Task<SetResult> MarkDateTable(IEngine engine,
             [Description("Table ref, e.g. 'table:Date'")] string tableRef,
             [Description("The date/key column name on that table")] string dateColumn)
             => engine.MarkDateTableAsync(tableRef, dateColumn, "agent");
 
-        [McpServerTool(Name = "get_incremental_refresh_policy"), Description("Read a table's incremental refresh policy (rolling-window store + incremental window, granularity, mode). Returns enabled=false if no policy is defined. Read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_incremental_refresh_policy"), Description("Read a table's incremental refresh policy (rolling-window store + incremental window, granularity, mode). Returns enabled=false if no policy is defined. Read-only.")]
         public static Task<RefreshPolicyInfo> GetIncrementalRefreshPolicy(IEngine engine,
             [Description("Table ref, e.g. 'table:Sales'")] string tableRef)
             => engine.GetIncrementalRefreshPolicyAsync(tableRef);
 
-        [McpServerTool(Name = "set_incremental_refresh_policy"), Description("Define/update a table's incremental refresh policy: store N periods of history and re-import the latest M periods. Set autoWire=true to create or repair RangeStart/RangeEnd and append the required half-open date filter without replacing existing M steps. Leave it false to validate and refuse when prerequisites are missing. Metadata only; it does not refresh data. Deterministic and undoable. Existing-policy fields are preserved when omitted. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_incremental_refresh_policy"), Description("Define/update a table's incremental refresh policy: store N periods of history and re-import the latest M periods. Set autoWire=true to create or repair RangeStart/RangeEnd and append the required half-open date filter without replacing existing M steps. Leave it false to validate and refuse when prerequisites are missing. Metadata only; it does not refresh data. Deterministic and undoable. Existing-policy fields are preserved when omitted.")]
         public static Task<SetResult> SetIncrementalRefreshPolicy(IEngine engine,
             [Description("Table ref, e.g. 'table:Sales'")] string tableRef,
             [Description("The Date/DateTime column the partition M filters on RangeStart/RangeEnd (validated to exist; pass empty to skip the column check)")] string dateColumn,
@@ -824,7 +891,7 @@ namespace Semanticus.Engine
             [Description("Create or repair the two date/time parameters and append the half-open partition filter before enabling the policy. Requires dateColumn and an M partition.")] bool autoWire = false)
             => engine.SetIncrementalRefreshPolicyAsync(tableRef, dateColumn, rollingWindowPeriods, rollingWindowGranularity, incrementalPeriods, incrementalGranularity, incrementalPeriodsOffset, mode, pollingExpression, autoWire, "agent");
 
-        [McpServerTool(Name = "remove_incremental_refresh_policy"), Description("Remove a table's incremental refresh policy (sets RefreshPolicy = null). Leaves RangeStart/RangeEnd and the partition M intact. Deterministic, undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "remove_incremental_refresh_policy"), Description("Remove a table's incremental refresh policy (sets RefreshPolicy = null). Leaves RangeStart/RangeEnd and the partition M intact. Deterministic, undoable.")]
         public static Task<SetResult> RemoveIncrementalRefreshPolicy(IEngine engine,
             [Description("Table ref, e.g. 'table:Sales'")] string tableRef)
             => engine.RemoveIncrementalRefreshPolicyAsync(tableRef, "agent");
@@ -850,60 +917,60 @@ namespace Semanticus.Engine
 
         // ---- Row-Level Security (RLS) roles ----------------------------------------------------
 
-        [McpServerTool(Name = "list_roles"), Description("List the model's security roles: each role's name, model permission (None/Read/ReadRefresh/Refresh/Administrator), per-table RLS row-filter DAX, and members. RLS gates what data a Copilot / data-agent persona can see, so it matters for AI grounding. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_roles"), Description("List the model's security roles: each role's name, model permission (None/Read/ReadRefresh/Refresh/Administrator), per-table RLS row-filter DAX, and members. RLS gates what data a Copilot / data-agent persona can see, so it matters for AI grounding.")]
         public static Task<RoleInfo[]> ListRoles(IEngine engine) => engine.ListRolesAsync();
 
-        [McpServerTool(Name = "create_role"), Description("Create a security role. modelPermission defaults to None (Read is auto-applied once you add an RLS filter). Then use set_table_permission to add per-table row filters and set_role_member to add members. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "create_role"), Description("Create a security role. modelPermission defaults to None (Read is auto-applied once you add an RLS filter). Then use set_table_permission to add per-table row filters and set_role_member to add members. Undoable.")]
         public static Task<RoleInfo> CreateRole(IEngine engine,
             [Description("Role name (unique)")] string name,
             [Description("None (default) | Read | ReadRefresh | Refresh | Administrator")] string modelPermission = null)
             => engine.CreateRoleAsync(name, modelPermission, "agent");
 
-        [McpServerTool(Name = "delete_role"), Description("Delete a security role (and its RLS filters + members). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "delete_role"), Description("Delete a security role (and its RLS filters + members). Undoable.")]
         public static Task<SetResult> DeleteRole(IEngine engine,
             [Description("Role name")] string name)
             => engine.DeleteRoleAsync(name, "agent");
 
-        [McpServerTool(Name = "set_role_permission"), Description("Set a role's model-level permission: None | Read | ReadRefresh | Refresh | Administrator. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_role_permission"), Description("Set a role's model-level permission: None | Read | ReadRefresh | Refresh | Administrator. Undoable.")]
         public static Task<SetResult> SetRolePermission(IEngine engine,
             [Description("Role name")] string name,
             [Description("None | Read | ReadRefresh | Refresh | Administrator")] string modelPermission)
             => engine.SetRolePermissionAsync(name, modelPermission, "agent");
 
-        [McpServerTool(Name = "set_table_permission"), Description("Set (or clear) a table's RLS ROW-FILTER DAX for a role: the boolean filter applied to that table's rows for members of the role, e.g. \"[Region] = LOOKUPVALUE(...)\" or \"[Owner] = USERPRINCIPALNAME()\". Pass an empty filter to remove it. Invalid DAX (unknown columns/functions, incomplete expressions, unknown tables) is refused and nothing is saved. Setting a filter auto-promotes the role's permission from None to Read. The result echoes the resulting ModelPermission and a Promoted flag so the elevation is explicit. RLS row-filters cannot target a calculation group. The filter is a DAX expression and participates in rename fixup. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_table_permission"), Description("Set (or clear) a table's RLS ROW-FILTER DAX for a role: the boolean filter applied to that table's rows for members of the role, e.g. \"[Region] = LOOKUPVALUE(...)\" or \"[Owner] = USERPRINCIPALNAME()\". Pass an empty filter to remove it. Invalid DAX (unknown columns/functions, incomplete expressions, unknown tables) is refused and nothing is saved. Setting a filter auto-promotes the role's permission from None to Read. The result echoes the resulting ModelPermission and a Promoted flag so the elevation is explicit. RLS row-filters cannot target a calculation group. The filter is a DAX expression and participates in rename fixup. Undoable.")]
         public static Task<SetTablePermissionResult> SetTablePermission(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Table ref or name, e.g. 'table:Sales' or 'Sales'")] string tableRef,
             [Description("DAX boolean row filter; empty/null removes the filter")] string filterDax)
             => engine.SetTablePermissionAsync(roleName, tableRef, filterDax, "agent");
 
-        [McpServerTool(Name = "set_role_member"), Description("Add or remove an (Azure AD / external) member of a role, by name (e.g. a UPN or group). add=true adds, add=false removes. A member must look like an email, a group name, or an object id. Adding a member that is already on the role reports that and does not create a new edit. NOTE: adding members is blocked on a governed Power BI model (V3Restricted). Members are then managed in the Power BI service; removing/listing always works. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_role_member"), Description("Add or remove an (Azure AD / external) member of a role, by name (e.g. a UPN or group). add=true adds, add=false removes. A member must look like an email, a group name, or an object id. Adding a member that is already on the role reports that and does not create a new edit. NOTE: adding members is blocked on a governed Power BI model (V3Restricted). Members are then managed in the Power BI service; removing/listing always works. Undoable.")]
         public static Task<SetResult> SetRoleMember(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Member name (UPN / group / object id)")] string memberName,
             [Description("true = add, false = remove")] bool add = true)
             => engine.SetRoleMemberAsync(roleName, memberName, add, "agent");
 
-        [McpServerTool(Name = "set_table_ols"), Description("Set a table's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the table at all (distinct from set_table_permission's row filter). 'None' hides the table's metadata + data from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). A calculation group cannot carry OLS. Surfaced via list_roles → ObjectPermissions. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_table_ols"), Description("Set a table's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the table at all (distinct from set_table_permission's row filter). 'None' hides the table's metadata + data from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). A calculation group cannot carry OLS. Surfaced via list_roles → ObjectPermissions. Undoable.")]
         public static Task<SetResult> SetTableOls(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Table ref or name, e.g. 'table:Salary' or 'Salary'")] string tableRef,
             [Description("Default | None | Read")] string permission)
             => engine.SetTableObjectPermissionAsync(roleName, tableRef, permission, "agent");
 
-        [McpServerTool(Name = "set_column_ols"), Description("Set a column's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the column. 'None' hides the column from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). Surfaced via list_roles → ObjectPermissions[].Columns. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_column_ols"), Description("Set a column's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the column. 'None' hides the column from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). Surfaced via list_roles → ObjectPermissions[].Columns. Undoable.")]
         public static Task<SetResult> SetColumnOls(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Column ref, e.g. 'column:Employee/Salary'")] string columnRef,
             [Description("Default | None | Read")] string permission)
             => engine.SetColumnObjectPermissionAsync(roleName, columnRef, permission, "agent");
 
-        [McpServerTool(Name = "enable_qna"), Description("Enable a Q&A / Copilot linguistic schema (synonyms) on the model by seeding a culture's linguistic metadata. Call once before set_synonyms. Pass null culture for the default (en-US). On an existing schema it self-heals: entities bound to hidden or deleted objects are pruned, and any visible-name collisions Q&A can't distinguish are surfaced as a warning.")]
-        public static Task<SetResult> EnableQna(IEngine engine,
+        [McpServerTool(Name = "create_linguistic_schema"), Description("Create the model's linguistic schema: the synonym store Copilot and data agents read, which also holds the AI instructions and the AI data schema. Seeds a culture's linguistic metadata; it does not change the Power BI Q&A setting. Call once before set_synonyms. Pass null culture for the default (en-US). On an existing schema it self-heals: entities bound to hidden or deleted objects are pruned, and any visible-name collisions Copilot can't tell apart are surfaced as a warning.")]
+        public static Task<SetResult> CreateLinguisticSchema(IEngine engine,
             [Description("Culture id (e.g. 'en-US'), or null for default")] string culture = null)
-            => engine.EnableQnaAsync(culture, "agent");
+            => engine.CreateLinguisticSchemaAsync(culture, "agent");
 
-        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot/Q&A map natural language to the right field. The linguistic schema requires conceptually UNIQUE names: hidden targets are refused, entities bound to hidden or deleted objects are pruned automatically, and a write that would collide two names under Q&A term matching fails with the objects named.")]
+        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot and data agents map natural language to the right field. The list replaces the object's own synonyms: a word left out is removed. The object's name term and Power BI's own generated words are kept, except what Power BI still records from an old name, which a list that leaves it out clears. Hidden targets are refused, and entities bound to hidden or deleted objects are pruned automatically. Two visible fields that read as the same word do not make a write fail; the readiness scan reports them as a Copilot ambiguity.")]
         public static Task<SetResult> SetSynonyms(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Synonym terms")] string[] terms,
@@ -921,7 +988,7 @@ namespace Semanticus.Engine
             [Description("Culture id (e.g. 'en-US'), or null for default")] string culture = null)
             => engine.GetAiInstructionsAsync(culture);
 
-        [McpServerTool(Name = "set_ai_data_schema"), Description("Include or exclude a field (measure/column/table) from the Prep-for-AI 'AI data schema': the focused field set Copilot/data agents reason over. included=false EXCLUDES it (marks it Hidden in the LSDL); included=true restores it. Excluding noise (keys, sort/helper columns, intermediate measures) sharpens AI answers without hiding the field from report authors. Auto-enables the linguistic schema if needed; round-trip verified, live, a single undoable step. CAVEAT: for a DEPLOYED model the LSDL edit syncs only after a model refresh. Persist with save_model.")]
+        [McpServerTool(Name = "set_ai_data_schema"), Description("Include or exclude a field (measure/column/table) from the Prep-for-AI 'AI data schema': the focused field set Copilot/data agents reason over. included=false EXCLUDES it (marks it Hidden in the LSDL); included=true restores it. Excluding noise (keys, sort/helper columns, intermediate measures) sharpens AI answers without hiding the field from report authors. Auto-enables the linguistic schema if needed; round-trip verified, live, a single undoable step. CAVEAT: for a DEPLOYED model the LSDL edit syncs only after a model refresh. Persist with save_model. On Pro the Plan can propose these choices as rows (the ai.schema point, what Copilot sees); this op is the same change done by hand.")]
         public static Task<SetResult> SetAiDataSchema(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales', 'column:Sales/CustomerKey', 'table:Bridge'")] string objRef,
             [Description("true = include in the AI data schema; false = exclude (mark Hidden)")] bool included,
@@ -930,15 +997,15 @@ namespace Semanticus.Engine
 
         // ---- Authoring generators (calendar / time-intelligence) -------------------------------
 
-        [McpServerTool(Name = "generate_date_table"), Description("CLASSIC approach: create a calculated date table (Date, Year, Quarter, Month Number/Name, Year-Month, Day, Day-of-Week) over a date range and mark it as the model's date table (DataCategory='Time'). For calendar-based time intelligence (CL 1701+, the modern approach with calendar-aware DAX like TOTALYTD(expr, 'Fiscal')), prefer define_calendar_from_template. Defaults: name 'Date', range 5 years back to end of this year. Columns materialize on deploy/process. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "generate_date_table"), Description("CLASSIC approach: create a calculated date table (Date, Year, Quarter, Month Number/Name, Year-Month, Day, Day-of-Week) over a date range and mark it as the model's date table (DataCategory='Time', with its Date column as the key). For calendar-based time intelligence (CL 1701+, the modern approach with calendar-aware DAX like TOTALYTD(expr, 'Fiscal')), prefer define_calendar_from_template. Defaults: name 'Date', range 5 years back to end of this year. Columns materialize on deploy/process. Undoable.")]
         public static Task<GenerateResult> GenerateDateTable(IEngine engine,
             [Description("Table name (default 'Date')")] string tableName = "Date",
             [Description("DAX start-date expression (default DATE(YEAR(TODAY())-5,1,1))")] string startExpr = null,
             [Description("DAX end-date expression (default DATE(YEAR(TODAY()),12,31))")] string endExpr = null,
-            [Description("Mark as the date table (DataCategory='Time'); default true")] bool markAsDate = true)
+            [Description("Mark as the date table (DataCategory='Time' and the Date column as the key); default true")] bool markAsDate = true)
             => engine.GenerateDateTableAsync(tableName, startExpr, endExpr, markAsDate, "agent");
 
-        [McpServerTool(Name = "generate_time_intelligence"), Description("Generate a suite of time-intelligence measures for a base measure, each correctly written against the given date column, named '<base> <variant>', placed in a 'Time Intelligence' display folder, and inheriting the base format. Default suite: YTD, QTD, MTD, PY (prior year), YoY, YoYPct. Additional opt-in variants (pass in 'variants'): ROLL12/R3M/R6M (rolling 12/3/6-month windows), SPLY (same period last year), PYTD (prior-year YTD), PM (prior month), MoM + MoM% (month-over-month delta and %). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "generate_time_intelligence"), Description("Generate a suite of time-intelligence measures for a base measure, each correctly written against the given date column, named '<base> <variant>', placed in a 'Time Intelligence' display folder, and inheriting the base format. Default suite: YTD, QTD, MTD, PY (prior year), YoY, YoYPct. Additional opt-in variants (pass in 'variants'): ROLL12/R3M/R6M (rolling 12/3/6-month windows), SPLY (same period last year), PYTD (prior-year YTD), PM (prior month), MoM + MoM% (month-over-month delta and %). Undoable.")]
         public static Task<GenerateResult> GenerateTimeIntelligence(IEngine engine,
             [Description("Base measure ref, e.g. 'measure:Sales/Total Sales'")] string baseMeasureRef,
             [Description("Date column as DAX ('Date'[Date]) or a column ref (column:Date/Date)")] string dateColumn,
@@ -948,12 +1015,12 @@ namespace Semanticus.Engine
 
         // ---- Calendar-based time intelligence (CL 1701+) ---------------------------------------
 
-        [McpServerTool(Name = "list_calendars"), Description("List the model's calendars (calendar-based time intelligence, CL 1701+): per table, each calendar's column→TimeUnit mappings (Year/Quarter/Month/Week/Date/…, primary + associated) and its time-related (untagged) bucket. Pure offline metadata read, no connection needed. Also reports whether the model's compatibility level supports calendars at all. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_calendars"), Description("List the model's calendars (calendar-based time intelligence, CL 1701+): per table, each calendar's column→TimeUnit mappings (Year/Quarter/Month/Week/Date/…, primary + associated) and its time-related (untagged) bucket. Pure offline metadata read, no connection needed. Also reports whether the model's compatibility level supports calendars at all.")]
         public static Task<CalendarListResult> ListCalendars(IEngine engine,
             [Description("Table name or 'table:Name' ref to filter to one table; null = all tables")] string tableRef = null)
             => engine.ListCalendarsAsync(tableRef);
 
-        [McpServerTool(Name = "define_calendar"), Description("Create a calendar on a table (calendar-based time intelligence, CL 1701+): map its columns to TimeUnit categories (Year, Quarter, Month, Week, Date, MonthOfYear, DayOfWeek, …: absolute units and recurring '…OfYear' variants), with optional associated columns per unit and a 'timeRelated' bucket for untagged time columns (e.g. IsWorkingDay). Enables calendar-aware DAX: TOTALYTD(expr, '<calendar>'). A table can hold several calendars (Gregorian + Fiscal + ISO…) over the same columns. One undoable step; persist with save_model. Requires CL 1701+ (set_compatibility_level). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "define_calendar"), Description("Create a calendar on a table (calendar-based time intelligence, CL 1701+): map its columns to TimeUnit categories (Year, Quarter, Month, Week, Date, MonthOfYear, DayOfWeek, …: absolute units and recurring '…OfYear' variants), with optional associated columns per unit and a 'timeRelated' bucket for untagged time columns (e.g. IsWorkingDay). Enables calendar-aware DAX: TOTALYTD(expr, '<calendar>'). A table can hold several calendars (Gregorian + Fiscal + ISO…) over the same columns. One undoable step; persist with save_model. Requires CL 1701+ (set_compatibility_level).")]
         public static Task<CalendarResult> DefineCalendar(IEngine engine,
             [Description("Table name or 'table:Name' ref")] string tableRef,
             [Description("Calendar name, e.g. 'Fiscal'")] string name,
@@ -961,13 +1028,13 @@ namespace Semanticus.Engine
             [Description("Optional calendar description")] string description = null)
             => engine.DefineCalendarAsync(tableRef, name, mappings, description, "agent");
 
-        [McpServerTool(Name = "delete_calendar"), Description("Delete a calendar from a table (the columns themselves are untouched). Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "delete_calendar"), Description("Delete a calendar from a table (the columns themselves are untouched). Undoable.")]
         public static Task<SetResult> DeleteCalendar(IEngine engine,
             [Description("Table name or 'table:Name' ref")] string tableRef,
             [Description("Calendar name")] string name)
             => engine.DeleteCalendarAsync(tableRef, name, "agent");
 
-        [McpServerTool(Name = "tag_calendar_column"), Description("Incrementally edit one column mapping on an existing calendar: tag a column to a TimeUnit (replacing that unit's primary if it has one), add it as an ASSOCIATED column of a unit, put it in the 'timeRelated' bucket, or remove=true to untag it. Undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "tag_calendar_column"), Description("Incrementally edit one column mapping on an existing calendar: tag a column to a TimeUnit (replacing that unit's primary if it has one), add it as an ASSOCIATED column of a unit, put it in the 'timeRelated' bucket, or remove=true to untag it. Undoable.")]
         public static Task<CalendarResult> TagCalendarColumn(IEngine engine,
             [Description("Table name or 'table:Name' ref")] string tableRef,
             [Description("Calendar name (must exist: define_calendar first)")] string calendarName,
@@ -977,7 +1044,7 @@ namespace Semanticus.Engine
             [Description("true = remove this column's mapping instead of adding one")] bool remove = false)
             => engine.TagCalendarColumnAsync(tableRef, calendarName, column, timeUnit, associated, remove, "agent");
 
-        [McpServerTool(Name = "define_calendar_from_template"), Description("One-step calendar setup (the modern replacement for generate_date_table): generate a template's calculated columns (only where absent: existing columns are kept and mapped as-is) AND the calendar with its TimeUnit mappings, as one undoable step. Templates: gregorian (Year/Quarter/Month/Day + name-by-number sort pairing) · fiscal (fiscalStartMonth, FY labeled by ENDING year) · iso (ISO-8601 weeks, Thursday rule) · 445 (4-4-5 retail periods over ISO weeks) · 13period (13 four-week periods). Targets an existing table with a date column (dateColumn, auto-detected when unambiguous), or creates a fresh CALENDAR() calculated table when tableName doesn't exist. The week-based templates (iso/445/13period) share ISO scaffolding columns so they coexist on one table. Requires CL 1701+. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "define_calendar_from_template"), Description("One-step calendar setup (the modern replacement for generate_date_table): generate a template's calculated columns (only where absent: existing columns are kept and mapped as-is) AND the calendar with its TimeUnit mappings, as one undoable step. Templates: gregorian (Year/Quarter/Month/Day + name-by-number sort pairing) · fiscal (fiscalStartMonth, FY labeled by ENDING year) · iso (ISO-8601 weeks, Thursday rule) · 445 (4-4-5 retail periods over ISO weeks) · 13period (13 four-week periods). Targets an existing table with a date column (dateColumn, auto-detected when unambiguous), or creates a fresh CALENDAR() calculated table when tableName doesn't exist. The week-based templates (iso/445/13period) share ISO scaffolding columns so they coexist on one table. Requires CL 1701+.")]
         public static Task<CalendarResult> DefineCalendarFromTemplate(IEngine engine,
             [Description("gregorian | fiscal | iso | 445 | 13period")] string template,
             [Description("Target table (default 'Date'; created as a calculated CALENDAR() table if absent)")] string tableName = null,
@@ -1012,13 +1079,14 @@ namespace Semanticus.Engine
             [Description("interactive | serviceprincipal | azcli | devicecode")] string authMode = "azcli",
             [Description("Optional Entra tenant id or domain to authenticate against")] string tenantId = null,
             [Description("Optional saved account profile id (from list_account_profiles) to open AS, for THIS open only, and never changes the tenant default. Must be an already-signed-in profile; adding a new account or an interactive sign-in is a human action (you will be refused).")] string accountProfileId = null,
-            [Description("true = throw away unsaved edits and open anyway; default false refuses while unsaved")] bool discardUnsaved = false)
+            [Description("true = throw away unsaved edits and open anyway; default false refuses while unsaved")] bool discardUnsaved = false,
+            [Description("true = reuse a sign-in this machine already holds, or answer that a sign in is needed. Never opens a browser or a device-code prompt. An assistant open is already like this; the flag exists so both doors take the same call.")] bool silentOnly = false)
         {
-            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved);
-            return await engine.OpenLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, accountProfileId: accountProfileId, origin: "agent", discardUnsaved: discardUnsaved);
+            await UnsavedWorkGuard.ThrowIfBlockedAsync(engine, discardUnsaved, "agent", "open the published model " + (string.IsNullOrWhiteSpace(database) ? endpoint : database));
+            return await engine.OpenLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, accountProfileId: accountProfileId, origin: "agent", discardUnsaved: discardUnsaved, silentOnly: silentOnly);
         }
 
-        [McpServerTool(Name = "deploy_live"), Description("DEPLOY the session's metadata edits back to the live Power BI / Fabric / Azure AS model over XMLA (the write half of open_live). Metadata only (names/descriptions/visibility/categories/format strings/folders/summarize-by, measure + calc-column DAX, partition sources (M / calc-table DAX / legacy), shared expressions, and the linguistic schema) via Model.SaveChanges(), matched by LineageTag so renames land on the right object. NO data refresh. Absence never deletes: an object that is only on the live model is reported in LiveOnly and left alone unless you pass it in deleteRefs (the opt-in tick). A NEW CALCULATED table IS created (and Calculate-recalced on commit); other structural changes (new DATA/import tables, new data columns, new partitions, source-type or Direct Lake rebinds, incremental-refresh policy) are reported in Unmatched/LiveOnly, never silently dropped. Empty endpoint = deploy back to the model this session opened (the round-trip); or pass endpoint + database. DRY RUN by default: commit=true writes, and that write needs the review token the preview returned. Needs a Read-Write XMLA endpoint and a write principal (authMode=serviceprincipal is the reliable one).")]
+        [McpServerTool(Name = "deploy_live"), Description("DEPLOY the session's metadata edits back to the live Power BI / Fabric / Azure AS model over XMLA (the write half of open_live). Metadata only (names/descriptions/visibility/categories/format strings/folders/summarize-by, measure + calc-column DAX, partition sources (M / calc-table DAX / legacy), shared expressions, and the linguistic schema) via Model.SaveChanges(), matched by LineageTag so renames land on the right object. NO data refresh. Absence never deletes: an object that is only on the live model is reported in LiveOnly and left alone unless you pass it in deleteRefs (the opt-in tick). A NEW CALCULATED table IS created (and Calculate-recalced on commit); other structural changes (new DATA/import tables, new data columns, new partitions, source-type or Direct Lake rebinds, incremental-refresh policy) are reported in Unmatched/LiveOnly, never silently dropped. Empty endpoint = deploy back to the model this session opened (the round-trip); or pass endpoint + database. DRY RUN by default: commit=true writes, and that write needs the review token the preview returned. A committed write first saves a restore point of the live model's metadata (list_restore_points) so rollback_push can undo it; if that snapshot fails, a write with deleteRefs is refused and a write without deletes goes ahead with a warning. Needs a Read-Write XMLA endpoint and a write principal (authMode=serviceprincipal is the reliable one).")]
         public static Task<DeployReport> DeployLive(IEngine engine,
             [Description("XMLA endpoint; empty = deploy back to the live model this session was opened from (open_live)")] string endpoint = null,
             [Description("Dataset / database name; ignored when endpoint is empty (the bound source's dataset is used)")] string database = null,
@@ -1029,6 +1097,15 @@ namespace Semanticus.Engine
             [Description("the review token returned by the preview; required to write, and it must still match")] string confirmToken = null,
             [Description("object refs from the preview LiveOnly list to remove; omit to leave extra live objects alone. Never a flag that means remove everything missing.")] string[] deleteRefs = null)
             => engine.DeployLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, commit: commit, origin: "agent", overrideReason: overrideReason, confirmToken: confirmToken, deleteRefs: deleteRefs);
+
+        [McpServerTool(Name = "publish_new_model"), Description("PUBLISH the open model as a NEW semantic model in a Power BI / Fabric workspace, load its data, and make it this model's publish destination (the next deploy_live or apply_model_diff updates it) and the model Tests and queries read. The person's Publish page does the same with its 'New model in a workspace' card. Use it when the model has no published copy yet (a model built with start_model_from_sql, a new local file); to update a model that already exists, use deploy_live or apply_model_diff. Nothing is overwritten: a name already taken in the workspace is refused before anything is written. A model whose source is a Fabric SQL endpoint is published as Direct Lake, so its data loads with no sign-in step, and the local copy turns Direct Lake in the same undoable step. Any other source is published as an import model; its result says to set the data source sign-in in the Power BI service, then refresh, so pass that line on. DRY RUN by default: commit=false names the workspace, the name and Direct Lake or Import, and contacts nothing; commit=true creates the model. The write follows the person's permission settings like every live write. list_workspaces gives workspace names.")]
+        public static Task<NewModelResult> PublishNewModel(IEngine engine,
+            [Description("The workspace's name, as list_workspaces shows it")] string workspace,
+            [Description("The new model's name; empty = the open model's name")] string name = null,
+            [Description("serviceprincipal | azcli | interactive | devicecode; empty = the sign-in the model's SQL source was read with")] string authMode = null,
+            [Description("Optional Entra tenant id or domain")] string tenantId = null,
+            [Description("false = DRY RUN (say what would be created, contact nothing); true = create the model and load its data")] bool commit = false)
+            => engine.PublishNewModelAsync(workspace, name, authMode, tenantId, origin: "agent", workspaceId: null, commit: commit);
 
         [McpServerTool(Name = "list_refresh_types"), Description("List the partition refresh ('process') options, each with a plain-language explanation: Full (reload + recalc), DataOnly (reload, no recalc), Calculate (recalc only), ClearValues (empty it), Automatic (refresh if stale), Add (append rows), plus the table-level Defragment / Indexes. Read-only. Use it to pick a type for refresh_partition.")]
         public static Task<RefreshTypeInfo[]> ListRefreshTypes(IEngine engine) => engine.ListRefreshTypesAsync();
@@ -1057,10 +1134,10 @@ namespace Semanticus.Engine
             return s;
         }
 
-        [McpServerTool(Name = "connection_status"), Description("Report the current live connection (connected, kind, data source).")]
+        [McpServerTool(Name = "connection_status"), Description("Report the current live query connection: connected, kind, data source. For which model is being edited versus which one answers queries (they can be two different copies), use connection_context.")]
         public static Task<ConnectionStatus> ConnectionStatusTool(IEngine engine) => engine.ConnectionStatusAsync();
 
-        [McpServerTool(Name = "disconnect"), Description("Close the live connection.")]
+        [McpServerTool(Name = "disconnect"), Description("Close the live query connection (the one connect_xmla, connect_local, open_live or open_local attached). The open model, its unsaved edits and its undo history stay in the session; run_dax, run_dmv and the other live tools need a new connection afterwards. Returns the resulting connection status.")]
         public static async Task<ConnectionStatus> Disconnect(IEngine engine)
         {
             var s = await engine.DisconnectAsync();
@@ -1150,7 +1227,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "reconcile_measure"), Description("Reconcile a DAX measure against an INDEPENDENT SQL ground truth, cell by cell (the Tests-tab correctness spine). The engine runs the DAX side (SUMMARIZECOLUMNS over your groupBy + the measure, plus an independent grand-total query) over the live XMLA connection and runs YOUR supplied SQL over the Fabric SQL endpoint, full-outer-joins them by the composite grouping key, and judges every cell under an explicit tolerance + blank policy. The engine NEVER authors the SQL. You supply the ground truth. The SQL runs against the source endpoint as YOUR OWN identity (the engine holds no elevated credential. It can only read what you already can; the endpoint's nature + your warehouse permissions decide what is possible). Whether you (an agent) may run it is governed by the QueryData permission setting on the SQL target (the permissions tab, Ask/Deny/Allow), exactly like preview_table / run_dax. A human runs ungated. groupBy entries are resolved to real model columns (a 'column:Table/Column' ref or a plain 'Table'[Column]); an unresolved entry is refused (this prevents WRONG RESULTS, not writes). blankPolicy is REQUIRED (\"zero\"|\"null\"|\"distinct\"). Grade on `status` (Reconciled|Mismatch|InsufficientCoverage|NothingVerifiable|InputError), NOT `anyMismatch`; an uncaveated pass is Reconciled AND unverifiable==0 AND complete==true, and even then expected-member coverage is UNKNOWN (coverageKnown=false; it reconciles the members observed, not that none is missing). A total-only run is InsufficientCoverage by design (a matching total can hide the VertiPaq blank-row trap). Requires a live connection; reads source-row aggregates from BOTH the model and the SQL endpoint. Returns the status, summary, worst offender, coverage facts, per-side execution timestamps (independent connections may see different snapshots), snapshotNote, and the mismatching cells (capped). Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "reconcile_measure"), Description("Reconcile a DAX measure against an INDEPENDENT SQL ground truth, cell by cell (the Tests-tab correctness spine). The engine runs the DAX side (SUMMARIZECOLUMNS over your groupBy + the measure, plus an independent grand-total query) over the live XMLA connection and runs YOUR supplied SQL over the Fabric SQL endpoint, full-outer-joins them by the composite grouping key, and judges every cell under an explicit tolerance + blank policy. The engine NEVER authors the SQL. You supply the ground truth. The SQL runs against the source endpoint as YOUR OWN identity (the engine holds no elevated credential. It can only read what you already can; the endpoint's nature + your warehouse permissions decide what is possible). Whether you (an agent) may run it is governed by the QueryData permission setting on the SQL target (the permissions tab, Ask/Deny/Allow), exactly like preview_table / run_dax. A human runs ungated. groupBy entries are resolved to real model columns (a 'column:Table/Column' ref or a plain 'Table'[Column]); an unresolved entry is refused (this prevents WRONG RESULTS, not writes). blankPolicy is REQUIRED (\"zero\"|\"null\"|\"distinct\"). Grade on `status` (Reconciled|Mismatch|InsufficientCoverage|NothingVerifiable|InputError), NOT `anyMismatch`; an uncaveated pass is Reconciled AND unverifiable==0 AND complete==true, and even then expected-member coverage is UNKNOWN (coverageKnown=false; it reconciles the members observed, not that none is missing). A total-only run is InsufficientCoverage by design (a matching total can hide the VertiPaq blank-row trap). Requires a live connection; reads source-row aggregates from BOTH the model and the SQL endpoint. Returns the status, summary, worst offender, coverage facts, per-side execution timestamps (independent connections may see different snapshots), snapshotNote, and the mismatching cells (capped).")]
         public static async Task<ReconcileRunResult> ReconcileMeasure(IEngine engine,
             [Description("Measure to test (a name or 'measure:Name')")] string measureRef,
             [Description("Ground-truth SQL. Grouped mode: return the groupBy key columns (same order) then the aggregate value column. Total-only mode (empty groupBy): aggregate to one row/value. The engine never writes this.")] string sql,
@@ -1196,10 +1273,26 @@ namespace Semanticus.Engine
 
         // ---- AI-native DAX optimize/verify loop ------------------------------------------------
 
-        [McpServerTool(Name = "benchmark_dax"), Description("Benchmark a DAX query's wall-clock cost on the connected live model: runs it N times and returns first-run, warm-min and warm-median ms plus each run. Use it to measure a query/measure BEFORE and AFTER an optimization to prove the rewrite is actually faster. Read-only.")]
-        public static async Task<BenchmarkResult> BenchmarkDax(IEngine engine,
+        [McpServerTool(Name = "benchmark_dax"), Description("Time a DAX query on the connected live model. mode='warm' (the default) runs it 'runs' times without clearing the cache and returns the first run, the fastest and median warm runs in milliseconds, and each run. mode='coldWarm' runs it cold (the cache is cleared before each run) and warm, and returns the average, standard deviation, minimum and maximum of total time and storage-engine time for each, plus each run. Cold runs and the storage-engine split need a local Power BI Desktop or an admin XMLA endpoint. Clearing the cache on a shared or cloud endpoint affects everyone using it, so there it needs confirm=true, and without it the result is warm only. clearForCold=false keeps a coldWarm run warm only. Use it before and after a rewrite to show the rewrite is faster. It does not change the model. runs: 1 to 25.")]
+        public static async Task<object> BenchmarkDaxOp(IEngine engine,
             [Description("DAX query, e.g. EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Sales\", [Total Sales])")] string query,
-            [Description("How many runs (default 5, max 25)")] int runs = 5)
+            [Description("How many runs (per temperature in coldWarm mode). Default 5, max 25.")] int runs = 5,
+            [Description("warm (the default) or coldWarm")] string mode = "warm",
+            [Description("coldWarm only: clear the cache before each cold run (default true). false = warm only.")] bool clearForCold = true,
+            [Description("coldWarm only: required to clear the cache on a shared or cloud endpoint (affects all users); ignored on local Power BI Desktop.")] bool confirm = false)
+        {
+            switch ((mode ?? "").Trim().ToLowerInvariant())
+            {
+                case "":
+                case "warm": return await BenchmarkDax(engine, query, runs);
+                case "coldwarm": return await BenchmarkDaxColdWarm(engine, query, runs, clearForCold, confirm);
+                default: throw new ArgumentException("mode must be 'warm' or 'coldWarm'.", nameof(mode));
+            }
+        }
+
+        /// <summary>benchmark_dax with mode='warm'. The activity kind stays "benchmark_dax": the DAX Lab reads a
+        /// BenchmarkResult off that kind.</summary>
+        public static async Task<BenchmarkResult> BenchmarkDax(IEngine engine, string query, int runs = 5)
         {
             var r = await engine.BenchmarkDaxAsync(query, runs);
             Emit(engine, new ActivityEvent { Kind = "benchmark_dax", Origin = "agent", Label = "Benchmarked a query", Query = TruncDax(query),
@@ -1228,7 +1321,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "verify_dax_equivalence"), Description("PROVE a candidate DAX rewrite is behavior-preserving before applying it: evaluates exprA (original) and exprB (rewrite) side by side across MULTIPLE context shapes built from groupBy (the fully-crossed leaf rows AND each single-column subtotal AND the grand total) and reports whether ALL values match plus any mismatching contexts. The extra shapes matter: SUMMARIZECOLUMNS leaves pin every dimension, so a wrong-SCOPE rewrite (wrong denominator, collapsed context transition, over-broad ALL/ALLEXCEPT) can match at every leaf yet diverge at a subtotal or the grand total. This gate catches that. ALWAYS run it (over a representative group-by matrix) before replacing a measure with an optimized version. Read-only.")]
+        [McpServerTool(Name = "verify_dax_equivalence"), Description("PROVE a candidate DAX rewrite is behavior-preserving before applying it: evaluates exprA (original) and exprB (rewrite) side by side across MULTIPLE context shapes built from groupBy (the fully-crossed leaf rows AND each single-column subtotal AND the grand total) and reports whether ALL values match plus any mismatching contexts. The extra shapes matter: SUMMARIZECOLUMNS leaves pin every dimension, so a wrong-SCOPE rewrite (wrong denominator, collapsed context transition, over-broad ALL/ALLEXCEPT) can match at every leaf yet diverge at a subtotal or the grand total. This gate catches that. Use it, over a representative group-by matrix, before replacing a measure with a hand-applied rewrite (update_measure); optimize_measure and apply_plan run the same proof themselves. Read-only.")]
         public static async Task<EquivalenceResult> VerifyDaxEquivalence(IEngine engine,
             [Description("Original scalar DAX expression (e.g. the current measure body)")] string exprA,
             [Description("Candidate rewrite scalar DAX expression")] string exprB,
@@ -1263,11 +1356,11 @@ namespace Semanticus.Engine
         }
 
         public static async Task<OptimizeMeasureResult> OptimizeMeasure(IEngine engine,
-            [Description("Measure/calc ref, e.g. 'measure:Sales/Total Sales'")] string measureRef,
-            [Description(">=2 candidate DAX rewrites to race (author them independently)")] string[] candidates,
-            [Description("Group-by columns forming the equivalence matrix, e.g. [\"'Date'[Year]\", \"'Product'[Category]\"]. A representative matrix is required to PROVE per-context equivalence")] string[] verifyGroupBy,
-            [Description("Optional table filters applied to the whole comparison")] string[] verifyFilters = null,
-            [Description("Apply the fastest proven winner (Pro). false = dry-run: return evidence, change nothing.")] bool apply = true)
+            string measureRef,
+            string[] candidates,
+            string[] verifyGroupBy,
+            string[] verifyFilters = null,
+            bool apply = true)
         {
             return await OptimizeMeasureCore(engine, measureRef, candidates, verifyGroupBy, verifyFilters, apply);
         }
@@ -1281,13 +1374,13 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "optimize_measure"), Description("VERIFIED EDITS: compare candidate DAX rewrites across the group-by list you provide. The group-by argument must be a list of text column names. The engine only applies a proven winner.")]
+        [McpServerTool(Name = "optimize_measure"), Description("VERIFIED EDITS: optimize a measure with evidence. Give 2 or more candidate DAX rewrites; the engine validates each (a candidate that references the measure itself is rejected), checks each returns identical values to the current body across the SUMMARIZECOLUMNS(verifyGroupBy) matrix you supply, benchmarks only the ones that matched (warm wall-clock over that grid, not a server FE/SE trace), and, when apply is true (the default), applies the fastest that beats the current body beyond a measured noise band as one undoable edit, recording the proof and benchmark as evidence. apply=false is a dry run that returns the same evidence and changes nothing. Equivalence is only as strong as verifyGroupBy, which must be a JSON list of text column names: a grand-total-only match is downgraded to unverified and never applied, so pass representative group-by columns. Nothing is applied with fewer than 2 valid candidates, without a live connection (open_live or open_local), or when no candidate is proven; a candidate that matched only under degraded fidelity is reported, not applied. Free on every tier.")]
         public static Task<OptimizeMeasureResult> OptimizeMeasureWire(IEngine engine,
             [Description("Measure/calc ref, e.g. 'measure:Sales/Total Sales'")] string measureRef,
             [Description(">=2 candidate DAX rewrites to race")] string[] candidates,
             [Description("A JSON list of text group-by columns, e.g. [\"'Date'[Year]\"]")] JsonElement verifyGroupBy,
             [Description("Optional table filters applied to the comparison")] string[] verifyFilters = null,
-            [Description("Apply the fastest proven winner (Pro). false = dry-run")] bool apply = true)
+            [Description("true (default) applies the fastest proven winner as one undoable edit; false = dry run: return the evidence, change nothing")] bool apply = true)
             => OptimizeMeasureCore(engine, measureRef, candidates, JsonTextList(verifyGroupBy, "verifyGroupBy"), verifyFilters, apply);
 
         [McpServerTool(Name = "probe_measure"), Description("VERIFIED EDITS: run a measure across MANY filter contexts to gather EVIDENCE before you trust it (value/BLANK/ERROR per member, non-blank coverage, additivity) across a scenario matrix. DAX context-dependence bugs (missing time-intel guards, blanks, non-additivity) are INVISIBLE until you run the measure in different contexts. It replicates a real visual (SUMMARIZECOLUMNS with your filter args as the OUTER/slicer context + a group-by axis) so ALLSELECTED / SELECTEDVALUE / ISINSCOPE resolve correctly. A naive one-context test lies about those. Pass a primaryAxis to auto-generate grand/single/multi/empty/boundary scenarios, and/or scenarios[] for cross-filter cases (name columns + members; do NOT hand-write DAX). Reports BEHAVIOR across contexts, NEVER 'correct'. You judge it against intent. Read-only; needs a live connection.")]
@@ -1304,7 +1397,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "capture_baseline"), Description("VERIFIED EDITS: value-capture at edit-START (run this BEFORE a risky structural edit: rename, retype, relationship change, delete, M rewrite). Freezes the MEASURED values of the object's blast radius (the lineage-downstream measures, evaluated BY REFERENCE over the SUMMARIZECOLUMNS(groupBy) grid you supply) into a session-held baseline, and returns a captureId. After the edit, compare_baseline re-evaluates the same grid and reports exactly which numbers moved. Pass representative groupBy columns: a grand-total-only baseline is thin evidence (disclosed in the result). Over-cap measures are listed in Skipped, never silently dropped. CERTIFIED TOTALS (month-end close): pass a `label` (the period, e.g. \"close FY26 · July\") to also PERSIST this capture beside the model as a certified baseline: one control total per call (objRef = the measure, filters = its stated context, includeDependents:false), all under the same label. That certified set survives the session, so a later refresh or edit that moves a signed-off number is caught by compare_baseline(label:…). needs a live connection (a baseline is measured values, not metadata). Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "capture_baseline"), Description("VERIFIED EDITS: value-capture at edit-START (run this BEFORE a risky structural edit: rename, retype, relationship change, delete, M rewrite). Freezes the MEASURED values of the object's blast radius (the lineage-downstream measures, evaluated BY REFERENCE over the SUMMARIZECOLUMNS(groupBy) grid you supply) into a session-held baseline, and returns a captureId. After the edit, compare_baseline re-evaluates the same grid and reports exactly which numbers moved. Pass representative groupBy columns: a grand-total-only baseline is thin evidence (disclosed in the result). Over-cap measures are listed in Skipped, never silently dropped. CERTIFIED TOTALS (month-end close): pass a `label` (the period, e.g. \"close FY26 · July\") to also PERSIST this capture beside the model as a certified baseline: one control total per call (objRef = the measure, filters = its stated context, includeDependents:false), all under the same label. That certified set survives the session, so a later refresh or edit that moves a signed-off number is caught by compare_baseline(label:…). needs a live connection (a baseline is measured values, not metadata).")]
         public static async Task<BaselineCaptureResult> CaptureBaseline(IEngine engine,
             [Description("The object you are ABOUT TO CHANGE, e.g. 'column:Sales/Amount', 'measure:Sales/Total Sales', 'table:Sales'")] string objRef,
             [Description("Group-by columns forming the evidence grid, e.g. [\"'Date'[Year]\", \"'Product'[Category]\"]. Representative coverage is what makes the later compare meaningful. For a certified TOTAL, leave empty (a single number at a stated context).")] string[] groupBy = null,
@@ -1330,7 +1423,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "compare_baseline"), Description("VERIFIED EDITS: the edit-END half of capture_baseline: re-evaluates a captured baseline's grid on the LIVE model and reports per measure whether its numbers are unchanged, MOVED (with the exact contexts and before→after values), or MISSING (the measure no longer resolves. That is an impact, not a skip). Safe=true only when everything is unchanged, nothing is missing/errored, AND coverage wasn't truncated, honesty first. IMPORTANT: it reads the LIVE model, so run it AFTER the edit is deployed (deploy_live). An undeployed local edit is not validated (the result discloses session edits since capture). CERTIFIED TOTALS (month-end close): pass a `label` instead of a captureId to re-check that period's PERSISTED certified figures. Each is re-evaluated at ITS stated context and reported held / moved (old→new) / missing / not-checkable, so drift from what was signed off is named. Detection, not prevention: it cannot stop a refresh or an out-of-tool edit, only report what moved. The verdict is recorded in the Verified Edits audit trail. needs the live connection. Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "compare_baseline"), Description("VERIFIED EDITS: the edit-END half of capture_baseline: re-evaluates a captured baseline's grid on the LIVE model and reports per measure whether its numbers are unchanged, MOVED (with the exact contexts and before→after values), or MISSING (the measure no longer resolves. That is an impact, not a skip). Safe=true only when everything is unchanged, nothing is missing/errored, AND coverage wasn't truncated, honesty first. IMPORTANT: it reads the LIVE model, so run it AFTER the edit is deployed (deploy_live). An undeployed local edit is not validated (the result discloses session edits since capture). CERTIFIED TOTALS (month-end close): pass a `label` instead of a captureId to re-check that period's PERSISTED certified figures. Each is re-evaluated at ITS stated context and reported held / moved (old→new) / missing / not-checkable, so drift from what was signed off is named. Detection, not prevention: it cannot stop a refresh or an out-of-tool edit, only report what moved. The verdict is recorded in the Verified Edits audit trail. needs the live connection.")]
         public static async Task<BaselineCompareResult> CompareBaseline(IEngine engine,
             [Description("The captureId from capture_baseline (omit for the most recent session capture)")] string captureId = null,
             [Description("Certified-totals label (month-end close): re-check the persisted certified figures signed off under this period, e.g. \"close FY26 · July\". Takes precedence over captureId.")] string label = null)
@@ -1405,31 +1498,31 @@ namespace Semanticus.Engine
 
         // ---- The workflow engine (enforced, evidence-verified playbooks). Workflows is a Semanticus Pro feature. ----
 
-        [McpServerTool(Name = "list_workflows"), Description("WORKFLOWS: list the available enforced playbooks, the stock library shipped with the engine plus this project's own `.semanticus/workflows/*.md` (a user file shadows a stock one of the same name; files are re-read on every call, so edits are live). Each entry shows step count, whether it is GATED, and any parse error (a malformed file is surfaced here, never hidden). Workflows is a Semanticus Pro feature, reads included. Read-only.")]
+        [McpServerTool(Name = "list_workflows"), Description("WORKFLOWS: list the workflows: your own in this project's `.semanticus/workflows/*.md` plus the starters shipped with the engine (a project file shadows a starter of the same name; files are re-read on every call, so edits are live). Each entry shows step count, whether it is GATED, starter (a shipped copy to start from; instantiate_workflow_template copies it), required (a team rule names it), replacesRequired (your copy shadows the shipped version a team rule requires) and any parse error (a malformed file is surfaced here, never hidden). Workflows is a Semanticus Pro feature, reads included. Read-only.")]
         public static Task<WorkflowInfo[]> ListWorkflows(IEngine engine) => engine.ListWorkflowsAsync();
 
         [McpServerTool(Name = "get_workflow_enforcement"), Description("WORKFLOWS: read the model-wide enforcement mode, the user's kill-switch over gate strictness. null mode = no override (each workflow's own strictness applies, engine default hard); 'off' = every gate is skipped (runs record no verified evidence); 'warn'/'hard' force that strictness everywhere. Workflows is a Semanticus Pro feature, reads included. Read-only.")]
         public static Task<WorkflowEnforcement> GetWorkflowEnforcement(IEngine engine) => engine.GetWorkflowEnforcementAsync();
 
-        [McpServerTool(Name = "set_workflow_enforcement"), Description("WORKFLOWS: set (or clear) the model-wide enforcement mode. mode='off' disables every gate, for quick tasks where the user explicitly doesn't want enforced workflows; mode='default' (or null) restores per-definition strictness; 'hard'/'warn' force that level everywhere. Sits at the TOP of the strictness resolution (above per-gate and per-workflow overrides), is persisted in .semanticus/workflow-settings.json beside the model, and the VS Code views update at once. You see the change on your next call. Ask the user before turning enforcement off. It is their accountability lever, not yours. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_workflow_enforcement"), Description("WORKFLOWS: set (or clear) the model-wide enforcement mode. mode='off' disables every gate, for quick tasks where the user explicitly doesn't want enforced workflows; mode='default' (or null) restores per-definition strictness; 'hard'/'warn' force that level everywhere. Sits at the TOP of the strictness resolution (above per-gate and per-workflow overrides), is persisted in .semanticus/workflow-settings.json beside the model, and the VS Code views update at once. You see the change on your next call. Ask the user before turning enforcement off. It is their accountability lever, not yours. Workflows is a Semanticus Pro feature. As the assistant you can only set 'hard'. Relaxing enforcement is the person's, and you are told to ask them.")]
         public static Task<WorkflowEnforcement> SetWorkflowEnforcement(IEngine engine,
             [Description("'hard' | 'warn' | 'off' | 'default' (clear the override)")] string mode)
             => engine.SetWorkflowEnforcementAsync(mode, "agent");
 
-        [McpServerTool(Name = "set_workflow_enabled"), Description("WORKFLOWS: turn a workflow ON or OFF for this project, the availability toggle (which workflows are on the menu). Disabled = hidden from the run picker and refused by start_workflow, but STILL listed (marked enabled:false) so it can be re-enabled. Persisted in .semanticus/workflow-settings.json beside the model (git-tracked, so the curation travels with the repo). The VS Code views update at once; you see the change on your next call. Orthogonal to strictness (how hard gates bite) and to whether a workflow is required for a task. Curating your menu is content. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_workflow_enabled"), Description("WORKFLOWS: turn a workflow ON or OFF for this project, the availability toggle (which workflows are on the menu). Disabled = hidden from the run picker and refused by start_workflow, but STILL listed (marked enabled:false) so it can be re-enabled. Persisted in .semanticus/workflow-settings.json beside the model (git-tracked, so the curation travels with the repo). The VS Code views update at once; you see the change on your next call. Orthogonal to strictness (how hard gates bite) and to whether a workflow is required for a task. Curating your menu is content. Workflows is a Semanticus Pro feature. As the assistant you can only turn a workflow on. Turning one off is the person's, and you are told to ask them.")]
         public static Task<WorkflowInfo[]> SetWorkflowEnabled(IEngine engine,
             [Description("The workflow name from list_workflows.")] string name,
             [Description("true = on the menu (default); false = hidden and unstartable.")] bool enabled)
             => engine.SetWorkflowEnabledAsync(name, enabled, "agent");
 
-        [McpServerTool(Name = "set_workflow_binding"), Description("WORKFLOWS: require an op to route through a workflow, the \"Required for…\" control (the third axis: availability · REQUIRED · strictness). require is the allowed workflow set (you pick among them by whenToUse); mode 'hard' REFUSES the bare op and steers you to start_workflow, 'warn' allows it but records a compliance advisory, 'off' (or an empty require) CLEARS the binding. The bare op is exempt only while an active run of a required workflow is AT a step that performs it (start-and-freestyle does not satisfy the mandate). Persisted in .semanticus/workflow-settings.json beside the model (git-tracked, so the mandate travels with the repo). The VS Code views update at once; you see the change on your next call. Independent of the strictness kill-switch. A mandate is whether you must ENTER a run, not how hard its gates bite. Workflows is a Semanticus Pro feature, reads included. Clearing is refused while the binding is locked team policy. get_workflow_policy shows the current rules.")]
+        [McpServerTool(Name = "set_workflow_binding"), Description("WORKFLOWS: require an op to route through a workflow, the \"Required for…\" control (the third axis: availability · REQUIRED · strictness). require is the allowed workflow set (you pick among them by whenToUse); mode 'hard' REFUSES the bare op and steers you to start_workflow, 'warn' allows it but records a compliance advisory, 'off' (or an empty require) CLEARS the binding. The bare op is exempt only while an active run of a required workflow is AT a step that performs it (start-and-freestyle does not satisfy the mandate). Persisted in .semanticus/workflow-settings.json beside the model (git-tracked, so the mandate travels with the repo). The VS Code views update at once; you see the change on your next call. Independent of the strictness kill-switch. A mandate is whether you must ENTER a run, not how hard its gates bite. Workflows is a Semanticus Pro feature, reads included. Clearing is refused while the binding is locked team policy. get_workflow_policy shows the current rules. As the assistant you can only make a requirement stricter (a new one, a stronger mode, fewer ways to satisfy it). Taking one off or loosening it is the person's, and you are told to ask them. Under the Locked policy a stricter one asks first like any file write.")]
         public static Task<WorkflowInfo[]> SetWorkflowBinding(IEngine engine,
             [Description("The op to route, e.g. 'create_measure' (bindable set: create_measure, update_measure, create_calculated_column, create_calculation_item, create_table, create_relationship)")] string op,
             [Description("The allowed workflow names (from list_workflows). Empty clears the binding.")] string[] require = null,
             [Description("'hard' (refuse the bare op) | 'warn' (allow + record) | 'off' (clear). Default 'off'.")] string mode = "off")
             => engine.SetWorkflowBindingAsync(op, require, mode, "agent");
 
-        [McpServerTool(Name = "set_workflow_activation"), Description("WORKFLOWS: show a workflow only when a condition holds, the dynamic-activation control (which workflows are on the CURRENT menu). e.g. show 'deploy-freeze-guard' only during the month-end window, or 'prod-checklist' only on the prod workspace. `when` is a plain condition over facts the engine knows: date (date.monthEndOffset >= -3, date.dayOfMonth >= 28), connection (connection.workspace ~ '*prod*', connection.kind == 'xmla'), git (git.branch == 'main'), the model (model.tableCount > 50, model.hasRls == true, model.readinessGrade < 'B'), or the session (session.tier == 'pro'), joined with && / || (no parentheses; split into separate rules for grouping). set='on' shows it only when the condition holds; set='off' hides it then. Passing neither `when` nor `set` CLEARS the rule (it shows normally again). Activation CURATES the menu. It is NOT a lock: a hidden workflow is still startable on demand, and a workflow REQUIRED by a binding is always shown. Persisted in .semanticus/workflow-settings.json (git-tracked). The VS Code views update at once; you see the change on your next call. Workflows is a Semanticus Pro feature, reads included. get_workflow_policy shows the current rules + any contradictions.")]
+        [McpServerTool(Name = "set_workflow_activation"), Description("WORKFLOWS: show a workflow only when a condition holds, the dynamic-activation control (which workflows are on the CURRENT menu). e.g. show 'deploy-freeze-guard' only during the month-end window, or 'prod-checklist' only on the prod workspace. `when` is a plain condition over facts the engine knows: date (date.monthEndOffset >= -3, date.dayOfMonth >= 28), connection (connection.workspace ~ '*prod*', connection.kind == 'xmla'), git (git.branch == 'main'), the model (model.tableCount > 50, model.hasRls == true, model.readinessGrade < 'B'), or the session (session.tier == 'pro'), joined with && / || (no parentheses; split into separate rules for grouping). set='on' shows it only when the condition holds; set='off' hides it then. Passing neither `when` nor `set` CLEARS the rule (it shows normally again). Activation CURATES the menu. It is NOT a lock: a hidden workflow is still startable on demand, and a workflow REQUIRED by a binding is always shown. Persisted in .semanticus/workflow-settings.json (git-tracked). The VS Code views update at once; you see the change on your next call. Workflows is a Semanticus Pro feature, reads included. get_workflow_policy shows the current rules + any contradictions. As the assistant you can show a workflow with a rule but not hide one: a rule with set='off' is the person's, and you are told to ask them.")]
         public static Task<WorkflowInfo[]> SetWorkflowActivation(IEngine engine,
             [Description("The workflow name from list_workflows.")] string workflow,
             [Description("The condition, e.g. \"date.monthEndOffset >= -3\" or \"connection.workspace ~ '*prod*'\". Omit for an unconditional rule; omit BOTH when and set to clear the rule.")] string when = null,
@@ -1439,22 +1532,22 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_workflow_policy"), Description("WORKFLOWS: this project's whole workflow POLICY in one compact read: the model-wide enforcement mode, one row per workflow (on the menu? gated? its whenToUse hint, and the ops that REQUIRE it), and the raw op→workflow bindings (op, required set, mode, whether locked team policy). Token-lean (no step bodies): read it BEFORE authoring so you self-route into a required workflow instead of hitting a mandate by rejection. Read-only. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowPolicy> GetWorkflowPolicy(IEngine engine) => engine.GetWorkflowPolicyAsync();
 
-        [McpServerTool(Name = "list_workflow_profiles"), Description("WORKFLOWS: list the simple project profiles available in Studio, what each changes in plain language, whether it requires Pro, and which profile is selected. A profile is one reviewed bundle of menu, requirement and check-strength settings. Read-only. Use activate_workflow_profile to apply one atomically. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_workflow_profiles"), Description("WORKFLOWS: list the sets of team rules available in Studio (Team standard, Consulting delivery, No team rules), what each changes in plain language, whether it requires Pro, and which one is selected. A set of team rules is one reviewed bundle of menu, requirement and check-strength settings; 'standard' is No team rules. Read-only. Use activate_workflow_profile to apply one atomically. Workflows is a Semanticus Pro feature.")]
         public static async Task<WorkflowProfileInfo[]> ListWorkflowProfiles(IEngine engine)
         {
             var profiles = await engine.ListWorkflowProfilesAsync();
-            Emit(engine, new ActivityEvent { Kind = "list_workflow_profiles", Origin = "agent", Label = "Reviewed workflow profiles", Ok = true });
+            Emit(engine, new ActivityEvent { Kind = "list_workflow_profiles", Origin = "agent", Label = "Reviewed the sets of team rules", Ok = true });
             return profiles;
         }
 
-        [McpServerTool(Name = "activate_workflow_profile"), Description("WORKFLOWS: atomically replace the project's simple workflow policy with one named profile from list_workflow_profiles. Solo analyst clears prior menu rules, requirements and automatic visibility rules. Team and Consulting profiles require Pro because they make workflows required. The settings remain source-controlled and any later manual policy edit marks the profile Custom. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "activate_workflow_profile"), Description("WORKFLOWS: atomically replace the project's team rules with one named set from list_workflow_profiles. standard (No team rules) clears prior menu rules, requirements and automatic visibility rules. team-standard (Team standard) and consulting-delivery (Consulting delivery) require Pro because they make workflows required. The settings remain source-controlled and any later manual policy edit marks the set Custom. Workflows is a Semanticus Pro feature. Replacing the team rules can loosen them, so it is the person's: you are told to ask them.")]
         public static Task<WorkflowProfileResult> ActivateWorkflowProfile(IEngine engine,
-            [Description("Profile name from list_workflow_profiles: standard, team-standard, or consulting-delivery.")] string name)
+            [Description("The set's name from list_workflow_profiles: standard, team-standard, or consulting-delivery.")] string name)
             => engine.ActivateWorkflowProfileAsync(name, "agent");
 
-        [McpServerTool(Name = "get_workflow"), Description("WORKFLOWS: read one workflow's FULL definition: every step's instruction text, gate inputs (the questions you must ask the user), and verify checks. use it to follow a playbook manually, or to preview what start_workflow will enforce. To customise a stock workflow, copy it into `.semanticus/workflows/<name>.md` and edit. The user copy shadows the stock one. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_workflow"), Description("WORKFLOWS: read one workflow's FULL definition: every step's instruction text, gate inputs (the questions you must ask the user), and verify checks. use it to follow a workflow by hand, or to preview what start_workflow will enforce. To customise a starter (a shipped workflow), call instantiate_workflow_template with its name: that copies it into this project as your workflow, and the copy is what you edit. If a team rule requires that workflow, nothing is copied and the required one is returned as it is. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowDef> GetWorkflow(IEngine engine,
-            [Description("The workflow name from list_workflows, e.g. 'new-measure'")] string name)
+            [Description("The workflow name from list_workflows, e.g. 'optimize-dax'")] string name)
             => engine.GetWorkflowAsync(name);
 
         [McpServerTool(Name = "get_workflow_document"), Description("WORKFLOWS: read the exact UTF-8 source text of one saved workflow, its disk byte hash, parse metadata and engine-owned editModel projection. User files shadow stock files. editModel contains every supported field, opaque edit keys, restrictions and finite choices; it is absent when broken source cannot be projected. Keep path and byteHash for preview_workflow_edit and edit_workflow_document. Broken workflow syntax remains readable for Source repair; invalid UTF-8 is refused without changing bytes. This is a next-call disk read; agents receive no workflow library push notifications. Workflows is a Semanticus Pro feature.")]
@@ -1499,9 +1592,10 @@ namespace Semanticus.Engine
 
         [McpServerTool(Name = "start_workflow"), Description("WORKFLOWS: start an ENFORCED run of a workflow. Returns the run id plus the current step. For an ordinary first step that is its full instructions and its gate questions: ask the USER those questions (do not invent answers), do the step's work with the normal tools, then submit_workflow_step. A file whose steps carry forEach: now starts too. If the first row IS an unexpanded loop, what comes back is that loop's SETUP call, not body work: it expands the loop and nothing else, so do not do iteration work yet, and expect no gate, no verification and no receipt until the run reaches the first applicable iteration, which is <loop>#0 only when #0's own when: holds. submit_workflow_step describes the three setup shapes. Calls run inside the same run and certificate. Their steps are expanded at start; a loop carrying call: expands a separate call for each item during loop setup. Submit a call header to check its gate and pass its declared with: inputs. Only declared returns: answers come back to its caller. Use the exact current stepId, including its call and iteration qualifiers. providedAnswers contains values already available for the current questions; ask only for missing information or corrections. The engine (not you) evaluates each gate: required inputs must be answered or explicitly declined, and verify checks (probe / equivalence / BPA / readiness) run against the live model. Every transition broadcasts to the Studio UI; the finished run's full record (answers, declines, evidence) is appended to the experience log. Workflows is a Semanticus Pro feature, reads included.")]
         public static async Task<WorkflowRunView> StartWorkflow(IEngine engine,
-            [Description("The workflow name from list_workflows")] string name)
+            [Description("The workflow name from list_workflows")] string name,
+            [Description("Optional. Run once: the workflow's full text as edited and not saved yet; the run uses it instead of the saved file. Refused for a workflow a team rule requires, which runs only as saved.")] string document = null)
         {
-            var r = await engine.StartWorkflowAsync(name, "agent");
+            var r = await engine.StartWorkflowAsync(name, "agent", document);
             var total = r.TotalStepsProvisional == true
                 ? $"at least {r.TotalSteps} steps"
                 : $"{r.TotalSteps} steps";
@@ -1514,27 +1608,29 @@ namespace Semanticus.Engine
             [Description("The run id from start_workflow (omit for the most recent run)")] string runId = null)
             => engine.GetWorkflowRunAsync(runId);
 
-        [Description("WORKFLOWS: submit the run's CURRENT step. Since public start admits forEach:, a run can be sitting on an unexpanded loop from its very first row, so the setup shapes below are reachable straight after start_workflow, not only from inside a run. answers is a JSON object keyed by gate-input name: a value, or the explicit decline sentinel {\"declined\": true, \"reason\": \"...\"} (answer-or-decline inputs accept a reasoned decline; required ones do not). An ordinary or iteration submission runs its gate and verification against the live model. A hard gate that fails blocks the step with the failure evidence (fix and re-submit, or skip_workflow_step with a reason); a warn gate records it and passes. THREE current-row shapes are setup calls and each one only expands the loop. A current unexpanded self-sourced loop is a source-only setup call: answer exactly the visible source question. A current unexpanded inline loop is a no-answer setup call: submit the current base id with no answers. A current unexpanded loop whose list is declared on an earlier step rather than on this call is also a no-answer setup call: submit the current base id with no answers, and do not answer the list input here, because it belongs to the step that declares it. Do not do iteration work yet on any of the three. None of them runs the input gate, body verification, or stamps a receipt: no gate, no verification, no receipt until the first applicable iteration. That third call is also how an unanswered or unusable list is reported, so reaching it does not mean the list is settled. Every setup call validates its source BEFORE it handles the condition: missing, declined, disallowed blank, over-bound and cross-frame scope cases refuse before anything is recorded, with skip_workflow_step with a reason as the recorded way past; a source only another frame holds reaches the loop only when its declaration says scope: run, and one behind a closed call frame cannot be reached that way at all, so that refusal does not offer it; only a source declared required: optional and answered blank becomes an empty not_applicable loop. Only after that validation is a loop-free false or unreadable when: recorded, and it creates zero iterations. Answering a list input that the immediately following forEach: step reads is not a setup call: it runs that step's own gate and verify and decides the next loop in the same submission. That loop expands only when the usable-list decision is expand or empty; a loop-free false or unreadable when records applied condition_false and creates no iterations. TotalStepsProvisional remains true for an unexpanded row even after not_applicable. After ANY loop expands, the next current row is the first APPLICABLE iteration, which is <loop>#0 only when #0's own when: holds, and it carries the loop's full authored gate except for a self-sourced source frozen at expansion. A when: that reads loop.index or loop.<as> is judged per iteration, so leading iterations may be marked not_applicable with their own loop facts and the run moves to the next one. That first applicable iteration returns the first real instructions, remaining questions, verify, ops, and receipt. An empty list marks that loop not_applicable and the run moves past it. An unusable list on the declaring submission (unanswered, declined, or longer than maxIterations) is refused by the pre-pair checks this unit owns, before anything is recorded. Answers target the current frame. A call header passes its declared with: values only after its own gate succeeds. The callee sees those inputs plus its own answers; only returns: names return to the immediate caller when the call finishes. A missing input reference refuses the header before it advances. providedAnswers carries current-question values already supplied to this call, so preserve or correct them instead of inventing replacements. Run-scoped answers survive loop iterations inside their own call; they do not cross a call boundary unless explicitly passed or returned. On success you get the resulting current step's instructions.")]
         public static async Task<WorkflowRunView> SubmitWorkflowStep(IEngine engine,
-            [Description("The run id (omit for the most recent run)")] string runId = null,
-            [Description("The current step's id, e.g. 'step-2' (omit to mean the current step; a mismatch is rejected)")] string stepId = null,
-            [Description("JSON object of answers, e.g. {\"verificationValue\": \"1234.5\", \"expectedGrain\": \"one row per day\", \"target\": {\"declined\": true, \"reason\": \"...\"}}")] string answers = null,
-            [Description("When the current step hands off to a child whose gate is off but this call expects values back: 'on' turns the child's gate on for this run (recommended); 'off' continues knowing nothing will come back.")] string callGate = null)
+            string runId = null,
+            string stepId = null,
+            string answers = null,
+            string callGate = null,
+            string writes = null)
         {
-            var r = await engine.SubmitWorkflowStepAsync(runId, stepId, answers, "agent", callGate);
+            var r = await engine.SubmitWorkflowStepAsync(runId, stepId, answers, "agent", callGate, writes);
             Emit(engine, new ActivityEvent { Kind = "submit_workflow_step", Origin = "agent", Label = $"Workflow '{r.Workflow}': submission accepted → {(r.Status == "completed" ? "run COMPLETED" : $"now on {r.CurrentStep?.StepId}")}", Target = r.Workflow, Ok = true, Result = null });
             return r;
         }
 
-        [McpServerTool(Name = "submit_workflow_step"), Description("WORKFLOWS: submit the current step. answers must be a JSON object, and callGate must be text such as 'on' or 'off'. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "submit_workflow_step"), Description("WORKFLOWS: submit the run's CURRENT step. Since public start admits forEach:, a run can be sitting on an unexpanded loop from its very first row, so the setup shapes below are reachable straight after start_workflow, not only from inside a run. answers is a JSON object keyed by gate-input name: a value, or the explicit decline sentinel {\"declined\": true, \"reason\": \"...\"} (answer-or-decline inputs accept a reasoned decline; required ones do not). An ordinary or iteration submission runs its gate and verification against the live model. A hard gate that fails blocks the step with the failure evidence (fix and re-submit, or skip_workflow_step with a reason); a warn gate records it and passes. THREE current-row shapes are setup calls and each one only expands the loop. A current unexpanded self-sourced loop is a source-only setup call: answer exactly the visible source question. A current unexpanded inline loop is a no-answer setup call: submit the current base id with no answers. A current unexpanded loop whose list is declared on an earlier step rather than on this call is also a no-answer setup call: submit the current base id with no answers, and do not answer the list input here, because it belongs to the step that declares it. Do not do iteration work yet on any of the three. None of them runs the input gate, body verification, or stamps a receipt: no gate, no verification, no receipt until the first applicable iteration. That third call is also how an unanswered or unusable list is reported, so reaching it does not mean the list is settled. Every setup call validates its source BEFORE it handles the condition: missing, declined, disallowed blank, over-bound and cross-frame scope cases refuse before anything is recorded, with skip_workflow_step with a reason as the recorded way past; a source only another frame holds reaches the loop only when its declaration says scope: run, and one behind a closed call frame cannot be reached that way at all, so that refusal does not offer it; only a source declared required: optional and answered blank becomes an empty not_applicable loop. Only after that validation is a loop-free false or unreadable when: recorded, and it creates zero iterations. Answering a list input that the immediately following forEach: step reads is not a setup call: it runs that step's own gate and verify and decides the next loop in the same submission. That loop expands only when the usable-list decision is expand or empty; a loop-free false or unreadable when records applied condition_false and creates no iterations. TotalStepsProvisional remains true for an unexpanded row even after not_applicable. After ANY loop expands, the next current row is the first APPLICABLE iteration, which is <loop>#0 only when #0's own when: holds, and it carries the loop's full authored gate except for a self-sourced source frozen at expansion. A when: that reads loop.index or loop.<as> is judged per iteration, so leading iterations may be marked not_applicable with their own loop facts and the run moves to the next one. That first applicable iteration returns the first real instructions, remaining questions, verify, ops, and receipt. An empty list marks that loop not_applicable and the run moves past it. An unusable list on the declaring submission (unanswered, declined, or longer than maxIterations) is refused by the pre-pair checks this unit owns, before anything is recorded. Answers target the current frame. A call header passes its declared with: values only after its own gate succeeds. The callee sees those inputs plus its own answers; only returns: names return to the immediate caller when the call finishes. A missing input reference refuses the header before it advances. providedAnswers carries current-question values already supplied to this call, so preserve or correct them instead of inventing replacements. Run-scoped answers survive loop iterations inside their own call; they do not cross a call boundary unless explicitly passed or returned. On success you get the resulting current step's instructions. callGate ('on' or 'off') matters only when the step hands off to a child whose gate is off while this call expects values back: 'on' turns the child's gate on for this run. writes (format-3 workflows, a step your assistant does): the step's model changes as an ordered list of {op, args} from the composer's change ops; they are applied as ONE change before the gate runs, so the step is exactly one undo entry, and a write that fails leaves the model as it was. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowRunView> SubmitWorkflowStepWire(IEngine engine,
             [Description("The run id (omit for the most recent run)")] string runId = null,
             [Description("The current step id (omit for the current step)")] string stepId = null,
             [Description("A JSON object of answers keyed by question")] JsonElement? answers = null,
-            [Description("Text 'on' or 'off' when changing a child gate")] JsonElement? callGate = null)
+            [Description("Text 'on' or 'off' when changing a child gate")] JsonElement? callGate = null,
+            [Description("Format-3 direct step: the step's writes as a JSON list of {op, args}, applied as one change")] JsonElement? writes = null)
             => SubmitWorkflowStep(engine, runId, stepId,
                 JsonObjectTextOrNull(answers ?? default, "answers"),
-                JsonTextOrNull(callGate ?? default, "callGate", "text such as 'on' or 'off'"));
+                JsonTextOrNull(callGate ?? default, "callGate", "text such as 'on' or 'off'"),
+                JsonArrayTextOrNull(writes ?? default, "writes"));
 
         [McpServerTool(Name = "skip_workflow_step"), Description("WORKFLOWS: skip the run's current step WITH A REASON. The accountable-override shape: never a hard wall, never a silent bypass. The reason is recorded on the run and lands in the experience log with the terminal record. Prefer fixing and re-submitting over skipping a failed hard gate. Workflows is a Semanticus Pro feature.")]
         public static async Task<WorkflowRunView> SkipWorkflowStep(IEngine engine,
@@ -1575,7 +1671,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "save_workflow_layout"), Description("Replace shared workflow Canvas positions: {stepId:{x,y}} with finite coordinates. Pass the revision from get_workflow_layout as expectedRevision to reject stale writes. Empty positions resets arrangement. Deleted step IDs are pruned. Stored in the project's .semanticus/workflow-layouts; broadcasts to Studio. Does not edit steps or the model. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowLayout> SaveWorkflowLayout(IEngine engine, string name, Dictionary<string, WorkflowPosition> positions, string expectedRevision = null) => engine.SaveWorkflowLayoutAsync(name, positions, expectedRevision);
 
-        [McpServerTool(Name = "save_workflow"), Description("WORKFLOWS: author or edit a workflow. Write the full markdown (frontmatter + '## Step N:' sections + optional yaml-gate fences with inputs/verify/ops) to this project's `.semanticus/workflows/<name>.md`. The engine PARSE-VALIDATES FIRST: a file the parser refuses is never written and the parse error comes back verbatim. Fix and retry. Saving a stock workflow's name creates your project's customised copy (it shadows the stock one). A workflow is a SKILL definition: gate-free = pure instructions; gates make it enforced. broadcasts workflow/libraryDidChange so the Studio library updates live. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "save_workflow"), Description("WORKFLOWS: author or edit a workflow. Write the full markdown (frontmatter + '## Step N:' sections + optional yaml-gate fences with inputs/verify/ops) to this project's `.semanticus/workflows/<name>.md`. The engine PARSE-VALIDATES FIRST: a file the parser refuses is never written and the parse error comes back verbatim. Fix and retry. Saving a starter's name creates your project's customised copy (it shadows the starter), except that creating a copy of a workflow a team rule requires is refused, because the copy would quietly replace it. To start from a starter, instantiate_workflow_template copies it. A workflow is a SKILL definition: gate-free = pure instructions; gates make it enforced. broadcasts workflow/libraryDidChange so the Studio library updates live. Workflows is a Semanticus Pro feature.")]
         public static async Task<WorkflowInfo[]> SaveWorkflow(IEngine engine,
             [Description("Kebab-case workflow name: becomes the filename and must equal the frontmatter name")] string name,
             [Description("The complete workflow markdown (see get_workflow on any stock workflow for the format)")] string markdown,
@@ -1598,33 +1694,33 @@ namespace Semanticus.Engine
 
         // ---- Workflow TEMPLATES (docs/pro-mode-spec.md §10 — the customisation layer: fill-in-your-own-process) ----
 
-        [McpServerTool(Name = "list_workflow_templates"), Description("TEMPLATES: list the workflow-template shelf, the fill-in-your-own-process recipes (stock shipped with the engine + this project's `.semanticus/workflow-templates/*.md`; a user file shadows a stock one of the same name). A template is NOT a runnable workflow: it has declared SLOTS you fill once (your KPI dictionary, your close checklist, your freeze window) and instantiate into a concrete workflow. Each entry shows the slot count + names and any parse error (surfaced, never hidden). Read-only. Next: get_workflow_template to read one, instantiate_workflow_template to fill it in. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_workflow_templates"), Description("STARTERS: list the starters that ask setup questions before they become your workflow (templates: stock ones shipped with the engine + this project's `.semanticus/workflow-templates/*.md`; a user file shadows a stock one of the same name). A template is NOT a runnable workflow: it has declared SLOTS you fill once (your KPI dictionary, your close checklist, your freeze window) and instantiate into a concrete workflow. Each entry shows the slot count + names and any parse error (surfaced, never hidden). Read-only. Next: get_workflow_template to read one, instantiate_workflow_template to fill it in. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowTemplateInfo[]> ListWorkflowTemplates(IEngine engine) => engine.ListWorkflowTemplatesAsync();
 
-        [McpServerTool(Name = "get_workflow_template"), Description("TEMPLATES: read one template's full definition, its slot declarations (the questions to ask the user, each with an example) plus the raw markdown body with the {{slot}} references intact, so you can see exactly what will render. Read-only. To fill it in, collect a value for each slot (ask the user the slot's question verbatim) and call instantiate_workflow_template. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_workflow_template"), Description("STARTERS: read one template's full definition, its slot declarations (the questions to ask the user, each with an example) plus the raw markdown body with the {{slot}} references intact, so you can see exactly what will render. Read-only. To fill it in, collect a value for each slot (ask the user the slot's question verbatim) and call instantiate_workflow_template. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowTemplate> GetWorkflowTemplate(IEngine engine,
             [Description("The template name from list_workflow_templates, e.g. 'metric-certification'")] string name)
             => engine.GetWorkflowTemplateAsync(name);
 
-        [Description("TEMPLATES: fill a template into a concrete, runnable workflow. valuesJson is a JSON object keyed by slot name (ask the user each slot's question. Do not invent org process). The engine renders by DETERMINISTIC text substitution (no inference), then enforces the STRUCTURE-PRESERVING INVARIANT: it renders once with your values and once with dummy values, parses both, and REFUSES if your values changed anything the engine ENFORCES: a step, a gate, a check, strictness (slot values may change what a step SAYS and what a question ASKS, never what it enforces); the refusal names exactly what changed where. It then runs the same admission check a saved workflow gets, and saves the instance with provenance (template, version, date, slot values) so it can be re-instantiated later. FREE (authoring is content; the paid line is ENFORCING the instance via start_workflow). A missing required slot is refused with the slot's own question. Next: start_workflow(newName) to run it.")]
         public static async Task<WorkflowInfo[]> InstantiateWorkflowTemplate(IEngine engine,
-            [Description("The template to fill, from list_workflow_templates")] string template,
-            [Description("Kebab-case name for the new workflow this creates, e.g. 'fy26-metric-cert' (becomes the filename)")] string name,
-            [Description("JSON object of slot values keyed by slot name, e.g. {\"surfaceName\":\"the FY26 Exec Dashboard\",\"kpiDictionary\":\"...\"}")] string valuesJson = null)
+            string template,
+            string name = null,
+            string valuesJson = null)
         {
             var r = await engine.InstantiateWorkflowTemplateAsync(template, name, valuesJson, "agent");
-            Emit(engine, new ActivityEvent { Kind = "instantiate_workflow_template", Origin = "agent", Label = $"Instantiated '{template}' → workflow '{name}'", Target = name, Ok = true });
+            var used = r.FirstOrDefault()?.Name ?? name ?? template;
+            Emit(engine, new ActivityEvent { Kind = "instantiate_workflow_template", Origin = "agent", Label = $"Used '{template}' → workflow '{used}'", Target = used, Ok = true });
             return r;
         }
 
-        [McpServerTool(Name = "instantiate_workflow_template"), Description("TEMPLATES: create a workflow from a template. valuesJson must be a JSON object of slot values. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "instantiate_workflow_template"), Description("STARTERS: Use a starter. For a shipped workflow (starter: true on list_workflows) it copies the file create-only into this project's workflows under its own name or `name`, ready to edit; if a team rule requires that workflow, nothing is copied and the required workflow is returned as it is. For a template it fills the template into a concrete, runnable workflow, asking its setup questions once. valuesJson is a JSON object keyed by slot name; each value is the user's answer to that slot's question (get_workflow_template lists them). The engine renders by deterministic text substitution (no inference), renders once more with dummy values, and refuses if your values changed anything the engine enforces (a step, a gate, a check, strictness): slot values may change what a step says and what a question asks, never what it enforces, and the refusal names what changed where. It then runs the same admission check a saved workflow gets and saves the instance with provenance (template, version, date, slot values) so it can be re-instantiated. A missing required slot is refused with the slot's own question. Next: start_workflow(name) to run it. Workflows is a Semanticus Pro feature.")]
         public static Task<WorkflowInfo[]> InstantiateWorkflowTemplateWire(IEngine engine,
-            [Description("The template name")] string template,
-            [Description("The new workflow name")] string name,
-            [Description("A JSON object of slot values")] JsonElement? valuesJson = null)
+            [Description("The starter's name: a shipped workflow from list_workflows or a template from list_workflow_templates")] string template,
+            [Description("Kebab-case name for your new workflow; becomes the filename. Omit it to keep the starter's own name.")] string name = null,
+            [Description("A JSON object of slot values (templates only)")] JsonElement? valuesJson = null)
             => InstantiateWorkflowTemplate(engine, template, name, JsonObjectTextOrNull(valuesJson ?? default, "valuesJson"));
 
-        [McpServerTool(Name = "save_workflow_template"), Description("TEMPLATES: author or edit a USER template. Write the full markdown (frontmatter with `kind: template` + a `slots:` block + '## Step N:' sections whose prose/questions reference each slot as {{slotName}}) to `.semanticus/workflow-templates/<name>.md`. PARSE-VALIDATES FIRST (a file the parser refuses is never written; the error returns verbatim), and slot-validates: every {{ref}} must name a declared slot, and every slot needs an example (the trial instantiation renders with it). Saving a stock template's name creates your customised copy (it shadows the stock one). Authoring is content. Next: check_workflow(name) to trial-instantiate, then instantiate_workflow_template to fill it in. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "save_workflow_template"), Description("STARTERS: author or edit a USER template. Write the full markdown (frontmatter with `kind: template` + a `slots:` block + '## Step N:' sections whose prose/questions reference each slot as {{slotName}}) to `.semanticus/workflow-templates/<name>.md`. PARSE-VALIDATES FIRST (a file the parser refuses is never written; the error returns verbatim), and slot-validates: every {{ref}} must name a declared slot, and every slot needs an example (the trial instantiation renders with it). Saving a stock template's name creates your customised copy (it shadows the stock one). Authoring is content. Next: check_workflow(name) to trial-instantiate, then instantiate_workflow_template to fill it in. Workflows is a Semanticus Pro feature.")]
         public static async Task<WorkflowTemplateInfo[]> SaveWorkflowTemplate(IEngine engine,
             [Description("Kebab-case template name: becomes the filename and must equal the frontmatter name")] string name,
             [Description("The complete template markdown (see get_workflow_template on any stock template for the format)")] string markdown)
@@ -1634,7 +1730,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "delete_workflow_template"), Description("TEMPLATES: delete a USER template from `.semanticus/workflow-templates`. Stock templates are read-only (deleting a customised copy reverts to the stock version). Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "delete_workflow_template"), Description("STARTERS: delete a USER template from `.semanticus/workflow-templates`. Stock templates are read-only (deleting a customised copy reverts to the stock version). Workflows is a Semanticus Pro feature.")]
         public static async Task<WorkflowTemplateInfo[]> DeleteWorkflowTemplate(IEngine engine,
             [Description("The user template's name")] string name)
         {
@@ -1656,7 +1752,7 @@ namespace Semanticus.Engine
             [Description("The workflow name from list_workflows")] string name)
             => engine.ReplayCheckWorkflowAsync(name);
 
-        [McpServerTool(Name = "dry_run"), Description("PLAN MODE for the model: rehearse ANY single model-mutating op through its REAL code path and get back the EXACT change set it would make (the model/didChange deltas) plus the op's own return value, with a hard guarantee of NO mutation, NO undo entry, NO broadcast, and NO audit record (the edit is applied, then rolled back). Preview a create_measure / update_measure / rename_object / set_property / define_calendar before committing, or check whether an op WOULD fail. A rehearsal that finds the failure is still a SUCCESSFUL dry-run (WouldSucceed=false with the op's real teaching error). 'argsJson' is a JSON object of the op's arguments by name, e.g. {\"tableRef\":\"table:Sales\",\"name\":\"Margin\",\"expression\":\"[Sales]-[Cost]\"}. Entitlement gates stay ACTIVE (a Pro refusal is the real answer you'd get). DENIED (each refusal names the right path): external/system I/O + lifecycle (save_model/open_*/connect_*/refresh_partition/export_vpax/clear_cache/evaluate_and_log/benchmark_*), deploy/cloud/git/fabric/cicd/daxlib/data-agent (already commit-gated, run directly), the undo timeline (undo_change/redo_change), multi-mutate composites whose later steps read earlier writes (apply_plan/apply_safe_fixes/bpa_fix_all/make_model_ai_ready/apply_model_diff/cherry_pick/build_model_from_spec/apply_dax_script/apply_tmdl: use propose_plan / preview paths / apply one typed op), and workflow/knowledge/waiver/connection bookkeeping. After a green rehearsal, run the op itself to apply.")]
+        [McpServerTool(Name = "dry_run"), Description("PLAN MODE for the model: rehearse ANY single model-mutating op through its REAL code path and get back the EXACT change set it would make (the model/didChange deltas) plus the op's own return value, with a hard guarantee of NO mutation, NO undo entry, NO broadcast, and NO audit record (the edit is applied, then rolled back). Preview a create_measure / update_measure / rename_object / set_property / define_calendar before committing, or check whether an op WOULD fail. A rehearsal that finds the failure is still a SUCCESSFUL dry-run (WouldSucceed=false with the op's real teaching error). 'argsJson' is a JSON object of the op's arguments by name, e.g. {\"tableRef\":\"table:Sales\",\"name\":\"Margin\",\"expression\":\"[Sales]-[Cost]\"}. Entitlement gates stay ACTIVE (a Pro refusal is the real answer you'd get). DENIED (each refusal names the right path): external/system I/O + lifecycle (save_model/open_*/connect_*/refresh_partition/export_vpax/clear_cache/evaluate_and_log/benchmark_*), deploy/cloud/git/fabric/cicd/daxlib/data-agent (already commit-gated, run directly), the undo timeline (undo_change/redo_change), multi-mutate composites whose later steps read earlier writes (apply_plan/apply_safe_fixes/make_model_ai_ready/apply_model_diff/cherry_pick/build_model_from_spec/apply_dax_script/apply_tmdl: use propose_plan / preview paths / apply one typed op), and workflow/knowledge/waiver/connection bookkeeping. After a green rehearsal, run the op itself to apply.")]
         public static Task<DryRunReport> DryRun(IEngine engine,
             [Description("The op name to rehearse (from get_op_catalog), e.g. 'create_measure'")] string op,
             [Description("The op's arguments as a JSON object keyed by argument name; omit for an op that takes none")] string argsJson = null)
@@ -1664,7 +1760,7 @@ namespace Semanticus.Engine
 
         // ---- Learning Loop: knowledge store (L1) + deterministic recall (L2) ----------------------
 
-        [McpServerTool(Name = "get_model_primer"), Description("PRIMER: read the open model's single project orientation document. It is plain Markdown in a .semanticus/primers sidecar, beside the model (travels in source control) for a disk model, or in the workspace for a live/local connection, and always uses six fixed sections: Overview, Business context, Gotchas, Patterns, Known issues, History. Read this before model work for the declared business context and known traps. Read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_model_primer"), Description("PRIMER: read the open model's single project orientation document. It is plain Markdown in a .semanticus/primers sidecar, beside the model (travels in source control) for a disk model, or in the workspace for a live/local connection, and always uses six fixed sections: Overview, Business context, Gotchas, Patterns, Known issues, History. Read this before model work for the declared business context and known traps. Read-only.")]
         public static async Task<PrimerDocument> GetModelPrimer(IEngine engine)
         {
             var r = await engine.GetPrimerAsync();
@@ -1672,12 +1768,12 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "set_model_primer"), Description("PRIMER: replace the open model's declared orientation document with reviewed Markdown. The document must keep exactly six second-level sections in this order: Overview, Business context, Gotchas, Patterns, Known issues, History. Stored beside the model in .semanticus/primers so it travels in source control without changing the model definition. Show the user the proposed edit before writing. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_model_primer"), Description("PRIMER: replace the open model's declared orientation document with reviewed Markdown. The document must keep exactly six second-level sections in this order: Overview, Business context, Gotchas, Patterns, Known issues, History. Stored beside the model in .semanticus/primers so it travels in source control without changing the model definition. Show the user the proposed edit before writing.")]
         public static Task<PrimerDocument> SetModelPrimer(IEngine engine,
             [Description("The complete Primer Markdown, including the six required ## section headings in their fixed order.")] string markdown)
             => engine.SetPrimerAsync(markdown, "agent");
 
-        [McpServerTool(Name = "list_primer_suggestions"), Description("PRIMER: list reviewed, model-scoped learning as proposed edits to the open model's fixed Primer sections. Free on any tier. Each proposal carries the source lesson id, capture time and source-run provenance. This never changes the Primer. Show the proposal to the user, then call accept_primer_suggestion only after explicit approval or reject_primer_suggestion to dismiss it.")]
+        [McpServerTool(Name = "list_primer_suggestions"), Description("PRIMER: list approved, model-scoped learning as proposed edits to the open model's fixed Primer sections. Free on any tier. Each proposal carries the source lesson id, capture time and source-run provenance, and needsReview=true when you wrote the lesson and no person has approved it yet (only the person can accept those, in Model notes). This never changes the Primer. Show the proposal to the user, then call accept_primer_suggestion only after explicit approval or reject_primer_suggestion to dismiss it.")]
         public static async Task<PrimerSuggestionList> ListPrimerSuggestions(IEngine engine)
         {
             var r = await engine.ListPrimerSuggestionsAsync();
@@ -1685,7 +1781,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "accept_primer_suggestion"), Description("PRIMER: apply ONE already-reviewed suggestion to its fixed Primer section and preserve its source provenance in the Markdown. Human approval is required before this call. The accepted source id is recorded so it cannot resurface. To write directly without suggestion automation, use set_model_primer.")]
+        [McpServerTool(Name = "accept_primer_suggestion"), Description("PRIMER: apply ONE already-reviewed suggestion to its fixed Primer section and preserve its source provenance in the Markdown. Human approval is required before this call, and a suggestion with needsReview=true (a lesson you wrote that no person has approved) is refused here: the person accepts it in Model notes. The accepted source id is recorded so it cannot resurface. To write directly without suggestion automation, use set_model_primer.")]
         public static Task<PrimerSuggestionDecision> AcceptPrimerSuggestion(IEngine engine,
             [Description("The suggestion id from list_primer_suggestions, after the user approved its exact proposed Markdown.")] string id)
             => engine.AcceptPrimerSuggestionAsync(id, "agent");
@@ -1695,7 +1791,7 @@ namespace Semanticus.Engine
             [Description("The suggestion id from list_primer_suggestions.")] string id)
             => engine.RejectPrimerSuggestionAsync(id, "agent");
 
-        [McpServerTool(Name = "recall_experience"), Description("KNOWLEDGE (L2): before starting work on the open model, recall prior experience for THIS model shape. The engine computes the model's fingerprint, reads BOTH scopes' APPROVED insights, and returns a DETERMINISTICALLY-ranked candidate set (key-term overlap with your query + same-shape fingerprint bonus + importance score + temporal decay), each with WHY it matched (matchedKeys). This is retrieval, not judgment: YOU do the semantic ranking over the candidates and decide what applies. Returns the fingerprint too, and says so plainly when there is no prior experience for this shape. Needs an open model. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "recall_experience"), Description("KNOWLEDGE (L2): before starting work on the open model, recall prior experience for THIS model shape. The engine computes the model's fingerprint, reads BOTH scopes' released insights (status approved, or unreviewed and marked untrusted), and returns a DETERMINISTICALLY-ranked candidate set (key-term overlap with your query + same-shape fingerprint bonus + importance score + temporal decay), each with WHY it matched (matchedKeys). This is retrieval, not judgment: YOU do the semantic ranking over the candidates and decide what applies. Returns the fingerprint too, and says so plainly when there is no prior experience for this shape. Needs an open model.")]
         public static Task<RecallResult> RecallExperience(IEngine engine,
             [Description("Optional query: what you are about to do (e.g. 'optimize a time-intelligence measure'); its terms drive the lexical key-overlap ranking. Omit to rank by fingerprint + score + recency alone.")] string query = null,
             [Description("Max candidates to return (default 12)")] int maxResults = 12)
@@ -1704,7 +1800,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_model_fingerprint"), Description("KNOWLEDGE: the open model's deterministic fingerprint: table/measure/column counts, source types, fact/dim classification, a naming-convention hash, and the top domain-word tokens, plus the stable FingerprintKey used to scope insights to matching model shapes. No inference, no embeddings. Use it to reason about 'have I seen a model like this before'. Needs an open model. Free, read-only.")]
         public static Task<ModelFingerprint> GetModelFingerprint(IEngine engine) => engine.GetModelFingerprintAsync();
 
-        [McpServerTool(Name = "add_insight"), Description("KNOWLEDGE (L1): record ONE actionable lesson, a distilled insight or a post-mortem root cause. Insights are the USER'S OWN DATA: plain append-only JSONL (`.semanticus/knowledge/insights.jsonl` for project scope, `~/.semanticus/knowledge/` for global), readable without us, never rewritten. Give deterministic match keys (rule ids, gate signatures, error types, op names, domain tokens) so recall can find it. Write-gated (SSGM): it lands 'pending' until approve_insight, UNLESS the auto-approve setting is on, which DEFAULTS TO TRUE for single-user local mode (set knowledge-settings.json {\"autoApprove\": false} to force review). Text that looks like an instruction to skip checks or swap models is NEVER auto-approved: it stays pending, lists under status=pending, and if later approved is recalled with an untrusted marker. fingerprintScoped=true pins it to the CURRENT model's shape (needs an open model); false = a user-level lesson that travels across all models. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "add_insight"), Description("KNOWLEDGE (L1): record ONE actionable lesson, a distilled insight or a post-mortem root cause. Insights are the USER'S OWN DATA: plain append-only JSONL (`.semanticus/knowledge/insights.jsonl` for project scope, `~/.semanticus/knowledge/` for global), readable without us, never rewritten. Give deterministic match keys (rule ids, gate signatures, error types, op names, domain tokens) so recall can find it. Write-gated (SSGM): it lands 'pending' (held out of recall) until approve_insight, UNLESS the auto-approve setting is on, which DEFAULTS TO TRUE for single-user local mode (set knowledge-settings.json {\"autoApprove\": false} to force review). Whatever you record is never 'approved': it lands 'unreviewed' (or 'pending'), untrusted and needsReview=true, until a PERSON approves it in Model notes. Recall returns it marked untrusted, as data not instruction, and it reaches the Primer only when the person accepts it. Text that looks like an instruction to skip checks or swap models is NEVER auto-approved: it stays pending, lists under status=pending, and keeps its untrusted marker even once a person approves it. fingerprintScoped=true pins it to the CURRENT model's shape (needs an open model); false = a user-level lesson that travels across all models.")]
         public static Task<InsightRecord> AddInsight(IEngine engine,
             [Description("The insight: one actionable sentence to a short paragraph")] string text,
             [Description("Deterministic match keys: rule ids, gate signatures, error types, op names, domain tokens")] string[] keys = null,
@@ -1713,36 +1809,36 @@ namespace Semanticus.Engine
             [Description("true = scope to the CURRENT model's fingerprint (surfaces only on matching shapes); false = applies everywhere")] bool fingerprintScoped = false)
             => engine.AddInsightAsync(text, keys, kind, scope, fingerprintScoped, "agent");
 
-        [McpServerTool(Name = "approve_insight"), Description("KNOWLEDGE (L1): approve a 'pending' insight so recall_experience can surface it (the SSGM write-gate release). No-op-safe on an already-approved insight. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "approve_insight"), Description("KNOWLEDGE (L1): release a 'pending' insight so recall_experience can surface it (the SSGM write-gate release). From you it never makes an insight 'approved' or trusted: the result is status 'unreviewed', untrusted, recalled only as data, until a person approves it in Model notes. No-op-safe on an insight that is already released.")]
         public static Task<InsightRecord> ApproveInsight(IEngine engine,
             [Description("The insight id (ki-xxxxxxxx) from list_insights")] string id) => engine.ApproveInsightAsync(id, "agent");
 
-        [McpServerTool(Name = "edit_insight"), Description("KNOWLEDGE (L1): refine an insight's text and/or match keys, a delta append (the store is never rewritten; constraint against context collapse). Provide new text and/or keys; omit one to leave it unchanged. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "edit_insight"), Description("KNOWLEDGE (L1): refine an insight's text and/or match keys, a delta append (the store is never rewritten; constraint against context collapse). Provide new text and/or keys; omit one to leave it unchanged.")]
         public static Task<InsightRecord> EditInsight(IEngine engine,
             [Description("The insight id (ki-xxxxxxxx)")] string id,
             [Description("New text (omit to keep the current text)")] string text = null,
             [Description("New match keys (omit to keep the current keys)")] string[] keys = null)
             => engine.EditInsightAsync(id, text, keys, "agent");
 
-        [McpServerTool(Name = "upvote_insight"), Description("KNOWLEDGE (L1): +1 an insight's importance counter (ExpeL: the engine counts, you judge). An insight that keeps proving useful ranks higher and resists decay. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "upvote_insight"), Description("KNOWLEDGE (L1): +1 an insight's importance counter (ExpeL: the engine counts, you judge). An insight that keeps proving useful ranks higher and resists decay.")]
         public static Task<InsightRecord> UpvoteInsight(IEngine engine,
             [Description("The insight id (ki-xxxxxxxx)")] string id) => engine.UpvoteInsightAsync(id, "agent");
 
-        [McpServerTool(Name = "downvote_insight"), Description("KNOWLEDGE (L1): -1 an insight's importance counter. When the score falls to 0 the insight is materialized OUT of the live set (the delta trail is kept, nothing is erased). Use it to retire a lesson that stopped applying. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "downvote_insight"), Description("KNOWLEDGE (L1): -1 an insight's importance counter. When the score falls to 0 the insight is materialized OUT of the live set (the delta trail is kept, nothing is erased). Use it to retire a lesson that stopped applying.")]
         public static Task<InsightRecord> DownvoteInsight(IEngine engine,
             [Description("The insight id (ki-xxxxxxxx)")] string id) => engine.DownvoteInsightAsync(id, "agent");
 
-        [McpServerTool(Name = "delete_insight"), Description("KNOWLEDGE (L1): tombstone an insight (delta append; the JSONL is not rewritten). It vanishes from the live set and recall. Prefer downvote for a lesson that merely lost relevance. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "delete_insight"), Description("KNOWLEDGE (L1): tombstone an insight (delta append; the JSONL is not rewritten). It vanishes from the live set and recall. Prefer downvote for a lesson that merely lost relevance.")]
         public static Task<SetResult> DeleteInsight(IEngine engine,
             [Description("The insight id (ki-xxxxxxxx)")] string id) => engine.DeleteInsightAsync(id, "agent");
 
-        [McpServerTool(Name = "list_insights"), Description("KNOWLEDGE (L1): list the live insight set with counters (score/uses/retrievals) and provenance (who/when/session/source-runs). Filter by scope ('project'|'global'; omit for both) and/or status ('pending'|'approved'). Reports the count of any corrupt JSONL lines it skipped. The store never bricks. Read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_insights"), Description("KNOWLEDGE (L1): list the live insight set with counters (score/uses/retrievals) and provenance (who/when/session/source-runs). Filter by scope ('project'|'global'; omit for both) and/or status ('pending' = held out of recall, 'unreviewed' = recalled as untrusted data, 'approved' = a person approved it). Reports the count of any corrupt JSONL lines it skipped. The store never bricks. Read-only.")]
         public static Task<InsightListResult> ListInsights(IEngine engine,
             [Description("'project' | 'global'; omit for both")] string scope = null,
-            [Description("'pending' | 'approved'; omit for all")] string status = null)
+            [Description("'pending' | 'unreviewed' | 'approved'; omit for all")] string status = null)
             => engine.ListInsightsAsync(scope, status);
 
-        [McpServerTool(Name = "purge_knowledge"), Description("KNOWLEDGE (L1): scoped one-op purge (the MemoryGraft safety valve). DRY RUN by default: confirm=false returns how many live insights WOULD be erased and changes nothing; confirm=true appends a purge marker so everything before it in that scope becomes invisible on replay (the file is not rewritten). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "purge_knowledge"), Description("KNOWLEDGE (L1): scoped one-op purge (the MemoryGraft safety valve). DRY RUN by default: confirm=false returns how many live insights WOULD be erased and changes nothing; confirm=true appends a purge marker so everything before it in that scope becomes invisible on replay (the file is not rewritten).")]
         public static Task<PurgeResult> PurgeKnowledge(IEngine engine,
             [Description("'project' (default) or 'global'")] string scope = "project",
             [Description("false (default) = dry-run count; true = actually purge")] bool confirm = false)
@@ -1767,12 +1863,9 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "benchmark_dax_coldwarm"), Description("DAX-Studio 'Run Benchmark': measure a query COLD (the SE cache is cleared before each run) and WARM (no clear), and return Average/StdDev/Min/Max for BOTH total query time and storage-engine time, split by cold vs warm, plus per-run detail. This is the way to prove an optimization helps the worst case. Needs a local Power BI Desktop or admin XMLA endpoint for the cold runs + SE split; on a shared/cloud endpoint pass confirm=true to allow clearing (it affects all users) or it degrades to warm-only. Read-only.")]
-        public static async Task<ColdWarmBenchmark> BenchmarkDaxColdWarm(IEngine engine,
-            [Description("DAX query, e.g. EVALUATE SUMMARIZECOLUMNS('Date'[Year], \"Sales\", [Total Sales])")] string query,
-            [Description("Runs per temperature (default 5, max 25)")] int runs = 5,
-            [Description("Clear the cache before each cold run (default true). false = warm-only.")] bool clearForCold = true,
-            [Description("Required to clear the cache on a shared/cloud endpoint (affects all users); ignored on local Power BI Desktop.")] bool confirm = false)
+        /// <summary>benchmark_dax with mode='coldWarm'. The activity kind stays "benchmark_coldwarm": the DAX Lab reads
+        /// a ColdWarmBenchmark off that kind, so one kind for both modes would hand it the wrong shape.</summary>
+        public static async Task<ColdWarmBenchmark> BenchmarkDaxColdWarm(IEngine engine, string query, int runs = 5, bool clearForCold = true, bool confirm = false)
         {
             var r = await engine.BenchmarkColdWarmAsync(query, runs, clearForCold, confirm);
             Emit(engine, new ActivityEvent { Kind = "benchmark_coldwarm", Origin = "agent", Label = "Benchmarked cold vs warm", Query = TruncDax(query),
@@ -1792,24 +1885,24 @@ namespace Semanticus.Engine
 
         // ---- Change-Plan engine ("analyse → review → fix everything", plus incremental edits) -------
 
-        [McpServerTool(Name = "propose_plan"), Description("Analyse the model and assemble a CHANGE PLAN (a 'pull request for your model') WITHOUT mutating anything: deterministic safe fixes + BPA auto-fixes are fully specified; AI-content items (descriptions, formats, names, synonyms) come back as a work queue with grounding for YOU to fill via set_plan_item. Review with get_plan, then apply_plan. scope null = whole model; 'table:Name' = just that table. This is the flagship: fix the whole model in one reviewed, undoable transaction.")]
+        [McpServerTool(Name = "propose_plan"), Description("Analyse the model and assemble a CHANGE PLAN (a 'pull request for your model') WITHOUT mutating anything: deterministic safe fixes + BPA auto-fixes are fully specified; AI-content items (descriptions, formats, names, synonyms) come back as a work queue with grounding for YOU to fill via set_plan_item. Review with get_plan, then apply_plan applies the approved items as one undoable transaction. scope null = whole model; 'table:Name' = just that table. Everything you propose here ALSO lands on the Model Plan (get_model_plan), filed under the item whose family and objects it serves, and a change no item serves opens an item of its own owned by the assistant. So this is the flat list of the same changes the Model Plan groups by goal, not a second list of different work.")]
         public static Task<ChangePlanView> ProposePlan(IEngine engine,
             [Description("Scope: null/empty = whole model, or 'table:Name' for one table")] string scope = null,
             [Description("Include AI-content items (descriptions/names/formats/synonyms) you must fill; default true")] bool includeAi = true,
             [Description("Max AI-content items to queue (default 40)")] int maxAiItems = 40)
             => engine.ProposePlanAsync(scope, includeAi, maxAiItems, "agent");
 
-        [McpServerTool(Name = "get_plan"), Description("Get the current change plan: every proposed item with its before→after, source (deterministic/bpa/ai), risk, status, and a summary. Use it to see what still needs content (status 'needs_content') and what is approved/ready to apply.")]
+        [McpServerTool(Name = "get_plan"), Description("Get the current change plan: every proposed item with its before→after, source (deterministic/bpa/ai), risk, status, and a summary. Use it to see what still needs content (status 'needs_content') and what is approved/ready to apply. These are the SAME changes the Model Plan groups under its items (get_model_plan), as one flat list: this is the change-by-change view, that is the by-goal view, and there is one set of changes behind both.")]
         public static Task<ChangePlanView> GetPlan(IEngine engine) => engine.GetPlanAsync();
 
-        [McpServerTool(Name = "set_plan_item"), Description("Fill an AI-content plan item with your authored value (and/or approve/reject it). Authoring a value moves the item to 'approved', EXCEPT the opt-in kinds (rename, set_dax without a non-empty verify matrix, set_m), which land on 'proposed' after ANY value revision (even one made after an approval: the consent covered the old value) and need an explicit approve. e.g. set_plan_item('ci-0007', after='Total revenue recognised in the period.'). Use get_plan to see item ids + grounding first.")]
+        [McpServerTool(Name = "set_plan_item"), Description("Fill an AI-content plan item with your authored value (and/or approve/reject it). Authoring a value moves the item to 'approved', EXCEPT the opt-in kinds (rename, set_dax without a non-empty verify matrix, set_m), which land on 'proposed' after ANY value revision (even one made after an approval: the consent covered the old value) and need an explicit approve. e.g. set_plan_item('ci-0007', after='Total revenue recognised in the period.'). Use get_plan to see item ids + grounding first. THIS IS ALSO HOW YOU KEEP AND DROP one line of a Model Plan item's change set: approved=true keeps the line, approved=false drops it, and the item's changeSet.digest changes either way, so an approval given before you dropped a line can no longer be honoured. The line's planItemId on get_model_plan is the itemId to pass here. Keeping and dropping change NOTHING in the model and are free on every tier. Touching a line this way is what makes a cleanup line that arrived ticked as a suggestion (suggested: true) the person's own, and apply_plan from your door does not apply an untouched suggested line.")]
         public static Task<ChangePlanView> SetPlanItem(IEngine engine,
             [Description("Plan item id from get_plan, e.g. 'ci-0007'")] string itemId,
             [Description("The authored value (description text, format string, new name, comma-separated synonyms, or DAX); null to only approve/reject")] string after = null,
             [Description("true to approve, false to reject, null to leave as-is")] bool? approved = null)
             => engine.SetPlanItemAsync(itemId, after, approved, "agent");
 
-        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included') | delete (remove the object) | delete_if_unused (remove ONLY if unused_objects' safe verdict still holds at apply time, recomputed server-side, else the item is skipped with the reason). An identical pending item (same ref+kind+target+after) is deduped: the existing item is returned, not re-added. For a set_dax rewrite, ALWAYS pass verifyGroupBy so apply_plan PROVES equivalence (and skips it if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename). It will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan.")]
+        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included') | delete (remove the object) | delete_if_unused (remove ONLY if unused_objects' safe verdict still holds at apply time, recomputed server-side, else the item is skipped with the reason). An identical pending item (same ref+kind+target+after) is deduped: the existing item is returned, not re-added. For a set_dax rewrite, pass verifyGroupBy so apply_plan proves equivalence (and skips the item if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename). It will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan. The change also appears on the Model Plan (get_model_plan) as a line on the item it serves, or on a new item owned by the assistant when no item serves it, so a person reads it in one list with everything else.")]
         public static Task<ChangePlanView> AddPlanItem(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Operation kind, e.g. 'set_dax', 'set_description', 'rename'")] string kind,
@@ -1819,18 +1912,18 @@ namespace Semanticus.Engine
             [Description("For set_dax: optional table filters for the verify matrix")] string[] verifyFilters = null)
             => engine.AddPlanItemAsync(objRef, kind, after, title, verifyGroupBy, verifyFilters, "agent");
 
-        [McpServerTool(Name = "apply_plan"), Description("Execute the APPROVED subset of the change plan as ONE undoable transaction. Only approved items are applied. Passing approvedIds narrows the approved set (it never applies rejected/proposed/needs_content items). DAX rewrites carrying a verify matrix are proven equivalent first and skipped if they'd change results or can't be proven; renames apply last. Returns a report: applied/skipped/failed counts + before→after BPA violations and AI-readiness grade. A single undo reverts everything; re-run propose_plan to iterate the tail.")]
+        [McpServerTool(Name = "apply_plan"), Description("Execute the APPROVED subset of the change plan as ONE undoable transaction. Only approved items are applied. Passing approvedIds narrows the approved set (it never applies rejected/proposed/needs_content items). DAX rewrites carrying a verify matrix are proven equivalent first and skipped if they'd change results or can't be proven; renames apply last. Returns a report: applied/skipped/failed counts + before→after BPA violations and AI-readiness grade. A single undo reverts everything; re-run propose_plan to iterate the tail. This is APPROVE-ALL over the changes the Model Plan groups under its items: it applies every change you have approved, wherever it sits, in one step. It is the batch tool, so it applies what it can and REPORTS what it could not; to approve one item's changes all-or-nothing instead, quoting the digest of exactly what you read, use model_plan_action(id, 'approve', digest).")]
         public static Task<ApplyPlanReport> ApplyPlan(IEngine engine,
             [Description("Item ids to apply (e.g. ['ci-0001','ci-0002']); null/empty = all approved items")] string[] approvedIds = null,
             [Description("plan item ids to apply even though their equivalence verdict is failed/unprovable: requires overrideReason; each shipped override is recorded")] string[] overrideIds = null,
             [Description("why you are shipping items past a failed/unprovable equivalence verdict: required to override; recorded in the model's append-only audit trail")] string overrideReason = null)
             => engine.ApplyPlanAsync(approvedIds, "agent", overrideIds, overrideReason);
 
-        [McpServerTool(Name = "clear_plan"), Description("Discard the current change plan (nothing in the model is affected. The plan never mutated it).")]
+        [McpServerTool(Name = "clear_plan"), Description("Drop every proposed change. Nothing in the model changes: a proposal never wrote anything. This is CANCEL-ALL over the changes the Model Plan groups under its items, so every item goes back to having nothing worked out for it. To drop one item's changes instead, use model_plan_action(id, 'cancel').")]
         public static Task<ChangePlanView> ClearPlan(IEngine engine) => engine.ClearPlanAsync("agent");
 
         // ---- Documentation narrative (collaborate on the built docs) ----------------------------------
-        [McpServerTool(Name = "get_doc_model"), Description("Get the complete documentation snapshot of the model that the exporter renders: header (name, compatibility level, culture, counts), the relationship graph, every table's detail (description, hierarchies, partitions with their source (M/SQL/DAX or, for Direct Lake, the Entity binding), calc-group items), all measures & columns (with DAX), KPIs, roles/RLS, perspectives, data sources, shared expressions, the Prep-for-AI surface, the AI-readiness + BPA scorecards, and (when live-connected) VertiPaq storage stats, PLUS any authored Documentation narrative. Read-only. Use it to understand the whole model at once or to see what the built docs will contain. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_doc_model"), Description("Get the complete documentation snapshot of the model that the exporter renders: header (name, compatibility level, culture, counts), the relationship graph, every table's detail (description, hierarchies, partitions with their source (M/SQL/DAX or, for Direct Lake, the Entity binding), calc-group items), all measures & columns (with DAX), KPIs, roles/RLS, perspectives, data sources, shared expressions, the Prep-for-AI surface, the AI-readiness + BPA scorecards, and (when live-connected) VertiPaq storage stats, PLUS any authored Documentation narrative. Read-only. Use it to understand the whole model at once or to see what the built docs will contain.")]
         public static async Task<DocModelDto> GetDocModel(IEngine engine,
             [Description("Max columns to include in the storage (VertiPaq) top-columns list; only used when live-connected")] int topN = 50)
         {
@@ -1839,16 +1932,16 @@ namespace Semanticus.Engine
             return dto;
         }
 
-        [McpServerTool(Name = "get_doc_outline"), Description("List the model objects that can carry Documentation NARRATIVE (the model, every table, every measure) and which narrative sections each already has. Use this to discover WHERE to add business context for the exported documentation. The narrative is ADDITIONAL context for the docs, separate from each object's first-class Description (which you set with set_description). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_doc_outline"), Description("List the model objects that can carry Documentation NARRATIVE (the model, every table, every measure) and which narrative sections each already has. Use this to discover WHERE to add business context for the exported documentation. The narrative is ADDITIONAL context for the docs, separate from each object's first-class Description (which you set with set_description).")]
         public static Task<DocOutline> GetDocOutline(IEngine engine) => engine.GetDocOutlineAsync();
 
-        [McpServerTool(Name = "get_doc_section"), Description("Read one Documentation narrative section (Markdown) for an object. objRef is 'model' for the model-wide narrative, or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Returns null if empty. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_doc_section"), Description("Read one Documentation narrative section (Markdown) for an object. objRef is 'model' for the model-wide narrative, or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Returns null if empty.")]
         public static Task<string> GetDocSection(IEngine engine,
             [Description("Object ref, or 'model' for the model-wide narrative")] string objRef,
             [Description("Section key, e.g. 'businessContext'")] string sectionKey)
             => engine.GetDocSectionAsync(objRef, sectionKey);
 
-        [McpServerTool(Name = "set_doc_section"), Description("Author/insert a Documentation narrative section (Markdown) for an object: ADDITIONAL business context that merges into the exported documentation, SEPARATE from the model's Descriptions. objRef is 'model' or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures; other refs are rejected). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Set markdown to empty/null to clear the section. This is the collaborate-on-the-docs path: it's stored as a model annotation, broadcasts live to the human's Documentation tab, and is undoable. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_doc_section"), Description("Author/insert a Documentation narrative section (Markdown) for an object: ADDITIONAL business context that merges into the exported documentation, SEPARATE from the model's Descriptions. objRef is 'model' or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures; other refs are rejected). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Set markdown to empty/null to clear the section. This is the collaborate-on-the-docs path: it's stored as a model annotation, broadcasts live to the human's Documentation tab, and is undoable.")]
         public static async Task<SetResult> SetDocSection(IEngine engine,
             [Description("Object ref, or 'model' for the model-wide narrative")] string objRef,
             [Description("Section key, e.g. 'businessContext'")] string sectionKey,
@@ -1861,7 +1954,7 @@ namespace Semanticus.Engine
         }
 
         // ---- Model spec (spec-driven authoring: autogenerate -> refine -> build) ------------------------
-        [McpServerTool(Name = "get_spec"), Description("Get the current MODEL SPEC: the structured plan for the model to build (storage mode + Fabric source, tables with columns/types/role, relationships, core measures, time-intelligence). The spec is an authoring artifact (NOT the model itself); build_model_from_spec materialises it. Returns { version, source, spec } (spec is null if none is loaded). Read-only. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_spec"), Description("Get the current MODEL SPEC: the structured plan for the model to build (storage mode + Fabric source, tables with columns/types/role, relationships, core measures, time-intelligence). The spec is an authoring artifact (NOT the model itself); build_model_from_spec materialises it. Returns { version, source, spec } (spec is null if none is loaded). Read-only.")]
         public static async Task<SpecView> GetSpec(IEngine engine)
         {
             var v = await engine.GetSpecAsync();
@@ -1869,7 +1962,7 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "set_spec"), Description("Replace the current model spec with the supplied JSON (the whole ModelSpec document). Use this to author or refine the spec; it broadcasts live to the Spec tab. Shape: { name, compatibilityLevel, storageMode: 'import'|'directLake', source: { kind:'fabric-sql', server, database, schema }, tables: [{ name, role:'fact'|'dimension'|'date'|'calculated'|'isolated', entity, schema, mExpression, calculatedExpression, sourceName, columns: [{ name, dataType, sourceColumn, isKey, hidden, summarizeBy }] }], relationships: [{ fromTable, fromColumn, toTable, toColumn, cardinality:'manyToOne'(default)|'oneToOne'|'oneToMany'|'manyToMany', crossFilter, isActive }], measures: [{ table, name, dax (or expression), description, formatString, displayFolder }], timeIntelligence: ['YTD','PY',...], timeIntelligenceBaseMeasures: [...], dateTable: { name, startExpr, endExpr, markAsDate } }. Does NOT touch the model. Returns the new spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_spec"), Description("Replace the current model spec with the supplied JSON (the whole ModelSpec document). Use this to author or refine the spec; it broadcasts live to the Spec tab. Shape: { name, compatibilityLevel, storageMode: 'import'|'directLake', source: { kind:'fabric-sql', server, database, schema }, tables: [{ name, role:'fact'|'dimension'|'date'|'calculated'|'isolated', entity, schema, mExpression, calculatedExpression, sourceName, columns: [{ name, dataType, sourceColumn, isKey, hidden, summarizeBy }] }], relationships: [{ fromTable, fromColumn, toTable, toColumn, cardinality:'manyToOne'(default)|'oneToOne'|'oneToMany'|'manyToMany', crossFilter, isActive, note }], measures: [{ table, name, dax (or expression), description, formatString, displayFolder }], timeIntelligence: ['YTD','PY',...], timeIntelligenceBaseMeasures: [...], dateTable: { name, dateColumn, startExpr, endExpr, markAsDate } }. A relationship's note is plain words for the person on why a link is off; the build ignores it. When dateTable.name is one of the spec's own tables, the build marks that table as the date table keyed on dateColumn (or its one date column) and adds no CALENDAR table; a table already marked is left as it is. Otherwise a CALENDAR table named dateTable.name is added from startExpr and endExpr. Does NOT touch the model. Returns the new spec view.")]
         public static async Task<SpecView> SetSpec(IEngine engine,
             [Description("The whole ModelSpec as JSON")] string specJson)
         {
@@ -1878,7 +1971,7 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "clear_spec"), Description("Discard the current model spec (nothing in the model is affected. The spec never mutated it). Returns the empty spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "clear_spec"), Description("Discard the current model spec (nothing in the model is affected. The spec never mutated it). Returns the empty spec view.")]
         public static async Task<SpecView> ClearSpec(IEngine engine)
         {
             var v = await engine.ClearSpecAsync("agent");
@@ -1886,12 +1979,12 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "save_spec"), Description("Save the current model spec to a JSON file (for version control / sharing). Pass an absolute path, e.g. '.../model.spec.json'. Returns the spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "save_spec"), Description("Save the current model spec to a JSON file (for version control / sharing). Pass an absolute path, e.g. '.../model.spec.json'. Returns the spec view.")]
         public static Task<SpecView> SaveSpec(IEngine engine,
             [Description("Absolute path to write the spec JSON to")] string path)
-            => engine.SaveSpecAsync(path);
+            => engine.SaveSpecAsync(path, "agent");
 
-        [McpServerTool(Name = "load_spec"), Description("Load a model spec from a JSON file (written by save_spec) and make it the current spec. Broadcasts live to the Spec tab. Returns the loaded spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "load_spec"), Description("Load a model spec from a JSON file (written by save_spec) and make it the current spec. Broadcasts live to the Spec tab. Returns the loaded spec view.")]
         public static async Task<SpecView> LoadSpec(IEngine engine,
             [Description("Absolute path to a spec JSON file")] string path)
         {
@@ -1900,7 +1993,7 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "build_model_from_spec"), Description("Materialise the current model spec INTO the open model as ONE undoable transaction (a single undo reverts the whole build). Composes the authoring primitives in dependency order: data source + shared M -> tables (import/Direct Lake/calculated, with columns + data types + keys) -> relationships (FK->PK) -> date table -> measures -> time-intelligence. Existing objects are skipped (re-run safe); per-row failures are reported without aborting. Build INTO the current session. Call create_model first for a from-scratch build. Returns a report (created/skipped/errors + before->after counts). Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "build_model_from_spec"), Description("Materialise the current model spec INTO the open model as ONE undoable transaction (a single undo reverts the whole build). Composes the authoring primitives in dependency order: data source + shared M -> tables (import/Direct Lake/calculated, with columns + data types + keys) -> relationships (FK->PK) -> date table -> measures -> time-intelligence. Existing objects are skipped (re-run safe); per-row failures are reported without aborting. Build INTO the current session. Call create_model first for a from-scratch build. Returns a report (created/skipped/errors + before->after counts). For a NEW model made from a SQL source, use start_model_from_sql instead: it makes the empty model, keeps the plan on a hidden draft, and builds it in one step once the person approves one plan. This tool is the two-step path for a model that is already open.")]
         public static async Task<SpecBuildReport> BuildModelFromSpec(IEngine engine)
         {
             var r = await engine.BuildModelFromSpecAsync("agent");
@@ -1908,7 +2001,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "autogenerate_spec_from_model"), Description("Auto-generate a starter model SPEC from the currently OPEN model (read-only, does not change the model): classifies each table fact/dimension/date/calculated by its relationship roles, captures columns + data types + keys + relationships + existing measures, PROPOSES additive 'Total <col>' measures for numeric fact columns, and suggests a time-intelligence set + date table. The autogen is a FIRST DRAFT. Refine it (set_spec / the Spec tab), then build_model_from_spec. Returns the spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "autogenerate_spec_from_model"), Description("Auto-generate a starter model SPEC from the currently OPEN model (read-only, does not change the model): classifies each table fact/dimension/date/calculated by its relationship roles, captures columns + data types + keys + relationships + existing measures, PROPOSES additive 'Total <col>' measures for numeric fact columns, and suggests a time-intelligence set + date table. The autogen is a FIRST DRAFT. Refine it (set_spec / the Spec tab), then build_model_from_spec. Returns the spec view.")]
         public static async Task<SpecView> AutogenerateSpecFromModel(IEngine engine)
         {
             var v = await engine.AutogenerateSpecFromModelAsync("agent");
@@ -1916,7 +2009,7 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "autogenerate_spec_from_fabric"), Description("Auto-generate a starter model SPEC by introspecting a FABRIC SQL ENDPOINT (Warehouse / Lakehouse SQL analytics endpoint) over TDS: reads INFORMATION_SCHEMA (tables, columns + types, declared PK/FK) using your Entra identity (a deterministic, read-only schema read; no data is copied). Classifies fact/dimension from FK topology, maps SQL types to TOM types, hides key columns, and proposes additive measures + a time-intelligence set. storageMode 'import' (M) or 'directLake'. authMode: azcli (default) | serviceprincipal | interactive | devicecode. If the endpoint rejects the sign-in with an authentication error, the workspace is usually in a DIFFERENT tenant than your az login. Pass tenantId. The result is a FIRST DRAFT. Refine it, then create_model + build_model_from_spec. (Fabric often declares no enforced keys, so relationships may be empty. Add them in the spec.) Returns the spec view. Create in Model is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "autogenerate_spec_from_fabric"), Description("Auto-generate a starter model SPEC by introspecting a FABRIC SQL ENDPOINT (Warehouse / Lakehouse SQL analytics endpoint) over TDS: reads INFORMATION_SCHEMA (tables, columns + types, declared PK/FK) using your Entra identity (a deterministic, read-only schema read; no data is copied). Classifies fact/dimension from FK topology, maps SQL types to TOM types, hides key columns, and proposes additive measures + a time-intelligence set. storageMode 'import' (M) or 'directLake'. authMode: azcli (default) | serviceprincipal | interactive | devicecode. If the endpoint rejects the sign-in with an authentication error, the workspace is usually in a DIFFERENT tenant than your az login. Pass tenantId. To reuse a SQL endpoint the person already saved on Connections (same sign-in, no password stored), read it with list_sql_sources and pass its server, database, authMode and tenantId. Which links are drafted INACTIVE, each with a plain note on the relationship saying why (a measure can still use it with USERELATIONSHIP): a fact table's own links always stay on (to the date table and to each dimension it references); when two of a fact's links reach the same table (an invoice date and a due date), the one listed first among the fact's columns stays on and the rest are off; any other link (a snowflake hop, a dimension's own date key) that would give a table a second path is off; a table linked to itself is off and not built. A source date table (a non-fact table named like date or calendar with a date column) is set as dateTable and MARKED as the date table on build, keyed on its date column; only a source with none gets a CALENDAR table. The result is a FIRST DRAFT. Refine it, then create_model + build_model_from_spec. (Fabric often declares no enforced keys, so relationships may be empty. Add them in the spec.) Returns the spec view. For a NEW model with nothing in it yet, use start_model_from_sql instead: it reads the same source, decides the spec on a hidden draft and builds it in one step once the person approves one plan. This tool is the two-step path, for a model that is already open.")]
         public static async Task<SpecView> AutogenerateSpecFromFabric(IEngine engine,
             [Description("Fabric SQL endpoint, e.g. 'xxxxx.datawarehouse.fabric.microsoft.com'")] string server,
             [Description("Warehouse / Lakehouse database name")] string database,
@@ -1933,18 +2026,18 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "git_status"), Description("Source control status of the OPEN model's git repository: current branch, ahead/behind, and the changed TMDL files (staged/worktree). Also flags whether the open model has unsaved in-memory edits (git_commit saves them to disk first). Read-only.")]
         public static Task<GitStatus> GitStatus(IEngine engine) => engine.GitStatusAsync();
 
-        [McpServerTool(Name = "git_diff"), Description("The unified text diff of the open model's git working tree (the on-disk TMDL diff). Pass a file path to scope it; staged=true for the staged diff. Read-only. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_diff"), Description("The unified text diff of the open model's git working tree (the on-disk TMDL diff). Pass a file path to scope it; staged=true for the staged diff. Read-only.")]
         public static Task<GitDiffResult> GitDiff(IEngine engine,
             [Description("Optional file path to scope the diff (relative to the repo)")] string path = null,
             [Description("true = the staged diff; false = the working-tree diff")] bool staged = false)
             => engine.GitDiffAsync(path, staged);
 
-        [McpServerTool(Name = "git_log"), Description("Recent commits on the open model's repository (hash, author, date, subject). Read-only. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_log"), Description("Recent commits on the open model's repository (hash, author, date, subject). Read-only.")]
         public static Task<GitLogEntry[]> GitLog(IEngine engine, [Description("Max commits (default 20)")] int max = 20) => engine.GitLogAsync(max);
 
-        [McpServerTool(Name = "git_commit"), Description("Commit the open model to git. DRY RUN by default (commit=false returns the file set that WOULD be committed and whether the model needs saving first; nothing changes). Pass commit=true to actually commit. It SAVES the open model's unsaved edits to disk first, stages the model folder, then commits. Returns the commit hash + files. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_commit"), Description("Commit the open model to git. DRY RUN by default (commit=false returns the file set that WOULD be committed and whether the model needs saving first; nothing changes). Pass commit=true to actually commit. It SAVES the open model's unsaved edits to disk first, stages the model folder, then commits. A blank message gets the default \"Saved from Semanticus\". Returns the commit hash + files.")]
         public static async Task<GitCommitResult> GitCommit(IEngine engine,
-            [Description("Commit message")] string message,
+            [Description("Commit message. A blank one gets a default.")] string message,
             [Description("Optional explicit file list to stage (default: stage the model folder)")] string[] files = null,
             [Description("false = preview (default); true = actually commit")] bool commit = false)
         {
@@ -1953,32 +2046,32 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "list_history_checkpoints"), Description("EDIT HISTORY (Free): list durable checkpoints for the open model on the current git branch. Checkpoints are ordinary model-scoped commits, so they survive closing the session and cloning the repository. Returns supported=false for a model outside git; session undo remains the short-term alternative. Read-only.")]
+        [McpServerTool(Name = "list_history_checkpoints"), Description("HISTORY (Free): list durable checkpoints for the open model on the current git branch. Checkpoints are ordinary model-scoped commits, so they survive closing the session and cloning the repository. Returns supported=false for a model outside git; session undo remains the short-term alternative. Read-only.")]
         public static Task<HistoryCheckpointList> ListHistoryCheckpoints(IEngine engine,
             [Description("Maximum checkpoints to return (1-500, default 50)")] int max = 50)
             => engine.ListHistoryCheckpointsAsync(max);
 
-        [McpServerTool(Name = "create_history_checkpoint"), Description("EDIT HISTORY (Free): create a durable, model-scoped git checkpoint without committing unrelated repository files. DRY RUN by default: commit=false reports the owned paths, changed files and whether the model will be saved. Pass commit=true after review. Refuses a detached branch, conflicts, or unrelated staged files instead of sweeping them into the commit. The result names the exact checkpoint hash; use restore_history_checkpoint to preview a restore.")]
+        [McpServerTool(Name = "create_history_checkpoint"), Description("HISTORY (Free): create a durable, model-scoped git checkpoint without committing unrelated repository files. DRY RUN by default: commit=false reports the owned paths, changed files and whether the model will be saved. Pass commit=true after review. Refuses a detached branch, conflicts, or unrelated staged files instead of sweeping them into the commit. The result names the exact checkpoint hash; use restore_history_checkpoint to preview a restore.")]
         public static async Task<HistoryCheckpointResult> CreateHistoryCheckpoint(IEngine engine,
             [Description("Plain accepted-state label, e.g. 'Before pricing refactor'")] string label = null,
             [Description("false = preview only (default); true = save and create the checkpoint commit")] bool commit = false)
         {
             var r = await engine.CreateHistoryCheckpointAsync(label, commit, "agent");
-            Emit(engine, new ActivityEvent { Kind = "history_checkpoint", Origin = "agent", Label = commit ? "Created an Edit History checkpoint" : "Previewed an Edit History checkpoint", Ok = string.IsNullOrEmpty(r.Error), Result = r });
+            Emit(engine, new ActivityEvent { Kind = "history_checkpoint", Origin = "agent", Label = commit ? "Saved a version to History" : "Previewed saving a version to History", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
 
-        [McpServerTool(Name = "restore_history_checkpoint"), Description("EDIT HISTORY (Free): restore the open FILE model to one of its durable checkpoints without resetting the branch or unrelated files. DRY RUN by default: restore=false names the model paths and safety sequence. Pass restore=true only after review. The engine first commits the current model as a rescue checkpoint, restores the selected model paths, reopens the model, and commits the restored state. Returns all three hashes so the action stays reversible. Live published models use rollback_push and its restore points instead.")]
+        [McpServerTool(Name = "restore_history_checkpoint"), Description("HISTORY (Free): restore the open FILE model to one of its durable checkpoints without resetting the branch or unrelated files. DRY RUN by default: restore=false names the model paths and safety sequence. Pass restore=true only after review. The engine first commits the current model as a rescue checkpoint, restores the selected model paths, reopens the model, and commits the restored state. Returns all three hashes so the action stays reversible. Live published models use rollback_push and its restore points instead.")]
         public static async Task<HistoryRestoreResult> RestoreHistoryCheckpoint(IEngine engine,
             [Description("Full or short hash returned by list_history_checkpoints")] string hash,
             [Description("false = preview only (default); true = create rescue checkpoint and restore")] bool restore = false)
         {
             var r = await engine.RestoreHistoryCheckpointAsync(hash, restore, "agent");
-            Emit(engine, new ActivityEvent { Kind = "history_restore", Origin = "agent", Label = restore ? "Restored an Edit History checkpoint" : "Previewed an Edit History restore", Ok = string.IsNullOrEmpty(r.Error), Result = r });
+            Emit(engine, new ActivityEvent { Kind = "history_restore", Origin = "agent", Label = restore ? "Restored a saved version from History" : "Previewed restoring a saved version", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
 
-        [McpServerTool(Name = "git_branch"), Description("List branches with no name or flags. To change state, pass a branch name and set create=true, checkout=true, or both. If switching changes the on-disk model, the result names the model path to reopen and flags modelReloadNeeded. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_branch"), Description("List branches with no name or flags. To change state, pass a branch name and set create=true, checkout=true, or both. If switching changes the on-disk model, the result names the model path to reopen and flags modelReloadNeeded.")]
         public static async Task<GitActionResult> GitBranch(IEngine engine,
             [Description("Branch name; empty = list branches")] string name = null,
             [Description("Create the branch")] bool create = false,
@@ -1989,7 +2082,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "git_checkout"), Description("Switch to a git ref (branch, tag, or commit). Refuses while the open model has unsaved edits. If the on-disk model changes, the result names the model path to reopen and flags modelReloadNeeded. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_checkout"), Description("Switch to a git ref (branch, tag, or commit). Refuses while the open model has unsaved edits. If the on-disk model changes, the result names the model path to reopen and flags modelReloadNeeded.")]
         public static async Task<GitActionResult> GitCheckout(IEngine engine, [Description("Branch / tag / commit to check out")] string gitRef)
         {
             var r = await engine.GitCheckoutAsync(gitRef, "agent");
@@ -1997,7 +2090,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "git_pull"), Description("Fast-forward pull the current branch from its upstream. Refuses while the open model has unsaved edits. If the on-disk model changes, the result names the model path to reopen and flags modelReloadNeeded. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_pull"), Description("Fast-forward pull the current branch from its upstream. Refuses while the open model has unsaved edits. If the on-disk model changes, the result names the model path to reopen and flags modelReloadNeeded.")]
         public static async Task<GitActionResult> GitPull(IEngine engine)
         {
             var r = await engine.GitPullAsync("agent");
@@ -2005,7 +2098,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "git_push"), Description("Push commits to the remote. DRY RUN by default (confirm=false reports what would push). Pass confirm=true to push. Uses the user's git credential helper. The engine never handles git credentials. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_push"), Description("Push commits to the remote. DRY RUN by default (confirm=false reports what would push). Pass confirm=true to push. Uses the user's git credential helper. The engine never handles git credentials.")]
         public static async Task<GitActionResult> GitPush(IEngine engine,
             [Description("Remote (default: the branch's configured remote)")] string remote = null,
             [Description("Branch (default: current)")] string branch = null,
@@ -2016,7 +2109,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "git_clone"), Description("Clone a git repository and locate the semantic model inside it. A relative target stays inside the current workspace, and the target must not already exist. Returns the model path to open with open_model. Uses the user's git credential helper. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "git_clone"), Description("Clone a git repository and locate the semantic model inside it. A relative target stays inside the current workspace, and the target must not already exist. Returns the model path to open with open_model. Uses the user's git credential helper.")]
         public static async Task<GitActionResult> GitClone(IEngine engine,
             [Description("Repository URL")] string url,
             [Description("Target directory to clone into")] string directory)
@@ -2086,7 +2179,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "list_connections"), Description("Every model source this machine has opened or connected to (XMLA endpoints, local running models, and local files or projects), newest first. Use this INSTEAD of asking the user to retype an endpoint or path. Each record carries kind (xmla | localDesktop | file), endpoint (the XMLA address, local data source, or file path), dataset, auth mode, model name, last-used, and the user's target label. Holds NO secrets: authMode is a mode NAME, never a token. 'label' is what the USER declared the environment to be (local | dev | uat | prod); an EMPTY label means the target is treated as PRODUCTION, the strictest reading and the only inference ever made. NEVER guess a label from an endpoint's name. 'workingFolder' is a durable local copy made from that source. 'publishConnectionId' is the separate final XMLA destination when one is linked; a local source does not become a published destination by implication. A file record is a local file or project this machine has opened; reopen it with open_model on its endpoint path. It cannot answer queries by itself. Read-only and free. Next: connection_context for the active edit/query/publish identities, or prepare_working_copy to preview a local workflow.")]
+        [McpServerTool(Name = "list_connections"), Description("Every model source this machine has opened or connected to (XMLA endpoints, local running models, and local files or projects), newest first. Use this INSTEAD of asking the user to retype an endpoint or path. Each record carries kind (xmla | localDesktop | file), endpoint (the XMLA address, local data source, or file path), dataset, auth mode, model name, last-used, and the user's target label. Holds NO secrets: authMode is a mode NAME, never a token. 'label' is what the USER declared the environment to be (local | dev | uat | prod); an EMPTY label means the target is treated as PRODUCTION, the strictest reading and the only inference ever made. NEVER guess a label from an endpoint's name. Only the user can set a label, in Connections in VS Code; the agent cannot. 'workingFolder' is a durable local copy made from that source. 'publishConnectionId' is the separate final XMLA destination when one is linked; a local source does not become a published destination by implication. A file record is a local file or project this machine has opened; reopen it with open_model on its endpoint path. It cannot answer queries by itself. Read-only and free. Next: connection_context for the active edit/query/publish identities, or prepare_working_copy to preview a local workflow.")]
         public static async Task<ModelConnectionRecord[]> ListConnections(IEngine engine)
             => await engine.ListConnectionsAsync();
 
@@ -2098,7 +2191,18 @@ namespace Semanticus.Engine
         public static async Task<SqlSourceUsage[]> ListSqlSourceUsage(IEngine engine)
             => await engine.ListSqlSourceUsageAsync();
 
-        [McpServerTool(Name = "save_sql_source"), Description("Save a named SQL source, or update one by id. Pass name, server (JUST the address, like contoso-sql.database.windows.net), database, and authMode: 'interactive' (a browser sign-in), 'devicecode' (a code entered on another device), 'azcli' (the Azure CLI sign-in already on this machine), or 'serviceprincipal' (an app registration). tenantId is optional. NEVER pass a password, a token or a connection string: a connection-string shape in server or database is REFUSED at the boundary rather than stripped, 'token' is refused as a mode by name, and the record has no password field to put one in. Semanticus signs in at use time with the mode you name here, which is the point: a check saved with no mode used to fall back to the Azure CLI sign-in and fail confusingly for anyone signing in through a browser. Two sources cannot share a name. Omit id to create; pass an id from list_sql_sources to update. Next: test_sql_source to prove it works before a check depends on it.")]
+        [McpServerTool(Name = "set_model_sql_endpoint"), Description("Give a model its SQL endpoint: the ONE saved SQL source its checks read from unless a check names its own. Pass a sqlSourceId from list_sql_sources, or null to clear it. It applies to the OPEN model, or to a saved model from list_connections when you pass its connectionId. Resolution for every check is: the check's own source or inline server first (the quiet per-check override for a model whose tables come from two warehouses), then the model's endpoint, then what the model's own partitions read from. A table-count mapping from set_table_source_mapping still wins for its table. A working copy made with prepare_working_copy starts with the endpoint of the model it came from. The source record is not copied: several models can share one saved source. Writes only machine-local metadata, never the model. Free. Next: connection_context to read it back, run_tests to count against it.")]
+        public static async Task<ModelSqlEndpointResult> SetModelSqlEndpoint(
+            IEngine engine,
+            [Description("Source id from list_sql_sources, or null to clear the model's endpoint")] string sqlSourceId,
+            [Description("Optional connection id from list_connections for a saved model that is not open; omit for the open model")] string connectionId = null)
+            => await engine.SetModelSqlEndpointAsync(sqlSourceId, connectionId, "agent");
+
+        [McpServerTool(Name = "list_model_sql_endpoints"), Description("Every model's SQL endpoint ('rows': model name, connectionId when the model is a saved connection, and the endpoint's source id, name, server, database and last test), plus 'notLinked': the saved SQL sources that no model uses as its endpoint, each with how many of the OPEN model's checks and table mappings still name it (a source with zero of both can be removed). Existing setups were linked once on upgrade from what each model's checks already used, by id, so no check changed where it points. Read-only and free. Next: set_model_sql_endpoint to link or clear one, delete_sql_source to remove an unused source.")]
+        public static async Task<ModelSqlEndpointList> ListModelSqlEndpoints(IEngine engine)
+            => await engine.ListModelSqlEndpointsAsync();
+
+        [McpServerTool(Name = "save_sql_source"), Description("Save a named SQL source, or update one by id. Pass name, server (JUST the address, like contoso-sql.database.windows.net), database, and authMode: 'interactive' (a browser sign-in), 'devicecode' (a code entered on another device), 'azcli' (the Azure CLI sign-in already on this machine), or 'serviceprincipal' (an app registration). tenantId is optional. NEVER pass a password, a token or a connection string: a connection-string shape in server or database is REFUSED at the boundary rather than stripped, 'token' is refused as a mode by name, and the record has no password field to put one in. Semanticus signs in at use time with the mode you name here, so every check that uses this source signs in the way the source says. Two sources cannot share a name. Omit id to create; pass an id from list_sql_sources to update. Next: test_sql_source to prove it works before a check depends on it.")]
         public static async Task<SqlSourceRecord> SaveSqlSource(
             IEngine engine,
             [Description("What to call it, shown wherever a source is picked (e.g. 'Contoso warehouse')")] string name,
@@ -2115,17 +2219,17 @@ namespace Semanticus.Engine
             [Description("Source id from list_sql_sources")] string id)
             => await engine.TestSqlSourceAsync(id, "agent");
 
-        [McpServerTool(Name = "delete_sql_source"), Description("Remove a saved SQL source. REFUSED while the open model's saved checks or table mappings still point at it, and the refusal SAYS HOW MANY of each, so 'still in use' is never an unexplained no. Change or remove those first. Returns deleted=false with a plain note rather than throwing. Honest limit: this can only see the model that is OPEN. A source used by a model that is not open can still be removed, and those checks then report that the source they were set to use is no longer saved rather than quietly running somewhere else. Next: list_tests to see which checks use a source.")]
+        [McpServerTool(Name = "delete_sql_source"), Description("Remove a saved SQL source. REFUSED while any model uses it as its SQL endpoint (the refusal names those models; clear them with set_model_sql_endpoint first), and while the open model's saved checks or table mappings still point at it, and the refusal SAYS HOW MANY of each, so 'still in use' is never an unexplained no. Change or remove those first. Returns deleted=false with a plain note rather than throwing. Honest limit: this can only see the model that is OPEN. A source used by a model that is not open can still be removed, and those checks then report that the source they were set to use is no longer saved rather than quietly running somewhere else. Next: list_tests to see which checks use a source.")]
         public static async Task<SqlSourceDeleteResult> DeleteSqlSource(
             IEngine engine,
             [Description("Source id from list_sql_sources")] string id)
             => await engine.DeleteSqlSourceAsync(id, "agent");
 
-        [McpServerTool(Name = "list_table_mappings"), Description("EVERY table in the model, where its row count is read from, and how the last count went. This row IS the table-count check: there is no saved-test kind for a table count, and mapping a table with set_table_source_mapping is the same action as adding one. 'source' says where the coordinates came from: 'mapping' (a person chose a saved SQL source), 'detected' (read from the table's own partition) or 'none'. 'canCount' false means 'reason' says in plain words what is missing, for example a table that is not mapped yet, a mapping that does not name a schema and table, an ambiguous source, or a source that has been removed. 'editable' is true for every table that could be counted, so a table with no source at all still has a row to point at a source. The last outcome (lastVerdict, lastMessage, lastModelCount, lastSourceCount, lastRunUtc) comes from the last run in this session and is ABSENT when nothing has been counted yet, which is its own state and never a pass or a failure. Counts that differ without proven matching snapshots stay 'couldn't check'. Read-only. Next: set_table_source_mapping to point a table at a saved source, run_tests to count. Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_table_mappings"), Description("EVERY table in the model, where its row count is read from, and how the last count went. This row IS the table-count check: there is no saved-test kind for a table count, and mapping a table with set_table_source_mapping is the same action as adding one. 'source' says where the coordinates came from: 'mapping' (a person chose a saved SQL source for this table), 'endpoint' (the model's SQL endpoint, with the schema and table read from the table's own partition), 'detected' (read from the table's own partition, when the model has no endpoint) or 'none'. 'canCount' false means 'reason' says in plain words what is missing, for example a table that is not mapped yet, a mapping that does not name a schema and table, an ambiguous source, or a source that has been removed. 'editable' is true for every table that could be counted, so a table with no source at all still has a row to point at a source. The last outcome (lastVerdict, lastMessage, lastModelCount, lastSourceCount, lastRunUtc) comes from the last run in this session and is ABSENT when nothing has been counted yet, which is its own state and never a pass or a failure. Counts that differ without proven matching snapshots stay 'couldn't check'. Read-only. Next: set_table_source_mapping to point a table at a saved source, run_tests to count.")]
         public static async Task<TableSourceMappingList> ListTableMappings(IEngine engine)
             => await engine.ListTableSourceMappingsAsync();
 
-        [McpServerTool(Name = "set_table_source_mapping"), Description("Point one model table at a named SQL source and the table inside it, so the ambient row-count check knows WHERE to count. Without a mapping the check reads whatever the table's own partition reveals, and a table whose partition does not say enough reports 'not mapped to a SQL source yet' with nothing to fix it. Pass the model table, a sqlSourceId from list_sql_sources, and the schema and table name in the source. The mapping WINS over anything detected from the model, replaces any mapping that table already had, and is stored with the model's test data (.semanticus/tests/) so it travels with the model. It supplies where to count, NEVER a verdict: counts that differ without proven snapshot alignment stay 'couldn't check', not a failure. Next: run_tests to count, clear_table_source_mapping to undo it. Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "set_table_source_mapping"), Description("Point one model table at a named SQL source and the table inside it, so the ambient row-count check knows WHERE to count. Without a mapping the check reads whatever the table's own partition reveals, and a table whose partition does not say enough reports 'not mapped to a SQL source yet' with nothing to fix it. Pass the model table, a sqlSourceId from list_sql_sources, and the schema and table name in the source. The mapping WINS over anything detected from the model, replaces any mapping that table already had, and is stored with the model's test data (.semanticus/tests/) so it travels with the model. It supplies where to count, NEVER a verdict: counts that differ without proven snapshot alignment stay 'couldn't check', not a failure. Next: run_tests to count, clear_table_source_mapping to undo it.")]
         public static async Task<TableSourceMappingInfo> SetTableSourceMapping(
             IEngine engine,
             [Description("The model table to map (a name or 'table:Name')")] string table,
@@ -2134,7 +2238,7 @@ namespace Semanticus.Engine
             [Description("The table name in the source, e.g. 'fact_sales'")] string entity = null)
             => await engine.SetTableSourceMappingAsync(table, sqlSourceId, schema, entity, "agent");
 
-        [McpServerTool(Name = "clear_table_source_mapping"), Description("Forget one model table's SQL source mapping. The row-count check then goes back to reading the table's own partition, which is where it was before anyone mapped it. Returns false when that table had no mapping. Changes no model object and needs no deploy. Tests is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "clear_table_source_mapping"), Description("Forget one model table's SQL source mapping. The row-count check then goes back to reading the table's own partition, which is where it was before anyone mapped it. Returns false when that table had no mapping. Changes no model object and needs no deploy.")]
         public static async Task<bool> ClearTableSourceMapping(
             IEngine engine,
             [Description("The model table to unmap (a name or 'table:Name')")] string table)
@@ -2171,7 +2275,7 @@ namespace Semanticus.Engine
             [Description("azcli | interactive | serviceprincipal")] string authMode = "azcli")
             => await engine.RememberXmlaConnectionAsync(endpoint, database, modelName, authMode, "agent");
 
-        [McpServerTool(Name = "connection_context"), Description("Explain the model identity currently being EDITED and the model identity currently answering QUERIES. They may deliberately be two copies: for example, a safe local working copy for edits while the published model answers real-data queries. Returns relationship=sameInstance only when that is proven; workingCopyAndPublished and twoModels explicitly mean two model contexts are in play. Read this before comparing, testing, or deploying so you never assume the query target is the write target. Holds no credentials. Read-only and free. Next: list_connections to choose a remembered model, connect_xmla/connect_local to change only the query model, or open_live/open_local to edit and query one live model.")]
+        [McpServerTool(Name = "connection_context"), Description("Explain the model identity currently being EDITED and the model identity currently answering QUERIES. They may deliberately be two copies: for example, a safe local working copy for edits while the published model answers real-data queries. Returns relationship=sameInstance only when that is proven; workingCopyAndPublished and twoModels explicitly mean two model contexts are in play. Read this before comparing, testing, or deploying so you never assume the query target is the write target. 'sqlEndpoint' is the open model's SQL endpoint (the saved SQL source its checks read from unless a check names its own), null when it has none; 'sqlEndpointSuggestion' is what the model's own sources read from, offered when no endpoint is set. Holds no credentials. Read-only and free. Next: list_connections to choose a remembered model, connect_xmla/connect_local to change only the query model, or open_live/open_local to edit and query one live model.")]
         public static async Task<ConnectionContext> GetConnectionContext(IEngine engine)
         {
             var result = await engine.ConnectionContextAsync();
@@ -2200,21 +2304,11 @@ namespace Semanticus.Engine
             }
         }
 
-        [McpServerTool(Name = "set_publish_destination"), Description("Link the OPEN editable model to a remembered XMLA connection as its explicit final publish destination. Works for Semanticus-created working copies and existing user-owned local files, including files in source control. Writes only machine-local connection metadata: it never edits model/repository files and never deploys. Use list_connections for the XMLA connection id. The actual push remains a separate preview + confirmation through apply_model_diff. Next: connection_context to verify Editing and Publish to before reviewing changes.")]
+        [McpServerTool(Name = "set_publish_destination"), Description("Link the OPEN editable model to a remembered XMLA connection as its explicit final publish destination. Works for Semanticus-created working copies and existing user-owned local files, including files in source control. Writes only machine-local connection metadata: it never edits model/repository files and never deploys. Use list_connections for the XMLA connection id. The actual push remains a separate preview + confirmation through apply_model_diff. Pass clear=true with no connectionId to let go of the destination; the change is recorded in the connection history like a set. Next: connection_context to verify Editing and Publish to before reviewing changes.")]
         public static async Task<ConnectionContext> SetPublishDestination(IEngine engine,
-            [Description("XMLA connection id from list_connections")] string connectionId)
-            => await engine.SetPublishDestinationAsync(connectionId, "agent");
-
-        [McpServerTool(Name = "label_connection"), Description("Declare what a target IS: local | dev | uat | prod. REFUSED FROM THIS DOOR. A label is a governance statement and the agent's own permissions are gated on it, so an agent that could relabel prod as dev would have defeated the matrix that restrains it. This tool exists so you can EXPLAIN the refusal, not work around it: when an operation is blocked because a target is unlabelled (and therefore treated as production), name the endpoint that needs labelling and ask the user to set it. Read current labels with list_connections.")]
-        public static async Task<object> LabelConnection(IEngine engine,
-            [Description("Connection id from list_connections")] string id,
-            [Description("local | dev | uat | prod (empty clears it. The target then counts as prod)")] string label = null)
-        {
-            // The refusal lives in the REGISTRY, not here, so the RPC door enforces it too. A rule enforced on one path
-            // and not its mirror is not a rule. This only turns it into a teaching error rather than a stack trace.
-            try { return await engine.LabelConnectionAsync(id, label, "agent"); }
-            catch (Exception ex) { return new { error = ex.Message }; }
-        }
+            [Description("XMLA connection id from list_connections. Omit it when clear is true.")] string connectionId = null,
+            [Description("true lets go of the open model's publish destination instead of setting one. Nothing is deployed or deleted; clearing when none is set changes nothing and says so in 'note'. A model open live from its workspace saves straight back to it, so its destination cannot be cleared: open a local copy instead.")] bool clear = false)
+            => await engine.SetPublishDestinationAsync(connectionId, "agent", clear);
 
         [McpServerTool(Name = "forget_connection"), Description("Remove a connection from the remembered list (see list_connections). Does not disconnect anything and does not touch the model. It only forgets the endpoint, its auth mode, its target label and its working folder. Re-connecting to the same endpoint records it again, UNLABELLED, which means it will be treated as production until the user labels it.")]
         public static async Task<object> ForgetConnection(IEngine engine,
@@ -2232,13 +2326,13 @@ namespace Semanticus.Engine
             catch (Exception ex) { return new { forgotten = false, error = ex.Message }; }
         }
 
-        [McpServerTool(Name = "get_agent_policy"), Description("Read the agent-permissions policy: what YOU (the agent) are allowed to do to a live target, by environment. Returns the global on/off switch, the active preset, and the capability×label matrix. Labels are local | dev | uat | prod; an UNLABELLED target is treated as prod (the strictest). Actions are allow | ask | deny: 'ask' means a human must approve the specific action in the UI before you can do it (see list_pending_approvals. You request approval simply by attempting the action). Reading, and running a calculation, are never gated. Use this to know BEFORE you try: if pushing to a target is 'deny' or 'ask', tell the user rather than failing repeatedly. Only a human can change this policy or the labels it reads. Read-only and free.")]
+        [McpServerTool(Name = "get_agent_policy"), Description("Read the agent-permissions policy: what YOU (the agent) are allowed to do to a live target, by environment. Returns the global on/off switch, the active preset, and the capability×label matrix. Labels are local | dev | uat | prod; an UNLABELLED target is treated as prod (the strictest). Actions are allow | ask | deny: 'ask' means a human must approve the specific action in the UI before you can do it (see list_pending_approvals. You request approval simply by attempting the action). Reading, and running a calculation, are never gated. Use this to know BEFORE you try: if pushing to a target is 'deny' or 'ask', tell the user rather than failing repeatedly. Only a human can change this policy or the labels it reads; the user sets labels in Connections, in VS Code. Read-only and free.")]
         public static async Task<AgentPolicy> GetAgentPolicy(IEngine engine) => await engine.GetAgentPolicyAsync();
 
         [McpServerTool(Name = "list_pending_approvals"), Description("The 'waiting for you' queue: actions you attempted that the policy said need a human's approval (an 'ask'). Each entry is bound to the EXACT action (capability + target + intent); the human approves it in the UI, then you retry the SAME action and it proceeds once (a grant is one-shot and expires). Use this to see what you're waiting on. You cannot approve your own actions. That asymmetry is the point. Read-only and free.")]
         public static async Task<ApprovalRecord[]> ListPendingApprovals(IEngine engine) => await engine.ListPendingApprovalsAsync();
 
-        [McpServerTool(Name = "list_restore_points"), Description("List the pre-push snapshots a published model can be rolled back to. Every committed apply_model_diff push to an XMLA endpoint writes one FIRST, so the push can be undone. This is the only way back from a live DELETE (a deploy re-creates measures, calculated columns, calculated tables and named expressions, but a relationship, role, perspective, hierarchy, partition, culture, datasource or data table removed from a published model is otherwise gone for good). Newest first. Only the newest 10 per target are kept. Filter by endpoint + database, or omit both for every target. Snapshots live in ~/.semanticus/restore and hold the target's full model METADATA (measures, M queries, role filters, connection strings, never row data) in clear text; purge_restore_points removes them. An integrityError means rollback is refused, while purge remains available through its validated storage path. Read-only and free. Next: rollback_push(id) to preview a restore.")]
+        [McpServerTool(Name = "list_restore_points"), Description("List the pre-push snapshots a published model can be rolled back to. Every committed deploy_live write and every committed apply_model_diff push to an XMLA endpoint writes one FIRST, so the push can be undone. This is the only way back from a live DELETE (a deploy re-creates measures, calculated columns, calculated tables and named expressions, but a relationship, role, perspective, hierarchy, partition, culture, datasource or data table removed from a published model is otherwise gone for good). Newest first. Only the newest 10 per target are kept. Filter by endpoint + database, or omit both for every target. Snapshots live in ~/.semanticus/restore and hold the target's full model METADATA (measures, M queries, role filters, connection strings, never row data) in clear text; purge_restore_points removes them. An integrityError means rollback is refused, while purge remains available through its validated storage path. Read-only and free. Next: rollback_push(id) to preview a restore.")]
         public static async Task<RestorePointRecord[]> ListRestorePoints(IEngine engine,
             [Description("Only restore points for this XMLA endpoint (requires database)")] string endpoint = null,
             [Description("Only restore points for this dataset (database) name")] string database = null)
@@ -2278,7 +2372,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "deploy_gate"), Description("The deploy-readiness gate for THIS change: findings the change set introduces or touches can block; older whole-model warnings become olderWarnings (a count, never a block) plus checkLine pointing at AI Readiness. Read-only. WAIVED BPA findings never block (they're audited acceptances, bpaWaivedBlocking counts them); readiness hard-gates still apply when this change touches them.")]
+        [McpServerTool(Name = "deploy_gate"), Description("The deploy-readiness gate for THIS change: findings the change set introduces or touches can block; older whole-model warnings become olderWarnings (a count, never a block) plus checkLine pointing at AI Readiness. With no change set to scope to (no edits in this session yet, a model-wide edit, or no saved or published copy) it judges the WHOLE model instead: wholeModel=true and checkLine opens with why. Read-only. WAIVED BPA findings never block (they're audited acceptances, bpaWaivedBlocking counts them); readiness hard-gates still apply when this change touches them.")]
         public static Task<DeployGate> DeployGate(IEngine engine) => engine.DeployGateAsync(null, "agent");
 
         // ---- Fabric REST (the cloud ALM lane — read-only discovery) -----------------------------------
@@ -2290,6 +2384,13 @@ namespace Semanticus.Engine
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
             => engine.ListWorkspacesAsync(authMode, null, "agent", cancellationToken);
+
+        [McpServerTool(Name = "list_workspace_models"), Description("List the semantic models in one Fabric workspace (id, displayName, description). Pair with list_workspaces to find the workspace id, then connect_xmla or open_live with the workspace address and the model's displayName as the database. Live read against api.fabric.microsoft.com using your Entra identity. Read-only.")]
+        public static Task<FabricSemanticModel[]> ListWorkspaceModels(IEngine engine,
+            [Description("Workspace id, from list_workspaces")] string workspaceId,
+            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            CancellationToken cancellationToken = default)
+            => engine.ListWorkspaceModelsAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "list_deployment_pipelines"), Description("List the Fabric deployment pipelines you can access (id, displayName, description). Use get_pipeline_stages then get_stage_items to drill into a pipeline's Dev/Test/Prod stages. Live read; read-only.")]
         public static Task<DeploymentPipeline[]> ListDeploymentPipelines(IEngine engine,
@@ -2322,7 +2423,7 @@ namespace Semanticus.Engine
             CancellationToken cancellationToken = default)
             => engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "deploy_stage"), Description("Promote items between Fabric deployment-pipeline stages. DRY RUN by default (the New/Update preview + the readiness gate); commit=true deploys. An agent may deploy to NON-production stages only. Promoting to PRODUCTION needs a human confirming from the Deploy tab with the confirmToken their own dry-run shows. A failing gate blocks unless forceOverride=true. items = source item ids (empty = all supported).")]
+        [McpServerTool(Name = "deploy_stage"), Description("Promote items between Fabric deployment-pipeline stages. DRY RUN by default (the New/Update preview); commit=true deploys. An agent may deploy to NON-production stages only. Promoting to PRODUCTION needs a human confirming from the Deploy tab with the confirmToken their own dry-run shows. The readiness gate does not apply to a stage move. items = source item ids (empty = all supported).")]
         public static async Task<DeployStageReport> DeployStage(IEngine engine,
             [Description("Deployment-pipeline id")] string pipelineId,
             [Description("Source stage id (e.g. Dev)")] string sourceStageId,
@@ -2331,9 +2432,9 @@ namespace Semanticus.Engine
             [Description("Optional deployment note")] string note = null,
             [Description("false = DRY RUN preview (default); true = deploy")] bool commit = false,
             [Description("The confirmToken from a human dry-run (production only; an agent cannot obtain it)")] string confirmToken = null,
-            [Description("true = deploy even if the readiness gate fails")] bool forceOverride = false,
+            [Description("Ignored. The readiness gate no longer applies to a stage move.")] bool forceOverride = false,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
-            [Description("required with forceOverride when the readiness gate fails; recorded in the audit trail")] string overrideReason = null,
+            [Description("Ignored. The readiness gate no longer applies to a stage move.")] string overrideReason = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.DeployStageAsync(pipelineId, sourceStageId, targetStageId, items, note, commit, confirmToken, forceOverride, authMode, null, "agent", overrideReason, cancellationToken);
@@ -2349,21 +2450,21 @@ namespace Semanticus.Engine
             => engine.DeploymentHistoryAsync(pipelineId, authMode, null, "agent", cancellationToken);
 
         // ---- Fabric Git (workspace ⇄ git) — reads + GATED writes ----------------------------------------
-        [McpServerTool(Name = "fabric_git_connection"), Description("The workspace's Fabric Git connection: provider (Azure DevOps / GitHub), repo/branch/directory, connection state, last-synced commit. Read-only. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_connection"), Description("The workspace's Fabric Git connection: provider (Azure DevOps / GitHub), repo/branch/directory, connection state, last-synced commit. Read-only.")]
         public static Task<FabricGitConnection> FabricGitConnection(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
             => engine.FabricGitConnectionAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "fabric_git_status"), Description("The workspace ⇄ git diff: each changed item (workspace change vs remote change vs conflict), plus the workspace + remote commit hashes. Read-only. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_status"), Description("The workspace ⇄ git diff: each changed item (workspace change vs remote change vs conflict), plus the workspace + remote commit hashes. Read-only.")]
         public static Task<FabricGitStatus> FabricGitStatus(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
             => engine.FabricGitStatusAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "fabric_git_commit"), Description("Commit the WORKSPACE's changes to git (workspace→git). DRY RUN by default (commit=false reports the pending change count; writes nothing). Pass commit=true to commit. items = item objectIds for a selective commit (empty = all). Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_commit"), Description("Commit the WORKSPACE's changes to git (workspace→git). DRY RUN by default (commit=false reports the pending change count; writes nothing). Pass commit=true to commit. items = item objectIds for a selective commit (empty = all).")]
         public static async Task<FabricGitResult> FabricGitCommit(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Commit message")] string comment = null,
@@ -2377,7 +2478,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "fabric_git_update"), Description("Update the WORKSPACE from git (git→workspace): OVERWRITES workspace items with the git version. DRY RUN by default (commit=false reports the incoming change count + any conflicts). Pass commit=true to apply. conflictPolicy = PreferRemote (default) | PreferWorkspace; allowOverride=true permits overwriting items that have workspace changes. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_update"), Description("Update the WORKSPACE from git (git→workspace): OVERWRITES workspace items with the git version. DRY RUN by default (commit=false reports the incoming change count + any conflicts). Pass commit=true to apply. conflictPolicy = PreferRemote (default) | PreferWorkspace; allowOverride=true permits overwriting items that have workspace changes.")]
         public static async Task<FabricGitResult> FabricGitUpdate(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("PreferRemote (default) | PreferWorkspace")] string conflictPolicy = "PreferRemote",
@@ -2391,7 +2492,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "fabric_git_connect"), Description("Connect a workspace to a git repo (Azure DevOps or GitHub). DRY RUN by default (commit=false). Pass commit=true to connect. Needs workspace Admin. After connecting, initialize + fabric_git_update/commit to sync. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_connect"), Description("Connect a workspace to a git repo (Azure DevOps or GitHub). DRY RUN by default (commit=false). Pass commit=true to connect. Needs workspace Admin. After connecting, initialize + fabric_git_update/commit to sync.")]
         public static async Task<FabricGitResult> FabricGitConnect(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("AzureDevOps | GitHub")] string provider,
@@ -2410,7 +2511,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "fabric_git_disconnect"), Description("Disconnect a workspace from git. DRY RUN by default (commit=false). Pass commit=true to disconnect. Needs workspace Admin. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "fabric_git_disconnect"), Description("Disconnect a workspace from git. DRY RUN by default (commit=false). Pass commit=true to disconnect. Needs workspace Admin.")]
         public static async Task<FabricGitResult> FabricGitDisconnect(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("false = DRY RUN (default); true = disconnect")] bool commit = false,
@@ -2422,7 +2523,7 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "cicd_publish"), Description("Publish the OPEN model's on-disk definition (PBIP/TMDL) to a Fabric workspace via updateDefinition, a FULL OVERWRITE of the target semantic model. DRY RUN by default (enumerates parts + target, writes nothing); the live publish (commit=true) is human-only from the Deploy tab. An agent's commit is refused, previewing is allowed. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "cicd_publish"), Description("Publish the OPEN model's on-disk definition (PBIP/TMDL) to a Fabric workspace via updateDefinition, a FULL OVERWRITE of the target semantic model. DRY RUN by default (enumerates parts + target, writes nothing); the live publish (commit=true) is human-only from the Deploy tab. An agent's commit is refused, previewing is allowed.")]
         public static async Task<CicdPublishResult> CicdPublish(IEngine engine,
             [Description("Target workspace id")] string workspaceId = null,
             [Description("Target semantic-model item id (in that workspace)")] string itemId = null,
@@ -2435,14 +2536,14 @@ namespace Semanticus.Engine
             return r;
         }
 
-        [McpServerTool(Name = "cicd_generate"), Description("Generate a ready-to-run fabric-cicd CI scaffold (parameter.yml + a GitHub Actions or Azure DevOps workflow + deploy.py) running the real publish_all_items in CI. Pure file authoring, no Fabric call. Returns the contents; write=true also writes them into the repo. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "cicd_generate"), Description("Generate a ready-to-run fabric-cicd CI scaffold (parameter.yml + a GitHub Actions or Azure DevOps workflow + deploy.py) running the real publish_all_items in CI. Pure file authoring, no Fabric call. Returns the contents; write=true also writes them into the repo. With write=true the files are written into the person's repository, which is a file write: under the Locked policy the person is asked first, and the question lists the files.")]
         public static async Task<CicdScaffold> CicdGenerate(IEngine engine,
             [Description("github (default, GitHub Actions) | ado (Azure DevOps)")] string target = "github",
             [Description("Target workspace id to seed parameter.yml (optional)")] string workspaceId = null,
             [Description("Environment name for the parameter.yml replace_value key (default PROD)")] string environment = "PROD",
             [Description("false = return contents only (default); true = also write the files into the repo")] bool write = false)
         {
-            var r = await engine.CicdGenerateAsync(target, workspaceId, environment, write);
+            var r = await engine.CicdGenerateAsync(target, workspaceId, environment, write, "agent");
             Emit(engine, new ActivityEvent { Kind = "cicd_generate", Origin = "agent", Label = r.Written ? "Wrote a fabric-cicd CI scaffold" : "Generated a fabric-cicd CI scaffold", Ok = string.IsNullOrEmpty(r.Error), Result = r });
             return r;
         }
@@ -2451,14 +2552,14 @@ namespace Semanticus.Engine
         // The whole Data agent view is Pro; create/update/publish/delete are DRY-RUN by default.
         // The engine publishes the ActivityEvent for every EXECUTED write (data_agent_*), so these tools do NOT
         // Emit again (a dry-run changes nothing; a commit is logged once by the engine on both doors).
-        [McpServerTool(Name = "list_data_agents"), Description("List the Fabric data agents in a workspace (id, name, description, type). Live read against api.fabric.microsoft.com with your Entra identity; read-only. [verify-at-build]: the item type string isn't documented yet, so this filters items whose type CONTAINS 'dataagent' (case-insensitive). If none match, ObservedItemTypes lists every item type in the workspace so you can confirm the real one. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "list_data_agents"), Description("List the Fabric data agents in a workspace (id, name, description, type). Live read against api.fabric.microsoft.com with your Entra identity; read-only. [verify-at-build]: the item type string isn't documented yet, so this filters items whose type CONTAINS 'dataagent' (case-insensitive). If none match, ObservedItemTypes lists every item type in the workspace so you can confirm the real one.")]
         public static Task<DataAgentList> ListDataAgents(IEngine engine,
             [Description("Workspace id (from list_workspaces)")] string workspaceId,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
             => engine.ListDataAgentsAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "get_data_agent"), Description("Get one data agent's decoded configuration: the draft (and published, if any) stage, aiInstructions, each data source (type, ids, descriptions, the raw elements tree, few-shots), and the publish description. Live read; read-only. Advanced publishing is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "get_data_agent"), Description("Get one data agent's decoded configuration: the draft (and published, if any) stage, aiInstructions, each data source (type, ids, descriptions, the raw elements tree, few-shots), and the publish description. Live read; read-only.")]
         public static Task<DataAgentDetail> GetDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id (from list_data_agents)")] string agentId,
@@ -2466,12 +2567,12 @@ namespace Semanticus.Engine
             CancellationToken cancellationToken = default)
             => engine.GetDataAgentAsync(workspaceId, agentId, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "generate_data_agent_config"), Description("Advanced publishing is a Semanticus Pro feature, reads included. Build a complete semantic_model datasource config FROM the open model in one shot: an element tree of every table/column/measure with model descriptions carried and is_selected honoring hidden objects + the Prep-for-AI AI-data-schema exclusions; aiInstructions seeded from the model's LSDL instructions. Returns the JSON for review (feed it to update_data_agent). Writes NOTHING. artifactId/workspaceId come back as placeholders (resolve the real Fabric ids first, see the Note).")]
+        [McpServerTool(Name = "generate_data_agent_config"), Description("Build a complete semantic_model datasource config FROM the open model in one shot: an element tree of every table/column/measure with model descriptions carried and is_selected honoring hidden objects + the Prep-for-AI AI-data-schema exclusions; aiInstructions seeded from the model's LSDL instructions. Returns the JSON for review (feed it to update_data_agent). Writes NOTHING. artifactId/workspaceId come back as placeholders (resolve the real Fabric ids first, see the Note).")]
         public static Task<DataAgentConfig> GenerateDataAgentConfig(IEngine engine,
             [Description("Max columns to emit per table (default 200)")] int maxColumnsPerTable = 200)
             => engine.GenerateDataAgentConfigFromModelAsync(maxColumnsPerTable);
 
-        [McpServerTool(Name = "create_data_agent"), Description("Advanced publishing is a Semanticus Pro feature, reads included. Create a new (empty draft) Fabric data agent: data_agent.json + a minimal draft stage_config with aiInstructions. DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true creates it. aiInstructions capped at 15000 chars.")]
+        [McpServerTool(Name = "create_data_agent"), Description("Create a new (empty draft) Fabric data agent: data_agent.json + a minimal draft stage_config with aiInstructions. DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true creates it. aiInstructions capped at 15000 chars.")]
         public static Task<DataAgentWriteReport> CreateDataAgent(IEngine engine,
             [Description("Target workspace id")] string workspaceId,
             [Description("Data agent display name")] string name,
@@ -2481,7 +2582,7 @@ namespace Semanticus.Engine
             CancellationToken cancellationToken = default)
             => engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "update_data_agent"), Description("Advanced publishing is a Semanticus Pro feature, reads included. Update a data agent's DRAFT: replace only the parts you pass (null = keep). Read-modify-write: fetches the current definition and re-emits ALL existing parts plus your changes (never drops unknown parts). aiInstructions capped at 15000 chars. datasourceJson/fewshotsJson go under the draft/{datasourceFolder}/ folder (folder = 'semantic_model-<name>'). DRY RUN by default: commit=false returns the exact request and changes NOTHING.")]
+        [McpServerTool(Name = "update_data_agent"), Description("Update a data agent's DRAFT: replace only the parts you pass (null = keep). Read-modify-write: fetches the current definition and re-emits ALL existing parts plus your changes (never drops unknown parts). aiInstructions capped at 15000 chars. datasourceJson/fewshotsJson go under the draft/{datasourceFolder}/ folder (folder = 'semantic_model-<name>'). DRY RUN by default: commit=false returns the exact request and changes NOTHING.")]
         public static Task<DataAgentWriteReport> UpdateDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id")] string agentId,
@@ -2492,9 +2593,9 @@ namespace Semanticus.Engine
             [Description("false = DRY RUN (default, sends nothing); true = update")] bool commit = false,
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
-            => engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, null, "agent", cancellationToken);
+            => engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, null, "agent", null, null, cancellationToken);
 
-        [McpServerTool(Name = "publish_data_agent"), Description("Advanced publishing is a Semanticus Pro feature, reads included. Publish a data agent: copy every draft/* part to published/* and write publish_info.json with a description ([verify-at-build]: v1 publishes via the documented definition-write path). DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true publishes.")]
+        [McpServerTool(Name = "publish_data_agent"), Description("Publish a data agent: copy every draft/* part to published/* and write publish_info.json with a description ([verify-at-build]: v1 publishes via the documented definition-write path). DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true publishes.")]
         public static Task<DataAgentWriteReport> PublishDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id")] string agentId,
@@ -2504,7 +2605,7 @@ namespace Semanticus.Engine
             CancellationToken cancellationToken = default)
             => engine.PublishDataAgentAsync(workspaceId, agentId, description, commit, authMode, null, "agent", cancellationToken);
 
-        [McpServerTool(Name = "delete_data_agent"), Description("Advanced publishing is a Semanticus Pro feature, reads included. Delete a Fabric data agent item. DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true deletes it (irreversible).")]
+        [McpServerTool(Name = "delete_data_agent"), Description("Delete a Fabric data agent item. DRY RUN by default: commit=false returns the exact request and changes NOTHING; commit=true deletes it (irreversible).")]
         public static Task<DataAgentWriteReport> DeleteDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id")] string agentId,
@@ -2520,12 +2621,19 @@ namespace Semanticus.Engine
     internal static class WaiverNotes
     {
         public static string Orphan(int count, string scanOp) => count == 0 ? "" :
-            $" Heads up: {count} stored waiver{(count == 1 ? "" : "s")} point at rule ids this rule set does not contain, " +
+            $" Heads up: {count} stored waiver{(count == 1 ? "" : "s")} point at rule ids this rule set does not contain, or at objects the model no longer has, " +
             $"so they accept nothing. See OrphanedWaiverRules (or OrphanedWaivers on {scanOp}); clear them with unwaive_finding, " +
             "or waive again against the rule id that replaced them.";
     }
 
-    /// <summary>Token-light projection of a <see cref="Scorecard"/> for the MCP <c>ai_readiness_summary</c> tool:
+    /// <summary>A readiness category the summary leaves out of its scores, and why.</summary>
+    public sealed class NotScoredCategory
+    {
+        public string Category { get; set; }
+        public string Reason { get; set; }
+    }
+
+    /// <summary>Token-light projection of a <see cref="Scorecard"/> for ai_readiness_scan with detail='summary':
     /// the grade + per-category scores + finding COUNTS (by severity / fix / top rule), without the findings list.</summary>
     public sealed class ReadinessSummary
     {
@@ -2533,7 +2641,10 @@ namespace Semanticus.Engine
         public double Overall { get; set; }
         public double RawOverall { get; set; }
         public string[] GatedBy { get; set; }
+        /// <summary>The categories that have a score. One with nothing to check is listed in <see cref="NotScored"/>
+        /// instead, because its Score of 0 read as a failing grade in a summary meant to be skimmed.</summary>
         public CategoryScore[] Categories { get; set; }
+        public NotScoredCategory[] NotScored { get; set; } = Array.Empty<NotScoredCategory>();
         public Dictionary<string, double> Coverage { get; set; }
         public int TotalFindings { get; set; }     // ACTIVE (un-waived) findings
         public int SafeFixCount { get; set; }
@@ -2561,11 +2672,14 @@ namespace Semanticus.Engine
 
         public static ReadinessSummary From(Scorecard c)
         {
-            var active = c.Findings.Where(f => !f.Waived).ToArray();   // counts reflect what still counts against the score
+            var active = c.Findings.Where(f => !f.IsAccepted()).ToArray();   // counts reflect what still counts against the score
             return new ReadinessSummary
             {
                 Grade = c.Grade, Overall = c.Overall, RawOverall = c.RawOverall, GatedBy = c.GatedBy,
-                Categories = c.Categories, Coverage = c.Coverage, TotalFindings = active.Length, SafeFixCount = c.SafeFixCount,
+                Categories = c.Categories.Where(x => x.HasRules).ToArray(),
+                NotScored = c.Categories.Where(x => !x.HasRules)
+                    .Select(x => new NotScoredCategory { Category = x.Category, Reason = x.NotScoredReason }).ToArray(),
+                Coverage = c.Coverage, TotalFindings = active.Length, SafeFixCount = c.SafeFixCount,
                 WaivedCount = c.WaivedCount, RuleErrors = c.RuleErrors,
                 UnevaluatedRuleCount = c.UnevaluatedRules.Length, UnevaluatedRules = c.UnevaluatedRules,
                 FindingsBySeverity = active.GroupBy(f => f.Severity ?? "?").ToDictionary(g => g.Key, g => g.Count()),
@@ -2576,13 +2690,13 @@ namespace Semanticus.Engine
                 OrphanedWaiverRules = c.OrphanedWaivers.Select(w => w.RuleId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 Note = (active.Length == 0
                     ? (c.WaivedCount > 0 ? $"No active findings ({c.WaivedCount} waived)." : "No findings.")
-                    : "Call ai_readiness_scan with category=<one of Categories> or severityMin to pull only the findings you'll act on.")
+                    : "Call ai_readiness_scan (detail='full') with category=<one of Categories> or severityMin to pull only the findings you'll act on.")
                     + WaiverNotes.Orphan(c.OrphanedWaiverCount,"ai_readiness_scan"),
             };
         }
     }
 
-    /// <summary>Token-light projection of a <see cref="BpaScorecard"/> for the MCP <c>bpa_summary</c> tool:
+    /// <summary>Token-light projection of a <see cref="BpaScorecard"/> for bpa_scan with detail='summary':
     /// rule/violation/auto-fix counts + violation COUNTS (by category / rule / severity), without the violations list.</summary>
     public sealed class BpaSummary
     {
@@ -2592,7 +2706,7 @@ namespace Semanticus.Engine
         public int WaivedCount { get; set; }        // accepted violations excluded from the count (surfaced, never hidden)
         public string[] RuleErrors { get; set; }
         /// <summary>Rules that could not be evaluated on this model. Carried in the token-light summary on purpose: an
-        /// agent that only calls bpa_summary must not be able to read "No violations." as a checked-and-clean model.</summary>
+        /// agent that only reads the summary must not be able to read "No violations." as a checked-and-clean model.</summary>
         public int UnknownCount { get; set; }
         public string[] UnknownRules { get; set; } = Array.Empty<string>();
         public Dictionary<string, int> ByCategory { get; set; }
@@ -2601,11 +2715,15 @@ namespace Semanticus.Engine
         // See ReadinessSummary: waivers pointing at rule ids the loaded corpus no longer has. Surfaced, never in WaivedCount.
         public int OrphanedWaiverCount { get; set; }
         public string[] OrphanedWaiverRules { get; set; } = Array.Empty<string>();
+        /// <summary>The "Best practice" letter, A to F (BpaGrading), and why. The same name on every surface.</summary>
+        public string BestPractice { get; set; }
+        public string BestPracticeWhy { get; set; }
+        public int ObjectsScanned { get; set; }
         public string Note { get; set; }
 
         public static BpaSummary From(BpaScorecard c)
         {
-            var active = c.Violations.Where(v => !v.Waived).ToArray();   // the counts the user acts on
+            var active = c.Violations.Where(v => !v.IsAccepted()).ToArray();   // the counts the user acts on
             return new BpaSummary
             {
                 RuleCount = c.RuleCount, ViolationCount = c.ViolationCount, AutoFixable = c.AutoFixable, WaivedCount = c.WaivedCount, RuleErrors = c.RuleErrors,
@@ -2616,9 +2734,10 @@ namespace Semanticus.Engine
                 BySeverity = active.GroupBy(v => v.Severity).ToDictionary(g => g.Key, g => g.Count()),
                 OrphanedWaiverCount = c.OrphanedWaiverCount,
                 OrphanedWaiverRules = c.OrphanedWaivers.Select(w => w.RuleId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-                Note = (c.ViolationCount == 0
+                BestPractice = c.BestPractice, BestPracticeWhy = c.BestPracticeWhy, ObjectsScanned = c.ObjectsScanned,
+                Note = (c.BestPracticeWhy == null ? "" : c.BestPracticeWhy + " ") + (c.ViolationCount == 0
                     ? (c.WaivedCount > 0 ? $"No active violations ({c.WaivedCount} waived)." : "No violations.")
-                    : "Call bpa_scan with category/ruleId/autoFixableOnly to pull only the violations you'll act on; bpa_fix_all applies all auto-fixable ones.")
+                    : "Call bpa_scan (detail='full') with category/ruleId/autoFixableOnly to pull only the violations you'll act on; apply_safe_fixes with system='bpa' applies all auto-fixable ones.")
                     // The unknown clause rides on the SAME line as the counts, because the counts are the thing it
                     // qualifies: without it "No violations." would read as a clean model when part of the scan
                     // never ran. It names the rules so the reader can go and look rather than just distrust the number.
@@ -2632,7 +2751,7 @@ namespace Semanticus.Engine
         }
     }
 
-    /// <summary>Token-light projection of a <see cref="ModelGraph"/> for the MCP <c>model_graph_summary</c> tool:
+    /// <summary>Token-light projection of a <see cref="ModelGraph"/> for get_model_graph with detail='summary':
     /// structural counts + the disconnected-table list, without the full per-table/per-relationship detail.</summary>
     public sealed class ModelGraphSummary
     {
@@ -2740,6 +2859,7 @@ namespace Semanticus.Engine
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ActiveRunBrief[] Workflows { get; set; }  // active runs; null when none
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? PlanItems { get; set; }             // loaded change-plan size; null when no plan
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string SpecName { get; set; }            // loaded spec name; null when no spec
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Jev.ActiveTasksBrief Tasks { get; set; } // the person's tasks for the assistant (Plan at the heart, lane E3); null when none
     }
 
     public sealed class ActiveRunBrief

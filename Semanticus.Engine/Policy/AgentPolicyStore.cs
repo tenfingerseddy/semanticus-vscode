@@ -28,8 +28,24 @@ namespace Semanticus.Engine
         {
             var path = Path_();
             if (!HomeFile.Exists(path)) return AgentPolicyPresets.Build(AgentPolicyPresets.Default);
-            try { return HomeFile.ReadStrict<AgentPolicy>(path) ?? AgentPolicyPresets.FailClosed(); }
+            try { return HomeFile.ReadStrict<AgentPolicy>(path) is { } saved ? KeepLockedHonest(saved) : AgentPolicyPresets.FailClosed(); }
             catch { return AgentPolicyPresets.FailClosed(); }
+        }
+
+        // A policy saved as Locked before Locked asked for local writes has those two rows at allow. The card the person
+        // chose says local writes ask, so the file is read that way (never loosened: a cell already ask or deny stays).
+        private static AgentPolicy KeepLockedHonest(AgentPolicy saved)
+        {
+            if (!string.Equals(saved.Preset, "locked", StringComparison.Ordinal) || saved.Matrix == null) return saved;
+            foreach (var cap in new[] { AgentCapability.EditLocal, AgentCapability.DeployFile })
+            {
+                if (!saved.Matrix.TryGetValue(cap.ToString(), out var row) || row == null)
+                    saved.Matrix[cap.ToString()] = row = new System.Collections.Generic.Dictionary<string, string>();
+                foreach (var label in new[] { "local", "dev", "uat", "prod" })
+                    if (!row.TryGetValue(label, out var action) || string.Equals(action?.Trim(), "allow", StringComparison.OrdinalIgnoreCase))
+                        row[label] = "ask";
+            }
+            return saved;
         }
 
         // Exact "human" only — an unknown/whitespace/agent origin is refused (fail closed), matching the guard.

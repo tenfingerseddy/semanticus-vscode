@@ -52,7 +52,7 @@ namespace TabularEditor.TOMWrapper.Utils
                     // it. Fail LOUD with EVERY failure as a real inner exception (message text alone loses the stacks)
                     // — and guard the wrapper rebuild so a Reinit throw can't MASK both underlying failures.
                     System.Exception reinitEx = null;
-                    try { model.Reinit(); } catch (System.Exception rx) { reinitEx = rx; }
+                    try { DependencyMaintenance.Reload(model); } catch (System.Exception rx) { reinitEx = rx; }
                     var msg = $"apply_tmdl failed: {applyEx.Message}; ROLLBACK ALSO FAILED: {rollbackEx.Message}. The in-memory model may be partially modified; re-open it from disk before editing further.";
                     throw reinitEx == null
                         ? new System.AggregateException(msg, applyEx, rollbackEx)
@@ -60,7 +60,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 }
                 // Rollback succeeded — surface the ORIGINAL error, stack intact. Guard the rebuild: the TOM state is
                 // restored, and a stale-wrapper failure here must not REPLACE the real error the caller needs.
-                try { model.Reinit(); }
+                try { DependencyMaintenance.Reload(model); }
                 catch (System.Exception reinitEx)
                 {
                     throw new System.AggregateException(
@@ -69,7 +69,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 }
                 throw;
             }
-            model.Reinit();   // rebuild the wrapper from TOM so structural changes (e.g. a new measure) surface
+            DependencyMaintenance.Reload(model);   // rebuild the wrapper from TOM so structural changes (e.g. a new measure) surface
             model.Handler.UndoManager.Add(new TmdlApplyUndoAction(model, logicalPath, before, afterTmdl));
         }
 
@@ -123,13 +123,13 @@ namespace TabularEditor.TOMWrapper.Utils
         {
             TabularModelHandler.Singleton = _model.Handler;
             TmdlApplier.ApplyDoc((TOM.Model)_model.MetadataObject, _path, _before);
-            _model.Reinit();
+            DependencyMaintenance.Reload(_model);
         }
         public void Redo()
         {
             TabularModelHandler.Singleton = _model.Handler;
             TmdlApplier.ApplyDoc((TOM.Model)_model.MetadataObject, _path, _after);
-            _model.Reinit();
+            DependencyMaintenance.Reload(_model);
         }
     }
 }

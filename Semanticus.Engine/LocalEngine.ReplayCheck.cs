@@ -66,7 +66,7 @@ namespace Semanticus.Engine
             {
                 // 3) Rehearse each declared op via the SAME dry_run contract (real code path, guaranteed rollback).
                 foreach (var op in step.Ops ?? Array.Empty<string>())
-                    rows.Add(await RehearseOpAsync(step, op, answers, available, report));
+                    rows.Add(await RehearseOpAsync(step, OpAliases.Canonical(op), answers, available, report));
 
                 // 4) Verify blocks — DAX probe/equivalence replayability (surfaced, NOT executed here).
                 foreach (var v in step.Gate?.Verify ?? Array.Empty<VerifySpec>())

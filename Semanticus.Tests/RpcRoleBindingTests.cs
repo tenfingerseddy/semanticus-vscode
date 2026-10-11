@@ -23,7 +23,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Connection_role_overrides_every_legacy_origin_value()
         {
-            var pipeName = "semanticus-role-" + Guid.NewGuid().ToString("N");
+            var pipeName = TestPipe.Mint("semanticus-role-");
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
             using var server = new RpcServer(sessions, engine, pipeName, Challenge);
@@ -63,7 +63,7 @@ namespace Semanticus.Tests
             Assert.Null(typeof(EngineRpcTarget).GetMethod("setAgentPolicyEnabled"));
             Assert.NotNull(typeof(HumanGovernanceRpcTarget).GetMethod("setAgentPolicyEnabled"));
 
-            var pipeName = "semanticus-role-" + Guid.NewGuid().ToString("N");
+            var pipeName = TestPipe.Mint("semanticus-role-");
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
             using var server = new RpcServer(sessions, engine, pipeName, Challenge);
@@ -89,7 +89,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Wrong_ui_challenge_receives_no_rpc_surface()
         {
-            var pipeName = "semanticus-role-" + Guid.NewGuid().ToString("N");
+            var pipeName = TestPipe.Mint("semanticus-role-");
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
             using var server = new RpcServer(sessions, engine, pipeName, Challenge);
@@ -113,7 +113,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Mcp_owned_engine_explicitly_rejects_human_and_keeps_agent_door_available()
         {
-            var pipeName = "semanticus-role-" + Guid.NewGuid().ToString("N");
+            var pipeName = TestPipe.Mint("semanticus-role-");
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
             using var server = new RpcServer(sessions, engine, pipeName);
@@ -134,6 +134,54 @@ namespace Semanticus.Tests
                 try { await serving; } catch (OperationCanceledException) { }
                 sessions.Dispose();
             }
+        }
+
+        [Fact]
+        public async Task Agent_role_clients_are_counted_for_assistant_presence_and_a_human_is_not()
+        {
+            // The presence signal behind the assistant handoff (Astra B8): an attached assistant is an
+            // agent-role client on this door, and a person at the UI is not one.
+            var pipeName = TestPipe.Mint("semanticus-role-");
+            var sessions = new SessionManager();
+            var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+            using var server = new RpcServer(sessions, engine, pipeName, Challenge);
+            engine.ObserveAgentClients(() => server.AgentClientCount);
+            using var stop = new CancellationTokenSource();
+            var serving = server.RunAsync(stop.Token);
+            RpcClient human = null;
+            try
+            {
+                Assert.Equal(0, server.AgentClientCount);
+                Assert.False(engine.AssistantPresence.IsAssistantAttached);
+
+                human = await RpcClient.ConnectAsync(pipeName, "human", Challenge);
+                using (await RpcClient.ConnectAsync(pipeName, "agent"))
+                {
+                    // Exactly one, with the human still connected: the human contributes nothing.
+                    await WaitForAgentCount(server, 1);
+                    Assert.True(engine.AssistantPresence.IsAssistantAttached);
+                }
+
+                await WaitForAgentCount(server, 0);
+                Assert.False(engine.AssistantPresence.IsAssistantAttached);
+            }
+            finally
+            {
+                human?.Dispose();
+                stop.Cancel();
+                try { await serving; } catch (OperationCanceledException) { }
+                sessions.Dispose();
+            }
+        }
+
+        /// <summary>The asserted count is the state that MUST arrive, so the bound expiring is a failure and
+        /// not a slow pass.</summary>
+        private static async Task WaitForAgentCount(RpcServer server, int expected)
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (server.AgentClientCount != expected && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Equal(expected, server.AgentClientCount);
         }
 
         private static Task<ChangeNotification> NextChange(SessionManager sessions)

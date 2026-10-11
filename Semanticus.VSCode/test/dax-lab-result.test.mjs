@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { measuredBench } from '../webview/src/benchtiming.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
@@ -25,10 +26,13 @@ assert.match(daxlab, /cancelDax/, 'Stop must ask the engine to stop the running 
 assert.match(daxlab, /The query was stopped\./, 'stopping must say so in plain words');
 assert.match(daxlab, /disabled=\{idle\}/, 'Reset must not replace the editor while a query is running');
 assert.match(daxlab, /rowAnnouncement\(res\.rowCount, res\.truncated\)/, 'the result pane must announce a capped set');
-assert.match(daxlab, /Result of:/, 'the result pane must name the query that produced the result');
+// Queries redesign (27 Sep, the space rule): the query is shown ONCE. The result names it on hover, never as a
+// second copy of the query text above the rows.
+assert.match(daxlab, /title=\{queryIdentity\(res\.query \|\| resQuery\)/, 'the result pane must name the query that produced the result');
+assert.doesNotMatch(daxlab, /Result of:/, 'the query must not be printed a second time above its own result');
 assert.match(daxlab, /timingAnnouncement/, 'zero-ms timings must go through the honest label');
 assert.match(daxlab, /Save measure check/, 'a calculation must offer a direct saved-check handoff');
-assert.match(daxlab, /The visual's filters travel with the check\./, 'the handoff must say the filters travel');
+assert.match(daxlab, /title="Check against SQL" detail="Compare this number with SQL you trust\."/, 'the handoff menu keeps its two short choices (the filters still travel: the next assertions)');
 
 // UX11: a check saved from a filtered visual must carry what the person was actually looking at. Dropping the
 // filters turned a calculation narrowed to one year into a check over the whole model, which reads as correct.
@@ -36,8 +40,7 @@ assert.match(daxlab, /groupBy, filterDax: filters \|\| undefined/, 'the SQL hand
 assert.match(daxlab, /filterDax: filters \|\| undefined, expressionDax: editedExpression \|\| undefined/, 'the trusted-answer handoff must carry the filters and any edited formula');
 assert.match(daxlab, /export function labExpressionEdit/, 'an edited formula must be distinguishable from the measure as saved');
 assert.match(daxlab, /savedExpression && squash\(text\) === squash\(savedExpression\)/, 'text equal to the measure as saved is not an edit');
-assert.match(daxlab, /The connection you are on now is written down\./, 'the handoff must say the connection is recorded');
-assert.match(daxlab, /still runs against whichever Tests and queries connection is current/, 'the recorded connection must not read as a pin');
+// The menu footnote about the recorded connection is gone (Q3). The saved list and the evidence still say "Authored against X, ran against Y" (the assertions below), which is where a person reads it.
 
 // The drawer shows the carried filters prefilled and editable, and asks which formula the check is about.
 assert.match(authoring, /open=\{!!initial\.filterDax\}/, 'carried filters must be visible, not hidden in a collapsed block');
@@ -81,11 +84,12 @@ assert.match(missingRow[0], /label="Edit this check"/, 'the row must offer editi
 assert.match(missingRow[0], /label="Delete this check"/, 'the row must offer deleting the check');
 
 // The blank standoff is restated in the person's words and linked to the setting that decides it.
-assert.match(tests, /Every cell is blank in the model and NULL in the source\. This test does not treat those as equal\./, 'the blank standoff must be said without engine words');
+assert.match(tests, /Every cell is blank in the model and NULL in the source\. This check does not treat those as equal\./, 'the blank standoff must be said without engine words');
 assert.match(tests, /label="Choose what a blank means"/, 'the blank standoff must link its own setting');
 assert.match(tests, /to check it\./, 'the blank standoff must say what choosing achieves');
 assert.match(tests, /comparisonSummary\(differCount, matchCount, rows\.length/, 'the comparisons must carry a count, not colour alone');
-assert.match(tests, /Tick to run a subset/, 'the saved-checks header must say what ticking does');
+// Minimalism pass (8 Oct): the one Run button reads "Run N ticked" while boxes are ticked, so the header needs no hint line about ticking.
+assert.match(tests, /Run \$\{tickedCount\.toLocaleString\(\)\} ticked/, 'ticking is explained by the Run button itself');
 
 // Tolerance boxes name their own unit, and the blank requirement stays neutral until Save is attempted.
 assert.match(authoring, /Relative %/, 'the relative tolerance box must name its unit');
@@ -108,20 +112,23 @@ assert.match(grid, /More rows exist/, 'the grid must say when more rows exist');
 // M15: the canvas told you to drag a measure into Values while Total Sales was already sitting in Values.
 // The real next step is Run, so the hint has to be driven by what the wells hold.
 assert.match(daxlab, /const wellsReady =/, 'the empty canvas must know whether the wells already hold a measure');
-assert.match(daxlab, /Press Run to build this visual\./, 'ready wells get the real next step, not a drag instruction');
-assert.match(daxlab, /Drag a measure into Values to build a visual\./, 'empty wells keep the drag instruction');
-assert.match(daxlab, /wellsReady \?[\s\S]{0,120}Press Run to build this visual/,
+assert.match(daxlab, /Press Run to build this result\./, 'ready wells get the real next step, not an add instruction');
+assert.match(daxlab, /Add a measure to build a result\./, 'empty wells keep the add instruction');
+assert.match(daxlab, /wellsReady \?[\s\S]{0,120}Press Run to build this result/,
   'the two hints must be chosen by the wells, not printed unconditionally');
 
-// M25: Verify in Query mode still named the Values well and the visual, neither of which is on screen there.
-assert.match(daxlab, /visual \? 'Original formula: the measure selected in Values' : 'Original formula'/,
+// M25: Verify in Query mode still named the Values well and the visual, neither of which is on screen there. Since
+// the redesign's fix round (verify-queries-redesign D5) Compare is told its SUBJECT: the wells, a question's parts, or
+// a query in the DAX view, and each names only what is on screen.
+assert.match(daxlab, /subject === 'question' \? 'Original formula: the number the question shows' : subject === 'wells' \? 'Original formula: the measure you chose' : 'Original formula'/,
   'the first Verify box must name the Query-mode input when you are in Query mode');
-assert.match(daxlab, /visual \? 'Test contexts from the visual' : 'Test contexts from the fields you choose'/,
+assert.match(daxlab, /subject !== 'dax' \? `Tested across \$\{own\}` : 'Tested across the fields you choose'/,
   'the contexts heading must describe where the contexts came from in this mode');
-assert.match(daxlab, /visual && filterLinesDerived\.length > 0/,
+assert.match(daxlab, /subject === 'wells' && filterLinesDerived\.length > 0/,
   'the "Filters from the visual" line belongs to Visual mode only');
-assert.match(daxlab, /VerifyTab \{\.\.\.\{[^}]*visual: mode === 'visual'/,
-  'Verify must be told which mode it is rendering for');
+assert.match(daxlab, /const compareSubject: 'wells' \| 'question' \| 'dax' = qParts \? 'question' : mode === 'visual' \? 'wells' : 'dax';/,
+  'Compare must be told which view it is rendering for');
+assert.match(daxlab, /CompareBody \{\.\.\.\{[^}]*subject: compareSubject/, 'Compare receives its subject');
 
 // M20: the New check popover ignored Escape, carried no menu role, and opened away from its own button.
 assert.match(authoring, /function NewCheckMenu[\s\S]{0,1400}aria-haspopup="menu"/, 'New check opens a menu');
@@ -150,7 +157,9 @@ const extract = (source, name, label) => {
   const m = source.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`));
   assert.ok(m, `${name} should remain a statically extractable top-level helper in ${label}`);
   const js = tsc.transpileModule(m[0], { compilerOptions: { target: tsc.ScriptTarget.ES2020 } }).outputText;
-  return Function(`"use strict"; ${js}; return ${name};`)();
+  // The helper compares queries with the page's shared, quote-aware squash (daxsquash.ts), so it is handed that too.
+  const squashJs = tsc.transpileModule(readFileSync(resolve(root, 'webview/src/daxsquash.ts'), 'utf8'), { compilerOptions: { module: tsc.ModuleKind.CommonJS, target: tsc.ScriptTarget.ES2020 } }).outputText;
+  return Function(`"use strict"; const { squash } = (() => { const exports = {}; ${squashJs}; return exports; })(); ${js}; return ${name};`)();
 };
 
 // The query a Visual to Query switch writes into the editor, from the wells Astra was handed.
@@ -170,7 +179,7 @@ assert.equal(labEdit('query', "CALCULATE([Total Sales], 'Date'[Year] = 2024)", '
 // The lab must RECORD what it generated rather than guess from the text: any regeneration is the lab's own
 // writing, and only text that differs from it belongs to the person.
 assert.match(daxlab, /generatedQuery/, 'the lab must remember the query it generated itself');
-assert.match(daxlab, /const q = buildQuery\(config\); setQuery\(q\); setGeneratedQuery\(q\);/,
+assert.match(daxlab, /const q = buildQuery\(config\); [^\n]*setQuery\(q\); setGeneratedQuery\(q\);/,
   'a mode switch must record the query it just wrote');
 assert.match(daxlab, /labExpressionEdit\(mode, query, selectedMeasureName, savedExpressions\[testMeasureRef\], generatedQuery\)/,
   "the edited-formula signal must be measured against the lab's own generated text");
@@ -190,7 +199,7 @@ assert.equal(oneCell('DEFINE MEASURE \'Sales\'[X] = 1 EVALUATE ROW("v", [X])'), 
   'a DEFINE block before a one-pair ROW is still one cell');
 assert.equal(oneCell("EVALUATE 'Sales'"), false, 'a whole table is a table');
 
-assert.match(authoring, /useState\(!!handedExpression && handedIsOneCell\)/,
+assert.match(authoring, /testExpression: !!handed && daxReturnsOneCell\(handed\)/,
   'a table query must never be preselected as the expression a measure check asks');
 assert.match(authoring, /A measure check compares one number/, 'the drawer must say plainly what a measure check needs');
 assert.match(authoring, /returns a table, not one number/, 'the drawer must name what the query actually returns');
@@ -312,9 +321,11 @@ assert.match(timings, /color: 'var\(--sem-engine-se\)' \}\}>\{s\.durationMs\}/, 
 assert.doesNotMatch(timings, /var\(--sem-good\)/, 'no engine figure may keep the shared pass-green');
 assert.doesNotMatch(timings, /var\(--sem-accent\)/, 'no engine figure may keep the brand accent');
 
-// A segment narrower than about 8% hides its own label, so the two engines are also named underneath.
-assert.match(timings, /FE formula engine/, 'the bar must say what FE stands for in plain words');
-assert.match(timings, /SE storage engine/, 'the bar must say what SE stands for in plain words');
+// A narrow segment hides its own label, so the two engines are also named underneath, in words. The D1 mockup
+// dropped the FE and SE letters altogether (verify-queries-redesign, lower items), so no label may use them.
+assert.match(timings, />Formula engine<\/EngineKey>/, 'the key must name the formula engine in plain words');
+assert.match(timings, />Storage engine<\/EngineKey>/, 'the key must name the storage engine in plain words');
+assert.doesNotMatch(timings, /`FE |`SE |\bSE (queries|cache|cpu)\b|'Subclass'|'xmSQL'/, 'no engine shorthand on screen: FE, SE, Subclass, xmSQL');
 
 // The storage-engine stat table is the same engine, so it carries the same colour as the bar segment.
 const coldwarm = daxlab.slice(daxlab.indexOf('function ColdWarmView'), daxlab.indexOf('function QueryPlanView'));
@@ -322,3 +333,14 @@ assert.match(coldwarm, /var\(--sem-engine-se\)/, 'the storage-engine table must 
 
 console.log('engine colours passed');
 
+// UAT-S05b-1-002: the agent ran benchmark_dax with nothing connected. The query never ran, yet the Performance
+// pane showed "under 1 ms" for the first run and the warm minimum, a speed nobody measured. A result with an
+// error, or with zero runs, is not timing and must not be shown as timing.
+const measured = { runs: 2, firstMs: 12, warmMinMs: 4, warmMedianMs: 5, runsMs: [12, 4, 5], rowCount: 1 };
+assert.equal(measuredBench(measured), measured, 'a real run is shown');
+assert.equal(measuredBench({ runs: 0, firstMs: 0, warmMinMs: 0, warmMedianMs: 0, runsMs: [], rowCount: 0, error: 'Not connected.' }), null,
+  'a benchmark that failed to run shows no timing');
+assert.equal(measuredBench({ runs: 0, firstMs: 0, warmMinMs: 0, warmMedianMs: 0, runsMs: [], rowCount: 0 }), null,
+  'zero runs is no timing, even without an error');
+assert.equal(measuredBench(null), null);
+assert.match(daxlab, /setBench\(measuredBench\(/, 'the agent door reflection must go through the same guard');

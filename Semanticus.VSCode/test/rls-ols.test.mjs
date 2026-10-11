@@ -43,8 +43,10 @@ assert.match(rls, /shrink-0"><MiniButton disabled=\{!newName\.trim\(\)\} onClick
 
 assert.match(rls, /const filterOk = valid && issues === 0/,
   'saving a row filter must refuse warnings as well as errors');
-assert.match(rls, /disabled=\{!dirty \|\| !filterOk\}/,
-  'Save filter must stay disabled while the row filter has issues');
+// The button shows only once there is an edit to save (a disabled "Saved" under every table is gone), and it is disabled while the filter has issues.
+assert.match(rls, /\{dirty && <MiniButton disabled=\{!filterOk\} onClick=\{saveFilter\}>/,
+  'Save filter must stay disabled while the row filter has issues, and appear only after an edit');
+assert.match(rls, /function EmptyTableSecurity/, 'a table with no filter is one line, with Add filter');
 
 assert.match(shot, /UISHOT_RLS && variant === 'Advanced Modelling'/,
   'RLS screenshots must land on the RLS / OLS area');

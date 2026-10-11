@@ -13,6 +13,8 @@ export function isLossy(def: unknown): boolean;
 
 export interface BoxesStepView {
   id: string;
+  /** The two tags (lane W2), read from the engine's definition by Author; absent on a box the draft alone made. */
+  tags?: ('you' | 'asst')[];
   key?: string;
   order: number;
   number: number;

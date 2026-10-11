@@ -5,6 +5,7 @@ using TabularEditor.TOMWrapper;
 // The tests pin internals that carry cross-assembly contracts (Refs must format identically to the engine's
 // public ObjectRefs — see the Refs doc-comment below).
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("Semanticus.Engine")]
 
 namespace Semanticus.Analysis
 {
@@ -26,7 +27,7 @@ namespace Semanticus.Analysis
 
     /// <summary>
     /// Analyst-copy helpers. A handful of readiness messages append the MCP op the user's AI assistant would call to
-    /// remediate (e.g. "Enable it (enable_qna)."). That op is load-bearing for the AGENT door, so the RULE supplies it
+    /// remediate (e.g. "Rename it (rename_object)."). That op is load-bearing for the AGENT door, so the RULE supplies it
     /// OUT OF BAND, as a typed <see cref="FixOp"/> part between literal text parts, never a substring of any string.
     /// <see cref="Compose"/> builds both renderings from the ordered part list: <see cref="ReadinessFinding.Message"/>
     /// renders each op inline as " (op_id)" (byte-identical to writing the hint inline, so the agent door is unchanged)
@@ -38,7 +39,7 @@ namespace Semanticus.Analysis
     public static class ReadinessCopy
     {
         /// <summary>An out-of-band MCP fix-op hint. Rules pass it as a part between literal text parts (e.g.
-        /// <c>NewFinding(o, name, "Enable it", ReadinessCopy.Op("enable_qna"), ".")</c>); it is a typed object, never a
+        /// <c>NewFinding(o, name, "Rename it", ReadinessCopy.Op("rename_object"), ".")</c>); it is a typed object, never a
         /// substring of any string, so no user prose or object name can be confused for it.</summary>
         public sealed class FixOp
         {
@@ -95,7 +96,7 @@ namespace Semanticus.Analysis
         public string ObjectName { get; set; }
         public string Message { get; set; }
         // The analyst-facing rendering of Message with agent-only MCP op-name hints removed (e.g. "Enable it
-        // (enable_qna)." -> "Enable it."). NULL when Message carries no op hint (the UI then renders Message verbatim);
+        // (rename_object)." -> "Rename it."). NULL when Message carries no op hint (the UI then renders Message verbatim);
         // never an empty string (Compose guards blank). Message and DisplayMessage are BOTH built server-side by
         // ReadinessCopy.Compose from the rule's ordered parts, where the op is a typed out-of-band ReadinessCopy.Op(...)
         // part, never a substring of any string — so nothing is ever scanned or mutated and an object literally named
@@ -106,6 +107,26 @@ namespace Semanticus.Analysis
         public string WaiverReason { get; set; }      // why it was accepted (null unless Waived)
         public bool WaiverRuleLevel { get; set; }      // true when waived by a rule-level (model-wide) waiver, not a per-instance one
         public bool Custom { get; set; }               // provenance: true = produced by a model-embedded (user-authored) rule, false = built-in
+        /// <summary>True when another accepted finding covers this one's change (<see cref="DeclinedChanges"/>): every path leaves the change
+        /// alone, but nobody accepted THIS finding. It carries <see cref="Waived"/> for the paths that ask "is this change left alone",
+        /// and it is open for everything that counts: the page lists it open with <see cref="DeclinedChanges.TwinReason"/>, and the score
+        /// and the counts include it. <see cref="IsAccepted"/> is false.</summary>
+        public bool WaivedAsTwin { get; set; }
+
+        /// <summary>True only for a finding the person accepted, by its own rule id and object (or its rule for the whole model). The
+        /// pages' accepted list, the score and the counts read this and nothing else; what no path may WRITE is decided separately, by
+        /// <see cref="DeclinedChanges"/>.</summary>
+        public bool IsAccepted() => Waived && !WaivedAsTwin;
+        /// <summary>True for a row that stands for a stored acceptance whose finding no longer fires. It is shown so an
+        /// acceptance that still keeps a change from being made is never invisible.</summary>
+        public bool NoLongerFires { get; set; }
+        /// <summary>For a twin finding (<see cref="WaivedAsTwin"/>): the acceptance it stands beside, as "rule name (page)", and the reason
+        /// the person gave for it, so the row says which acceptance is the related one.</summary>
+        public string CoveredBy { get; set; }
+        public string CoveredReason { get; set; }
+        /// <summary>True for the one row that stands for a rule-level acceptance, listed whether or not the rule fires anywhere
+        /// (<see cref="DeclinedChanges.WholeModelName"/>). It is an acceptance, not a finding: never scored, never counted.</summary>
+        public bool WholeRuleRow { get; set; }
     }
 
     public sealed class CategoryScore
@@ -117,6 +138,9 @@ namespace Semanticus.Analysis
         public int Violations { get; set; }       // ACTIVE (un-waived) violations
         public int Waived { get; set; }           // accepted findings in this category (informational)
         public bool HasRules { get; set; }
+        /// <summary>Set only when <see cref="HasRules"/> is false: why the category has no score. Its Score of 0 is
+        /// not a failing grade, and without this line it reads as one (dogfood feedback, 27 Sep).</summary>
+        public string NotScoredReason { get; set; }
     }
 
     public sealed class Scorecard
@@ -148,7 +172,7 @@ namespace Semanticus.Analysis
 
     /// <summary>Live per-column statistics (distinct-value cardinality, from COLUMNSTATISTICS / DMVs) that the
     /// Dmv-kind readiness rules need. ABSENT on an offline scan — those rules are then simply not evaluated, so
-    /// the offline scorecard is unchanged. Supplied only by the live scan path (ai_readiness_scan_live).</summary>
+    /// the offline scorecard is unchanged. Supplied only by the live scan path (ai_readiness_scan with live=true).</summary>
     public sealed class ReadinessLiveStats
     {
         // (table, column) -> distinct value count. Tuple key, compared CASE-INSENSITIVELY (TOM treats object names
@@ -164,10 +188,11 @@ namespace Semanticus.Analysis
         public void Set(string table, string column, long card) => Cardinality[(table ?? "", column ?? "")] = card;
         public bool TryGet(string table, string column, out long card) => Cardinality.TryGetValue((table ?? "", column ?? ""), out card);
 
-        /// <summary>The Q&A linguistic index stores at most this many unique TEXT values across indexed (string)
-        /// columns; beyond it values are dropped and Copilot/Q&A value-matching degrades. (Microsoft-documented.)</summary>
+        /// <summary>Copilot's value index stores at most this many unique TEXT values across indexed (string)
+        /// columns; beyond it values are dropped and Copilot value-matching degrades. (Microsoft-documented,
+        /// copilot-prepare-data-ai-faq.) The name keeps its Qna prefix from when Q&A owned the index.</summary>
         public const long QnaUniqueValueCeiling = 5_000_000;
-        /// <summary>A single visible text column above this dominates the Q&A index (>20% of the ceiling) — almost
+        /// <summary>A single visible text column above this dominates Copilot's value index (>20% of the ceiling) — almost
         /// always a surrogate key / id / free-text column that should be hidden or excluded from the AI data schema.</summary>
         public const long HighCardinalityColumn = 1_000_000;
     }

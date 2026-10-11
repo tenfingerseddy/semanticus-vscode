@@ -43,6 +43,15 @@ namespace Semanticus.Engine
             return (await GetAllPagesAsync<FabricWorkspace>(http, "workspaces", ct).ConfigureAwait(false)).ToArray();
         }
 
+        internal static async Task<FabricSemanticModel[]> ListSemanticModelsAsync(string workspaceId, string token, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required: list_workspaces shows your workspaces and their ids.");
+            using var http = NewClient(token);
+            var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/semanticModels";
+            var models = await GetAllPagesAsync<FabricSemanticModel>(http, url, ct).ConfigureAwait(false);
+            return models.OrderBy(m => m.DisplayName ?? "", StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
         internal static async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string token, CancellationToken ct)
         {
             using var http = NewClient(token);

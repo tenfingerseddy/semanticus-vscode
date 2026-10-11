@@ -359,12 +359,12 @@ async function gotoLineage(page, errors) {
   const group = await page.waitForFunction(
     () => {
       const has = (l) => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === l);
-      return has('Model') ? 'Model' : has('Understand') ? 'Understand' : false;
+      return has('Explore') ? 'Explore' : has('Model') ? 'Model' : has('Understand') ? 'Understand' : false;
     }, { timeout: 15000 },
   ).then((h) => h.jsonValue()).catch(() => null);
   if (!group) {
     const seen = await page.evaluate(() => [...document.querySelectorAll('nav button')].map((b) => (b.textContent || '').trim()).filter(Boolean).slice(0, 30));
-    throw new Error('no Model / Understand entry point in the shell nav. Buttons on screen: ' + seen.join(' | '));
+    throw new Error('no Explore / Model / Understand entry point in the shell nav. Buttons on screen: ' + seen.join(' | '));
   }
   await clickButton(page, group);
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === 'Lineage'), { timeout: 15000 });

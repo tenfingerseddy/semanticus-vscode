@@ -42,14 +42,62 @@ namespace Semanticus.Tests
             var doc = WorkflowEvidenceRenderer.Build(run);
             var owner = Assert.IsType<Semanticus.Engine.Evidence.KeyValueSection>(
                 doc.Sections.Single(x => x.Title == "Workflow definition: review-table"));
-            Assert.Contains(owner.Pairs, x => x.Key == "Version" && x.Value == "7");
-            Assert.Contains(owner.Pairs, x => x.Key == "Settings strictness" && x.Value == "warn");
+            Assert.Contains(owner.Pairs, x => x.Key == "Version" && x.Value == "Version 7");
+            Assert.Contains(owner.Pairs, x => x.Key == "Checks, as set in Settings" && x.Value == "Checks warn only");
             var step = Assert.IsType<Semanticus.Engine.Evidence.KeyValueSection>(
                 doc.Sections.Single(x => x.Title == "Step 2: Review"));
             Assert.Contains(step.Pairs, x => x.Key == "Step" && x.Value == "review/review");
             Assert.Contains(step.Pairs, x => x.Key == "Workflow" && x.Value == "review-table");
-            Assert.Contains(step.Pairs, x => x.Key == "Workflow version" && x.Value == "7");
-            Assert.Contains(step.Pairs, x => x.Key == "Definition strictness" && x.Value == "hard");
+            Assert.Contains(step.Pairs, x => x.Key == "Version" && x.Value == "Version 7");
+            Assert.Contains(step.Pairs, x => x.Key == "Checks" && x.Value == "Checks must pass");
+        }
+
+        /// <summary>F16 (pre-handover journey): the report said "Produced by verified-measure 7", "Definition strictness
+        /// hard", "finished with status completed" and raw ISO UTC stamps such as 2026-09-25T01:45:48.8352373Z. A person
+        /// reads the workflow's own name and version in words, plain strictness words, and times in their own zone.</summary>
+        [Fact]
+        public void The_report_reads_in_the_persons_words_and_local_time()
+        {
+            var def = new WorkflowDef
+            {
+                Name = "verified-measure", Title = "Test a complex measure", Version = 7, Strictness = "hard",
+                Steps = new[]
+                {
+                    new WorkflowStep { Id = "step-1", Title = "Fix the specification", Instructions = "Restate it." },
+                    new WorkflowStep { Id = "step-2", Title = "Lock the expected values", Instructions = "Lock them." },
+                },
+            };
+            var run = new WorkflowRunStore().Start(def, null);
+            run.Origin = "human";
+            run.StartedUtc = "2026-09-25T01:44:16.8044079Z";
+            run.Results[0].Status = "done";
+            run.Results[0].EffectiveStrictness = "hard";
+            run.Results[0].Answers = new Dictionary<string, AnswerValue> { ["requirement"] = new AnswerValue { Value = "Margin over sales." } };
+            run.Results[1].Status = "skipped";
+            run.Results[1].EffectiveStrictness = "hard";
+            run.Results[1].Note = "skipped: not needed today";
+            run.Status = "completed";
+            run.StepIndex = 2;
+            run.FinishedUtc = "2026-09-25T01:45:48.8352373Z";
+
+            var zone = TimeZoneInfo.CreateCustomTimeZone("Contoso+10", TimeSpan.FromHours(10), "Contoso+10", "Contoso+10");
+            var artifact = EvidenceArtifact.Seal(WorkflowEvidenceRenderer.Build(run, zone), zone);
+            var html = artifact.Html;
+
+            foreach (var engineWords in new[] { "verified-measure 7", "Definition strictness", "Effective strictness", "finished with status",
+                         "2026-09-25T01:4", "Status: done", "Gate: hard", "workflow-run", ">hard<", ">done<", ">completed<" })
+                Assert.DoesNotContain(engineWords, html);
+            Assert.Contains("Test a complex measure, version 7", html);
+            Assert.Contains("25 Sep 2026, 11:45 AM", html);
+            Assert.Contains("25 Sep 2026, 11:44 AM", html);
+            Assert.Contains("Checks must pass", html);
+            Assert.Contains("Skipped: not needed today", html);
+            Assert.Contains("Test a complex measure, version 7, finished.", html);
+            Assert.DoesNotContain(((char)0x2014).ToString(), html);
+            // The record of truth keeps the machine facts exactly; only the words a person reads changed.
+            Assert.Contains("2026-09-25T01:45:48.8352373Z", artifact.Json);
+            Assert.Contains("\"producer\":\"verified-measure\"", artifact.Json);
+            Assert.Equal(artifact.ContentHash, EvidenceHash.HashOfJsonText(artifact.Json));
         }
 
         [Fact]
@@ -281,7 +329,8 @@ namespace Semanticus.Tests
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new Pro());
             var opened = await engine.OpenAsync(TestModels.FindBim());
-            var active = await engine.StartWorkflowAsync("new-measure", "human");
+            // Lane l9-finish: optimize-dax now runs as a draft, so this guided-run fixture uses a starter that is still guided.
+            var active = await engine.StartWorkflowAsync("refactor-to-calculation-group", "human");
 
             var early = await engine.ExportWorkflowEvidenceAsync(active.RunId);
             Assert.Contains("still active", early.Note);

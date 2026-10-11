@@ -1,0 +1,11 @@
+relationship af759f59-85d3-5f8f-be45-40418eaf924b
+	fromColumn: Stock.'Date Key'
+	toColumn: Calendar.'Date Key'
+
+relationship 86681fac-b907-5885-a68b-6c335841b308
+	fromColumn: Stock.'Product Key'
+	toColumn: Product.'Product Key'
+
+relationship 13a6f85f-35a4-563e-be37-1602ec46a5b3
+	fromColumn: Stock.'Warehouse Key'
+	toColumn: Warehouse.'Warehouse Key'

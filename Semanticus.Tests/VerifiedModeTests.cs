@@ -6,9 +6,9 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    /// <summary>Verified Mode: the human-controlled safety toggle, free for everyone since 2026-09-15. When ON, a
-    /// mutating DAX edit must validate before it commits (v1 verification floor: invalid DAX refused). All
-    /// deterministic + offline.</summary>
+    /// <summary>Record verified edits (wire name set_verified_mode): the human-controlled audit switch, free for
+    /// everyone since 2026-09-15. Every mutating DAX edit must validate before it commits whatever the switch says;
+    /// ON adds the audit record. All deterministic + offline.</summary>
     public sealed class VerifiedModeTests
     {
         private sealed class Fake : IEntitlement
@@ -49,6 +49,21 @@ namespace Semanticus.Tests
 
             var r = await FirstMeasureRefAsync(e);
             await Assert.ThrowsAsync<InvalidOperationException>(() => e.SetDaxAsync(r, "SUM(", "agent"));
+        }
+
+        /// <summary>Kane, 24 Sep: the switch only adds an audit record, so both of its notes name it for that and
+        /// say every write is checked either way.</summary>
+        [Fact]
+        public async Task Notes_name_the_switch_Record_verified_edits()
+        {
+            using var e = await OpenAsync(pro: false);
+            foreach (var on in new[] { true, false })
+            {
+                var note = (await e.SetVerifiedModeAsync(on, "human")).Note;
+                Assert.Contains("Record verified edits", note, StringComparison.Ordinal);
+                Assert.DoesNotContain("Verified Mode", note, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("every DAX write", note, StringComparison.Ordinal);
+            }
         }
 
         [Fact]

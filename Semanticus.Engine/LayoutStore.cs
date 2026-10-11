@@ -30,6 +30,11 @@ namespace Semanticus.Engine
     internal static class LayoutStore
     {
         public const string DirName = ".semanticus";
+        /// <summary>A folder's one file of decision switches from before each model kept its own, still read, and where
+        /// each model in the folder also records its offs with its name (LocalEngine.Decisions.cs).</summary>
+        public const string DecisionSettingsFile = "decision-settings.json";
+        /// <summary>Each model's own decision switches, one file per model.</summary>
+        public const string DecisionSettingsFolder = "decision-settings";
         public const string FileName = "layout.json";
         private const int CurrentVersion = 1;
 
@@ -49,6 +54,10 @@ namespace Semanticus.Engine
             public double Y { get; set; }
             public double Width { get; set; }
             public double Height { get; set; }
+            /// <summary>The Diagram leaves this table where it is when it makes room for the lines (LayoutNode.Keep).
+            /// Written only when set, so a sidecar without kept tables reads exactly as before.</summary>
+            [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+            public bool? Keep { get; set; }
         }
 
         private sealed class FileShape
@@ -183,9 +192,49 @@ namespace Semanticus.Engine
             if (string.IsNullOrEmpty(dir)) return;
             Directory.CreateDirectory(dir);
             var gitignore = Path.Combine(dir, ".gitignore");
-            if (File.Exists(gitignore)) return;
-            File.WriteAllText(gitignore, "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n");
+            if (!File.Exists(gitignore))
+            {
+                File.WriteAllText(gitignore, "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n" + HistoryIgnore + QuestionsIgnore);
+                return;
+            }
+            // The edit ledger (Plan-heart E4) and the data question history (ask_data, 26 Sep) came after many sidecars
+            // already had this file, so each one's lines are added to an existing one once. Only these lines: a line the
+            // person removed on purpose is not put back.
+            var text = File.ReadAllText(gitignore);
+            var lines = text.Split('\n').Select(l => l.Trim()).ToList();
+            var add = (lines.Contains(EditLedger.FileName) ? "" : HistoryIgnore)
+                    + (lines.Contains(Query.DataQuestionStore.FileName) ? "" : QuestionsIgnore);
+            if (add.Length == 0) return;
+            File.AppendAllText(gitignore, (text.Length == 0 || text.EndsWith("\n", StringComparison.Ordinal) ? "" : "\n") + add);
         }
+
+        /// <summary>Keeps the What Pro decides files that mean nothing after Power BI Desktop closes out of the model's
+        /// commits: one per run of Desktop or live endpoint, and the three shared Desktop files. The per-file and per-title
+        /// files are the ones worth keeping. Adds only these two lines, once.</summary>
+        public static void EnsureSwitchIgnore(string dir)
+        {
+            if (string.IsNullOrEmpty(dir)) return;
+            EnsureRuntimeIgnore(dir);
+            var gitignore = Path.Combine(dir, ".gitignore");
+            var text = File.ReadAllText(gitignore);
+            var lines = text.Split('\n').Select(l => l.Trim()).ToList();
+            var add = (lines.Contains(SwitchRunIgnore) ? "" : SwitchRunIgnore + "\n")
+                    + (lines.Contains(SwitchDesktopIgnore) ? "" : SwitchDesktopIgnore + "\n");
+            if (add.Length == 0) return;
+            File.AppendAllText(gitignore, (text.Length == 0 || text.EndsWith("\n", StringComparison.Ordinal) ? "" : "\n") + add);
+        }
+
+        private const string SwitchRunIgnore = DecisionSettingsFolder + "/live-*.json";
+        private const string SwitchDesktopIgnore = DecisionSettingsFolder + "/desktop-*.json";
+
+        // The History is this machine's record of edits, not part of the team's model: it is written after every edit,
+        // so a tracked copy would show as a change after every commit (found by CicdSmoke's clean-after-commit check).
+        private const string HistoryIgnore = EditLedger.FileName + "\n" + EditLedger.FileName + ".tmp\n";
+
+        // The data question history holds the filter values a reading matched in the model's data and the questions
+        // people asked. It stays on this computer, so it never rides the model's commits.
+        private const string QuestionsIgnore = Query.DataQuestionStore.FileName + "\n" + Query.DataQuestionStore.FileName + ".tmp\n"
+                                              + Query.DataQuestionStore.LiveFolder + "/\n";
 
         public static readonly string[] GitAddExcludes =
         {
@@ -194,6 +243,11 @@ namespace Semanticus.Engine
             ":(exclude,glob)**/experience.jsonl",
             ":(exclude,glob)**/baselines/vitals.jsonl",
             ":(exclude,glob)**/vitals.jsonl",
+            ":(exclude,glob)**/.semanticus/history.json",
+            ":(exclude,glob)**/.semanticus/history.json.tmp",
+            ":(exclude,glob)**/.semanticus/data-questions.json",
+            ":(exclude,glob)**/.semanticus/data-questions.json.tmp",
+            ":(exclude,glob)**/.semanticus/data-questions/**",
         };
 
         /// <summary>Copy the sidecar beside a save-as target so primers and workflows travel with the model.</summary>
@@ -215,6 +269,12 @@ namespace Semanticus.Engine
                 Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, dir)));
             foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
             {
+                // Decision switches are one model's each, and the save carries that model's own. Copying the files would
+                // hand every other model's offs in the old folder to the models already in the new one.
+                var top = Path.GetRelativePath(from, file).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+                if (string.Equals(top, DecisionSettingsFile, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(top, DecisionSettingsFolder, StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var name = Path.GetFileName(file);
                 if (string.Equals(name, "engine.lock", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(name, "engine.json", StringComparison.OrdinalIgnoreCase)

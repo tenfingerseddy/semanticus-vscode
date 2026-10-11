@@ -289,7 +289,7 @@ inputs:
         }
 
         [Fact]
-        public async Task Benchmark_delta_with_no_baseline_fails_teaching_benchmark_dax_coldwarm()
+        public async Task Benchmark_delta_with_no_baseline_fails_teaching_a_cold_warm_benchmark()
         {
             var ws = NewWorkspace();
             WriteUserWorkflow(ws, "benchmark-delta.md", BenchmarkDeltaMd);
@@ -302,11 +302,11 @@ inputs:
                 // rejection text names the tool that records the baseline.
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                     () => e.SubmitWorkflowStepAsync(run.RunId, "step-1", "{\"target\": \"measure:Sales/Total\"}", "human"));
-                Assert.Contains("benchmark_dax_coldwarm", ex.Message);
+                Assert.Contains("benchmark_dax with mode='coldWarm'", ex.Message);
 
                 var after = await e.GetWorkflowRunAsync(run.RunId);
                 Assert.Equal("failed", after.Steps[0].Status);
-                Assert.Contains("benchmark_dax_coldwarm",
+                Assert.Contains("benchmark_dax with mode='coldWarm'",
                     after.Steps[0].VerifyResults.Single(v => v.Kind == "benchmark_delta").Detail);
             }
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
@@ -326,7 +326,7 @@ inputs:
                     () => e.SubmitWorkflowStepAsync(run.RunId, "step-1",
                         "{\"baselineMs\": \"fast\", \"target\": \"measure:Sales/Total\"}", "human"));
                 Assert.Contains("is not a number of milliseconds", ex.Message);
-                Assert.Contains("benchmark_dax_coldwarm", ex.Message);   // the fix is named in the teaching text
+                Assert.Contains("benchmark_dax, mode='coldWarm'", ex.Message);   // the fix is named in the teaching text
             }
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
@@ -426,7 +426,7 @@ inputs:
         {
             var ws = NewWorkspace();
             WriteUserWorkflow(ws, "rpc.md", RpcMd);
-            var pipe = "semanticus-wfverify-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipe = TestPipe.Mint("semanticus-wfverify-");
             var sessions = new SessionManager();
             var owner = new LocalEngine(sessions, new Pro(), ws);
             using var server = new RpcServer(sessions, owner, pipe);
@@ -463,8 +463,9 @@ inputs:
         [Fact]
         public void Make_ai_ready_final_rescan_still_asks_for_an_improved_grade()
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "make-ai-ready.md");
-            Assert.True(File.Exists(path), "stock playbook was not copied beside the test binary: " + path);
+            // make-ai-ready parked (contract 21.2, lane W3); a pinned binding still runs its freeze.
+            var path = WorkflowSeedLibraryTests.ParkedFreeze("make-ai-ready");
+            Assert.True(File.Exists(path), "frozen make-ai-ready was not copied beside the test binary: " + path);
             var md = File.ReadAllText(path);
             Assert.Contains("grade improved", md);
         }

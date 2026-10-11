@@ -94,6 +94,9 @@ namespace Semanticus.Engine
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         };
 
+        /// <summary>The sidecar file, for a witness that hashes it.</summary>
+        public static string PathFor(string dir) => Path.Combine(dir, TestSuiteStore.SubDir, FileName);
+
         /// <summary>Every mapping in the sidecar. The caller filters to the open model's identity.</summary>
         public static (List<TableSourceMapping> Mappings, int Unreadable) Load(string dir)
         {
@@ -102,38 +105,48 @@ namespace Semanticus.Engine
 
         /// <summary>Set (or replace) the mapping for one table. Returns the stored mapping, or null on failure —
         /// never throws, like the suite store it sits beside.</summary>
-        public static TableSourceMapping Upsert(string dir, TableSourceMapping mapping)
+        public static TableSourceMapping Upsert(string dir, TableSourceMapping mapping, Action<string> beforeWrite = null, Action<TableSourceMapping> guard = null)
         {
             if (string.IsNullOrEmpty(dir) || mapping == null || string.IsNullOrWhiteSpace(mapping.ModelTable)) return null;
+            Exception refused = null;
             try
             {
                 lock (Gate)
                 {
+                    beforeWrite?.Invoke(PathFor(dir));
                     var (all, _) = LoadUnlocked(dir);
-                    all.RemoveAll(x => Same(x, mapping.ModelTable, mapping.ModelIdentity));
-                    all.Add(mapping);
-                    WriteUnlocked(dir, all);
+                    // The editor's starting point against the mapping as it stands inside this write. A refusal is not a failure to write: it is carried out, never swallowed.
+                    try { guard?.Invoke(all.FirstOrDefault(x => Same(x, mapping.ModelTable, mapping.ModelIdentity))); }
+                    catch (InvalidOperationException e) { refused = e; }
+                    if (refused == null)
+                    {
+                        all.RemoveAll(x => Same(x, mapping.ModelTable, mapping.ModelIdentity));
+                        all.Add(mapping);
+                        WriteUnlocked(dir, all);
+                    }
                 }
-                return mapping;
             }
-            catch { return null; }
+            catch (Exception ex) when (ex is not StaleApprovalException) { return null; }
+            if (refused != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(refused).Throw();
+            return mapping;
         }
 
         /// <summary>Remove one table's mapping. False when there was nothing to remove.</summary>
-        public static bool Remove(string dir, string modelTable, string modelIdentity)
+        public static bool Remove(string dir, string modelTable, string modelIdentity, Action<string> beforeWrite = null)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrWhiteSpace(modelTable)) return false;
             try
             {
                 lock (Gate)
                 {
+                    beforeWrite?.Invoke(PathFor(dir));
                     var (all, _) = LoadUnlocked(dir);
                     if (all.RemoveAll(x => Same(x, modelTable, modelIdentity)) == 0) return false;
                     WriteUnlocked(dir, all);
                     return true;
                 }
             }
-            catch { return false; }
+            catch (Exception ex) when (ex is not StaleApprovalException) { return false; }
         }
 
         /// <summary>How many table mappings point at one named source. The number a refused delete says out loud.</summary>
@@ -179,15 +192,28 @@ namespace Semanticus.Engine
     /// <summary>Pure discovery and judgement for ambient model-vs-source table row counts.</summary>
     public static class TableRowCountReconciliation
     {
-        public static IReadOnlyList<TableRowCountInput> Discover(Model model) => Discover(model, null);
+        public static IReadOnlyList<TableRowCountInput> Discover(Model model) => Discover(model, null, null);
+
+        public static IReadOnlyList<TableRowCountInput> Discover(Model model, IReadOnlyList<TableSourceMapping> mappings)
+            => Discover(model, mappings, null);
 
         /// <summary>
-        /// Where each table's row count will be read from. A saved mapping WINS: the person said which SQL source and
-        /// which table in it, and that beats anything guessed from a partition. With no mapping this is exactly the
-        /// old behaviour, reading the model's own partitions. With neither, the row says so in plain words instead of
-        /// disappearing, so a surface has something to offer a Map source action against.
+        /// Where each table's row count will be read from, in the resolver's order (contract 19.3). A saved mapping
+        /// WINS: the person said which SQL source and which table in it, and that is this table's own override. With
+        /// no mapping, the model's SQL endpoint (<paramref name="modelEndpoint"/>, already resolved, or null) says
+        /// where to connect, and the table's own partition still says which schema and table to count. With no
+        /// endpoint either, this is exactly the old behaviour, reading the model's own partitions. With nothing at
+        /// all, the row says so in plain words instead of disappearing, so a surface has something to offer a Map
+        /// source action against.
         /// </summary>
-        public static IReadOnlyList<TableRowCountInput> Discover(Model model, IReadOnlyList<TableSourceMapping> mappings)
+        public static IReadOnlyList<TableRowCountInput> Discover(Model model, IReadOnlyList<TableSourceMapping> mappings,
+            SqlSourceResolution modelEndpoint) => Discover(model, mappings, modelEndpoint, null);
+
+        /// <summary>The same, with <paramref name="tablesOnPartitions"/>: unmapped tables that keep reading the model's
+        /// own partitions even though the model has an endpoint, because the upgrade chose that endpoint after they
+        /// were already counted there (Kane's rule: no check changes where it points).</summary>
+        public static IReadOnlyList<TableRowCountInput> Discover(Model model, IReadOnlyList<TableSourceMapping> mappings,
+            SqlSourceResolution modelEndpoint, ISet<string> tablesOnPartitions)
         {
             if (model == null) throw new ArgumentNullException(nameof(model));
             var sources = SqlSourceDiscovery.Find(model);
@@ -208,7 +234,9 @@ namespace Semanticus.Engine
                     results.Add(FromMapping(table, mapping, group));
                     continue;
                 }
-                results.Add(FromDetection(table, group));
+                results.Add(modelEndpoint != null && modelEndpoint.FromModelEndpoint && tablesOnPartitions?.Contains(table) != true
+                    ? FromModelEndpoint(table, group, modelEndpoint)
+                    : FromDetection(table, group));
             }
             return results.OrderBy(r => r.ModelTable, StringComparer.OrdinalIgnoreCase).ToArray();
         }
@@ -243,7 +271,38 @@ namespace Semanticus.Engine
             };
         }
 
-        // No mapping: exactly the old reading of the model's partitions.
+        // No mapping, and the model has a SQL endpoint: connect where the endpoint says, and count the one source
+        // table the partitions name. The endpoint is where; the partition is still what.
+        private static TableRowCountInput FromModelEndpoint(string table, List<ReconcileSourceCandidate> group, SqlSourceResolution endpoint)
+        {
+            var named = (group ?? new List<ReconcileSourceCandidate>())
+                .Where(c => !string.IsNullOrWhiteSpace(c.Schema) && !string.IsNullOrWhiteSpace(c.Entity))
+                .GroupBy(c => c.Schema.Trim() + "\u001f" + c.Entity.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First()).ToList();
+            var input = new TableRowCountInput
+            {
+                ModelTable = table, Server = endpoint.Server, Database = endpoint.Database,
+                SqlSourceId = endpoint.SqlSourceId, SqlSourceName = endpoint.SourceName,
+                AuthMode = endpoint.AuthMode, TenantId = endpoint.TenantId,
+            };
+            if (endpoint.Error != null)
+            {
+                input.DiscoveryError = endpoint.Error;
+                return input;
+            }
+            if (named.Count == 1)
+            {
+                input.Schema = named[0].Schema.Trim();
+                input.Entity = named[0].Entity.Trim();
+                return input;
+            }
+            input.DiscoveryError = named.Count == 0
+                ? "the model does not say which source table this table reads, so it cannot be counted at the model's SQL endpoint. Map it to a schema and a table name"
+                : $"the table reads {named.Count} different source tables, so none was guessed. Map it to one schema and table name";
+            return input;
+        }
+
+        // No mapping and no model endpoint: exactly the old reading of the model's partitions.
         private static TableRowCountInput FromDetection(string table, List<ReconcileSourceCandidate> group)
         {
             var complete = (group ?? new List<ReconcileSourceCandidate>()).Where(IsComplete)

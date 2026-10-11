@@ -400,6 +400,36 @@ function 'Sample.Mul' = (a: INT64, b: INT64) => a * b
             }
         }
 
+        // UAT-S05b-1-005: installing a package that is already fully present, with replace off, installed nothing
+        // and skipped everything, yet it still made a new revision and rewrote the record of who installed the
+        // package (assistant became human). A no-op must write nothing: no revision, no new undo step, and the
+        // original installer and time stay as they were.
+        [Fact]
+        public async Task Reinstalling_a_fully_present_package_writes_nothing_and_keeps_who_installed_it()
+        {
+            var (engine, sessions) = await NewProModelAsync(1702);
+            using (engine)
+            {
+                ServeSamplePackage();
+                await engine.DaxLibInstallAsync("Sample", "1.0.0", false, "agent");
+                var before = Assert.Single(await engine.DaxLibListInstalledAsync());
+                var revBefore = sessions.Require().Revision;
+
+                var again = await engine.DaxLibInstallAsync("Sample", "1.0.0", false, "human");
+                Assert.Empty(again.Functions);
+                Assert.Equal(2, again.Skipped.Length);
+
+                Assert.Equal(revBefore, sessions.Require().Revision);          // no new revision
+                Assert.Equal(revBefore, again.Revision);
+                var after = Assert.Single(await engine.DaxLibListInstalledAsync());
+                Assert.Equal("agent", after.By);                                // the assistant still installed it
+                Assert.Equal(before.When, after.When);
+
+                await engine.UndoAsync("human");                                // one undo takes the real install back
+                Assert.Empty(await engine.DaxLibListInstalledAsync());
+            }
+        }
+
         [Fact]
         public async Task Install_resolves_dependencies_deps_first()
         {
@@ -435,23 +465,21 @@ function 'Sample.Mul' = (a: INT64, b: INT64) => a * b
         }
 
         [Fact]
-        public async Task Install_is_refused_on_the_free_tier()
+        public async Task Install_runs_on_the_free_tier()
         {
-            // Kane 2026-07-04 made DaxLib install free as an adoption funnel. Kane 2026-09-15 replaced that line:
-            // daxlib is part of Advanced Modelling, so install and its reads are Pro. The end-to-end install lives
-            // in Install_creates_the_udfs_raises_cl_records_provenance_and_is_one_undo; this pins the tier boundary.
+            // Three lines in three months, and the last one is Kane 2026-09-22: "free is the tool, Pro is the
+            // tool that works for you". Advanced modelling is free again, daxlib with it, so this test is the
+            // reverse of what it was and proves the gate that was removed is not still firing somewhere.
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, new Fake(false));   // FREE
             using (engine)
             {
                 await engine.CreateModelAsync("DL", 1702);
-                ServeSamplePackage();   // served on purpose: if the gate ever goes, this fails as an assert, not a hang
-                var ex = await Assert.ThrowsAsync<EntitlementException>(
-                    () => engine.DaxLibInstallAsync("Sample", "1.0.0", false, "human"));
-                Assert.Contains("Advanced Modelling is a Semanticus Pro feature", ex.Message);
-                // Refused at the entry, so nothing was installed on the way to the refusal. Read the model
-                // directly: daxlib_list_installed is a Pro read too, and a free engine cannot call it.
-                Assert.Equal(0, await sessions.Require().ReadAsync(m => m.Functions.Count));
+                ServeSamplePackage();
+                var result = await engine.DaxLibInstallAsync("Sample", "1.0.0", false, "human");
+                Assert.NotEmpty(result.Functions);
+                Assert.NotEqual(0, await sessions.Require().ReadAsync(m => m.Functions.Count));
+                Assert.NotEmpty(await engine.DaxLibListInstalledAsync());
             }
         }
 

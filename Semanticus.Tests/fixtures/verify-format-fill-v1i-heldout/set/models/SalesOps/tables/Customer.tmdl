@@ -1,0 +1,24 @@
+table Customer
+	/// customer join key
+	column 'Customer Key'
+		dataType: int64
+		sourceColumn: CustomerKey
+		summarizeBy: none
+
+	column Segment
+		dataType: string
+		sourceColumn: Segment
+		summarizeBy: none
+
+	column 'Postal Code'
+		dataType: int64
+		sourceColumn: PostalCode
+		summarizeBy: none
+
+	partition Customer = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [CustomerKey = Int64.Type, Segment = type text, PostalCode = Int64.Type], {})
+			in
+				Source

@@ -30,7 +30,7 @@ export function Caret({ open, className = '' }: { open: boolean; className?: str
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{label}</label>
+      <label className="text-xs" style={{ color: 'var(--sem-muted)' }}>{label}</label>
       {children}
     </div>
   );
@@ -44,12 +44,12 @@ export function PathDisclosure({ path, label = 'Where is this saved?', className
   const [open, setOpen] = useState(false);
   if (!path) return null;
   return (
-    <span className={`inline-flex min-w-0 items-center gap-1.5 ${className}`}>
+    <span className={`inline-flex min-w-0 items-center gap-2 ${className}`}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="shrink-0 text-[10.5px]" style={{ color: 'var(--sem-muted)', background: 'none', border: 0, padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer' }}>
+        className="shrink-0 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)', background: 'none', border: 0, padding: 0, textDecoration: 'underline', textUnderlineOffset: 2, cursor: 'pointer' }}>
         {open ? 'Hide where it is saved' : label}
       </button>
-      {open && <span className="min-w-0 break-all text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>{path}</span>}
+      {open && <span className="min-w-0 break-all text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{path}</span>}
     </span>
   );
 }

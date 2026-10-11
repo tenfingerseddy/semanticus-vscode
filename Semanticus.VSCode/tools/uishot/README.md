@@ -55,6 +55,28 @@ node pageshot.mjs page.html out.png [widthPx]  # screenshot ANY local HTML file 
   `lowcl` (Format expression locked below compatibility level 1601) · `staledraft` (an open editor + draft must
   NOT survive onto a same-named object with a different ref key) · `error` (inline validation) · `empty`
 
+## The screen check (One Visual Language)
+
+Every page must keep one gap between cards (12), one page margin (24), one card padding (16, or 12 for a flat
+inset), top-level card edges on the 12-column grid, and no card inside another card. `screencheck.mjs` measures
+a rendered page with `measure.js`, judges it with `screen-judge.mjs`, and compares the five counts with
+`visual-baseline.json`. Every page is measured at 1440 x 900 whatever size the driver shoots at. It then puts
+the page in Dark Modern, Light Modern and Dark High Contrast (`themes.mjs`, the `--vscode-*` variables and body
+class VS Code itself sets) and counts every text box below 4.5:1 in each, across the whole window.
+
+The shell journey, the Overview, Plan, Pro, Pro page and consent drivers call it on every scene they render and
+fail when a page is worse than its baseline in any one kind (eight kinds: five layout rules and contrast in
+each theme). A page at zero may never regress.
+
+```bash
+node visual-check.mjs                            # the scoreboard: all 22 pages, after a self-test on fixtures/visual-grid.html
+node visual-audit-drive.mjs                      # the same pages, shot plain and with every gap drawn on them
+SEMANTICUS_VISUAL_SEED=1 node visual-check.mjs   # lower the baseline where pages got better (never raises one)
+```
+
+A driver that adds a new scene adds a new key: run it once with `SEMANTICUS_VISUAL_SEED=1` and commit the
+baseline. The style half of the same rule is `scripts/visual-style-scan.mjs`, run by `npm test`.
+
 ## How it works (and why)
 
 - **Isolated Chromium, not Edge.** The machine's Edge hands off to the user's running instance, so it can't be

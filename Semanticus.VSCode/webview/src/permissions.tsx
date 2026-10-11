@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { rpc, onReconnect } from './bridge';
 import { Panel, Banner, SectionTitle, Pill } from './workflows';
 import { uiLabel } from './copy';
+import { useConnection } from './connection';
 
 // ===================================================================================================
 // Permissions — the human door onto the agent-policy engine (PR #128). This page IS the human: every
@@ -11,10 +12,11 @@ import { uiLabel } from './copy';
 //   1. Guardrail switch + preset picker (header)  — the switch is FREE, presets are Pro.
 //   2. The capability × target matrix              — plain-language rows; engine enum in a tooltip.
 //   3. "Waiting for you" approval queue            — polled while the tab is open.
-//   4. Targets (the connection registry)           — the labelling home the refusal messages point at.
+//   4. One line that says labels are set in Connections (r1 min4: the Targets list left; each model's label is set
+//      in one place, the Connections list, and this page only reads it to pick the column).
 // Copy rule: "the AI assistant", never "Claude". Plain language; engine terms live only in tooltips.
 // This guardrail is a governance control against ACCIDENTS, not a boundary against a hostile agent —
-// the credential the user hands the assistant is the real boundary (stated in the footer).
+// the credential the user hands the assistant is the real boundary (stated once, in the footer).
 //
 // Honesty rules this page enforces on ITSELF (a governance surface must never lie about state):
 //   • Policy state renders only once getAgentPolicy has ANSWERED — no default-rendered "On · Standard"
@@ -39,7 +41,7 @@ interface ApprovalRecord {
 function grantScopeLine(r: ApprovalRecord): string | null {
   const mins = r.ttlMinutes && r.ttlMinutes > 0 ? r.ttlMinutes : 15;
   if (r.capability === 'QueryData') {
-    return `Approving allows all read-rows operations on this target (previews, DAX row queries, pivots, debug logging) until it expires in ${mins} minutes.`;
+    return `Approving also allows other row previews on this target for ${mins} minutes.`;
   }
   return null;
 }
@@ -52,6 +54,8 @@ interface ConnectionRecord {
 type Action = 'allow' | 'ask' | 'deny';
 const LABELS = ['local', 'dev', 'uat', 'prod'] as const;
 type Label = typeof LABELS[number];
+/** The one word per label, the same words Connections uses (Local, Development, UAT, Production). */
+export const LABEL_WORD: Record<Label, string> = { local: 'Local', dev: 'Development', uat: 'UAT', prod: 'Production' };
 
 const errMsg = (e: unknown) => String((e as Error)?.message ?? e);
 
@@ -99,15 +103,16 @@ export function publishPermissionDescription(policy: AgentPolicy, targetLabel?: 
 // The matrix rows, in reading order. `cap` is the engine capability (shown only in a tooltip); `kind` decides how a
 // row renders: an editable gated row, a structurally-always-allow local row, or a pinned info strip (allow/deny).
 type RowKind = 'gated' | 'localAllow' | 'infoAllow' | 'infoDeny';
-interface RowDef { cap: string; title: string; sub: string; kind: RowKind; }
+interface RowDef { cap: string; title: string; sub: string; kind: RowKind; tip?: string; }
 const ROWS: RowDef[] = [
   { cap: 'Read / QueryCalc', title: 'Read & analyze', sub: 'List, inspect, scan, and run measure calculations.', kind: 'infoAllow' },
-  { cap: 'QueryData', title: 'Preview data', sub: 'Show rows of source data: table previews, measure pivots, and row-returning DAX queries. Calculation checks can still show the category labels they group by.', kind: 'gated' },
+  { cap: 'QueryData', title: 'Preview data', sub: 'Show rows of data.', kind: 'gated',
+    tip: 'Table previews, measure pivots and row-returning DAX queries. Calculation checks can still show the category labels they group by.' },
   { cap: 'EditLocal', title: 'Edit the working model', sub: 'Never touches a live target.', kind: 'localAllow' },
   { cap: 'DeployFile', title: 'Write model files', sub: 'Never touches a live target.', kind: 'localAllow' },
-  { cap: 'DeployLive', title: 'Deploy to a published model', sub: 'Publish changes to the design of a live model.', kind: 'gated' },
-  { cap: 'DeployDelete', title: 'Delete from a published model', sub: 'Remove an object from a live model. Irreversible.', kind: 'gated' },
-  { cap: 'Rollback', title: 'Roll back a published model', sub: 'Restore a live model to an earlier checkpoint.', kind: 'gated' },
+  { cap: 'DeployLive', title: 'Publish to a published model', sub: 'Publish changes to the design of a live model.', kind: 'gated' },
+  { cap: 'DeployDelete', title: 'Delete from a published model', sub: 'Cannot be undone.', kind: 'gated' },
+  { cap: 'Rollback', title: 'Roll back a published model', sub: 'Restore a live model to an earlier version.', kind: 'gated' },
   { cap: 'Refresh', title: 'Refresh live data', sub: 'Refresh a partition on the live model.', kind: 'gated' },
   { cap: 'Governance', title: 'Change these settings', sub: 'Never allowed for the assistant.', kind: 'infoDeny' },
 ];
@@ -186,48 +191,43 @@ export function PermissionsView({ focusApproval, onFocusConsumed, onApprovalChan
 
   return (
     <div className="h-full overflow-auto">
-      <div className="sem-evidence-page sem-centered-page flex flex-col gap-4 min-w-0">
+      <div className="sem-evidence-page flex flex-col gap-4 min-w-0">
         <HeaderPanel policy={policy} policyErr={policyErr} inflight={inflight}
           onToggle={setEnabled} onPreset={setPreset} onRetry={loadPolicy} />
         {writeErr && <Banner color="var(--sem-bad)">{writeErr}</Banner>}
         {policy && <MatrixPanel policy={policy} inflight={inflight} onCell={setCell} />}
         <ApprovalsPanel focusApproval={focusApproval} onFocusConsumed={onFocusConsumed} onApprovalChanged={onApprovalChanged} />
-        <TargetsPanel />
+        <LabelsLine />
         <FooterLine />
       </div>
     </div>
   );
 }
 
-// ---- Header: intro + the free guardrail switch + the preset picker -------------------------------
+// ---- Header: the title, the free guardrail switch and the preset picker ---------------------------
 function HeaderPanel({ policy, policyErr, inflight, onToggle, onPreset, onRetry }: {
   policy: AgentPolicy | null; policyErr: string | null; inflight: string | null;
   onToggle: (v: boolean) => void; onPreset: (id: string) => void; onRetry: () => void;
 }) {
   const isCustom = policy?.preset === 'custom';
   const isUnreadable = policy?.preset === 'unreadable';
+  const chosen = policy && !isCustom && !isUnreadable ? PRESETS.find((p) => p.id === policy.preset) : null;
   return (
-    <Panel>
-      <div className="flex items-start gap-4">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <ShieldIcon />
-            <div className="text-[15px] font-semibold">Assistant permissions</div>
-          </div>
-          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-            A preset sets a sensible baseline; tune any cell for full control. This governs the assistant to
-            prevent accidents; it is not a security boundary.
-          </div>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-4">
+        <div className="flex-1 min-w-0 flex items-center gap-2">
+          <ShieldIcon />
+          <h1 className="m-0 text-(length:--sem-text-page) font-semibold">Assistant permissions</h1>
         </div>
         {/* The switch renders ONLY once the policy is known — a toggle with a defaulted position would be a
             governance-status lie. While loading/error, its slot says so instead. */}
         {policy
           ? <GuardrailSwitch enabled={policy.enabled} disabled={!!inflight} onToggle={onToggle} />
-          : <div className="text-[11px] shrink-0 pt-1" style={{ color: 'var(--sem-muted)' }}>{policyErr ? 'unavailable' : 'loading…'}</div>}
+          : <div className="text-(length:--sem-text-label) shrink-0 pt-1" style={{ color: 'var(--sem-muted)' }}>{policyErr ? 'unavailable' : 'loading…'}</div>}
       </div>
 
       {policyErr && !policy && (
-        <div className="mt-3 flex items-start gap-2">
+        <div className="flex items-start gap-2">
           <div className="flex-1 min-w-0">
             <Banner color="var(--sem-bad)">Couldn’t load the permission settings: {policyErr}</Banner>
           </div>
@@ -237,100 +237,92 @@ function HeaderPanel({ policy, policyErr, inflight, onToggle, onPreset, onRetry 
         </div>
       )}
       {!policy && !policyErr && (
-        <div className="mt-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the current policy…</div>
+        <div className="text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the current policy…</div>
       )}
 
       {policy && isUnreadable && (
-        <div className="mt-3">
-          <Banner color="var(--sem-warn)">
-            Your saved permission settings could not be read. Live actions are blocked until the settings are restored. Choose a preset below to reset them.
-          </Banner>
-        </div>
+        <Banner color="var(--sem-warn)">
+          Your saved permission settings could not be read. Live actions are blocked until the settings are restored. Choose a preset below to reset them.
+        </Banner>
       )}
 
       {policy && (
-        <div className="mt-3">
-          <SectionTitle>Preset</SectionTitle>
-          <div className="flex flex-wrap gap-2 mt-2">
-            {PRESETS.map((p) => (
-              <PresetCard key={p.id} preset={p} active={!isCustom && !isUnreadable && policy.preset === p.id}
-                busy={inflight === `preset:${p.id}`} disabled={!!inflight}
-                onClick={() => onPreset(p.id)} />
-            ))}
+        <div className="flex flex-col gap-2">
+          {/* One segmented control and one line for the chosen preset; the other four read on hover. */}
+          <div className="sem-seg self-start" role="group" aria-label="Preset">
+            {PRESETS.map((p) => {
+              const active = !isCustom && !isUnreadable && policy.preset === p.id;
+              return (
+                <button key={p.id} type="button" className="sem-seg-item" aria-pressed={active} disabled={!!inflight}
+                  data-testid={`perm-preset-${p.id}`} title={`${p.name}: ${p.desc}`} onClick={() => onPreset(p.id)}>
+                  {inflight === `preset:${p.id}` ? 'Applying…' : p.name}
+                </button>
+              );
+            })}
           </div>
+          {chosen && <div className="text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{presetLine(chosen)}</div>}
           {isCustom && (
-            <div className="flex items-center gap-2 mt-2 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
+            <div className="flex items-center gap-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>
               <Pill tint="var(--sem-accent)">Custom</Pill>
-              <span>Your matrix no longer matches a named preset. Keep tuning cells, or pick a preset above to reset.</span>
+              <span>Your grid no longer matches a preset. Keep changing cells, or pick a preset to reset it.</span>
             </div>
           )}
         </div>
       )}
-    </Panel>
+    </div>
   );
 }
 
-function PresetCard({ preset, active, busy, disabled, onClick }: {
-  preset: { id: string; name: string; desc: string }; active: boolean; busy: boolean; disabled: boolean; onClick: () => void;
-}) {
-  // Only an in-flight write disables a card now. There is no plan to check: choosing a preset is free.
-  return (
-    <button onClick={onClick} disabled={disabled}
-      title={active ? 'Current preset' : `Switch to the ${preset.name} preset`}
-      className="text-left rounded-lg px-3 py-2 transition-colors disabled:opacity-60 flex flex-col items-start justify-start"
-      style={{ width: 190, background: active ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)',
-        border: `1px solid ${active ? 'var(--sem-accent)' : 'var(--sem-border)'}`, opacity: busy ? 0.6 : undefined }}>
-      <div className="flex items-center gap-1.5">
-        <span className="text-[12.5px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{preset.name}</span>
-        {busy ? <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>applying…</span>
-          : active && <span className="text-[9.5px] font-bold uppercase tracking-wide" style={{ color: 'var(--sem-accent)' }}>Current</span>}
-      </div>
-      <div className="text-[11px] mt-0.5 leading-snug" style={{ color: 'var(--sem-muted)' }}>{preset.desc}</div>
-    </button>
-  );
+/** "Standard: asks before touching UAT or production." The chosen preset's name and its one line. */
+export function presetLine(preset: { name: string; desc: string }): string {
+  return `${preset.name}: ${preset.desc.charAt(0).toLowerCase()}${preset.desc.slice(1)}`;
 }
 
 // The global kill-switch — a labelled toggle. Free for everyone; operable as soon as the policy is known.
 function GuardrailSwitch({ enabled, disabled, onToggle }: { enabled: boolean; disabled: boolean; onToggle: (v: boolean) => void }) {
   return (
-    <div className="flex flex-col items-end shrink-0">
-      <div className="flex items-center gap-2">
-        <span className="text-[12px] font-medium">Permission checks</span>
-        <button role="switch" aria-checked={enabled} disabled={disabled} onClick={() => onToggle(!enabled)}
-          title={enabled ? 'On: these permission checks apply to the assistant. Click to turn off.' : 'Off: these permission checks are disabled. Click to turn on.'}
-          className="relative rounded-full transition-colors disabled:opacity-60" style={{ width: 40, height: 22,
-            background: enabled ? 'var(--sem-accent)' : 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-          <span className="absolute rounded-full transition-all" style={{ width: 16, height: 16, top: 2,
-            left: enabled ? 20 : 3, background: enabled ? 'var(--sem-on-accent)' : 'var(--sem-muted)' }} />
-        </button>
-        <span className="text-[11px] tnum w-6" style={{ color: enabled ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>{enabled ? 'On' : 'Off'}</span>
-      </div>
-      <div className="text-[10.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>Free · always available</div>
+    <div className="flex items-center gap-2 shrink-0">
+      <span className="text-(length:--sem-text-meta) font-medium">Permission checks</span>
+      <button role="switch" aria-checked={enabled} disabled={disabled} onClick={() => onToggle(!enabled)}
+        title={enabled ? 'On: these permission checks apply to the assistant. Click to turn off.' : 'Off: these permission checks are disabled. Click to turn on.'}
+        className="relative rounded-full transition-colors disabled:opacity-60" style={{ width: 36, height: 'var(--sem-chip-h)',
+          background: enabled ? 'var(--sem-accent)' : 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+        <span className="absolute rounded-full transition-all" style={{ width: 14, height: 14, top: 2,
+          left: enabled ? 18 : 2, background: enabled ? 'var(--sem-on-accent)' : 'var(--sem-muted)' }} />
+      </button>
+      <span className="text-(length:--sem-text-label) tnum w-6" style={{ color: enabled ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>{enabled ? 'On' : 'Off'}</span>
     </div>
   );
 }
 
 // ---- The capability × target matrix --------------------------------------------------------------
+/** What can never be changed here, said once under the grid instead of as four rows of fixed cells. Under the Locked
+ *  preset the two local rows are not "always": they ask first, and the line says so instead of claiming otherwise. */
+export function fixedLine(policy: AgentPolicy): string {
+  const local = ROWS.filter((r) => r.kind === 'localAllow');
+  const alwaysLocal = !policy.enabled || local.every((r) => LABELS.every((l) => (policy.matrix?.[r.cap]?.[l] ?? 'allow') === 'allow'));
+  return alwaysLocal
+    ? 'Always allowed: read and check the model, edit the working model, write model files. Never: change these settings.'
+    : 'Always allowed: read and check the model. Editing the working model and writing model files ask first. Never: change these settings.';
+}
+
 function MatrixPanel({ policy, inflight, onCell }: {
   policy: AgentPolicy; inflight: string | null;
   onCell: (cap: string, label: Label, action: Action) => void;
 }) {
   const off = !policy.enabled;
-  const grid = ROWS.filter((r) => r.kind === 'gated' || r.kind === 'localAllow');
-  const infoTop = ROWS.find((r) => r.kind === 'infoAllow')!;
-  const infoBottom = ROWS.find((r) => r.kind === 'infoDeny')!;
+  // Only the rows a person can change. The two local rows are in the grid only under Locked, where they ask first.
+  const lockedLocal = !off && ROWS.some((r) => r.kind === 'localAllow' && LABELS.some((l) => (policy.matrix?.[r.cap]?.[l] ?? 'allow') !== 'allow'));
+  const grid = ROWS.filter((r) => r.kind === 'gated' || (r.kind === 'localAllow' && lockedLocal));
   const cols = `minmax(230px,1.5fr) repeat(4, minmax(78px,1fr))`;
 
   return (
     <Panel>
-      <SectionTitle>What the assistant may do</SectionTitle>
-      <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        Columns are your target labels. <strong style={{ color: 'var(--sem-fg)' }}>Unlabelled targets are treated as production.</strong>
-        {!off && <> Click a cell to change it (allow → ask → deny).</>}
-      </div>
+      <SectionTitle>What your assistant may do</SectionTitle>
+      {!off && <div className="text-(length:--sem-text-meta) mt-1" style={{ color: 'var(--sem-muted)' }}>Click a cell to change it.</div>}
 
       {off && (
-        <div className="flex items-center gap-2 mt-3 rounded-lg px-3 py-2 text-[12px]"
+        <div className="flex items-center gap-2 mt-3 rounded px-3 py-2 text-(length:--sem-text-meta)"
           style={{ background: 'color-mix(in srgb, var(--sem-warn) 12%, transparent)', color: 'var(--sem-fg)', border: '1px solid color-mix(in srgb, var(--sem-warn) 32%, transparent)' }}>
           <WarnDot />
           <span>
@@ -340,33 +332,28 @@ function MatrixPanel({ policy, inflight, onCell }: {
         </div>
       )}
 
-      {/* Pinned info strip — always allowed, structural (not per-target). Stays bright when the guardrail is
-          off: it is a fact about the engine, not a cell of the (stood-down) matrix. */}
-      <div className="mt-3"><InfoStrip kind="allow" row={infoTop} /></div>
-
-      <div className="mt-2 rounded-xl overflow-hidden" style={{ border: '1px solid var(--sem-border)' }}>
+      <div className="mt-3">
         {/* header */}
-        <div style={{ display: 'grid', gridTemplateColumns: cols, background: 'var(--sem-surface-2)' }}>
-          <div className="px-3 py-2 text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Capability</div>
+        <div style={{ display: 'grid', gridTemplateColumns: cols }}>
+          <div className="px-3 py-2 text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>Capability</div>
           {LABELS.map((l) => (
-            <div key={l} className="px-2 py-2 text-center text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>
-              {l}{l === 'prod' && <span title="Unlabelled targets are treated as production" style={{ color: 'var(--sem-warn)' }}> *</span>}
+            <div key={l} className="px-2 py-2 text-center text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>
+              {LABEL_WORD[l]}{l === 'prod' && <span title="A model with no label uses the Production settings." style={{ color: 'var(--sem-warn)' }}> *</span>}
             </div>
           ))}
         </div>
         {/* body */}
-        {grid.map((row, i) => (
-          <div key={row.cap} style={{ display: 'grid', gridTemplateColumns: cols,
-            borderTop: '1px solid var(--sem-border)', background: i % 2 ? 'color-mix(in srgb, var(--sem-surface-2) 40%, transparent)' : 'transparent' }}>
+        {grid.map((row) => (
+          <div key={row.cap} style={{ display: 'grid', gridTemplateColumns: cols, borderTop: '1px solid var(--sem-rule)' }}>
             <RowLabel row={row} />
             {LABELS.map((l) => {
               const key = `cell:${row.cap}:${l}`;
-              const action = (policy.matrix?.[row.cap]?.[l] as Action) ?? 'deny';
+              const action = (policy.matrix?.[row.cap]?.[l] as Action) ?? (row.kind === 'localAllow' ? 'allow' : 'deny');
               return (
                 <div key={l} className="flex items-center justify-center px-2 py-2">
                   {row.kind === 'localAllow' ? (
-                    // A structural fact, not a policy choice — a distinct outline "Always" chip, never dimmed.
-                    <FixedChip />
+                    // The Locked preset asks even for these (its line says so): show what the matrix says, read-only.
+                    <ActionChip action={action} />
                   ) : off ? (
                     // Guardrail off: only the TUNABLE cells dim (they are what stood down).
                     <span style={{ opacity: 0.35 }}><ActionChip action={action} /></span>
@@ -381,8 +368,7 @@ function MatrixPanel({ policy, inflight, onCell }: {
         ))}
       </div>
 
-      {/* Pinned info strip — never allowed, structural (holds even with the guardrail off). */}
-      <div className="mt-2"><InfoStrip kind="deny" row={infoBottom} /></div>
+      <div data-testid="perm-fixed-line" className="mt-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{fixedLine(policy)}</div>
     </Panel>
   );
 }
@@ -390,28 +376,10 @@ function MatrixPanel({ policy, inflight, onCell }: {
 function RowLabel({ row }: { row: RowDef }) {
   return (
     <div className="px-3 py-2 min-w-0">
-      <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-[12.5px] font-medium" title={`Capability: ${row.cap}`}>{row.title}</span>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-(length:--sem-text-meta) font-medium" title={`${row.tip ? `${row.tip} ` : ''}Capability: ${row.cap}`}>{row.title}</span>
       </div>
-      <div className="text-[11px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>{row.sub}</div>
-    </div>
-  );
-}
-
-// A pinned, non-editable strip for the two structural rows: always-allow (Read) and never-allow (Governance).
-function InfoStrip({ kind, row }: { kind: 'allow' | 'deny'; row: RowDef }) {
-  const allow = kind === 'allow';
-  const color = allow ? 'var(--sem-good)' : 'var(--sem-bad)';
-  return (
-    <div className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-      <span style={{ color }}>{allow ? <EyeIcon /> : <LockIcon />}</span>
-      <div className="flex-1 min-w-0">
-        <span className="text-[12.5px] font-medium" title={`Capability: ${row.cap}`}>{row.title}</span>
-        <span className="text-[11px] ml-2" style={{ color: 'var(--sem-muted)' }}>{row.sub}</span>
-      </div>
-      <span className="text-[11px] font-semibold px-2 py-0.5 rounded" style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)` }}>
-        {allow ? 'Always allowed' : 'Never allowed'}
-      </span>
+      <div className="text-(length:--sem-text-label) mt-1" style={{ color: 'var(--sem-muted)' }}>{row.sub}</div>
     </div>
   );
 }
@@ -427,21 +395,9 @@ const next = (a: Action): Action => (a === 'allow' ? 'ask' : a === 'ask' ? 'deny
 function ActionChip({ action }: { action: Action }) {
   const m = ACTION_META[action];
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md"
+    <span className="inline-flex items-center gap-1 text-(length:--sem-text-label) font-semibold px-2 py-1 rounded"
       style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 16%, transparent)` }}>
       <ActionIcon action={action} />{m.label}
-    </span>
-  );
-}
-
-// A structurally-fixed cell: an outline "Always" chip, visually distinct from a policy-derived Allow so a
-// fact never reads as a choice.
-function FixedChip() {
-  return (
-    <span title="Fixed: this never touches a live target, so it is always allowed."
-      className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md"
-      style={{ color: 'var(--sem-muted)', background: 'transparent', border: '1px dashed var(--sem-border)' }}>
-      <ActionIcon action="allow" />Always
     </span>
   );
 }
@@ -452,7 +408,7 @@ function ActionCell({ action, disabled, pending, onClick }: { action: Action; di
   const m = ACTION_META[action];
   return (
     <button onClick={onClick} disabled={disabled} title={`${m.label}. Click to cycle: allow → ask → deny.`}
-      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-md transition-colors"
+      className="inline-flex items-center gap-1 text-(length:--sem-text-label) font-semibold px-2 py-1 rounded transition-colors"
       style={{ color: m.color, background: `color-mix(in srgb, ${m.color} 16%, transparent)`,
         border: `1px solid color-mix(in srgb, ${m.color} 34%, transparent)`, opacity: pending ? 0.55 : undefined }}>
       <ActionIcon action={action} />{m.label}
@@ -538,6 +494,12 @@ function ApprovalsPanel({ focusApproval, onFocusConsumed, onApprovalChanged }: {
     return () => window.clearTimeout(clear);
   }, [focusApproval?.id, focusApproval?.nonce, items]);
 
+  // Nothing to show, nothing drawn: the section appears when something waits, when a request the person came for is
+  // gone, or when the queue could not be read. An expired approval has no action, so it is not listed (the assistant
+  // asks again and a new row appears).
+  const live = granted.filter((r) => !isExpired(r.expiresUtc, now));
+  if (items !== null && !err && pending.length === 0 && live.length === 0 && !focusNotice) return null;
+
   return (
     <Panel>
       <SectionTitle>Waiting for you {pending.length > 0 && <span style={{ color: 'var(--sem-accent)' }}>({pending.length})</span>}</SectionTitle>
@@ -551,162 +513,83 @@ function ApprovalsPanel({ focusApproval, onFocusConsumed, onApprovalChanged }: {
           </button>
         </div>
       ) : items === null ? (
-        <div className="text-[12px] mt-2" style={{ color: 'var(--sem-muted)' }}>Loading…</div>
+        <div className="text-(length:--sem-text-meta) mt-2" style={{ color: 'var(--sem-muted)' }}>Loading…</div>
       ) : (
         <>
           {err && <div className="mt-2"><Banner color="var(--sem-bad)">{err}</Banner></div>}
-          {list.length === 0 ? (
-            <div className="text-[12px] mt-2" style={{ color: 'var(--sem-muted)' }}>
-              Nothing waiting. When the assistant needs your approval, it appears here.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 mt-2">
-              {pending.map((r) => (
-                <div key={r.id} ref={(node) => { if (node) cards.current.set(r.id, node); else cards.current.delete(r.id); }} tabIndex={-1}
-                  className="rounded-lg px-3 py-2.5 outline-none"
-                  style={{ background: 'var(--sem-surface-2)', border: `1px solid ${directedId === r.id ? 'var(--sem-warn)' : 'var(--sem-border)'}`, boxShadow: directedId === r.id ? '0 0 0 2px color-mix(in srgb, var(--sem-warn) 24%, transparent)' : undefined }}>
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12.5px] font-medium">{r.summary || capabilityLabel(r.capability)}</div>
-                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                        <Pill tint={LABEL_TINT[r.label] ?? 'var(--sem-muted)'} title={`Capability: ${r.capability} · label: ${r.label}`}>{capabilityLabel(r.capability)}</Pill>
-                        <Pill tint={LABEL_TINT[r.label] ?? 'var(--sem-muted)'}>{r.label}</Pill>
-                        {r.target && <span className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }} title={r.target}>{truncMid(r.target, 44)}</span>}
-                        <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>· asked {relTime(r.requestedUtc, now)}</span>
-                      </div>
-                      {grantScopeLine(r) && (
-                        <div className="text-[11px] mt-1" style={{ color: 'var(--sem-muted)' }}>{grantScopeLine(r)}</div>
-                      )}
+          <div className="flex flex-col mt-2">
+            {pending.map((r) => (
+              <div key={r.id} ref={(node) => { if (node) cards.current.set(r.id, node); else cards.current.delete(r.id); }} tabIndex={-1}
+                className="py-3 outline-none border-b"
+                style={{ borderColor: 'var(--sem-rule)', boxShadow: directedId === r.id ? 'inset 2px 0 0 var(--sem-warn)' : undefined }}>
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0 sem-row-line">
+                    <div className="text-(length:--sem-text-meta) font-medium">{r.summary || capabilityLabel(r.capability)}</div>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }} title={`Capability: ${r.capability} · label: ${r.label}`}>{capabilityLabel(r.capability)}</span>
+                      <Pill tint={LABEL_TINT[r.label] ?? 'var(--sem-muted)'}>{LABEL_WORD[r.label as Label] ?? r.label}</Pill>
+                      {r.target && <span className="text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }} title={r.target}>{truncMid(r.target, 44)}</span>}
+                      <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>· asked {relTime(r.requestedUtc, now)}</span>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <MiniAction color="var(--sem-good)" disabled={busyId === r.id} onClick={() => act(r.id, 'approveAgentAction')}>Approve</MiniAction>
-                      <MiniAction color="var(--sem-bad)" disabled={busyId === r.id} onClick={() => act(r.id, 'denyAgentAction')}>Deny</MiniAction>
-                    </div>
+                    {grantScopeLine(r) && (
+                      <div className="text-(length:--sem-text-label) mt-1" style={{ color: 'var(--sem-muted)' }}>{grantScopeLine(r)}</div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <MiniAction color="var(--sem-bad)" disabled={busyId === r.id} onClick={() => act(r.id, 'denyAgentAction')}>Deny</MiniAction>
+                    <MiniAction color="var(--sem-good)" disabled={busyId === r.id} onClick={() => act(r.id, 'approveAgentAction')}>Approve</MiniAction>
                   </div>
                 </div>
-              ))}
-              {granted.map((r) => {
-                // Never claim a capability the engine would refuse: ApprovalLedger.IsLiveGrant requires
-                // now < expiry, so once the clock passes it the "can run" sentence is false even though the
-                // record is still in `items` (the poll's catch keeps stale items across an RPC outage).
-                // Driven by the ticking `now`, not by fresh data, so it flips to expired on the clock.
-                const expired = isExpired(r.expiresUtc, now);
-                const tint = expired ? 'var(--sem-muted)' : 'var(--sem-good)';
-                return (
-                  <div key={r.id} className="rounded-lg px-3 py-2.5 flex items-center gap-3"
-                    style={{ background: `color-mix(in srgb, ${tint} 8%, transparent)`, border: `1px solid color-mix(in srgb, ${tint} 26%, transparent)` }}>
-                    <span style={{ color: tint }}>{expired ? <ClockIcon /> : <ActionIcon action="allow" />}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[12.5px]">{r.summary || capabilityLabel(r.capability)}</div>
-                      <div className="text-[11px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-                        {expired
-                          ? <>This approval has expired. The assistant must ask again.</>
-                          : r.capability === 'QueryData'
-                            ? <>Approved. The assistant can run read-rows operations on this target{expiresIn(r.expiresUtc, now)}.</>
-                            : <>Approved. Waiting for the assistant to act{expiresIn(r.expiresUtc, now)}.</>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+              </div>
+            ))}
+            {live.map((r) => (
+              // Never claim a capability the engine would refuse: ApprovalLedger.IsLiveGrant requires now < expiry, so only
+              // a live grant is listed, driven by the ticking `now` so it leaves on the clock, not on fresh data.
+              <div key={r.id} className="py-2 flex items-center gap-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
+                <span style={{ color: 'var(--sem-good)' }}><ActionIcon action="allow" /></span>
+                <span>{r.summary || capabilityLabel(r.capability)}: approved, {r.capability === 'QueryData'
+                  ? 'your assistant can preview rows here'
+                  : 'waiting for your assistant'}{expiresIn(r.expiresUtc, now)}.</span>
+              </div>
+            ))}
+          </div>
         </>
       )}
     </Panel>
   );
 }
 
-// ---- Targets — the connection registry (the labelling home) --------------------------------------
-function TargetsPanel() {
-  const mounted = useMountedRef();
-  const [conns, setConns] = useState<ConnectionRecord[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  // Latest-wins generation, same pattern as the approvals: a stale listConnections response must never
-  // resurrect a forgotten row or an old label. Mutations bump the ticket before they run.
-  const genRef = useRef(0);
+// ---- Labels: one line, because each model's label is set in Connections -------------------------
+/** How many published models have no label, so the guardrail treats them as production. A model on this computer reads
+ *  Local in the Connections list, so it is not counted. Null while the list is unread. */
+export function unlabelledCount(conns: ConnectionRecord[] | null): number | null {
+  if (!conns) return null;
+  return conns.filter((c) => c.kind !== 'localDesktop' && c.kind !== 'file' && (!c.label || !(LABELS as readonly string[]).includes(c.label))).length;
+}
 
-  const pull = () => {
-    const gen = ++genRef.current;
-    return rpc<ConnectionRecord[]>('listConnections')
-      .then((r) => { if (mounted.current && gen === genRef.current) { setConns(r ?? []); setErr(null); } })
-      .catch((e) => { if (mounted.current && gen === genRef.current) setErr(errMsg(e)); });
-  };
+export function labelsLine(unlabelled: number | null): string {
+  const base = 'Labels are set on each model in Connections.';
+  if (!unlabelled) return base;
+  return `${base} ${unlabelled === 1 ? '1 model has no label, so it gets' : `${unlabelled} models have no label, so they get`} the Production settings.`;
+}
+
+function LabelsLine() {
+  const mounted = useMountedRef();
+  const { openConnections } = useConnection();
+  const [conns, setConns] = useState<ConnectionRecord[] | null>(null);
   useEffect(() => {
     let cancelled = false;                       // scoped to THIS effect — StrictMode-safe
-    const kick = () => { if (!cancelled) void pull(); };
+    const kick = () => { rpc<ConnectionRecord[]>('listConnections').then((r) => { if (mounted.current && !cancelled) setConns(r ?? []); }).catch(() => undefined); };
     kick();
     const off = onReconnect(kick);
     return () => { cancelled = true; off(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const mutate = async (id: string, run: () => Promise<unknown>) => {
-    setBusyId(id);
-    genRef.current++;                            // invalidate any list response already in flight
-    try { await run(); if (mounted.current) await pull(); }
-    catch (e) { if (mounted.current) setErr(errMsg(e)); }
-    finally { if (mounted.current) setBusyId(null); }
-  };
-  const label = (id: string, lbl: string) => mutate(id, () => rpc('labelConnection', id, lbl, 'human'));
-  const forget = (id: string) => mutate(id, () => rpc('forgetConnection', id, 'human'));
-
-  const list = conns ?? [];
   return (
-    <Panel>
-      <SectionTitle>Targets</SectionTitle>
-      <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        Label each connection as local, development, testing (UAT) or production. The label chooses which permissions apply. Connections without a label use the production settings. Adding a label is free.
-      </div>
-      {conns === null && err ? (
-        <div className="mt-2 flex items-start gap-2">
-          <div className="flex-1 min-w-0"><Banner color="var(--sem-bad)">Couldn’t load the connection list: {err}</Banner></div>
-          <button onClick={() => { setErr(null); void pull(); }} className="sem-btn shrink-0">
-            Retry
-          </button>
-        </div>
-      ) : conns === null ? (
-        <div className="text-[12px] mt-2" style={{ color: 'var(--sem-muted)' }}>Loading…</div>
-      ) : (
-        <>
-          {err && <div className="mt-2"><Banner color="var(--sem-bad)">{err}</Banner></div>}
-          {list.length === 0 ? (
-            <div className="text-[12px] mt-2" style={{ color: 'var(--sem-muted)' }}>
-              No connections yet. Open a live model (Power BI Desktop or an XMLA endpoint) and it appears here to label.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2 mt-3">
-              {list.map((c) => {
-                const unlabelled = !c.label || !(LABELS as readonly string[]).includes(c.label);
-                return (
-                  <div key={c.id} className="rounded-lg px-3 py-2.5" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[12.5px] font-medium truncate">{c.modelName || c.database || 'Model'}</span>
-                          {unlabelled && <Pill tint="var(--sem-warn)" title="No label set: the guardrail treats this as production.">treated as production</Pill>}
-                        </div>
-                        <div className="text-[11px] mt-0.5 tnum" style={{ color: 'var(--sem-muted)' }} title={c.endpoint}>
-                          {truncMid(c.endpoint || uiLabel(c.kind), 52)}{c.database ? <> · <span title={c.database}>{c.database}</span></> : null}
-                        </div>
-                      </div>
-                      <div className="shrink-0"><LabelPicker value={unlabelled ? null : (c.label as Label)} busy={busyId === c.id} onPick={(l) => void label(c.id, l)} /></div>
-                    </div>
-                    {unlabelled && (
-                      <div className="flex justify-end mt-1.5">
-                        <ConfirmButton label="Forget" busy={busyId === c.id} onConfirm={() => void forget(c.id)}
-                          title="Remove this unlabelled connection from the registry" />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-    </Panel>
+    <div data-testid="perm-labels-line" className="text-(length:--sem-text-meta) px-1" style={{ color: 'var(--sem-muted)' }}>
+      {labelsLine(unlabelledCount(conns))}{' '}
+      <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="perm-open-connections" onClick={() => openConnections()}>Open Connections</button>
+    </div>
   );
 }
 
@@ -714,35 +597,11 @@ const LABEL_TINT: Record<string, string> = {
   local: 'var(--sem-good)', dev: 'var(--sem-accent)', uat: 'var(--sem-warn)', prod: 'var(--sem-bad)',
 };
 
-// The per-row label picker — the four labels plus Clear (unlabelled). Free + always operable (human-only in the engine).
-function LabelPicker({ value, busy, onPick }: { value: Label | null; busy: boolean; onPick: (label: string) => void }) {
-  return (
-    <div className="inline-flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--sem-border)', opacity: busy ? 0.5 : 1 }}>
-      {LABELS.map((l) => {
-        const active = value === l;
-        return (
-          <button key={l} disabled={busy} onClick={() => onPick(l)} title={`Label this target as ${l}`}
-            className="text-[11px] px-2 py-1 font-medium transition-colors"
-            style={active ? { background: LABEL_TINT[l], color: 'var(--sem-on-accent)' } : { background: 'transparent', color: 'var(--sem-muted)' }}>
-            {l}
-          </button>
-        );
-      })}
-      <button disabled={busy} onClick={() => onPick('')} title="Clear the label (treated as production)"
-        className="text-[11px] px-2 py-1 font-medium transition-colors"
-        style={value === null ? { background: 'var(--sem-surface)', color: 'var(--sem-fg)' } : { background: 'transparent', color: 'var(--sem-muted)' }}>
-        Clear
-      </button>
-    </div>
-  );
-}
-
 // ---- Footer: the honest boundary line ------------------------------------------------------------
 function FooterLine() {
   return (
-    <div className="text-[11px] leading-relaxed px-1 pb-2" style={{ color: 'var(--sem-muted)' }}>
-      This guardrail governs your assistant and prevents accidents. It is not a security boundary against a hostile
-      agent; the credential you give the assistant is the real boundary.
+    <div className="text-(length:--sem-text-label)  px-1 pb-2" style={{ color: 'var(--sem-muted)' }}>
+      This stops accidents. It is not a security boundary: the sign-in you give your assistant is.
     </div>
   );
 }
@@ -751,29 +610,10 @@ function FooterLine() {
 function MiniAction({ children, color, onClick, disabled }: { children: React.ReactNode; color: string; onClick: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className="text-[11px] px-2.5 py-1 rounded-md font-semibold transition-opacity disabled:opacity-40"
+      className="text-(length:--sem-text-label) px-3 py-1 rounded font-semibold transition-opacity disabled:opacity-40"
       style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 36%, transparent)` }}>
       {children}
     </button>
-  );
-}
-
-// An inline "are you sure?" for a destructive action — no modal, stays in the row (matches the Workflows ReasonButton feel).
-function ConfirmButton({ label, title, onConfirm, busy }: { label: string; title?: string; onConfirm: () => void; busy?: boolean }) {
-  const [armed, setArmed] = useState(false);
-  if (!armed) {
-    return (
-      <button onClick={() => setArmed(true)} title={title} className="text-[11px] px-2 py-1 rounded-md font-medium"
-        style={{ background: 'transparent', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>{label}</button>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Forget this target?</span>
-      <button disabled={busy} onClick={onConfirm} className="text-[11px] px-2 py-1 rounded-md font-semibold disabled:opacity-40"
-        style={{ background: 'var(--sem-bad)', color: 'var(--sem-on-accent)' }}>{busy ? '…' : 'Yes, forget'}</button>
-      <button onClick={() => setArmed(false)} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Cancel</button>
-    </span>
   );
 }
 

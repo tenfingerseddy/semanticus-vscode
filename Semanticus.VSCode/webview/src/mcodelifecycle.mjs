@@ -1,9 +1,12 @@
 // Framework-free lifecycle rules for the M Code workspace. The webview and the Node tests import this same
 // module so revision conflicts, stale async completions, and request cancellation are exercised behaviorally.
 
-/** Keep a table pick only when it still exists in the open model; otherwise take the first table or none. */
+/** Keep a table pick only when it still exists in the open model; otherwise take the first table or none.
+ *  A null or missing list means the model has not loaded yet, so the pick is kept: a tree jump remounts the tab
+ *  before its document arrives, and healing against nothing wiped the jump's table (UAT-S07b-2-001). */
 export function reconcileTableSelection(selected, tableNames) {
-  const names = Array.isArray(tableNames) ? tableNames : [];
+  if (!Array.isArray(tableNames)) return selected ?? '';
+  const names = tableNames;
   if (selected && names.includes(selected)) return selected;
   return names[0] ?? '';
 }

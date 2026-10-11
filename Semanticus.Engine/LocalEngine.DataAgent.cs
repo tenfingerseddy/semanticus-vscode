@@ -36,7 +36,6 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentList> ListDataAgentsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId)) return new DataAgentList { Error = "A workspaceId is required: list_workspaces shows your workspaces and their ids." };
             try
             {
@@ -57,7 +56,6 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentDetail> GetDataAgentAsync(string workspaceId, string agentId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId))
                 return new DataAgentDetail { Error = "A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it." };
             try
@@ -83,7 +81,6 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentConfig> GenerateDataAgentConfigFromModelAsync(int maxColumnsPerTable = 200)
         {
-            RequireProFeature();
             var s = _sessions.Require();   // an instructive throw when no model is open
             var cap = maxColumnsPerTable <= 0 ? 200 : maxColumnsPerTable;
             var connectionContext = await ConnectionContextAsync();
@@ -178,7 +175,6 @@ namespace Semanticus.Engine
         // before the dry-run branch — so a free call never gets halfway into a write flow it can't finish.
         public async Task<DataAgentWriteReport> CreateDataAgentAsync(string workspaceId, string name, string aiInstructions, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             aiInstructions ??= string.Empty;
             if (string.IsNullOrWhiteSpace(workspaceId)) return Err("A workspaceId is required: list_workspaces shows your workspaces and their ids.");
             if (string.IsNullOrWhiteSpace(name)) return Err("A name is required.");
@@ -206,10 +202,11 @@ namespace Semanticus.Engine
 
         // READ-MODIFY-WRITE: fetch the current definition, replace ONLY the parts provided (null = keep), re-emit ALL
         // existing parts + the changed ones — never drop an unknown part.
-        public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
+        public async Task<DataAgentWriteReport> UpdateDataAgentAsync(string workspaceId, string agentId, string aiInstructions, string datasourceFolder, string datasourceJson, string fewshotsJson, bool commit, string authMode, string tenantId, string origin, string expectedPart = null, string expectedContent = null, CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
+            if (expectedContent != null && !((expectedPart == ExpectInstructions && aiInstructions != null) || (expectedPart == ExpectFewshots && fewshotsJson != null) || (expectedPart == ExpectSchema && datasourceJson != null)))
+                return Err("expectedContent names the text the part started from, so expectedPart must be 'instructions' (with aiInstructions), 'fewshots' (with fewshotsJson) or 'schema' (with datasourceJson). Nothing was sent.");
             if (aiInstructions != null && aiInstructions.Length > AiInstructionsCap) return Err($"aiInstructions is {aiInstructions.Length} chars: over the {AiInstructionsCap} cap. Nothing was sent.");
             if ((datasourceJson != null || fewshotsJson != null) && string.IsNullOrWhiteSpace(datasourceFolder))
                 return Err("Choose a data source before saving its schema or examples. Nothing was sent.");
@@ -242,6 +239,7 @@ namespace Semanticus.Engine
                 var existing = await DataAgentRest.GetDefinitionAsync(workspaceId, agentId, token, cancellationToken);
                 var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var p in existing) if (!string.IsNullOrEmpty(p.Path)) map[p.Path.Replace('\\', '/')] = p.Content;   // keep ALL existing parts
+                GuardDataAgentExpected(expectedPart, expectedContent, map, datasourceFolder, aiInstructions, fewshotsJson, datasourceJson);   // the editor's starting point against the part as Fabric holds it NOW, before anything is replaced
                 if (aiInstructions != null) map[DataAgentRest.DraftStageConfigPath] = SetStageConfigInstructions(map.TryGetValue(DataAgentRest.DraftStageConfigPath, out var sc) ? sc : null, aiInstructions);
                 if (!string.IsNullOrEmpty(datasourceFolder) && datasourceJson != null) map[DataAgentRest.DraftPrefix + datasourceFolder + "/datasource.json"] = datasourceJson;
                 if (!string.IsNullOrEmpty(datasourceFolder) && fewshotsJson != null) map[DataAgentRest.DraftPrefix + datasourceFolder + "/fewshots.json"] = fewshotsJson;
@@ -252,9 +250,48 @@ namespace Semanticus.Engine
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested) { return await FailAsync("update_data_agent", agentId, origin, ex, summary); }
         }
 
+        internal const string ExpectInstructions = "instructions";
+        internal const string ExpectFewshots = "fewshots";
+        internal const string ExpectSchema = "schema";
+
+        /// <summary>A save from the Teach panel names the text of the part it started from; this compares it with the part as the definition holds it now (read in this
+        /// same write, just before the part is replaced) and refuses with GuardExpectedValue's words when another writer changed it since. A live value that already
+        /// equals what is being written is no conflict. Null <paramref name="expectedContent"/> skips the fence (the MCP door and every older caller).</summary>
+        internal static void GuardDataAgentExpected(string expectedPart, string expectedContent, IReadOnlyDictionary<string, string> map, string datasourceFolder, string writingInstructions, string writingFewshots, string writingSchema = null)
+        {
+            if (expectedContent == null) return;
+            if (expectedPart == ExpectSchema)
+            {
+                // the schema as the page loaded it against the source document as Fabric holds it now: the document, not its layout (Fabric owns the shape and its key order)
+                map.TryGetValue(DataAgentRest.DraftPrefix + datasourceFolder + "/datasource.json", out var liveSchema);
+                GuardExpectedValue("schema", SchemaKey(expectedContent), SchemaKey(liveSchema), SchemaKey(writingSchema));
+                return;
+            }
+            if (expectedPart == ExpectInstructions)
+            {
+                var live = map.TryGetValue(DataAgentRest.DraftStageConfigPath, out var sc) ? ReadAiInstructions(sc) : null;
+                GuardExpectedValue("set of AI instructions", expectedContent, live, writingInstructions);
+                return;
+            }
+            var path = DataAgentRest.DraftPrefix + datasourceFolder + "/fewshots.json";
+            GuardExpectedValue("set of examples", FewShotsKey(ReadFewShots(expectedContent)), FewShotsKey(ReadFewShots(map.TryGetValue(path, out var fs) ? fs : null)), FewShotsKey(ReadFewShots(writingFewshots)));
+        }
+        private static string SchemaKey(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return "";
+            try { return SortedJson(Newtonsoft.Json.Linq.JToken.Parse(json)).ToString(Newtonsoft.Json.Formatting.None); }
+            catch (Newtonsoft.Json.JsonException) { return json; }
+        }
+        private static Newtonsoft.Json.Linq.JToken SortedJson(Newtonsoft.Json.Linq.JToken t) => t switch
+        {
+            Newtonsoft.Json.Linq.JObject o => new Newtonsoft.Json.Linq.JObject(o.Properties().OrderBy(p => p.Name, StringComparer.Ordinal).Select(p => new Newtonsoft.Json.Linq.JProperty(p.Name, SortedJson(p.Value)))),
+            Newtonsoft.Json.Linq.JArray a => new Newtonsoft.Json.Linq.JArray(a.Select(SortedJson)),
+            _ => t.DeepClone(),
+        };
+        private static string FewShotsKey(DataAgentFewShot[] rows) => JsonSerializer.Serialize(rows.Select(r => new[] { r.Id ?? "", r.Question ?? "", r.Query ?? "" }));
+
         public async Task<DataAgentWriteReport> PublishDataAgentAsync(string workspaceId, string agentId, string description, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"publish_data_agent {agentId} → copy {DataAgentRest.DraftPrefix}* to {DataAgentRest.PublishedPrefix}* + write {DataAgentRest.PublishInfoPath}; description {(description ?? string.Empty).Length} chars";
             if (!commit) return DryRun(summary);
@@ -273,7 +310,6 @@ namespace Semanticus.Engine
 
         public async Task<DataAgentWriteReport> DeleteDataAgentAsync(string workspaceId, string agentId, bool commit, string authMode, string tenantId, string origin, CancellationToken cancellationToken = default)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(workspaceId) || string.IsNullOrWhiteSpace(agentId)) return Err("A workspaceId and agentId are required: list_workspaces finds the workspace, list_data_agents finds the agent id within it.");
             var summary = $"delete_data_agent {agentId} → DELETE item in {workspaceId}";
             if (!commit) return DryRun(summary);

@@ -1,33 +1,39 @@
-import { useEffect, useState, useRef, type ReactNode } from 'react';
-import { openLocalModel, pickWorkingCopyFolder, rpc, onConnectionChange, onOpenConnections, announceConnectionChange, closeConnectionsPanel } from './bridge';
+import { Fragment, lazy, Suspense, useEffect, useState, useRef, type ReactNode } from 'react';
+import { openLocalModel, pickWorkingCopyFolder, rpc, onConnectionChange, onOpenConnections, announceConnectionChange, closeConnectionsPanel, navigateInStudio, runHostCommand } from './bridge';
+import { planRankingOf } from './features';
+import { useTier } from './pro';
 import { useConnection, type ConnectionContextModel, type SessionInfo } from './connection';
 import { AccountPicker } from './accountpicker';
-import { defaultSignInMode, SIGN_IN_MODES, SQL_SOURCE_COPY } from './copy';
+import { defaultSignInMode } from './copy';
 import { useSurfaceEscape } from './surface-escape';
+import { ConsentCard } from './consent';
+import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
+import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
+import { setPageModelIdentity } from './pagemodel';
+import { DesktopPicker, WorkspacePicker, type WorkspaceChoice } from './connectpickers';
+import { ENV_OPTIONS } from './connectpickers-model';
+import {
+  type HubRecord, type HubContext, type HubPanel, type Job, type ModelEndpointList, type NotLinkedSource, type SqlEndpointInfo,
+  SEARCH_FROM, defaultMoveCount, defaultMoveSentence, endpointFor, jobOptions, kindWord, removeConfirmSentence, routeSection, rowJobs, rowSecondLine, sideId, startFormStaysOpen,
+} from './connectionshub-model';
+import { BTN, BTN_COMPACT, BTN_PRIMARY, BTN_QUIET, ChangePanel, DefaultConfirm, JobPicker, NotLinkedList } from './connectionshub-parts';
 
-// The Connections HUB — the ratified end-state (TASKS.md [T160]/[T161]). It REPLACES the drawer as the single manager
-// surface: a full-viewport overlay inside Studio, and the SAME component full-page in a dedicated webview when Studio is
-// closed (standalone). Both doors host one component so the picker launches while the manager manages. All state moves
-// through the existing engine ops (listConnections / connectionContext / probeConnectionAccounts / listConnectionHistory
-// / prepareWorkingCopy / setPublishDestination / labelConnection / forgetConnection / connectXmla / createModel), so
-// MCP-door parity, undo and broadcast semantics are untouched. Brand: the Ink + Signal-green token layer (--sem-*).
-// Sizing follows sol's refinement spec: explicit control heights (30px standard / 24px compact / 24x24 overflow).
+// The Connections HUB, one page (slice C, lane C2; contract 19.1; design connections-minimal.html, Kane 24 Sep).
+// It is ONE list of saved models, ONE account button, and a Jobs button for which model does Editing, Tests and
+// queries, and Publish to (the Now strip that named them left in r1 min4: each row names its jobs). The five sections, the side rail and the three-way detail panel it replaced repeated the
+// same account, the same "what is open now" and the same Open button in three or four places each.
+//
+// It is still the single manager surface: a floating dialog inside Studio, and the SAME component full-page in a
+// dedicated webview when Studio is closed (standalone). All state moves through existing engine ops (listConnections /
+// connectionContext / probeConnectionAccounts / listConnectionHistory / prepareWorkingCopy / setPublishDestination /
+// labelConnection / forgetConnection / connectXmla / createModel / disconnect / listModelSqlEndpoints /
+// setModelSqlEndpoint), so the assistant reaches every capability here through its own tools on the same session.
+//
+// The page does not decide which model may do which job. The engine lists each saved model with the reason it
+// cannot answer tests and queries or be a publish destination (the same sentence it throws when asked), and a model
+// with a reason is struck out with it, never hidden. connectionshub-model.ts holds that rule and a node test runs it.
 
-interface ConnectionRecord {
-  id: string;
-  kind: 'xmla' | 'localDesktop' | string;
-  endpoint: string;
-  database?: string;
-  modelName?: string;
-  tenantId?: string;
-  authMode?: string;
-  label?: string;
-  workingFolder?: string;
-  publishConnectionId?: string;
-  lastUsedUtc?: string;
-  lastAccount?: string;
-  useCount?: number;
-}
+type ConnectionRecord = HubRecord;
 
 // One target's silently-probed account (mirrors Engine ConnectionAccountProbe). `account` is who the NEXT open signs in
 // as — ONLY a live sign-in record, undefined when unknown; `previousAccount` is provenance ("last opened as <x>").
@@ -43,8 +49,8 @@ interface FailedAuthAttempt { targetId: string; purpose: 'open' | 'query'; profi
 // only, NEVER a secret value. For serviceprincipal, `requirements` lists each needed input (Client ID / Client secret /
 // Tenant) and whether the engine host can see it; for azcli, `cliAccount`/`cliTenant` report the detected `az login`
 // session. `keyVaultSupported` is false today, stated plainly so the UI never implies in-app Key Vault resolution.
-interface AuthPrereqRequirement { label: string; envNames: string[]; present: boolean; }
-interface AuthPrerequisites { mode: string; ready: boolean; requirements: AuthPrereqRequirement[]; cliAccount?: string; cliTenant?: string; detail?: string; keyVaultSupported: boolean; }
+interface AuthPreqRequirement { label: string; envNames: string[]; present: boolean; }
+interface AuthPrerequisites { mode: string; ready: boolean; requirements: AuthPreqRequirement[]; cliAccount?: string; cliTenant?: string; detail?: string; keyVaultSupported: boolean; }
 
 // One device-local connection-timeline event (mirrors Engine ConnectionHistoryEvent). Holds no credential.
 interface HistoryEvent { id?: string; kind: string; account?: string; endpoint?: string; database?: string; tenantId?: string; ok: boolean; detail?: string; whenUtc?: string; }
@@ -58,8 +64,13 @@ const historyKindLabel = (e: HistoryEvent): string => {
     default: return e.ok ? e.kind : `${e.kind} failed`;
   }
 };
-// Sign-in-family events (identity), vs model events (connect / open / role). Drives the History type filter chips.
-const isSigninEvent = (e: HistoryEvent) => e.kind === 'signin' || e.kind === 'switch';
+
+/** The History row's second line: who, what it was about, when. The "what" is left out when it only repeats the title. */
+const historySubLine = (e: HistoryEvent): string => {
+  const kind = historyKindLabel(e).trim().toLowerCase();
+  const about = e.detail || e.database || short(e.endpoint);
+  return [e.account, about && about.trim().toLowerCase() !== kind ? about : null, shortWhen(e.whenUtc)].filter(Boolean).join(' · ');
+};
 const shortWhen = (iso?: string): string => {
   if (!iso) return '';
   const d = new Date(iso);
@@ -149,7 +160,15 @@ interface WorkSetup {
   plan: WorkingCopyResult | null;
 }
 
-export type HubView = 'open' | 'setup' | 'accounts' | 'history' | 'add' | 'work' | 'sqlsources';
+// The names other surfaces still ask the hub to open on. 'setup', 'accounts' and 'sqlsources' were sections of the
+// old five-section hub; on the one page they open the Change panel, the account menu and the open model's SQL
+// endpoint (routeSection in connectionshub-model.ts), so Deploy, the Tests page and the host commands keep working.
+// 'createsql' is the list with the start plan's own form open (From a SQL source): the SQL start when no model is open yet
+// (verifier L3). The form asks for the source, the model name and an empty folder, and the engine's startModelFromSql makes
+// the model itself, so there is no blank-model name step before it (the M11 wiring step).
+// 'create' is the list with the New blank model form open: the welcome in the empty Model view starts there.
+export type HubView = 'open' | 'setup' | 'accounts' | 'history' | 'add' | 'work' | 'sqlsources' | 'desktop' | 'workspace' | 'createsql' | 'create';
+type MainView = 'open' | 'history' | 'add' | 'work' | 'desktop' | 'workspace';
 
 // A caller inside Studio (e.g. Deploy's "Change publish destination") can ask the hub to open on a specific view
 // next. The hub is mounted once in App with no initialView prop, so the request is a module-level flag set just
@@ -159,20 +178,23 @@ export function openConnectionsOnView(view: HubView): void {
   nextView = view;
 }
 
+// The start plan's form, the one the Plan page hosts (startplan.tsx StartFromSql). Loaded when it is first shown: startplan
+// reads its saved endpoints from this file, so a static import both ways would make the two modules load each other.
+const StartFromSqlForm = lazy(() => import('./startplan').then((m) => ({ default: m.StartFromSql })));
+
+/** The next time the hub opens, it opens "New blank model" (an empty model's Plan offers it, ModelPlanView.Starts). */
+let nextCreate = false;
+export function openConnectionsOnCreate(): void {
+  nextView = 'open';
+  nextCreate = true;
+}
+
 // ================================================================================================================
-// THE FOURTH ROLE: named SQL sources.
-//
-// A check used to carry its own server, database and sign-in, so the same warehouse was typed again for every check
-// (Astra's UAT, 2026-09-14), and a check authored with no sign-in mode reached the SQL token helper, which reads an
-// absent mode as the Azure command line. A saved, named, tested record fixes both: an address is typed once here,
-// and a check or a table mapping points at it by id, so a rename or a re-point never breaks a reference.
-//
-// These records hold NO credential. `authMode` is the NAME of a way to sign in, exactly like a model connection;
-// there is no password field on this form and there never will be. The engine refuses a connection-string shape at
-// its boundary and this form refuses one before the call, so a pasted password never leaves the box it was typed in.
-//
-// Engine ops (cp/tests-engine-b): listSqlSources / saveSqlSource / deleteSqlSource / testSqlSource, plus
-// listTableSourceMappings for the table half. All four are the SAME engine path the agent door calls.
+// SQL endpoints. A SQL source used to be a fourth role with its own section; now each model has one optional SQL
+// endpoint, set from its row (contract 19.3). The saved record underneath is unchanged: a name, a server, a database
+// and the NAME of a way to sign in. It holds NO credential; there is no password field on this form and there never
+// will be. The engine refuses a connection-string shape at its boundary and this form refuses one before the call,
+// so a pasted password never leaves the box it was typed in. Several models may share one saved record.
 // ================================================================================================================
 
 /** One saved SQL source, as both doors see it (mirrors Engine SqlSourceRecord). Exported: a check's source picker
@@ -194,13 +216,37 @@ export interface SqlSourceRecord {
 interface SqlSourceTestResult { id?: string; name?: string; server?: string; database?: string; ok: boolean; note?: string; elapsedMs?: number; testedUtc?: string; }
 /** A refused Remove (mirrors Engine SqlSourceDeleteResult). The engine returns the counts AND the names, both sorted,
  *  so a refusal can say what needs repair rather than only how much of it there is. */
-interface SqlSourceDeleteResult { deleted: boolean; note?: string; checksUsing?: number; tableMappingsUsing?: number; checkTitles?: string[]; mappedTables?: string[]; }
-/** What uses one saved SQL source. The FREE projection behind list_sql_source_usage, and the whole of it:
- *  usage only, so no check definitions, no expected values, no saved verdicts and no row counts leak out of
- *  the now-Pro Tests feature. Connections is the only caller and this is all Connections needs. */
-interface SqlSourceUsage { id: string; name: string; checksUsing: number; checkTitles: string[]; tableMappingsUsing: number; mappedTables: string[]; }
-/** The Add / Edit form's own state. `id` null = a new source; an id = an edit of that record. */
+interface SqlSourceDeleteResult { deleted: boolean; note?: string; checksUsing?: number; tableMappingsUsing?: number; checkTitles?: string[]; mappedTables?: string[]; linkedModels?: string[]; usingModels?: string[]; }
+/** The endpoint form's own state. `id` null = a new saved record; an id = the saved record this model points at. */
 interface SqlSourceForm { id: string | null; name: string; server: string; database: string; authMode: string; tenantId: string; }
+
+// What the person typed into an endpoint form and has not saved outlives the hub (join 11, the drafts class, drafts.ts): closing it, a tab
+// switch, a restarted engine and a reload keep it. A draft is held per row and per source (a saved one by its id, or 'new'), with the
+// saved source it was typed over (a new one: the form as it opened). The hub opens the form again on it; a draft ends on a save the engine
+// took, Cancel, and Use the new one.
+type SqlFields = Omit<SqlSourceForm, 'id'>;
+const sqlFieldsOfForm = (f: SqlSourceForm): SqlFields => ({ name: f.name, server: f.server, database: f.database, authMode: f.authMode, tenantId: f.tenantId });
+const SQL_DRAFTS = 'hub|sql|';
+const sqlDraftScope = (row: string, source: string | null) => SQL_DRAFTS + JSON.stringify([row, source ?? 'new']);
+const sqlRowPrefix = (row: string) => SQL_DRAFTS + '[' + JSON.stringify(row) + ',';
+/** A held endpoint form of the open model: on `row` when given, preferring the source `prefer` (null = a new one), else the first held. */
+function heldSqlForm(row?: string, prefer?: string | null): { row: string; form: SqlSourceForm; base: SqlFields } | null {
+  const m = draftModel();
+  if (!m) return null;
+  const found: { row: string; source: string }[] = [];
+  for (const id of draftStore.held(m, SQL_DRAFTS)) {
+    try {
+      const [scope, field] = JSON.parse(id) as [string, string];
+      const parts = JSON.parse(scope.slice(SQL_DRAFTS.length)) as unknown;
+      if (field || !Array.isArray(parts) || parts.length !== 2 || typeof parts[0] !== 'string' || typeof parts[1] !== 'string') continue;
+      if (!row || parts[0] === row) found.push({ row: parts[0], source: parts[1] });
+    } catch { /* not one of these */ }
+  }
+  const pick = (prefer !== undefined ? found.find((x) => x.source === (prefer ?? 'new')) : undefined) ?? found[0];
+  const source = pick ? (pick.source === 'new' ? null : pick.source) : null;
+  const h = pick ? heldDraft<SqlFields>(sqlDraftScope(pick.row, source)) : undefined;
+  return pick && h ? { row: pick.row, form: { id: source, ...h.value }, base: h.base } : null;
+}
 
 /**
  * What Save refuses BEFORE the engine is called, in the words of the box that is wrong. One complaint at a time, in
@@ -214,7 +260,7 @@ function sqlSourceFormError(form: SqlSourceForm): string | null {
   const name = (form.name || '').trim();
   const server = (form.server || '').trim();
   const database = (form.database || '').trim();
-  if (!name) return 'Give this source a name, so you can pick it by name in a check later.';
+  if (!name) return 'Give this endpoint a name, so you can recognise it later.';
   if (!server) return 'Type the server address, for example contoso-sql.database.windows.net.';
   if (!database) return 'Type the database name.';
   if (/[;=]/.test(server) || /[;=]/.test(database))
@@ -223,9 +269,9 @@ function sqlSourceFormError(form: SqlSourceForm): string | null {
 }
 
 /**
- * The row's last-test line. "Never tested" is a THIRD state and stays one: a source nobody has tested has not
- * passed, and saying so is the difference between evidence and a guess. `whenText` is already-formatted words, so
- * this stays pure and the contract test can run it.
+ * The last-test line. "Never tested" is a THIRD state and stays one: a source nobody has tested has not passed, and
+ * saying so is the difference between evidence and a guess. `whenText` is already-formatted words, so this stays pure
+ * and the contract test can run it.
  */
 function sqlSourceTestLine(lastTestOk: boolean | null | undefined, whenText: string): string {
   if (lastTestOk === null || lastTestOk === undefined) return 'Not tested yet';
@@ -234,29 +280,8 @@ function sqlSourceTestLine(lastTestOk: boolean | null | undefined, whenText: str
 }
 
 /**
- * "Used by 3 checks and 4 table mappings" is only said when it was really counted. Use is per MODEL, so with no
- * model open there is nothing to count; and when the table half could not be read, it is reported as uncounted
- * rather than rounded down to zero, which would read as "nothing points at this" and invite a removal.
- */
-function sqlSourceUsageLine(checks: number | null, mappings: number | null, usageRead = true): string {
-  // Three different nulls, and they must not print the same sentence. No usage reading at all means there is
-  // no model to ask. A reading that came back WITHOUT this source, or without one of its counts, is a
-  // partial answer: it is not zero use, and it must never be allowed to read as "nothing points at this",
-  // because that is the sentence a person deletes a source on.
-  if (!usageRead) return 'Open a model to see what uses this source.';
-  if (checks === null && mappings === null) return 'What uses this source was not counted.';
-  if (checks === null) return `Checks were not counted. Used by ${mappings} ${mappings === 1 ? 'table mapping' : 'table mappings'}.`;
-  if (checks === 0 && mappings === 0) return 'Nothing in this model uses it yet.';
-  const parts = [`${checks} ${checks === 1 ? 'check' : 'checks'}`];
-  if (mappings !== null) parts.push(`${mappings} ${mappings === 1 ? 'table mapping' : 'table mappings'}`);
-  const line = `Used by ${parts.join(' · ')}`;
-  return mappings === null ? `${line}. Table mappings were not counted.` : line;
-}
-
-/**
- * The names behind a refusal's count. The engine counts what still points at a source; the names come from the
- * saved checks and the table mappings the hub already holds. Where the hub knows fewer names than the engine
- * counted, it says how many are missing rather than showing a short list as though it were the whole list.
+ * The names behind a refusal's count. Where the engine named fewer than it counted, say how many are missing rather
+ * than showing a short list as though it were the whole list.
  */
 function sqlSourceUsedByNames(names: string[], count: number): string {
   const listed = (names || []).map((n) => (n || '').trim()).filter((n) => n.length > 0);
@@ -268,8 +293,7 @@ function sqlSourceUsedByNames(names: string[], count: number): string {
 
 /**
  * The Tests page's way in: "Add a SQL source..." at the end of a check's source list, and "Manage SQL sources".
- * Takes the openConnections from useConnection() so this module stays free of the connection context, exactly the
- * shape Deploy's "Change publish destination" already uses.
+ * They land on the open model's SQL endpoint, which is where a check's source now comes from.
  */
 export function openSqlSources(openConnections: () => void): void {
   openConnectionsOnView('sqlsources');
@@ -281,21 +305,13 @@ export function listSqlSources(): Promise<SqlSourceRecord[]> {
   return rpc<SqlSourceRecord[]>('listSqlSources');
 }
 
-const inputStyle = { background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', color: 'var(--sem-fg)' } as const;
-// Button scale system (sol's refinement): explicit heights remove inherited line-height / host-scaling inflation, the
-// root cause of oversized buttons. Standard 30px, compact 24px, quiet 24px link, overflow 24x24.
-const BTN = 'inline-flex h-[30px] items-center justify-center gap-1.5 rounded-[5px] border px-2.5 text-[11px] leading-none font-semibold disabled:opacity-40';
-const BTN_COMPACT = 'inline-flex h-6 min-w-0 items-center justify-center gap-1 rounded border px-2 text-[10px] leading-none font-semibold disabled:opacity-40';
-const BTN_QUIET = 'inline-flex h-6 items-center justify-center gap-1 rounded px-1.5 text-[10px] leading-none font-semibold disabled:opacity-40';
-const BTN_OVERFLOW = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border p-0 text-[16px] leading-none font-semibold disabled:opacity-40';
 // ---- naming a remembered connection ---------------------------------------------------------------------------
 // A remembered connection reads as WORDS, never as an address. Kane's list titled a published model
 // "Contoso%20Fabric%20Monitoring" (live test, 2026-09-15; Contoso stands in for the real tenant name, which the
 // public-mirror gate refuses to carry): a WORKSPACE-level record with no dataset, so the name fell
-// through to the encoded last path segment, in the row, the detail title, the Model row and the Open now panel alike.
-// These are the ONE place a name is decided, and they mirror the engine's ConnectionRegistry.WorkspaceNameFromEndpoint
-// rule for rule so a target is one string on both doors. Kept as top-level pure functions so the contract test can
-// extract and actually RUN them, rather than only matching the source text.
+// through to the encoded last path segment. These are the ONE place a name is decided, and they mirror the engine's
+// ConnectionRegistry.WorkspaceNameFromEndpoint rule for rule so a target is one string on both doors. Kept as
+// top-level pure functions so the contract test can extract and actually RUN them.
 function short(value?: string): string {
   const v = (value || '').replace(/[\\/]+$/, '');
   if (!v) return '';
@@ -339,52 +355,31 @@ function nameOf(r: ConnectionRecord): string {
   if (r.kind === 'localDesktop') return r.modelName || (isGuidName(r.database) ? '' : (r.database || '')) || 'Local running model';
   return r.modelName || r.database || workspaceNameFromEndpoint(r.endpoint) || decodeSegment(short(r.endpoint)) || 'Model';
 }
-// The row's SECOND line. A workspace says what it is, because Open there means picking a model first; a real model
-// names the workspace it lives in and then who the next open signs in as, so the ratified identity line (HIGH 3) is
-// still on every row you can actually open a model from. ONE line for every kind, deliberately: the row height is what
-// the nine-models-without-a-scrollbar check measures, so a second line would move a release gate sideways.
-function subtitleOf(r: ConnectionRecord, identity: string): string {
+// Where a saved model lives, the first part of its row's second line. A workspace-level record says what it is,
+// because Open there means picking a model first.
+function whereOf(r: ConnectionRecord): string {
   if (r.kind === 'file') return endpointText(r.endpoint);
-  if (r.kind === 'localDesktop') return decodeSegment(short(r.endpoint)) || 'Local running model';
-  if (isWorkspaceOnly(r)) return 'Workspace · you pick the model when you open it';
+  if (r.kind === 'localDesktop') return `Power BI Desktop, ${decodeSegment(short(r.endpoint)) || 'running on this computer'}`;
+  if (isWorkspaceOnly(r)) return 'Workspace, you pick the model when you open it';
   const workspace = workspaceNameFromEndpoint(r.endpoint);
-  return workspace ? `In ${workspace} · ${identity}` : identity;
-}
-// The detail card's Model row. A workspace has no model chosen yet, and saying so is better than repeating the
-// workspace name in the Model slot as if one had been.
-function modelRowText(r: ConnectionRecord): string {
-  if (isWorkspaceOnly(r)) return 'You pick the model when you open this workspace';
-  if (r.database && !isGuidName(r.database)) return r.database;
-  return nameOf(r);
+  return workspace ? `In ${workspace}` : 'Workspace model';
 }
 // An endpoint shown as DETAIL is text for a person to read, not a string to copy, so it is decoded too.
 function endpointText(endpoint?: string | null): string {
   return decodeSegment(endpoint || '');
 }
-// Up to two initials for the identity avatar, from a UPN (megan@contoso.com -> K) or a "first.last" local part.
-const initials = (account?: string): string => {
-  const local = (account || '').split('@')[0];
-  const parts = local.split(/[.\-_ ]+/).filter(Boolean);
-  if (!parts.length) return '?';
-  return (parts[0][0] + (parts[1]?.[0] ?? '')).toUpperCase();
-};
 
-// Environment reads a fail-closed label. An UNLABELLED cloud model reads "Production safeguards", never "prod": a
-// fail-closed governance posture is a different fact from a declared Production label (ratified, sol).
+// Environment reads a fail-closed label. An UNLABELLED cloud model reads "No label (Production settings)", never "Production": a
+// fail-closed governance posture is a different fact from a declared Production label (ratified, sol). Permissions says it
+// the same way, so the one fact has one wording.
 function environment(r: ConnectionRecord): { text: string; tone: 'accent' | 'warn' | 'muted' } {
   if (r.kind === 'localDesktop' || r.kind === 'file' || r.label === 'local') return { text: 'Local', tone: 'muted' };
   const l = (r.label || '').toLowerCase();
   if (l === 'dev') return { text: 'Development', tone: 'accent' };
   if (l === 'uat') return { text: 'UAT', tone: 'accent' };
   if (l === 'prod') return { text: 'Production', tone: 'warn' };
-  return { text: 'Production safeguards', tone: 'warn' };
+  return { text: 'No label (Production settings)', tone: 'warn' };
 }
-function envBadgeStyle(tone: 'accent' | 'warn' | 'muted'): React.CSSProperties {
-  if (tone === 'accent') return { background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, transparent)' };
-  if (tone === 'warn') return { background: 'color-mix(in srgb, var(--sem-warn) 16%, transparent)', color: 'var(--sem-warn)', borderColor: 'color-mix(in srgb, var(--sem-warn) 40%, transparent)' };
-  return { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', borderColor: 'var(--sem-border)' };
-}
-
 // Who the NEXT open of a target signs in as — ONLY a live sign-in record (probe.account); undefined when unknown. The
 // per-target lastAccount is never the prediction, only provenance ("last opened as <x>") (HIGH 3).
 function rowIdentity(account?: string, was?: string): string {
@@ -397,125 +392,117 @@ function roleValue(side: ConnectionContextModel | undefined, fallback: string): 
   return side?.available ? (side.modelName || side.database || workspaceNameFromEndpoint(side.source) || decodeSegment(short(side.source)) || fallback) : fallback;
 }
 
-// The environment label options. The unlabelled value is named "Not labelled (Production safeguards)", short enough that
-// the compact detail-pane select never truncates the selected value (L3).
-const ENV_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'Not labelled (Production safeguards)' },
-  { value: 'dev', label: 'Development' },
-  { value: 'uat', label: 'UAT' },
-  { value: 'prod', label: 'Production' },
-  { value: 'local', label: 'Local' },
-];
-
 function EnvBadge({ r }: { r: ConnectionRecord }) {
   const env = environment(r);
-  return <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] leading-none font-semibold uppercase tracking-[0.05em]" style={envBadgeStyle(env.tone)}>{env.text}</span>;
-}
-
-// One role card in the Current setup grid (Editing / Tests and queries / Publish to). A card either offers a
-// "Change ..." action (routing to Open a model) OR an inline control (the publish picker, which owns that role
-// since publish left the Open view entirely).
-function RoleCard({ n, label, value, detail, missing, action, onAction, control }:
-  { n: number; label: string; value: string; detail: string; missing?: boolean; action?: string; onAction?: () => void; control?: ReactNode }) {
-  return (
-    <article className="rounded-md border p-3" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-      <div className="flex items-center gap-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-full border text-[9px] font-bold" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 55%, var(--sem-border))', color: 'var(--sem-accent)' }}>{n}</span>
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>{label}</h3>
-      </div>
-      <div className="mt-2.5 text-[13px] font-semibold truncate" style={{ color: missing ? 'var(--sem-muted)' : 'var(--sem-fg)' }} title={value}>{value}</div>
-      <div className="mt-1 min-h-6 text-[9px] leading-[14px]" style={{ color: 'var(--sem-muted)' }}>{detail}</div>
-      {control ? <div className="mt-1.5">{control}</div> : action && <button className={`${BTN} mt-1.5`} style={inputStyle} onClick={onAction}>{action}</button>}
-    </article>
-  );
-}
-
-// A scroll region that SHOWS it has more below it. The hub is a fixed-height dialog, so the detail column really does
-// scroll — but this platform paints an OVERLAY scrollbar (measured: offsetWidth - clientWidth === 0, and nothing is
-// drawn at rest), so a card cut at the pane's bottom edge read as clipped rather than as scrollable. The fade is drawn
-// only while content remains below, so it never claims there is more when there is not. Display only: no pointer
-// events, no change to what the pane contains.
-function ScrollCue({ className, children }: { className?: string; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [more, setMore] = useState(false);
-  useEffect(() => {
-    const el = ref.current; if (!el) return;
-    const read = () => setMore(el.scrollHeight - el.clientHeight - el.scrollTop > 1);
-    read();
-    el.addEventListener('scroll', read, { passive: true });
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
-    for (const child of Array.from(el.children)) ro.observe(child);
-    return () => { el.removeEventListener('scroll', read); ro.disconnect(); };
-  });
-  return (
-    <div className="relative flex flex-col min-[900px]:min-h-0 min-[900px]:flex-1">
-      <div ref={ref} className={className}>{children}</div>
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-6 transition-opacity duration-150"
-        style={{ opacity: more ? 1 : 0, background: 'linear-gradient(to top, var(--sem-surface), transparent)' }} />
-    </div>
-  );
+  // Instrument: the label is a word, with a dot in the warning colour while it carries the Production safeguards.
+  return <span className={`sem-chip shrink-0${env.tone === 'warn' ? ' sem-chip-warn' : env.tone === 'accent' ? ' sem-chip-dot' : ''}`}>{env.text}</span>;
 }
 
 export function ConnectionsHub({ open, onClose, standalone = false, initialView }: { open: boolean; onClose: () => void; standalone?: boolean; initialView?: HubView }) {
-  const { context, session, connectLocal, connectXmla, refresh } = useConnection();
-  const [view, setView] = useState<HubView>(initialView ?? 'open');
+  const { context, session, connectLocal, connectXmla, disconnect, refresh } = useConnection();
+  const ctx = context as HubContext | null;
+  const firstRoute = routeSection(initialView ?? 'open');
+  const [view, setViewState] = useState<MainView>(firstRoute.view);
+  const [panel, setPanel] = useState<HubPanel>(firstRoute.panel);   // the Change panel, the account menu, or none
   const [records, setRecords] = useState<ConnectionRecord[]>([]);
   const [probes, setProbes] = useState<AccountProbe[]>([]);
   const [profiles, setProfiles] = useState<AccountProfile[]>([]);   // the saved Microsoft identities on this device (Phase 2)
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [menuId, setMenuId] = useState<string | null>(null);           // the row whose overflow menu is open
+  const [rowError, setRowError] = useState<{ id: string; text: string; retry: () => void } | null>(null);   // said on the row that failed
+  const [notice, setNotice] = useState<string | null>(null);   // what a job change did, in the engine's words where it gave some
+  const [menuId, setMenuId] = useState<string | null>(null);   // the row whose ⋯ menu is open
+  const [jobPick, setJobPick] = useState<Job | null>(null);    // the Change panel picker that is open
   const [query, setQuery] = useState('');
   const [work, setWork] = useState<WorkSetup | null>(null);
   const [switchTarget, setSwitchTarget] = useState<ConnectionRecord | null>(null);   // the model whose per-open account choice dialog is open (Phase 2)
-  const [switchPurpose, setSwitchPurpose] = useState<'open' | 'query' | null>(null);   // HIGH (sol): the EXPLICIT intent behind a stale-model account choice (Open vs Query). A stale model is neither the editing nor the query connection, so applyAccount cannot infer intent from its role - it MUST honour the verb the user clicked. null = a generic "choose account" (role-inferred).
+  const [switchPurpose, setSwitchPurpose] = useState<'open' | 'query' | null>(null);   // HIGH (sol): the EXPLICIT intent behind a stale-model account choice (Open vs Query). null = a generic "choose account" (role-inferred).
   const [failedAuthAttempt, setFailedAuthAttempt] = useState<FailedAuthAttempt | null>(null); // attempt-local; never marks a saved profile globally signed out
-  const [pendingDefault, setPendingDefault] = useState<AccountProfile | null>(null);  // a make-default awaiting its blast-radius confirmation
+  const [pendingDefault, setPendingDefault] = useState<AccountProfile | null>(null);  // a make-default awaiting its count-first confirmation
   // The account row the chooser's PRIMARY button acts on. The primary must never contradict the list (a row that needs a
-  // sign-in cannot be answered by a silent retry of the same expired credential), so it follows this selection. null =
-  // no explicit pick yet, and the dialog falls back to the failed row, then the signed-in default.
+  // sign-in cannot be answered by a silent retry of the same expired credential), so it follows this selection.
   const [pickedProfileId, setPickedProfileId] = useState<string | null>(null);
   const [endpoint, setEndpoint] = useState('');
   const [database, setDatabase] = useState('');
   const [authMode, setAuthMode] = useState('interactive');
   const [newLabel, setNewLabel] = useState('');
-  const [newTenant, setNewTenant] = useState('');   // optional tenant for command-line / service-identity adds (threads to the query tenant so az's home tenant can't silently decide)
-  const [prereq, setPrereq] = useState<AuthPrerequisites | null>(null);   // the live auth-prerequisite probe for the selected advanced sign-in method (names/presence only, never secret values)
+  const [newTenant, setNewTenant] = useState('');   // optional tenant for command-line / service-identity adds
+  const [prereq, setPrereq] = useState<AuthPrerequisites | null>(null);   // names/presence only, never secret values
   const [prereqLoading, setPrereqLoading] = useState(false);
   const [history, setHistory] = useState<HistoryEvent[]>([]);
-  const [historyKind, setHistoryKind] = useState<'all' | 'model' | 'signin'>('all');
-  const [historyConn, setHistoryConn] = useState<string | null>(null);   // an optional per-connection filter (set from a row's "View history")
-  const [createOpen, setCreateOpen] = useState(false);   // the guarded "Create new model" surface
+  const [historyConn, setHistoryConn] = useState<string | null>(null);   // an optional per-model filter (set from a row's History)
+  const [createOpen, setCreateOpen] = useState(initialView === 'create');   // the guarded "New blank model" surface; the SQL start opens its own form (startSqlOpen) and never this card
   const [createName, setCreateName] = useState('');
+  const createNameNow = useRef(''); createNameNow.current = createName;   // what the box holds when the engine answers
   const [createConfirm, setCreateConfirm] = useState(false);   // second-step consent when the open model has unsaved changes
+  // "From a SQL source" opens the start plan's own form here, with no name step first: it names the model, takes an empty
+  // folder and reads the source in one call, and asks before it replaces an open model with unsaved changes.
+  const [startSqlOpen, setStartSqlOpen] = useState(initialView === 'createsql');
+  // A model that opens ends the start: the form, with the sign-in error of the start that failed before it, goes (plan statement check 3, defect 6).
+  const openSessionId = session?.sessionId ?? null;
+  const lastSessionId = useRef<string | null>(openSessionId);
+  useEffect(() => {
+    const was = lastSessionId.current;
+    lastSessionId.current = openSessionId;
+    setStartSqlOpen((on) => startFormStaysOpen(on, was, openSessionId));
+  }, [openSessionId]);
+  const pro = planRankingOf(useTier()) === 'granted';
   const [openConfirm, setOpenConfirm] = useState(false);       // second-step consent when opening another model over unsaved work
-  const [pendingOpen, setPendingOpen] = useState<ConnectionRecord | 'path' | null>(null);
-  const [editEnv, setEditEnv] = useState(false);   // the detail pane's environment-label editor is behind an explicit control
-  const [localPath, setLocalPath] = useState('');
-  const [localPathError, setLocalPathError] = useState<string | null>(null);
-  // ---- the fourth role: named SQL sources ------------------------------------------------------------------------
+  const [pendingOpen, setPendingOpen] = useState<ConnectionRecord | null>(null);
+  const [envEditId, setEnvEditId] = useState<string | null>(null);   // the row whose environment label is being changed
+  // ---- SQL endpoints ---------------------------------------------------------------------------------------------
+  const [endpoints, setEndpoints] = useState<ModelEndpointList | null>(null);   // null = not read (or the read failed)
   const [sqlSources, setSqlSources] = useState<SqlSourceRecord[]>([]);
-  const [sqlLoading, setSqlLoading] = useState(false);
-  const [sqlError, setSqlError] = useState<string | null>(null);          // the LIST could not be read (not a form error)
-  const [sqlUsage, setSqlUsage] = useState<SqlSourceUsage[] | null>(null); // per-source usage; null = not counted (no model open, or the read failed)
-  const [sqlForm, setSqlForm] = useState<SqlSourceForm | null>(null);     // the Add / Edit form, or null when closed
-  const [sqlFormError, setSqlFormError] = useState<string | null>(null);  // what the form itself refused, or what the engine said
-  const [sqlBusy, setSqlBusy] = useState<string | null>(null);            // 'save' | 'test' | 'remove' | a source id being tested
-  const [sqlTest, setSqlTest] = useState<SqlSourceTestResult | null>(null);   // the last Test connection outcome
-  const [sqlRemoving, setSqlRemoving] = useState<SqlSourceRecord | null>(null);  // a Remove awaiting its confirmation
-  const [sqlRefused, setSqlRefused] = useState<SqlSourceDeleteResult | null>(null); // a Remove the engine refused, with names
-  const [sqlOpenId, setSqlOpenId] = useState<string | null>(null);        // the row whose test result is showing
+  // A form held from before (the hub was closed, the page reloaded) opens again under its row.
+  const heldSqlAtOpen = useRef<ReturnType<typeof heldSqlForm> | undefined>(undefined);
+  if (heldSqlAtOpen.current === undefined) heldSqlAtOpen.current = heldSqlForm();
+  const [sqlRow, setSqlRow] = useState<string | null>(heldSqlAtOpen.current?.row ?? null);              // the row whose endpoint form is open
+  const [sqlForm, setSqlForm] = useState<SqlSourceForm | null>(heldSqlAtOpen.current?.form ?? null);
+  const [sqlSourcesRead, setSqlSourcesRead] = useState(false);   // the saved sources were read: before that, a held form's source is not known yet
+  // A NEW source's starting point (the form as it opened): its draft is held over this. Null while the form is on a saved source.
+  const sqlNewSeed = useRef<SqlFields | null>(heldSqlAtOpen.current && !heldSqlAtOpen.current.form.id ? heldSqlAtOpen.current.base : null);
+  const sqlNow = useRef({ row: sqlRow, form: sqlForm }); sqlNow.current = { row: sqlRow, form: sqlForm };
+  const [sqlFormError, setSqlFormError] = useState<string | null>(null);
+  const [sqlBusy, setSqlBusy] = useState<string | null>(null);
+  // The saved source behind an open form can be changed from the other door (save_sql_source) while the form is open. The form
+  // follows it while nothing is typed, and Save reads the source again and asks before writing an older copy over it.
+  const sqlFields = (rec: SqlSourceRecord) => ({ name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' });
+  const sqlRaw = useRef<SqlSourceRecord | null>(null);   // the saved source the last Save read, as the engine sent it (the write names it as what it replaces)
+  const sqlScopeNow = sqlRow && sqlForm ? sqlDraftScope(sqlRow, sqlForm.id) : '';
+  const sqlGuard = useEditBase({
+    current: sqlForm?.id ? (!sqlSourcesRead ? undefined : sqlSources.find((x) => x.id === sqlForm.id) ? sqlFields(sqlSources.find((x) => x.id === sqlForm.id)!) : null) : undefined,
+    draft: sqlForm ? { name: sqlForm.name, server: sqlForm.server, database: sqlForm.database, authMode: sqlForm.authMode, tenantId: sqlForm.tenantId } : undefined,
+    editing: sqlRow != null && !!sqlForm?.id, scope: sqlScopeNow,
+    persist: sqlRow && sqlForm?.id ? { scope: sqlScopeNow } : undefined,
+    reseed: (v) => setSqlForm((f) => f ? { ...f, ...v } : f),
+    readNow: async () => { const rec = (await rpc<SqlSourceRecord[]>('listSqlSources')).find((x) => x.id === sqlForm?.id); sqlRaw.current = rec ?? null; return rec ? sqlFields(rec) : null; },
+  });
+  const sqlTypedSince = useRef(false);   // the last Save finished with newer words in the boxes than it carried: the form is not closed over them
+  const heldSql = useHeldDrafts(SQL_DRAFTS);   // the scopes of this model's held endpoint forms: a row that holds one says so
+  const endSqlDraft = (row: string | null, source: string | null) => { const m = draftModel(); if (m && row) draftStore.clear(m, sqlDraftScope(row, source)); };
+  /** A change typed into the form. A NEW source's draft is held here (a saved one's is held by the guard above). */
+  const typeSql = (next: SqlSourceForm) => {
+    setSqlForm(next);
+    const m = draftModel(), row = sqlNow.current.row;
+    if (next.id || !m || !row) return;
+    sqlNewSeed.current ??= { name: '', server: '', database: '', authMode: next.authMode, tenantId: next.tenantId };
+    const v = sqlFieldsOfForm(next);
+    if (sameValue(v, sqlNewSeed.current)) draftStore.clear(m, sqlDraftScope(row, null));
+    else draftStore.set(m, sqlDraftScope(row, null), '', { value: v, base: sqlNewSeed.current });
+  };
+  const [sqlTest, setSqlTest] = useState<SqlSourceTestResult | null>(null);
+  const [nlRemoving, setNlRemoving] = useState<NotLinkedSource | null>(null);          // a not-linked Remove awaiting its confirmation
+  const [nlRefused, setNlRefused] = useState<SqlSourceDeleteResult | null>(null);      // a Remove the engine refused, with names
 
   const shown = open || standalone;
-  // Focus the Open-view search when the hub opens on Open a model (the tree "Open Model" lands here with search ready).
-  // A ref flag the search input's callback ref consumes once, so it never steals focus on an ordinary re-render.
+  // One way to move between the page and its few full views; the old section names land through routeSection.
+  const setView = (v: MainView) => { setViewState(v); setMenuId(null); setJobPick(null); if (v !== 'open') setPanel('none'); };
+  const goTo = (section: string) => { const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
+  // Focus the search when the hub opens on the list (the tree "Open Model" lands here with search ready), once.
   const searchWanted = useRef(true);
-  // A monotonically-bumped token for host "open" requests that arrive while the hub is ALREADY shown. The focus effect
-  // below keys on [shown, onClose] and will NOT re-run in that case, so searchWanted alone never re-focuses search; a
-  // dedicated effect keyed on this token does. It is left at 0 on the initial mount (owned by the opener-capture effect).
+  // A monotonically-bumped token for host "open" requests that arrive while the hub is ALREADY shown (the focus effect
+  // below keys on [shown, onClose] and will not re-run then). Left at 0 on the initial mount.
   const [openToken, setOpenToken] = useState(0);
 
   const load = async () => {
@@ -529,10 +516,20 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         rpc<AccountProfile[]>('listAccountProfiles').catch(() => [] as AccountProfile[]),
       ]);
       setRecords(recs ?? []); setProbes(prb ?? []); setProfiles(profs ?? []); setError(null);
-      setSelectedId((cur) => cur && (recs ?? []).some((r) => r.id === cur) ? cur : ((recs ?? [])[0]?.id ?? null));
     }
     catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setLoading(false); }
+    void loadEndpoints();
+  };
+  // Each row's SQL endpoint and the sources no model is linked to, from the engine (C1). A failed read leaves the rows
+  // without an endpoint line rather than claiming none is set.
+  const loadEndpoints = async () => {
+    const [list, sources] = await Promise.all([
+      rpc<ModelEndpointList>('listModelSqlEndpoints').catch(() => null),
+      rpc<SqlSourceRecord[]>('listSqlSources').catch(() => null),
+    ]);
+    setEndpoints(list); setSqlSources(sources ?? []);
+    if (sources) setSqlSourcesRead(true);
   };
   const loadHistory = async (conn: string | null) => {
     try { setHistory((await rpc<HistoryEvent[]>('listConnectionHistory', conn || null)) ?? []); }
@@ -540,185 +537,72 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   };
   const reloadHistory = async () => { if (view === 'history') await loadHistory(historyConn); };
 
-  // ---- named SQL sources: load, save, test, remove ----------------------------------------------------------------
-  // The list itself is machine-local and always readable. What USES a source is per model, so both use-counts come
-  // from the open model and stay NULL when there is no model to ask: a failed count must never render as a zero,
-  // because "nothing points at this" is exactly the sentence that invites a removal.
-  const loadSqlSources = async () => {
-    setSqlLoading(true);
-    try {
-      const recs = await rpc<SqlSourceRecord[]>('listSqlSources');
-      setSqlSources(recs ?? []);
-      setSqlError(null);
-    }
-    catch (e) { setSqlError(String((e as Error).message ?? e)); setSqlSources([]); }
-    finally { setSqlLoading(false); }
-  };
-  // ONE free read, not two Pro ones. This used to call listTests for the per-check use and listTableMappings
-  // for the per-table mappings. Both belong to the Tests feature now, and both return far more than a use
-  // count: whole check definitions with their expected values, and saved verdicts with row counts. Neither
-  // may become free to keep a Connections label working, so the engine offers the usage projection instead.
-  // It still fails on its own: a usage read that cannot answer leaves the counts NULL and the list standing,
-  // because a failed count rendered as a zero is the exact sentence that invites a removal.
-  // The engine door returns a bare array (EngineRpcTarget.listSqlSourceUsage). Asking for a `{ sources }`
-  // wrapper read `undefined` off every successful answer, so the page showed "not counted" beside sources it
-  // had just been told the real counts for. An answer in a shape this page does not recognise is not counted
-  // either: it falls to null, never to zero.
-  const loadSqlUse = async () => {
-    try {
-      const rows = await rpc<SqlSourceUsage[]>('listSqlSourceUsage');
-      setSqlUsage(Array.isArray(rows) ? rows : null);
-    }
-    catch { setSqlUsage(null); }
-  };
-  // A source the projection did not mention, or a count it did not carry, is NOT zero use. Zero is the one
-  // sentence that invites a removal, and inventing it from a partial answer is how a source that three saved
-  // checks depend on gets deleted. Both fall back to null, which the row renders as "not counted".
-  const usageFor = (id: string): SqlSourceUsage | undefined => (sqlUsage ?? []).find((u) => u.id === id);
-  const countOf = (id: string, pick: (u: SqlSourceUsage) => number | undefined): number | null => {
-    if (sqlUsage === null) return null;            // the read failed outright
-    const row = usageFor(id);
-    if (!row) return null;                          // a successful but PARTIAL answer: this source was absent
-    const value = pick(row);
-    return typeof value === 'number' ? value : null; // present, but this count was not carried
-  };
-  const checksUsing = (id: string): number | null => countOf(id, (u) => u.checksUsing);
-  const mapsUsing = (id: string): number | null => countOf(id, (u) => u.tableMappingsUsing);
-
-  const openSqlForm = (r?: SqlSourceRecord) => {
-    setSqlFormError(null); setSqlTest(null); setSqlRefused(null); setSqlRemoving(null);
-    setSqlForm(r
-      ? { id: r.id, name: r.name || '', server: r.server || '', database: r.database || '', authMode: defaultSignInMode(r), tenantId: r.tenantId || '' }
-      : { id: null, name: '', server: '', database: '', authMode: 'interactive', tenantId: '' });
-  };
-  const closeSqlForm = () => { setSqlForm(null); setSqlFormError(null); setSqlTest(null); };
-
-  // Save validates the obvious FIRST, so a missing name never becomes a round trip, and a pasted connection string
-  // never leaves this webview at all. The engine's own refusals are shown exactly as it worded them.
-  const saveSqlSource = async () => {
-    if (!sqlForm) return;
-    const refusal = sqlSourceFormError(sqlForm);
-    if (refusal) { setSqlFormError(refusal); return; }
-    setSqlBusy('save'); setSqlFormError(null);
-    try {
-      const saved = await rpc<SqlSourceRecord>('saveSqlSource', sqlForm.id || null, sqlForm.name.trim(), sqlForm.server.trim(),
-        sqlForm.database.trim(), sqlForm.authMode, sqlForm.tenantId.trim() || null, 'human');
-      setSqlForm(null); setSqlTest(null);
-      if (saved?.id) setSqlOpenId(saved.id);   // keep the saved row in view, so a Save does not lose the person's place
-      await loadSqlSources();
-    }
-    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
-    finally { setSqlBusy(null); }
-  };
-
-  // Test connection asks the engine to sign in with the SOURCE's own mode and ask for one constant. A failure is a
-  // RESULT here, not an exception: the note is the plain-words reason, and the date moves either way.
-  const testSqlSource = async (r: SqlSourceRecord) => {
-    setSqlBusy(r.id); setSqlTest(null); setSqlRefused(null);
-    try {
-      const result = await rpc<SqlSourceTestResult>('testSqlSource', r.id, 'human');
-      setSqlTest(result ?? { ok: false, note: 'The test finished without saying anything.' });
-    }
-    catch (e) { setSqlTest({ id: r.id, name: r.name, ok: false, note: String((e as Error).message ?? e) }); }
-    finally { setSqlBusy(null); await loadSqlSources(); }
-  };
-
-  // Testing the form's values before the record exists would need an unsaved probe the engine does not offer, so the
-  // form saves first and then tests the saved record. Said out loud on the button rather than implied.
-  const saveAndTestSqlSource = async () => {
-    if (!sqlForm) return;
-    const refusal = sqlSourceFormError(sqlForm);
-    if (refusal) { setSqlFormError(refusal); return; }
-    setSqlBusy('test'); setSqlFormError(null);
-    try {
-      const saved = await rpc<SqlSourceRecord>('saveSqlSource', sqlForm.id || null, sqlForm.name.trim(), sqlForm.server.trim(),
-        sqlForm.database.trim(), sqlForm.authMode, sqlForm.tenantId.trim() || null, 'human');
-      setSqlForm((f) => f ? { ...f, id: saved?.id ?? f.id } : f);
-      const result = await rpc<SqlSourceTestResult>('testSqlSource', saved.id, 'human');
-      setSqlTest(result ?? { ok: false, note: 'The test finished without saying anything.' });
-    }
-    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
-    finally { setSqlBusy(null); await loadSqlSources(); }
-  };
-
-  // Remove is refused while anything still points at the source, and the refusal NAMES what does. The engine returns
-  // both the counts and the sorted names; we render the names, and say how many were not named when the two disagree.
-  const removeSqlSource = async (r: SqlSourceRecord) => {
-    setSqlBusy(r.id); setSqlRefused(null);
-    try {
-      const result = await rpc<SqlSourceDeleteResult>('deleteSqlSource', r.id, 'human');
-      if (result?.deleted) { setSqlRemoving(null); setSqlRefused(null); }
-      else { setSqlRemoving(r); setSqlRefused(result ?? { deleted: false }); }   // the record stays, so the refusal can name it
-    }
-    catch (e) { setSqlRefused({ deleted: false, note: String((e as Error).message ?? e) }); }
-    finally { setSqlBusy(null); await loadSqlSources(); }
-  };
-
   const probeOf = (r: ConnectionRecord): AccountProbe | undefined => probes.find((p) => p.id === r.id);
   const accountOf = (r: ConnectionRecord): string | undefined => probeOf(r)?.account;
 
   useEffect(() => { if (shown) { void load(); void refresh(); } }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
-  // A pending "open on this view" request (openConnectionsOnView) lands the hub on the requested section when it opens.
+  // A pending "open on this view" request (openConnectionsOnView) lands the hub on the requested place when it opens.
   useEffect(() => {
     if (!shown || !nextView) return;
-    setView(nextView);
+    goTo(nextView);
+    if (nextView === 'createsql') openStartFromSql();
+    if (nextView === 'create') openCreate();
     nextView = null;
+    if (nextCreate) { nextCreate = false; openCreate(); }
   }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (shown && view === 'history') void loadHistory(historyConn); }, [shown, view, historyConn]); // eslint-disable-line react-hooks/exhaustive-deps
-  // The list is a local file read and the Current setup role card states its count, so it loads with the hub. What
-  // USES a source is per model and costs two more calls, so that is read only when the section itself opens.
-  useEffect(() => { if (shown) void loadSqlSources(); }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (shown && view === 'sqlsources') void loadSqlUse(); }, [shown, view]); // eslint-disable-line react-hooks/exhaustive-deps
   // A connection-state change from OUTSIDE this hub's own RPCs (an MCP-door connect/disconnect relayed from
-  // model/activity, or a reference set/clear the host just completed) reloads every panel so none goes stale.
+  // model/activity, or a reference set/clear the host just completed) reloads everything so nothing goes stale.
   useEffect(() => {
     if (!shown) return;
     return onConnectionChange(() => { void load(); void refresh(); if (view === 'history') void loadHistory(historyConn); });
   }, [shown, view, historyConn]); // eslint-disable-line react-hooks/exhaustive-deps
-  // The host can ask the hub to jump to a section (the tree "Manage Connections" -> Current setup, "Add published
-  // model" from the quick pick -> Add). Both doors receive the SAME host->webview message, so overlay and standalone
-  // converge on one behaviour; an "open" landing re-arms the search focus.
+  // The host can ask the hub to jump somewhere (the tree "Manage Connections" -> the Change panel, "Add published
+  // model" from the quick pick -> the pasted-address form). Both doors receive the SAME host->webview message.
   useEffect(() => onOpenConnections((section) => {
-    if (section === 'open' || section === 'setup' || section === 'accounts' || section === 'history' || section === 'add' || section === 'sqlsources') {
-      // A host-driven Add (the native "Add published model") must land on a FRESH form, not whatever advanced method +
-      // tenant a prior visit left behind (MED, sol) - the same reset openAddView applies to the in-webview CTAs.
+    if (section && ['open', 'setup', 'accounts', 'history', 'add', 'work', 'sqlsources', 'desktop', 'workspace', 'createsql', 'create'].includes(section)) {
+      // A host-driven Add must land on a FRESH form, not whatever advanced method + tenant a prior visit left behind.
       if (section === 'add') { setAuthMode('interactive'); setNewTenant(''); }
-      setView(section);
+      goTo(section);
+      if (section === 'createsql') openStartFromSql();
+      if (section === 'create') openCreate();
       if (section === 'open') { searchWanted.current = true; setOpenToken((t) => t + 1); }
     }
   }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // "Add a SQL source" from the Tests page lands here: the open model's SQL endpoint form, under its row.
+  useEffect(() => {
+    if (panel !== 'sql' || loading) return;
+    const id = sideId(ctx?.editing);
+    const r = id ? records.find((x) => x.id === id) : undefined;
+    setPanel('none');
+    if (r) openEndpointForm(r);
+    else setNotice('Open a model first. Its SQL endpoint is set from its row in this list.');
+  }, [panel, loading, records, ctx]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // aria-modal promises an inert background, so deliver one: focus moves INTO the hub on open, Tab cycles inside it,
-  // Escape dismisses, and closing returns focus to whatever opened it. The shared floating frame gives both doors the
-  // same dialog, so the trap and Escape run in BOTH modes (no standalone guard). ORDER MATTERS: the opener is captured
-  // BEFORE any hub focus moves, so restore never targets an element inside the closing hub; only then do we focus the
-  // search box (search-first on Open a model, via a plain ref — never a focus-in-ref-callback) or the panel. onClose is
-  // a stable identity (useCallback / module import), so this effect runs only on open/close, not on every re-render.
+  // Escape dismisses, and closing returns focus to whatever opened it. ORDER MATTERS: the opener is captured BEFORE
+  // any hub focus moves, so restore never targets an element inside the closing hub. onClose is a stable identity, so
+  // this effect runs only on open/close, not on every re-render.
   const panelRef = useRef<HTMLDivElement | null>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
-  const localPathRef = useRef<HTMLInputElement | null>(null);
-  // A ref mirror of the open overflow menu, read by the modal Escape handler so Escape closes an OPEN row menu first
-  // and only then the whole dialog (a ref, not a dep, so the focus effect never re-runs when a menu opens/closes).
+  // Ref mirrors of what Escape should close first: an open row menu, then the Change panel or the account menu.
   const menuIdRef = useRef<string | null>(null);
   useEffect(() => { menuIdRef.current = menuId; }, [menuId]);
-  // A new account chooser (or a new purpose) starts with no explicit row pick, so the primary button falls back to
-  // the row that failed, then the signed-in default. A pick can never leak from a previous target.
+  const panelOpenRef = useRef(false);
+  useEffect(() => { panelOpenRef.current = panel === 'change' || panel === 'account'; }, [panel]);
+  // A new account chooser (or a new purpose) starts with no explicit row pick. A pick can never leak from a previous target.
   useEffect(() => { setPickedProfileId(null); }, [switchTarget?.id, switchPurpose]);
-  // The trigger that opened the current overflow menu, captured on open so focus can return to it on close (Escape or a
-  // selection unmounts the focused menuitem — without this, focus would orphan on <body>).
+  // The trigger that opened the current ⋯ menu, captured on open so focus can return to it on close.
   const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
-  // When a row's overflow menu opens, move focus into it (ARIA menu semantics; Arrow/Home/End are handled on it). When
-  // it closes, return focus to the trigger that opened it, never orphaning focus on <body>.
   useEffect(() => {
-    if (menuId) { document.querySelector<HTMLButtonElement>('[data-hub-menu] [role="menuitem"]')?.focus(); return; }
+    if (menuId) { document.querySelector<HTMLButtonElement>('[data-hub-menu] [role="menuitem"]:not(:disabled)')?.focus(); return; }
     if (menuTriggerRef.current) { menuTriggerRef.current.focus(); menuTriggerRef.current = null; }
   }, [menuId]);
-  // Escape belongs to whatever is on TOP. The hub opens OVER the Tests drawer, and both used to close on
-  // the same key, so adding a SQL source from inside a half-finished check threw the check away (Astra,
-  // 2026-09-15, P1). The hub opens last, so it is the top surface and takes the key; the drawer gets it
-  // back the moment the hub closes. An open row menu is still dismissed first: that is inside this surface.
-  useSurfaceEscape(() => { if (menuIdRef.current) setMenuId(null); else onClose(); }, shown);
+  // Escape belongs to whatever is on TOP. The hub opens OVER the Tests drawer, and both used to close on the same key,
+  // so adding a SQL source from inside a half-finished check threw the check away (Astra, 2026-09-15, P1). The hub
+  // opens last, so it takes the key; inside it, an open row menu closes first, then an open panel, then the hub.
+  useSurfaceEscape(() => { if (menuIdRef.current) setMenuId(null); else if (panelOpenRef.current) { setPanel('none'); setJobPick(null); } else onClose(); }, shown);
   useEffect(() => {
     if (!shown) return;
     restoreRef.current = document.activeElement as HTMLElement | null;   // capture the opener BEFORE moving focus in
@@ -736,17 +620,13 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     window.addEventListener('keydown', onKey);
     return () => { window.removeEventListener('keydown', onKey); restoreRef.current?.focus(); };
   }, [shown, onClose]);
-  // Re-focus search when an "open" request arrives while the hub is already shown (the token bumped above). Runs only
-  // for token>0 so the initial mount stays owned by the opener-capture effect (which captures the opener BEFORE any hub
-  // focus — reintroducing focus there would be the old HIGH bug). Targets searchRef only when the Open view is showing.
+  // Re-focus search when an "open" request arrives while the hub is already shown (the token bumped above).
   useEffect(() => {
     if (openToken === 0 || view !== 'open') return;
     searchRef.current?.focus();
   }, [openToken]); // eslint-disable-line react-hooks/exhaustive-deps
-  // Live auth prerequisites for an ADVANCED sign-in method (command-line / service identity): probe the engine for what
-  // it can actually see — the detected `az login` account, or which service-principal inputs are present on the host —
-  // so choosing the method previews whether it will work instead of only failing at Connect. Names/presence only, never
-  // a secret value; debounced on the tenant field; a probe failure falls back to static guidance (never a dead form).
+  // Live auth prerequisites for an ADVANCED sign-in method on the pasted-address form: what the engine can actually
+  // see (the detected `az login` account, or which service-principal inputs are present). Names/presence only.
   useEffect(() => {
     if (view !== 'add' || (authMode !== 'azcli' && authMode !== 'serviceprincipal')) { setPrereq(null); setPrereqLoading(false); return; }
     let cancelled = false;
@@ -761,45 +641,31 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
 
   if (!shown) return null;
 
-  const editing = context?.editing;
-  const querying = context?.querying;
-  const publishing = context?.publishing;
-  const xmlaRecords = records.filter((r) => r.kind === 'xmla');
+  const editing = ctx?.editing;
+  const querying = ctx?.querying;
+  const publishing = ctx?.publishing;
   const currentAccount = session?.currentAccount;
-  const currentTenant = session?.currentTenant;
   // ONE signed-in identity for the hub: the live session account when present, else the saved default (or any
-  // signed-in) profile the engine already served. Connections, the chooser and the footer chip all read this so a
-  // remembered sign-in is never shown as unknown after a restart that has not yet reattached a live model.
+  // signed-in) profile the engine already served, so a remembered sign-in is never shown as unknown after a restart.
   const signedInAccount = currentAccount
     || profiles.find((p) => p.isDefault && p.signedIn)?.username
     || profiles.find((p) => p.signedIn)?.username;
-  const signedInTenant = currentTenant
-    || profiles.find((p) => p.username === signedInAccount)?.tenantId;
-  const selected = records.find((r) => r.id === selectedId) || records[0];
-  // "Switch account" acts on the live model in play (editing side, else querying), and only when it is a published
+  // "Use another account" acts on the live model in play (editing side, else querying), and only when it is a published
   // target signed in via a switchable family (a local model uses Windows auth; azcli / service principal have no picker).
   const liveConnId = (editing?.live && editing?.kind !== 'localDesktop' ? editing?.connectionId : null) || querying?.connectionId;
   const switchable = records.find((r) => r.kind === 'xmla' && r.id === liveConnId && credentialFamily(r.authMode) != null);
 
   // ---- mutations (every one goes through an existing engine op) -------------------------------------------------
-  // CLOSE CONTRACT (Kane's simplify guidance, ONE behavior everywhere): a SUCCESSFUL terminal action - open live,
-  // query attach, working-copy open, create - closes the dialog in BOTH modes (overlay close / standalone panel
-  // dispose, via the shared onClose). Actions that keep you in the manager - label change, forget, make-default,
-  // add-and-remember, section nav - never close.
-  // opts carries the Phase 2 per-open account choice: accountProfileId pins a SAVED account for this open only (never
-  // repoints the tenant default); forceReauth adds a NEW account via the Microsoft picker; makeDefault repoints the
-  // tenant default (an explicit human choice with a stated blast radius). A failed authorization stays on the account
-  // choice (the dialog reopens), never an endpoint form.
-  // Keep the target and the user's purpose when a remembered XMLA operation cannot authorize. A saved profile is
-  // identity metadata only; it may still need a fresh sign-in. Returning to this chooser preserves the endpoint,
-  // the open/query distinction, the tenant default, and the editing session while giving the user an explicit retry.
+  // CLOSE CONTRACT: a SUCCESSFUL terminal action (open live, open a file, a working-copy open, create) closes the
+  // dialog in BOTH modes. Changing which model answers tests and queries, or where this model publishes to, keeps you on the page and
+  // says what changed (design "A model for each job"), as do label, forget, make-default and the SQL endpoint.
   const recoverAccountChoice = (r: ConnectionRecord, purpose: 'open' | 'query') => {
     setSwitchPurpose(purpose);
     setSwitchTarget(r);
     setPickedProfileId(null);   // a fresh failure re-selects the row that failed, so the primary button names it
   };
   const openModel = async (r: ConnectionRecord, opts?: { forceReauth?: boolean; accountProfileId?: string; makeDefault?: boolean; loginHint?: string }, purpose: 'open' | 'query' = 'open') => {
-    setBusyId('open:' + r.id); setError(null); setMenuId(null);
+    setBusyId('open:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null);
     try {
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
       if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen(r); setOpenConfirm(true); setBusyId(null); return; }
@@ -813,26 +679,24 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       onClose();
     } catch (e) {
       const failure = String((e as Error).message ?? e);
-      setError(failure);
       await reloadHistory();   // a FAILED open also appends a timeline event (a cancelled sign-in / superseded open)
       if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
+        setError(failure);
         markFailedAuthAttempt(r, purpose, opts?.accountProfileId, opts?.loginHint);
         recoverAccountChoice(r, purpose);   // only auth failures enter account recovery
-      }
+      } else if (records.some((x) => x.id === r.id)) {
+        setRowError({ id: r.id, text: failure, retry: () => void openModel(r, opts, purpose) });   // said on the row that failed
+      } else setError(failure);
     }
     finally { setBusyId(null); }
   };
-  // Route an account choice by the ROLE the target plays (item 8). A QUERY-only live model switches ONLY its query
-  // connection (connectXmla) and NEVER replaces the editing session; every other target opens/reopens for editing
-  // (openLive). Routing on the target's role is the safe default: switching the query account can never clobber the
-  // editing session, and reopening the editing model as a different account is still an edit-open.
+  // Route an account choice by the ROLE the target plays. A QUERY-only live model switches ONLY its query connection
+  // (connectXmla) and NEVER replaces the editing session; every other target opens/reopens for editing (openLive).
   const isQueryRole = (r: ConnectionRecord): boolean =>
     querying?.connectionId === r.id && !(editing?.live && editing?.connectionId === r.id && editing?.kind !== 'localDesktop');
-  // Open the shared per-open account dialog with an EXPLICIT intent (HIGH, sol): a stale-model Open/Query knows what it
-  // wants, so applyAccount honours the verb the user clicked rather than re-inferring from the pre-op role (which, for a
-  // not-yet-connected model, is neither editing nor querying and would silently fall through to an edit-open). null =
-  // a generic "choose account" that stays role-inferred (a live query model query-switches; an editing model reopens).
-  const openAccountChoice = (r: ConnectionRecord, purpose: 'open' | 'query' | null = null) => { setError(null); setFailedAuthAttempt(null); setSwitchPurpose(purpose); setSwitchTarget(r); };
+  // Open the shared per-open account dialog with an EXPLICIT intent (HIGH, sol). null = a generic "choose account"
+  // that stays role-inferred (a live query model query-switches; an editing model reopens).
+  const openAccountChoice = (r: ConnectionRecord, purpose: 'open' | 'query' | null = null) => { setError(null); setMenuId(null); setPanel('none'); setFailedAuthAttempt(null); setSwitchPurpose(purpose); setSwitchTarget(r); };
   const applyAccount = async (r: ConnectionRecord, opts?: { forceReauth?: boolean; accountProfileId?: string; makeDefault?: boolean; loginHint?: string }) => {
     const asQuery = switchPurpose ? switchPurpose === 'query' : isQueryRole(r);   // honour explicit intent; else infer from role
     if (!asQuery) { await openModel(r, opts, 'open'); return; }
@@ -843,7 +707,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null);   // the query account switch succeeded — dismiss the dialog
       await refresh(); await load(); await reloadHistory();
       announceConnectionChange();
-      onClose();
+      setNotice(`Tests and queries now run on ${nameOf(r)}.`);
     } catch (e) {
       const failure = String((e as Error).message ?? e);
       setError(failure);
@@ -861,40 +725,79 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     return profiles.filter((p) => credentialFamily(p.family) === family && (!tenant || (p.tenantId || '').toLowerCase() === tenant));
   };
 
-  const queryWith = async (r: ConnectionRecord) => {
-    if (r.kind === 'file') {
-      setError('A local file cannot answer queries by itself. Choose a running local model or a published model.');
-      return;
-    }
-    setBusyId('query:' + r.id); setError(null); setMenuId(null);
+  // Tests and queries: the model that answers them. Whether a model CAN is the engine's call: the pickers strike out
+  // what it listed as refused, and anything it refuses on the way comes back in its own words on the row.
+  const attachTests = async (r: ConnectionRecord) => {
+    setBusyId('query:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null); setNotice(null);
     const res = r.kind === 'localDesktop'
       ? await connectLocal(r.endpoint)
       : await connectXmla(r.endpoint, r.database || '', r.authMode || 'interactive', r.tenantId || null);
-    const failure = !res.ok ? (res.message || 'That model could not be connected for queries.') : null;
+    const failure = !res.ok ? (res.message || 'That model could not be connected for tests and queries.') : null;
     await load(); await reloadHistory(); setBusyId(null);
-    if (res.ok) onClose();   // query attach is a terminal action — close in both modes (the contract above)
-    else {
+    if (res.ok) { setNotice(`Tests and queries now run on ${nameOf(r)}.`); return; }
+    if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
       setError(failure);
-      if (isSwitchableXmla(r) && isAuthRequiredFailure(failure)) {
-        markFailedAuthAttempt(r, 'query');
-        recoverAccountChoice(r, 'query');
-      } else setFailedAuthAttempt(null);
-    }
+      markFailedAuthAttempt(r, 'query');
+      recoverAccountChoice(r, 'query');
+    } else { setFailedAuthAttempt(null); setRowError({ id: r.id, text: failure || '', retry: () => void attachTests(r) }); }
   };
-  // The "Running desktop model" quick card discovers and query-attaches a running local model. It routes through this
-  // helper (never a bare rpc) so a SUCCESSFUL attach honours the close contract: await the attach + refresh, THEN
-  // onClose — the SAME completion-then-close order as queryWith, so the close can never race the refresh.
-  const connectRunningLocal = async () => {
-    setBusyId('query:local'); setError(null); setMenuId(null);
-    const res = await connectLocal(null);
-    if (!res.ok) setError(res.message || 'No running local model could be connected for queries.');
-    await load(); await reloadHistory(); setBusyId(null);
-    if (res.ok) onClose();   // discover + query-attach is a terminal action — close in both modes (the contract above)
+  // Disconnect tests and queries: the existing `disconnect`, which only other tabs offered before (contract 19.1).
+  const disconnectTests = async () => {
+    setBusyId('disconnect'); setError(null); setNotice(null); setJobPick(null);
+    try { await disconnect(); await load(); await reloadHistory(); announceConnectionChange(); setNotice('Nothing answers tests and queries now. Your open model is unchanged.'); }
+    finally { setBusyId(null); }
+  };
+  // The pickers (connectpickers.tsx) only list; these three do the work, so the unsaved-changes check, the close
+  // contract and the label step stay the ones every other open uses. Each answers the engine's sentence on a
+  // failure, which the picker shows on the row that failed, or null when it worked.
+  const useDesktopForTests = async (dataSource: string): Promise<string | null> => {
+    setError(null); setMenuId(null);
+    const res = await connectLocal(dataSource);
+    await load(); await reloadHistory();
+    if (!res.ok) return res.message || 'That copy of Power BI Desktop could not be connected for tests and queries.';
+    onClose();   // a test attach from the picker is a terminal action: close in both modes
+    return null;
+  };
+  const openDesktop = async (dataSource: string): Promise<string | null> => {
+    // openModel asks about unsaved changes first and shows its own failure line, exactly as a saved row's Open does.
+    await openModel({ id: 'desktop:' + dataSource, kind: 'localDesktop', endpoint: dataSource });
+    return null;
+  };
+  const connectPicked = async (c: WorkspaceChoice): Promise<string | null> => {
+    setError(null);
+    const res = await connectXmla(c.endpoint, c.database, c.authMode, c.tenantId);
+    if (!res.ok) return res.message || 'The connection did not complete.';
+    await load();
+    if (c.label) {
+      const recs = await rpc<ConnectionRecord[]>('listConnections').catch(() => [] as ConnectionRecord[]);
+      const match = (recs ?? []).find((r) => r.endpoint === c.endpoint && (r.database || '') === c.database)
+        ?? (recs ?? []).find((r) => r.endpoint === c.endpoint);
+      if (match) { await rpc('labelConnection', match.id, c.label).catch(() => undefined); await load(); }
+    }
+    announceConnectionChange();   // the same in-webview announce the pasted-address add makes (see addAndConnect)
+    setView('open');
+    setNotice(`${c.database || 'The model'} is connected and saved.`);
+    return null;
   };
 
+  // Publish to: link the open model to a workspace model. Choosing only links it; publishing still shows its review.
   const setPublish = async (r: ConnectionRecord) => {
-    setBusyId('publish:' + r.id); setError(null); setMenuId(null);
-    try { await rpc('setPublishDestination', r.id, 'human'); await refresh(); await load(); await reloadHistory(); }
+    setBusyId('publish:' + r.id); setError(null); setRowError(null); setMenuId(null); setJobPick(null); setNotice(null);
+    try {
+      await rpc('setPublishDestination', r.id, 'human'); await refresh(); await load(); await reloadHistory();
+      setNotice(`This model now publishes to ${nameOf(r)}. Nothing was published.`);
+    }
+    catch (e) { setRowError({ id: r.id, text: String((e as Error).message ?? e), retry: () => void setPublish(r) }); }
+    finally { setBusyId(null); }
+  };
+  // "Not set": the clear C1 added to set_publish_destination. The engine words the result, including the no-op.
+  const clearPublish = async () => {
+    setBusyId('publish:clear'); setError(null); setJobPick(null); setNotice(null);
+    try {
+      const after = await rpc<HubContext>('setPublishDestination', null, 'human', true);
+      await refresh(); await load(); await reloadHistory();
+      setNotice(after?.note || 'This model has no publish destination now.');
+    }
     catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusyId(null); }
   };
@@ -903,16 +806,12 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     setBusyId('label:' + r.id); setError(null);
     try { await rpc('labelConnection', r.id, label || null); await load(); }
     catch (e) { setError(String((e as Error).message ?? e)); }
-    finally { setBusyId(null); }
+    finally { setBusyId(null); setEnvEditId(null); }
   };
 
   const forget = async (r: ConnectionRecord) => {
     setBusyId('forget:' + r.id); setError(null); setMenuId(null);
-    try {
-      await rpc('forgetConnection', r.id);
-      await load(); await refresh(); await reloadHistory();
-      setSelectedId((cur) => (cur === r.id ? null : cur));
-    }
+    try { await rpc('forgetConnection', r.id); await load(); await refresh(); await reloadHistory(); }
     catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusyId(null); }
   };
@@ -958,7 +857,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       // tenant a prior advanced attempt left behind (MED, sol) - the picker targets the tenant itself.
       const advanced = authMode === 'azcli' || authMode === 'serviceprincipal';
       const res = await connectXmla(endpoint.trim(), database.trim(), authMode, advanced ? (newTenant.trim() || null) : null);
-      if (!res.ok) { setError(res.message || 'The connection did not complete. Check the endpoint, model name, and sign-in.'); return; }   // show the engine's actual reason (e.g. the service-principal env-var help)
+      if (!res.ok) { setError(res.message || 'The connection did not complete. Check the address, model name, and sign-in.'); return; }   // the engine's actual reason
       const added = endpoint.trim();
       setEndpoint(''); setDatabase(''); setNewLabel(''); setNewTenant('');
       await load();
@@ -976,8 +875,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     } finally { setBusyId(null); }
   };
 
-  // B1: "Create new model" is guarded. The engine swaps the open model UNCONDITIONALLY, so the hub must (a) take a
-  // name (never a hardcoded default) and (b) re-read the live session at submit time and require an explicit second
+  // "New blank model" is guarded. The engine swaps the open model UNCONDITIONALLY, so the hub must (a) take a name
+  // (never a hardcoded default) and (b) re-read the live session at submit time and require an explicit second
   // consent when the open model has unsaved changes — the same guard the native picker applies, in BOTH hosting modes.
   const submitCreate = async () => {
     const name = createName.trim();
@@ -986,64 +885,33 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     try {
       const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
       if (s?.hasUnsavedChanges && !createConfirm) { setCreateConfirm(true); return; }
-      await rpc('createModel', name, 1604, !!s?.hasUnsavedChanges);
+      await rpc<{ sessionId?: string }>('createModel', name, 1604, !!s?.hasUnsavedChanges);
       await refresh();
-      setCreateOpen(false); setCreateName(''); setCreateConfirm(false);
-      onClose();
+      setCreateConfirm(false);
+      // The form and the hub end only when the box still holds the name that was sent; a name typed while the model was being made stays (the next Create sends it).
+      if (createNameNow.current.trim() === name) { setCreateOpen(false); setCreateName(''); onClose(); }
     } catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusyId(null); }
   };
-  const openCreate = () => { setCreateName(''); setCreateConfirm(false); setError(null); setCreateOpen(true); };
-  const rejectLocalPath = () => {
-    setLocalPathError('Please enter a path that exists.');
-    localPathRef.current?.focus();
+  const openCreate = () => { setCreateName(''); setCreateConfirm(false); setStartSqlOpen(false); setError(null); setCreateOpen(true); };
+  const openStartFromSql = () => { setCreateOpen(false); setCreateConfirm(false); setError(null); setStartSqlOpen(true); };
+  // The start made the model, opened it and planned it. The plan is the Plan page's, so the hub hands over to Studio:
+  // standalone, the host opens Studio (asked BEFORE the panel closes: a message posted after 'closePanel' comes from a
+  // disposed webview and never arrives, verifier H1); in Studio the move to the Plan is stamped with the NEW session,
+  // which Studio holds until it has read that session (App.tsx heldNav).
+  const startedFromSql = async () => {
+    const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
+    await refresh();
+    setStartSqlOpen(false);
+    if (standalone) runHostCommand('semanticus.openStudio');
+    onClose();
+    if (!standalone) navigateInStudio('plan', undefined, s?.sessionId);
   };
-  const openTypedLocal = async () => {
-    const p = localPath.trim();
-    if (!p) { rejectLocalPath(); return; }
-    setBusyId('open:path'); setError(null); setLocalPathError(null);
-    try {
-      const s = await rpc<SessionInfo>('sessionInfo').catch(() => null);
-      if (s?.hasUnsavedChanges && !openConfirm) { setPendingOpen('path'); setOpenConfirm(true); setBusyId(null); return; }
-      await rpc('open', p, !!s?.hasUnsavedChanges);
-      await refresh(); await load();
-      setLocalPath('');
-      setOpenConfirm(false); setPendingOpen(null);
-      onClose();
-    } catch (e) {
-      const msg = String((e as Error).message ?? e);
-      if (/not found|does not exist|could not find|no such file|cannot find/i.test(msg)) rejectLocalPath();
-      else { setLocalPathError(msg); localPathRef.current?.focus(); }
-    } finally { setBusyId(null); }
-  };
-  // Navigate FRESH to the Add view with a known sign-in method (MED, sol): a browser "Sign in" CTA must land on Browser
-  // sign-in, not whatever advanced method was last selected, and must never carry a hidden stale tenant into the connect.
-  // The method cards pass their own mode; a plain Sign in / Add resets to interactive.
+  // Navigate FRESH to the pasted-address form with a known sign-in method (MED, sol): a browser sign-in must land on
+  // Browser sign-in, not whatever advanced method was last selected, and never carry a hidden stale tenant.
   const openAddView = (mode: string = 'interactive') => { setAuthMode(mode); setNewTenant(''); setError(null); setView('add'); };
   const createDirty = !!session?.hasUnsavedChanges || createConfirm;
 
-  // How many remembered models a make-default would repoint: the set on the SAME tenant + sign-in family, which is the
-  // slot the tenant default governs (an interactive default never touches device-code / service-principal / azcli rows).
-  // Counts the whole matching set (including this model) — the honest "N would open with it" the design quantifies.
-  const defaultBlastRadius = (r: ConnectionRecord): string => {
-    const tenant = (r.tenantId || '').toLowerCase();
-    const family = credentialFamily(r.authMode);
-    const affected = records.filter((o) => o.kind === 'xmla'
-      && (o.tenantId || '').toLowerCase() === tenant && credentialFamily(o.authMode) === family);
-    const n = affected.length;   // honest zero when nothing matches — never a fabricated floor of 1
-    const where = r.tenantId ? `the ${r.tenantId} tenant` : 'this sign-in with no tenant recorded';
-    return `${n} remembered model${n === 1 ? '' : 's'} on ${where} would open with it from now on.`;
-  };
-  // Blast radius stated from a PROFILE (the Accounts view has no target model) — models on the profile's tenant + family.
-  const profileDefaultBlast = (p: AccountProfile): string => {
-    const tenant = (p.tenantId || '').toLowerCase();
-    const family = credentialFamily(p.family);
-    const affected = records.filter((o) => o.kind === 'xmla'
-      && (o.tenantId || '').toLowerCase() === tenant && credentialFamily(o.authMode) === family);
-    const n = affected.length;   // honest zero when nothing matches — never a fabricated floor of 1
-    const where = p.tenantId ? `the ${p.tenantId} tenant` : 'this sign-in with no tenant recorded';
-    return `${n} remembered model${n === 1 ? '' : 's'} on ${where} would open with it from now on.`;
-  };
   // The tenant default account for a target, from the saved profiles — who an UNQUALIFIED open uses.
   const defaultProfileFor = (r: ConnectionRecord): AccountProfile | undefined => profilesFor(r).find((p) => p.isDefault);
   // A raw auth failure does not prove a saved profile is globally signed out. Mark only the profile actually selected by
@@ -1056,13 +924,12 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         : defaultProfileFor(r);
     setFailedAuthAttempt({ targetId: r.id, purpose, profileId: profile?.id, username: profile?.username || loginHint });
   };
-  // Use a SAVED account for THIS open only (silent; never repoints the tenant default), routed by role. Keep the dialog
-  // target set so a failed authorization returns to the account choice.
+  // Use a SAVED account for THIS open only (silent; never repoints the tenant default), routed by role.
   const useForThisOpen = (r: ConnectionRecord, p: AccountProfile) => { void applyAccount(r, { accountProfileId: p.id }); };
-  // Add a NEW account via the Microsoft sign-in picker (does not repoint the default unless it is the first account), routed by role.
+  // Add a NEW account via the Microsoft sign-in picker (does not repoint the default unless it is the first account).
   const signInAnother = (r: ConnectionRecord) => { void applyAccount(r, { forceReauth: true }); };
-  // Make a saved account the tenant DEFAULT (an explicit, quantified choice). Repoints every remembered model on the
-  // tenant, so it is recorded in History and broadcast so both doors refresh.
+  // Make a saved account the tenant DEFAULT. It moves every saved model on that tenant, so the page says how many
+  // BEFORE it moves them (DefaultConfirm), records it in History and broadcasts so both doors refresh.
   const makeDefaultFor = async (p: AccountProfile) => {
     setBusyId('default:' + p.id); setError(null);
     try {
@@ -1074,165 +941,325 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     finally { setBusyId(null); }
   };
 
-  const viewHistoryFor = (r: ConnectionRecord) => { setMenuId(null); setHistoryConn(r.id); setHistoryKind('all'); setView('history'); };
+  const viewHistoryFor = (r: ConnectionRecord | null) => { setMenuId(null); setPanel('none'); setHistoryConn(r?.id ?? null); setView('history'); };
 
-  // ---- views ---------------------------------------------------------------------------------------------------
+  // ---- SQL endpoints: one per model, set from its row ------------------------------------------------------------
+  const endpointOf = (r: ConnectionRecord): SqlEndpointInfo | null => endpointFor(endpoints, r.id);
+  const openEndpointForm = (r: ConnectionRecord) => {
+    setMenuId(null); setSqlFormError(null); setSqlTest(null); setSqlRow(r.id);
+    const ep = endpointOf(r);
+    const rec = ep ? sqlSources.find((s) => s.id === ep.sourceId) : undefined;
+    const fresh: SqlSourceForm = rec
+      ? { id: rec.id, name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' }
+      : { id: null, name: '', server: '', database: '', authMode: r.kind === 'xmla' ? (r.authMode || 'interactive') : 'interactive', tenantId: r.kind === 'xmla' ? (r.tenantId || '') : '' };
+    // Words left on this row's form open again (the source it points at first, else any other the person typed for it).
+    const held = heldSqlForm(r.id, fresh.id);
+    sqlNewSeed.current = held ? (held.form.id ? null : held.base) : (fresh.id ? null : sqlFieldsOfForm(fresh));
+    setSqlForm(held ? held.form : fresh);
+  };
+  // Cancel, and the end of a save or a remove: the form closes and what was typed in it is done with.
+  const closeEndpointForm = () => {
+    const { row, form } = sqlNow.current;
+    if (form) endSqlDraft(row, form.id);
+    setSqlRow(null); setSqlForm(null); setSqlFormError(null); setSqlTest(null);
+  };
+  const useSavedSource = (id: string) => {
+    const rec = sqlSources.find((s) => s.id === id);
+    const held = rec && sqlRow ? heldDraft<SqlFields>(sqlDraftScope(sqlRow, rec.id)) : undefined;
+    if (rec) setSqlForm({ id: rec.id, ...(held?.value ?? { name: rec.name || '', server: rec.server || '', database: rec.database || '', authMode: defaultSignInMode(rec), tenantId: rec.tenantId || '' }) });
+    setSqlFormError(null); setSqlTest(null);
+  };
+  const useNewSource = () => {
+    const blank: SqlSourceForm = { id: null, name: '', server: '', database: '', authMode: 'interactive', tenantId: '' };
+    const held = sqlRow ? heldDraft<SqlFields>(sqlDraftScope(sqlRow, null)) : undefined;
+    sqlNewSeed.current = held?.base ?? sqlFieldsOfForm(blank);
+    setSqlForm(held ? { id: null, ...held.value } : blank);
+  };
+  // Save the record (new, or the one this model already points at), then link it to the model. The engine's own
+  // refusals land in the form, in its words.
+  const saveRecord = async (): Promise<SqlSourceRecord | null> => {
+    if (!sqlForm) return null;
+    const refusal = sqlSourceFormError(sqlForm);
+    if (refusal) { setSqlFormError(refusal); return null; }
+    if (sqlForm.id && !(await sqlGuard.beforeSave())) return null;   // the saved source moved: the banner asks, nothing is written
+    // An existing source is written naming what the Save read, and the engine compares it inside its own write.
+    const was = sqlForm.id ? sqlRaw.current : null;
+    const expected = was ? JSON.stringify({ name: was.name ?? null, server: was.server ?? null, database: was.database ?? null, authMode: was.authMode ?? null, tenantId: was.tenantId ?? null }) : null;
+    let saved: SqlSourceRecord;
+    try {
+      saved = await rpc<SqlSourceRecord>('saveSqlSource', sqlForm.id || null, sqlForm.name.trim(), sqlForm.server.trim(),
+        sqlForm.database.trim(), sqlForm.authMode, sqlForm.tenantId.trim() || null, 'human', expected);
+    } catch (e) { if (await sqlGuard.refused(e)) return null; throw e; }
+    const sent = { name: sqlForm.name, server: sqlForm.server, database: sqlForm.database, authMode: sqlForm.authMode, tenantId: sqlForm.tenantId };   // the words this Save carried (the form as it was when Save was pressed)
+    // R-B: the typing is the saved source now, and its draft ends, only when the boxes still hold exactly the words the engine took. Words typed while the Save was on its way stay held, the form stays open on
+    // them (sqlTypedSince, read by the callers that close it), and they are not reported as a change made by someone else.
+    const now = sqlNow.current.form;
+    sqlTypedSince.current = !!now && !sameValue({ name: now.name, server: now.server, database: now.database, authMode: now.authMode, tenantId: now.tenantId }, sent);
+    if (!sqlTypedSince.current) {
+      // The engine took it. The list learns of it at once, so the form on it has nothing to hold or ask.
+      endSqlDraft(sqlRow, sqlForm.id);
+      if (saved?.id) endSqlDraft(sqlRow, saved.id);
+    } else if (sqlForm.id) sqlGuard.saved(sent, sqlFields(saved));
+    if (saved?.id) setSqlSources((list) => [...list.filter((x) => x.id !== saved.id), saved]);
+    setSqlForm((f) => f ? { ...f, id: saved?.id ?? f.id } : f);
+    return saved;
+  };
+  const saveEndpoint = async (r: ConnectionRecord) => {
+    setSqlBusy('save'); setSqlFormError(null);
+    try {
+      const saved = await saveRecord();
+      if (!saved?.id) return;
+      await rpc('setModelSqlEndpoint', saved.id, r.id, 'human');
+      if (sqlTypedSince.current) { await loadEndpoints(); setNotice(`SQL endpoint saved for ${nameOf(r)}. You typed more while it was saving, so the form is still open on those words.`); return; }
+      closeEndpointForm(); await loadEndpoints();
+      setNotice(`SQL endpoint saved for ${nameOf(r)}. Checks for this model use it without asking again.`);
+    }
+    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
+    finally { setSqlBusy(null); }
+  };
+  // Test signs in with the record's own way and asks for one constant; an unsaved record cannot be probed, so the
+  // form saves first and says so on the button.
+  const testEndpoint = async () => {
+    setSqlBusy('test'); setSqlFormError(null); setSqlTest(null);
+    try {
+      const saved = await saveRecord();
+      if (!saved?.id) return;
+      const result = await rpc<SqlSourceTestResult>('testSqlSource', saved.id, 'human');
+      setSqlTest(result ?? { ok: false, note: 'The test finished without saying anything.' });
+    }
+    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
+    finally { setSqlBusy(null); await loadEndpoints(); }
+  };
+  const removeEndpoint = async (r: ConnectionRecord) => {
+    setSqlBusy('remove'); setSqlFormError(null);
+    try {
+      await rpc('setModelSqlEndpoint', null, r.id, 'human');
+      closeEndpointForm(); await loadEndpoints();
+      setNotice(`${nameOf(r)} has no SQL endpoint now. The saved record is kept.`);
+    }
+    catch (e) { setSqlFormError(String((e as Error).message ?? e)); }
+    finally { setSqlBusy(null); }
+  };
+  const linkSource = async (sourceId: string, connectionId: string) => {
+    setSqlBusy('link'); setError(null);
+    try {
+      await rpc('setModelSqlEndpoint', sourceId, connectionId, 'human');
+      await loadEndpoints();
+      const r = records.find((x) => x.id === connectionId);
+      setNotice(`Linked to ${r ? nameOf(r) : 'the model'}.`);
+    }
+    catch (e) { setError(String((e as Error).message ?? e)); }
+    finally { setSqlBusy(null); }
+  };
+  // Remove is refused while anything still points at the source, and the refusal NAMES what does.
+  const removeSource = async (s: NotLinkedSource) => {
+    setSqlBusy('remove:' + s.id); setNlRefused(null);
+    try {
+      const result = await rpc<SqlSourceDeleteResult>('deleteSqlSource', s.id, 'human');
+      if (result?.deleted) { setNlRemoving(null); setNlRefused(null); }
+      else setNlRefused(result ?? { deleted: false });
+    }
+    catch (e) { setNlRefused({ deleted: false, note: String((e as Error).message ?? e) }); }
+    finally { setSqlBusy(null); await loadEndpoints(); }
+  };
+
+  // ---- the page --------------------------------------------------------------------------------------------------
   const visibleRecords = records.filter((r) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
     return [nameOf(r), r.endpoint, r.database, environment(r).text].filter(Boolean).join(' ').toLowerCase().includes(q);
   });
+  const busy = busyId != null;
 
-  // One row: model info + ONE primary verb (Open) + the overflow. Nothing else (ratified: ONE verb). Open runs the
-  // sensible default (published -> Open live; local -> open the running model); a signed-out published row routes Open
-  // into the shared account dialog instead of mutating its label, with the signed-out state shown as a detail status.
-  // Publish/work-locally and per-open account choices moved off the row (detail pane, Current setup, overflow).
+  // One row: the model in words, its label, ONE verb (Open) and the ⋯ menu that holds everything else about it.
   function ModelRow({ r }: { r: ConnectionRecord }) {
     const account = accountOf(r);
     const was = probeOf(r)?.previousAccount;
     const family = credentialFamily(r.authMode);
     const stale = r.kind === 'xmla' && !account && !!family;   // a switchable published row with no live sign-in
-    const identity = r.kind === 'xmla' ? rowIdentity(account, was) : 'Local Windows session';
-    const isSel = r.id === selectedId;
+    const jobs = rowJobs(r, ctx);
+    const isEditing = jobs.includes('editing');
+    const ep = endpointOf(r);
+    // The account shows once, in the header. A row says who it opens as only when that is someone else.
+    const who = r.kind === 'xmla' && (!account || account !== signedInAccount) ? rowIdentity(account, was) : null;
+    const where = [whereOf(r), who].filter(Boolean).join(', ');
+    const testsWhy = rowJobs(r, ctx).includes('tests and queries') ? null : (r.testsRefusal || null);
+    const publishWhy = rowJobs(r, ctx).includes('publish target') ? null : (r.publishRefusal || null);
     return (
-      <div className="relative border-b last:border-b-0" style={{ borderColor: 'var(--sem-border)', background: isSel ? 'var(--sem-accent-soft)' : 'transparent', boxShadow: isSel ? 'inset 2px 0 var(--sem-accent)' : undefined }}>
-        <div className="flex items-center gap-2 px-2.5" style={{ minHeight: '56px' }}>
-          <button type="button" data-testid="hub-model-row" onClick={() => { setSelectedId(r.id); setMenuId(null); setEditEnv(false); }} className="flex min-w-0 flex-1 items-center gap-2 py-2 text-left">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded border text-[13px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }} aria-hidden>{r.kind === 'localDesktop' ? '▣' : '◇'}</span>
-            <span className="min-w-0">
-              <span className="block truncate text-[12px] leading-4 font-semibold" style={{ color: 'var(--sem-fg)' }}>{nameOf(r)}</span>
-              <span className="mt-0.5 block truncate text-[9px] leading-3" style={{ color: 'var(--sem-muted)' }} title={endpointText(r.endpoint)}>{subtitleOf(r, identity)}</span>
-            </span>
-          </button>
-          <EnvBadge r={r} />
-          <button className={`${BTN_COMPACT} whitespace-nowrap`} data-testid="hub-row-open" disabled={busyId != null} onClick={() => { if (stale) openAccountChoice(r, 'open'); else void openModel(r); }}
-            style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Open</button>
-          <button className={BTN_OVERFLOW} data-testid="hub-row-overflow" aria-haspopup="menu" aria-expanded={menuId === r.id} onClick={(e) => { const opening = menuId !== r.id; if (opening) menuTriggerRef.current = e.currentTarget; setMenuId(opening ? r.id : null); }} style={{ ...inputStyle, borderColor: 'transparent', color: 'var(--sem-muted)' }} title="More actions">{'⋯'}</button>
+      <div className="hub-row relative" data-selected={isEditing ? 'true' : undefined}>
+        <div className="sem-list-row sem-list-row-2">
+          {/* The environment label sits INSIDE the row's reading line, not between it and Open. It is a word whose
+              width changes from row to row (none, dev, uat, Production), and outside the line it pushed each row's
+              Open to its own x, 97 px apart down the list. Inside it, every Open is in one column. */}
+          <div className="flex min-w-0 flex-1 items-center gap-2 sem-row-line">
+            <div data-testid="hub-model-row" className="flex min-w-0 flex-1 flex-col items-start py-2 text-left">
+              <span className="hub-row-name block max-w-full truncate">{nameOf(r)}</span>
+              <span className="sem-text-meta block max-w-full truncate" title={endpointText(r.endpoint)}>{rowSecondLine(where, jobs, ep?.name || null)}</span>
+              {/* Words typed into this row's SQL endpoint form and not saved: kept, and found again when the form opens. */}
+              <DraftMark show={sqlRow !== r.id && [...heldSql].some((id) => String(JSON.parse(id)[0]).startsWith(sqlRowPrefix(r.id)))} />
+            </div>
+            <EnvBadge r={r} />
+          </div>
+          <button className={`${BTN_COMPACT} whitespace-nowrap`} data-testid="hub-row-open" disabled={busy || isEditing} title={isEditing ? 'Open now' : undefined}
+            onClick={() => { if (stale) openAccountChoice(r, 'open'); else void openModel(r); }}>Open</button>
+          <button className="sem-btn sem-btn-sm hub-overflow" data-testid="hub-row-overflow" aria-haspopup="menu" aria-expanded={menuId === r.id} aria-label={`More for ${nameOf(r)}`}
+            onClick={(e) => { const opening = menuId !== r.id; if (opening) menuTriggerRef.current = e.currentTarget; setMenuId(opening ? r.id : null); setPanel('none'); }} title="More">{'⋯'}</button>
         </div>
         {menuId === r.id && (
           <div role="menu" data-hub-menu onKeyDown={(e) => {
-            const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+            const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
             const i = items.indexOf(document.activeElement as HTMLButtonElement);
             if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length]?.focus(); }
             else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length]?.focus(); }
             else if (e.key === 'Home') { e.preventDefault(); items[0]?.focus(); }
             else if (e.key === 'End') { e.preventDefault(); items[items.length - 1]?.focus(); }
-          }} className="absolute right-2.5 top-full z-20 -mt-1 w-56 rounded-md border py-1 shadow-2xl" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-            {r.kind === 'xmla' && family && <MenuItem onClick={() => { setMenuId(null); openAccountChoice(r); }}>Choose account for this open</MenuItem>}
-            <MenuItem onClick={() => viewHistoryFor(r)}>View connection history</MenuItem>
-            <div className="my-1 border-t" style={{ borderColor: 'var(--sem-border)' }} />
-            <MenuItem danger onClick={() => void forget(r)}>Forget remembered model</MenuItem>
+          }} className="hub-menu absolute right-4 top-full z-20 -mt-1">
+            {jobs.includes('tests and queries')
+              // The one door for letting go of tests and queries (the connect bar's Disconnect and the Now strip's left):
+              // it sits on the row that holds the job, and the Jobs panel offers the same as "None".
+              ? <MenuItem onClick={() => { setMenuId(null); void disconnectTests(); }}>Turn tests and queries off</MenuItem>
+              : <MenuItem disabled={!!testsWhy} why={testsWhy} onClick={() => { if (stale) openAccountChoice(r, 'query'); else void attachTests(r); }}>Use for tests and queries</MenuItem>}
+            {jobs.includes('publish target')
+              ? <MenuItem disabled onClick={() => undefined}>Publish target</MenuItem>
+              : <MenuItem disabled={!!publishWhy} why={publishWhy} onClick={() => void setPublish(r)}>Publish here</MenuItem>}
+            <MenuItem onClick={() => void beginWork(r)}>Work on a local copy</MenuItem>
+            <div className="hub-menu-rule" />
+            <MenuItem onClick={() => openEndpointForm(r)}>{ep ? `SQL endpoint: ${ep.name || ep.server || 'set'}` : 'Add SQL endpoint'}</MenuItem>
+            {r.kind === 'xmla' && family && <MenuItem onClick={() => openAccountChoice(r)}>Open as another account</MenuItem>}
+            {r.kind === 'xmla' && <MenuItem onClick={() => { setMenuId(null); setEnvEditId(r.id); }}>Environment label</MenuItem>}
+            <MenuItem onClick={() => viewHistoryFor(r)}>History</MenuItem>
+            <div className="hub-menu-rule" />
+            <MenuItem danger onClick={() => void forget(r)}>Forget</MenuItem>
+          </div>
+        )}
+        {envEditId === r.id && (
+          <div className="hub-inline" data-testid="hub-env-edit">
+            <label className="sem-field-label">Environment label
+              <select data-testid="hub-env-select" disabled={busy} value={(r.label || '')} autoFocus onChange={(e) => void relabel(r, e.target.value)} className="sem-field sem-field-sm">
+                {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select></label>
+            <span className="sem-text-meta">Sets what your assistant may do on this model.</span>
+            <button className={`${BTN_QUIET} ml-auto`} onClick={() => setEnvEditId(null)}>Done</button>
+          </div>
+        )}
+        {sqlRow === r.id && sqlForm && EndpointForm(r)}
+        {rowError?.id === r.id && (
+          <div className="hub-inline" data-testid="hub-row-error" role="alert">
+            <span className="note-line note-bad min-w-0 flex-1 break-words">{rowError.text}</span>
+            <button className={BTN_COMPACT} disabled={busy} onClick={() => rowError.retry()}>Try again</button>
+            <button className={BTN_QUIET} onClick={() => setRowError(null)}>Dismiss</button>
           </div>
         )}
       </div>
     );
   }
 
-  function DetailPane() {
-    if (!selected) return <div className="p-3.5 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Select a model to see its details and open options.</div>;
-    const r = selected;
-    const isCloud = r.kind === 'xmla';
-    const account = accountOf(r);
-    const was = probeOf(r)?.previousAccount;
-    const family = credentialFamily(r.authMode);
-    const stale = isCloud && !account && !!family;
-    const activeQuery = querying?.connectionId === r.id;
-    const activeEditing = editing?.connectionId === r.id;
-    const env = environment(r);
-    // Statuses are TEXT, never a mutated button label: the honest state of THIS model right now.
-    const statuses: string[] = [];
-    if (activeEditing) statuses.push('Currently open');
-    if (activeQuery) statuses.push('Queries run here');
-    if (r.workingFolder) statuses.push(`Local copy exists · ${r.workingFolder}`);
-    if (stale) statuses.push('Sign-in required');
+  // The endpoint form opens under its row. Called as a function, never mounted as a JSX element, so typing survives a
+  // parent re-render (D-004: an inner component is a NEW component type each keystroke, which tore the inputs down).
+  function EndpointForm(r: ConnectionRecord) {
+    const form = sqlForm!;
+    const ep = endpointOf(r);
+    const suggestion = sideId(editing) === r.id && !ep ? ctx?.sqlEndpointSuggestion : null;
+    const sharedWith = form.id ? (endpoints?.rows ?? []).filter((x) => x.sqlEndpoint?.sourceId === form.id && x.connectionId !== r.id).length : 0;
+    const saved = form.id ? sqlSources.find((s) => s.id === form.id) : undefined;
     return (
-      <div className="px-3.5 py-2.5">
-        <div className="flex items-start gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded border text-[14px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }} aria-hidden>{r.kind === 'localDesktop' ? '▣' : '◇'}</span>
-          <div className="min-w-0 flex-1">
-            <h3 className="truncate text-[13px] leading-5 font-semibold" style={{ color: 'var(--sem-fg)' }} title={nameOf(r)}>{nameOf(r)}</h3>
-            <div className="text-[10px] leading-4 break-words" style={{ color: 'var(--sem-muted)' }}>{r.kind === 'file' ? 'Local file or project' : r.kind === 'localDesktop' ? 'Local running model' : isWorkspaceOnly(r) ? 'Published workspace' : 'Published model'}<br />{endpointText(r.endpoint)}</div>
-          </div>
-          <EnvBadge r={r} />
+      <div className="hub-inline hub-sqlform" data-testid="hub-sql-form">
+        <div className="hub-sqlform-head">
+          <b className="sem-card-title">SQL endpoint for {nameOf(r)}</b>
+          <span className="sem-text-meta">Checks compare this model's numbers against it. One per model, optional.</span>
         </div>
-
-        {statuses.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {statuses.map((s) => <span key={s} className="inline-flex items-center rounded-full border px-2 py-0.5 text-[9px] leading-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{s}</span>)}
+        {suggestion && (
+          <div className="hub-found" data-testid="hub-sql-found">
+            <span className="note-line note-ok min-w-0 flex-1">Found in this model's sources: <b>{suggestion.server}</b>, {suggestion.database}</span>
+            <button className={BTN_COMPACT} onClick={() => {
+              if (suggestion.matchingSourceId) useSavedSource(suggestion.matchingSourceId);
+              else typeSql({ ...form, id: null, name: form.name || `${nameOf(r)} SQL endpoint`, server: suggestion.server, database: suggestion.database });
+            }}>Use this</button>
           </div>
         )}
-
-        <div className="mt-1.5 grid grid-cols-[96px_minmax(0,1fr)] gap-x-2 gap-y-1.5 border-y py-1.5 text-[10px] leading-4" style={{ borderColor: 'var(--sem-border)' }}>
-          <div style={{ color: 'var(--sem-muted)' }}>Model</div><div style={{ color: 'var(--sem-fg)' }}>{modelRowText(r)}</div>
-          <div style={{ color: 'var(--sem-muted)' }}>Environment</div>
-          {/* The badge stays visible; editing the label is behind an explicit control (a label change moves your assistant's
-              permissions, so it is a deliberate act, not an always-open dropdown). */}
-          <div>
-            {editEnv && isCloud ? (
-              <>
-                <select data-testid="hub-env-select" disabled={busyId != null} value={(r.label || '')} onChange={(e) => { void relabel(r, e.target.value); setEditEnv(false); }} className="h-6 max-w-[220px] rounded border px-1.5 text-[10px]" style={inputStyle}>
-                  {ENV_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <div className="mt-1 text-[9px] leading-[13px]" style={{ color: 'var(--sem-muted)' }}>This label controls your assistant's permissions. Only a person can change it.</div>
-              </>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <span style={{ color: 'var(--sem-fg)' }}>{env.text}</span>
-                {isCloud && <button className={BTN_QUIET} data-testid="hub-change-env" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => setEditEnv(true)}>Change environment label</button>}
-              </div>
-            )}
-          </div>
-          <div style={{ color: 'var(--sem-muted)' }}>Connection history</div><div style={{ color: 'var(--sem-fg)' }}>{typeof r.useCount === 'number' ? `Used ${r.useCount} time${r.useCount === 1 ? '' : 's'}` : 'Remembered'}{r.lastUsedUtc ? ` · Last used ${shortWhen(r.lastUsedUtc)}` : ''}</div>
-        </div>
-
-        {isCloud ? (
-          <div className="mt-1.5 rounded-md border p-2" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 30%, var(--sem-border))', background: 'var(--sem-accent-soft)' }}>
-            <div className="flex items-center gap-1.5">
-              <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} aria-hidden>{initials(account || signedInAccount)}</span>
-              <div className="min-w-0 text-[10px]" style={{ color: 'var(--sem-fg)' }}>{stale ? 'Signed out. Sign in and choose an account for this model.' : `This open will use ${account || signedInAccount || 'the current account'}.`}</div>
-              {family && <button className={`${BTN_QUIET} ml-auto`} style={{ color: 'var(--sem-accent)' }} onClick={() => openAccountChoice(r)}>Choose account for this open</button>}
-            </div>
-            {was && was !== account && <div className="mt-1 text-[9px]" style={{ color: 'var(--sem-muted)' }}>Last opened as {was}. The saved endpoint stays the same whichever account you pick.</div>}
-          </div>
-        ) : (
-          <div className="mt-1.5 rounded-md border p-2 text-[10px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{r.kind === 'file' ? 'This is a file on this computer. No sign-in is required.' : 'No Microsoft sign-in is required. This local desktop model uses your Windows session.'}</div>
+        {sqlSources.length > 0 && (
+          <label className="sem-field-label">Use a saved one
+            <select className="sem-field sem-field-sm" data-testid="hub-sql-saved" value={form.id || ''} onChange={(e) => { if (e.target.value) useSavedSource(e.target.value); else useNewSource(); }}>
+              <option value="">A new one</option>
+              {sqlSources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select></label>
         )}
-
-        {/* The three outcomes, each explaining itself at the decision point (Kane's direct ask). Publish is NOT
-            here: it is a Current-setup role, not a way to open.
-            They STICK to the bottom of the pane: the detail above them is taller than the pane, so the third way to
-            open used to sit below the fold, half-faded by the scroll cue, and the decision was cut off mid-sentence. */}
-        <div className="sticky bottom-0 -mx-3.5 -mb-2.5 px-3.5 pb-2.5 pt-1.5" style={{ background: 'var(--sem-surface)', borderTop: '1px solid var(--sem-border)' }}>
-        <div className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>Open this model</div>
-        <div className="mt-1.5 grid gap-1.5">
-          <OutcomeButton primary label={isCloud ? 'Open live' : 'Open'} disabled={busyId != null} busy={busyId === 'open:' + r.id}
-            micro={isCloud ? 'Edit and query the published model directly. No local files are created.' : r.kind === 'file' ? 'Open this local file or project for editing.' : 'Open this running local model for editing and queries.'}
-            onClick={() => { if (stale) openAccountChoice(r, 'open'); else void openModel(r); }} />
-          {/* Query carries the SAME signed-out guard as Open live (routes to the account picker), an explicit
-              "already answers queries" state instead of a silent grey, and visible progress — the three ways it used
-              to read as "nothing happens." */}
-          <OutcomeButton label={activeQuery ? 'Already used for queries' : 'Query this model'} disabled={busyId != null || activeQuery || r.kind === 'file'} busy={busyId === 'query:' + r.id}
-            micro={activeQuery ? 'This model already answers your tests and queries.' : 'Run queries and tests against this model. The model you are editing stays open.'}
-            onClick={() => { if (stale) openAccountChoice(r, 'query'); else void queryWith(r); }} />
-          <OutcomeButton label="Work locally" disabled={busyId != null} busy={busyId === 'work:' + r.id}
-            micro="Work on a saved copy on this computer. Publish separately when you want to update the live model."
-            onClick={() => void beginWork(r)} />
+        <div className="hub-sqlform-grid">
+          <label className="sem-field-label">Name
+            <input data-testid="hub-sql-name" value={form.name} onChange={(e) => { typeSql({ ...form, name: e.target.value }); setSqlFormError(null); }}
+              placeholder="Contoso warehouse" autoComplete="off" className="sem-field sem-field-sm" /></label>
+          <label className="sem-field-label">Server
+            <input data-testid="hub-sql-server" value={form.server} onChange={(e) => { typeSql({ ...form, server: e.target.value }); setSqlFormError(null); }}
+              placeholder="contoso-sql.database.windows.net" autoComplete="off" className="sem-field sem-field-sm" /></label>
+          <label className="sem-field-label">Database
+            <input data-testid="hub-sql-database" value={form.database} onChange={(e) => { typeSql({ ...form, database: e.target.value }); setSqlFormError(null); }}
+              placeholder="Warehouse" autoComplete="off" className="sem-field sem-field-sm" /></label>
         </div>
+        {/* The ONE shared sign-in control, the same one the Data agent page and Promote use. */}
+        <AccountPicker mode={form.authMode} onMode={(m) => typeSql({ ...form, authMode: m })}
+          tenantId={form.tenantId} onTenantId={(t) => typeSql({ ...form, tenantId: t })}
+          tenantLabel="where the database lives (optional)" hint="Every check on this model signs in this way." />
+        {saved && <div className="sem-text-meta">{sqlSourceTestLine(saved.lastTestOk, shortWhen(saved.lastTestedUtc))}{sharedWith > 0 ? `. ${sharedWith} other saved model${sharedWith === 1 ? ' uses' : 's use'} this too, so a change here changes it for ${sharedWith === 1 ? 'it' : 'them'}.` : ''}</div>}
+        {sqlGuard.moved && <EditMovedBanner what="SQL source" theirs={sqlGuard.theirs} onKeepMine={sqlGuard.keepMine} onUseNew={sqlGuard.useNew} disabled={sqlBusy != null} />}
+        {sqlFormError && <div data-testid="hub-sql-form-error" className="note-line note-bad">{sqlFormError}</div>}
+        {sqlTest && <div data-testid="hub-sql-form-test" className={`note-line ${sqlTest.ok ? 'note-ok' : 'note-bad'}`}>{sqlTest.note}</div>}
+        <div className="hub-sqlform-btns">
+          <DraftMark show={form.id ? sqlGuard.drafted : !!sqlNewSeed.current && !sameValue(sqlFieldsOfForm(form), sqlNewSeed.current)} />
+          {ep && <button className={BTN_QUIET} data-testid="hub-sql-unlink" disabled={sqlBusy != null} onClick={() => void removeEndpoint(r)}>Remove endpoint</button>}
+          <button className={`${BTN_COMPACT} ml-auto`} onClick={closeEndpointForm}>Cancel</button>
+          <button className={BTN_COMPACT} data-testid="hub-sql-test" disabled={sqlBusy != null} onClick={() => void testEndpoint()}>{sqlBusy === 'test' ? 'Testing...' : 'Save and test'}</button>
+          <button className={`${BTN_COMPACT} sem-btn-primary`} data-testid="hub-sql-save" disabled={sqlBusy != null} onClick={() => void saveEndpoint(r)}>Save</button>
         </div>
       </div>
     );
   }
 
-  // The ONE shared account dialog (Phase 2), reached from a row's overflow "Choose account for this open", the detail's
-  // account note, and the Accounts "Switch account". Saved profiles are selectable per open (Use for this open) without repointing the
-  // tenant default; Sign in another account adds a profile via the real Microsoft picker; make-default is explicit and
-  // quantified. A failed authorization returns HERE (openModel re-sets the target), never to an endpoint form.
+  // The make-default confirmation says how many saved models move BEFORE anything moves. One element, drawn in the
+  // account menu or above the account choice, whichever asked for it.
+  const defaultConfirm = pendingDefault && (
+    <DefaultConfirm username={pendingDefault.username} busy={busy}
+      sentence={defaultMoveSentence(defaultMoveCount(records, pendingDefault.tenantId, credentialFamily(pendingDefault.family), credentialFamily), pendingDefault.tenantId)}
+      onCancel={() => setPendingDefault(null)} onConfirm={() => void makeDefaultFor(pendingDefault)} />
+  );
+
+  // The account menu: the ONLY place the account shows. Saved accounts, which is the default, which are signed out,
+  // Make default (count first), sign in another, the history, and where all of it is kept.
+  function AccountMenu() {
+    const methodLabel = (family?: string): string => credentialFamily(family) === 'devicecode' ? 'device code sign-in' : 'browser sign-in';
+    return (
+      <div className="hub-pop" role="group" aria-label="Accounts" data-testid="hub-account-menu">
+        {profiles.length === 0 && <div className="sem-text-meta hub-pop-item">No saved accounts yet. Pick a workspace model to sign in.</div>}
+        {profiles.map((p) => (
+          <div key={p.id} className="hub-pop-item" data-testid="hub-profile-row">
+            <span className={`note-dot ${p.signedIn ? 'note-dot-ok' : ''}`} aria-hidden />
+            <span className="min-w-0 flex-1"><b className="block truncate">{p.username}</b>
+              <span className="sem-text-meta block truncate">{[p.tenantId || 'tenant unknown', methodLabel(p.family)].join(' · ')}</span></span>
+            {!p.signedIn
+              ? <button className={BTN_QUIET} data-testid="hub-profile-resignin" disabled={busy} onClick={() => { const m = records.find((rec) => rec.kind === 'xmla' && profilesFor(rec).some((pp) => pp.id === p.id)); if (m) openAccountChoice(m); else setView('workspace'); }}>Sign in</button>
+              : p.isDefault ? <span className="sem-chip sem-chip-dot">Default</span>
+              : <button className={BTN_QUIET} data-testid="hub-profile-make-default" disabled={busy} onClick={() => setPendingDefault(p)}>Make default</button>}
+          </div>
+        ))}
+        {defaultConfirm}
+        <div className="hub-pop-rule" />
+        {switchable && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-switch-account" disabled={busy} onClick={() => openAccountChoice(switchable)}>Use another account for {nameOf(switchable)}</button>}
+        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else setView('workspace'); }}>Sign in another account</button>
+        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Other ways to sign in</button>
+        <div className="hub-pop-item"><button className={BTN_QUIET} onClick={() => viewHistoryFor(null)}>History</button></div>
+      </div>
+    );
+  }
+
+  // The per-open account choice (Phase 2), reached from a row's "Open as another account", a stale row's Open, and the
+  // account menu. Saved profiles are selectable per open without repointing the tenant default; Sign in another account
+  // adds a profile via the real Microsoft picker; make-default is explicit and quantified. A failed authorization
+  // returns HERE, never to an address form.
   function AccountDialog({ r }: { r: ConnectionRecord }) {
     const list = profilesFor(r);
     const def = defaultProfileFor(r);
     const defName = def?.username || accountOf(r) || signedInAccount;
     const purpose = switchPurpose === 'query' ? 'query' : 'open';
-    const role = purpose === 'query' ? 'Tests and queries' : 'Open for editing';
+    const role = purpose === 'query' ? 'tests and queries' : 'opening';
     const authRequired = isAuthRequiredFailure(error || undefined);
     const signedInCount = list.filter((p) => p.signedIn).length;
     const signedOutCount = list.length - signedInCount;
@@ -1240,10 +1267,8 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       ? list.find((p) => p.id === failedAuthAttempt.profileId || p.username === failedAuthAttempt.username)
       : undefined;
     // ONE notice, not two: the plain cause line, then the instruction, then the engine's raw text behind "Show details".
-    // The tone stays honest - amber while a sign-in can repair this here, red for a failure this dialog cannot repair.
     const causeAccount = failedProfile?.username || failedAuthAttempt?.username || accountOf(r);
     const plainCause = plainAuthCause(error, causeAccount);
-    const tone = authRequired ? 'var(--sem-warn)' : 'var(--sem-bad)';
     // The row the PRIMARY button acts on: an explicit pick, else the row that just failed, else the signed-in default.
     const picked = list.find((p) => p.id === pickedProfileId) || failedProfile || (def?.signedIn ? def : undefined) || list.find((p) => p.signedIn);
     const needsSignIn = !!picked && (picked.id === failedProfile?.id || !picked.signedIn);
@@ -1261,11 +1286,11 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
       useForThisOpen(r, picked);
     };
     return (
-      <div data-testid="hub-account-dialog" data-purpose={purpose} className="m-4 rounded-lg border p-3" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, var(--sem-border))', background: 'var(--sem-surface)' }}>
-        <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Who should authorize {role} for {nameOf(r)}?</div>
-        <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>Saved accounts are remembered identities. The connection currently authorized for this model {authRequired ? 'may have expired.' : 'is separate from these saved identities.'} This choice applies to this {purpose} only. The saved endpoint stays the same whichever account you pick.</div>
-        {error && <div data-testid="hub-account-error" className="mt-2 rounded-md border px-2.5 py-2 text-[10px] leading-4 break-words" style={{ borderColor: tone, background: 'var(--sem-surface-2)' }}>
-          <div className="text-[11px] font-semibold" style={{ color: tone }}>{plainCause || `The last attempt failed: ${error}`}</div>
+      <div data-testid="hub-account-dialog" data-purpose={purpose} className="sem-card mb-3">
+        <div className="sem-card-title">Which account should {nameOf(r)} use for {role}?</div>
+        <div className="sem-text-meta mt-1">For this {purpose} only.</div>
+        {error && <div data-testid="hub-account-error" className="sem-inset mt-2 text-xs leading-4 break-words">
+          <div className={`text-xs font-semibold note-line ${authRequired ? 'note-warn' : 'note-bad'}`}>{plainCause || `The last attempt failed: ${error}`}</div>
           {authRequired
             ? <div data-testid="hub-account-recovery" className="mt-1" style={{ color: 'var(--sem-fg)' }}>
                 {failedProfile
@@ -1274,258 +1299,146 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
                     ? <>Choose a signed-in saved account for this {purpose}. {signedOutCount > 0 && <>Signed-out profiles offer “Sign in and use”. </>}“Sign in another account” opens the sign-in picker. Your current model and local edits stay in place.</>
                     : <>No saved account is currently signed in. Use “Sign in another account” to authorize this {purpose}. Your current model and local edits stay in place.</>}
               </div>
-            : <div data-testid="hub-account-retry" className="mt-1" style={{ color: 'var(--sem-fg)' }}>The target remains selected. Retry this {purpose} with a listed account or use “Sign in another account”. Your current model and local edits stay in place.</div>}
-          {plainCause && <details data-testid="hub-account-details" className="mt-1.5">
+            : <div data-testid="hub-account-retry" className="mt-1" style={{ color: 'var(--sem-fg)' }}>The model stays selected. Retry this {purpose} with a listed account or use “Sign in another account”. Your current model and local edits stay in place.</div>}
+          {plainCause && <details data-testid="hub-account-details" className="mt-2">
             <summary className="cursor-pointer select-none" style={{ color: 'var(--sem-muted)' }}>Show details</summary>
             <div className="mt-1 break-words" style={{ color: 'var(--sem-muted)' }}>{error}</div>
           </details>}
         </div>}
-        <div className="mt-2.5 rounded-md border overflow-hidden" style={{ borderColor: 'var(--sem-border)' }}>
+        <div className="hub-account-list mt-3">
           {list.map((p) => (
-            <div key={p.id} data-testid="hub-account-row" data-selected={picked?.id === p.id ? 'true' : undefined} className="flex items-center gap-2.5 border-b px-2.5 py-2 last:border-b-0" style={{ borderColor: 'var(--sem-border)', background: picked?.id === p.id ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)' }}>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold" style={{ background: p.isDefault ? 'var(--sem-accent)' : 'var(--sem-surface)', color: p.isDefault ? 'var(--sem-on-accent)' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} aria-hidden>{initials(p.username)}</span>
+            <div key={p.id} data-testid="hub-account-row" data-selected={picked?.id === p.id ? 'true' : undefined} className="hub-account-row flex items-center gap-3 border-b py-2 last:border-b-0">
               {/* Selecting a row is what the primary button follows, so the identity itself is the selector. */}
               <button type="button" data-testid="hub-account-select" aria-pressed={picked?.id === p.id} className="min-w-0 flex-1 text-left" onClick={() => setPickedProfileId(p.id)}>
-                <div className="truncate text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.username}</div>
-                <div className="truncate text-[9px]" style={{ color: 'var(--sem-muted)' }}>{[p.tenantId ? `${p.tenantId} tenant` : 'tenant unknown', failedProfile?.id === p.id ? 'sign-in needed for this connection' : p.signedIn ? 'signed in' : 'signed out', p.lastUseUtc ? `last used ${shortWhen(p.lastUseUtc)}` : null].filter(Boolean).join(' · ')}</div>
+                <div className="truncate text-xs font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.username}</div>
+                <div className="truncate text-xs" style={{ color: 'var(--sem-muted)' }}>{[p.tenantId ? `${p.tenantId} tenant` : 'tenant unknown', failedProfile?.id === p.id ? 'sign-in needed for this connection' : p.signedIn ? 'signed in' : 'signed out', p.lastUseUtc ? `last used ${shortWhen(p.lastUseUtc)}` : null].filter(Boolean).join(' · ')}</div>
               </button>
-              <div className="flex shrink-0 items-center gap-1.5">
+              <div className="flex shrink-0 items-center gap-2">
                 {/* Signed-out is checked BEFORE default (MED, sol): a DEFAULT profile that is signed out must still get a
-                    targeted "Sign in and use" (forceReauth + loginHint re-auths THIS identity) - the bottom "Open with
-                    default" has neither, so it could sign in a different account. */}
+                    targeted "Sign in and use" (forceReauth + loginHint re-auths THIS identity). */}
                 {failedProfile?.id === p.id
-                  ? <button className={BTN_QUIET} data-testid="hub-sign-in-again" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => void applyAccount(r, { forceReauth: true, loginHint: p.username })}>Sign in again</button>
+                  ? <button className={BTN_QUIET} data-testid="hub-sign-in-again" disabled={busy} onClick={() => void applyAccount(r, { forceReauth: true, loginHint: p.username })}>Sign in again</button>
                   : !p.signedIn
-                  ? <button className={BTN_QUIET} data-testid="hub-signin-and-use" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => void applyAccount(r, { forceReauth: true, loginHint: p.username })}>Sign in and use</button>
+                  ? <button className={BTN_QUIET} data-testid="hub-signin-and-use" disabled={busy} onClick={() => void applyAccount(r, { forceReauth: true, loginHint: p.username })}>Sign in and use</button>
                   : p.isDefault
-                    ? <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] font-semibold uppercase" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>default</span>
-                    : <button className={BTN_QUIET} data-testid="hub-use-for-open" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => useForThisOpen(r, p)}>Use for this {purpose}</button>}
-                {!p.isDefault && p.signedIn && <button className={BTN_QUIET} data-testid="hub-make-default" style={{ color: 'var(--sem-muted)' }} disabled={busyId != null} onClick={() => setPendingDefault(p)}>Make default</button>}
+                    ? <span className="sem-chip sem-chip-dot">Default</span>
+                    : null}
+                {!p.isDefault && p.signedIn && <button className={BTN_QUIET} data-testid="hub-make-default" style={{ color: 'var(--sem-muted)' }} disabled={busy} onClick={() => setPendingDefault(p)}>Make default</button>}
               </div>
             </div>
           ))}
-          <button data-testid="hub-sign-in-another" className="flex w-full items-center gap-2.5 px-2.5 py-2 text-left" style={{ background: 'var(--sem-surface-2)' }} disabled={busyId != null} onClick={() => signInAnother(r)}>
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[13px] font-bold" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} aria-hidden>+</span>
-            <span className="min-w-0"><span className="block text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Sign in another account</span>
-              <span className="block text-[9px]" style={{ color: 'var(--sem-muted)' }}>opens the Microsoft sign-in picker; adds a saved profile</span></span>
+          <button data-testid="hub-sign-in-another" className="flex w-full items-center gap-3 px-3 py-2 text-left" style={{ background: 'var(--sem-surface-2)' }} disabled={busy} onClick={() => signInAnother(r)}>
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-(length:--sem-text-body) font-bold" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} aria-hidden>+</span>
+            <span className="min-w-0"><span className="block text-xs font-semibold" style={{ color: 'var(--sem-fg)' }}>Sign in another account</span>
+              </span>
           </button>
         </div>
-        <div className="mt-2.5 border-t pt-2 text-[9px] leading-[14px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>Make an account the default instead: {defaultBlastRadius(r)} Every switch is recorded in the connection history.</div>
+        {panel !== 'account' && defaultConfirm}
         <div className="mt-3 flex justify-end gap-2">
-          <button className={BTN} onClick={() => { setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }} style={inputStyle}>Cancel</button>
-          <button className={BTN} data-testid="hub-open-default" disabled={busyId != null || (!picked && list.length > 0)} onClick={runPrimary} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{primaryLabel}</button>
+          <button className={BTN} onClick={() => { setSwitchTarget(null); setSwitchPurpose(null); setFailedAuthAttempt(null); setPendingDefault(null); setPickedProfileId(null); setError(null); }}>Cancel</button>
+          <button className={BTN_PRIMARY} data-testid="hub-open-default" disabled={busy || (!picked && list.length > 0)} onClick={runPrimary}>{primaryLabel}</button>
         </div>
       </div>
     );
   }
 
-  function OpenView() {
-    return (
-      // A fixed head (title, account banner, the "Open a new model" strip) above a flex-1 body where BOTH panes own
-      // their own scroll at >=900px, so a tall detail pane can never push the dialog past its fixed height (the old
-      // outer scrollbar + cut-off cards). Below 900px it flows naturally into the one outer scroll.
-      <section className="flex flex-col px-5 py-4 min-[900px]:h-full">
-        <div className="mb-3 flex items-start gap-3">
-          <div className="min-w-0"><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Open a model</h2>
-            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Open a saved model, connect to a published model or start a new one. Your recent connections are remembered.</p></div>
-          <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search models" className="ml-auto h-8 w-[210px] shrink-0 rounded-[5px] border px-2.5 text-[11px]" style={inputStyle} />
-        </div>
-
-        <div className="mb-3 flex items-center gap-2 rounded-md border px-2.5 py-2 text-[10px]" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 30%, var(--sem-border))', background: 'var(--sem-accent-soft)' }}>
-          <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} aria-hidden>{initials(signedInAccount)}</span>
-          <div className="min-w-0"><div className="text-[10px] font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{signedInAccount ? `Signed in as ${signedInAccount}` : 'No account is signed in'}</div>
-            <div className="text-[9px] truncate" style={{ color: 'var(--sem-muted)' }}>{signedInAccount ? `${signedInTenant || 'Tenant unknown'} · each model opens with its tenant's default; pick another per open` : 'Open a published model below to sign in'}</div></div>
-          {/* Not-signed-in routes where a sign-in actually happens (adding a published model), NOT the Accounts view,
-              which has nothing to act on with no account yet (the old dead end sol flagged). */}
-          <button className={`${BTN_QUIET} ml-auto`} data-testid="hub-banner-account" style={{ color: 'var(--sem-accent)' }} onClick={() => { if (signedInAccount) setView('accounts'); else openAddView(); }}>{signedInAccount ? 'Switch account' : 'Sign in'}</button>
-        </div>
-
-        {/* "Open a new model" FIRST and full-width (Kane: the most frequent action; sol: placing it here also relieves
-            the right-column overflow). "Create blank model" is named so it never reads as this section's own title. */}
-        <section className="mb-3">
-          <h3 className="mb-1.5 text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>Open a new model</h3>
-          <div className="grid grid-cols-2 gap-1.5 min-[720px]:grid-cols-4">
-            <QuickCard glyph={'▱'} title="Local file or project" body="Open a BIM, TMDL, or Power BI project from disk." onClick={() => openLocalModel()} />
-            <QuickCard glyph="+" title="Published model" body="Connect to a published Power BI or Fabric model." onClick={() => openAddView()} />
-            <QuickCard glyph={'▣'} title="Running desktop model" body="Discover a running local model and query it." onClick={() => void connectRunningLocal()} />
-            <QuickCard glyph="+" title="Create blank model" body="Name a new model and build it with your assistant." onClick={openCreate} />
-          </div>
-          <form className="mt-1.5 flex flex-wrap items-center gap-1.5" onSubmit={(e) => { e.preventDefault(); void openTypedLocal(); }}>
-            <input ref={localPathRef} data-testid="hub-local-path" value={localPath} onChange={(e) => { setLocalPath(e.target.value); setLocalPathError(null); }} placeholder="Or type a path to a .bim file, TMDL folder, or Power BI project" autoComplete="off" className="h-8 min-w-[220px] flex-1 rounded-[5px] border px-2.5 text-[11px]" style={inputStyle} />
-            <button type="submit" className={BTN_COMPACT} disabled={busyId != null} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Open path</button>
-          </form>
-          {localPathError && <div data-testid="hub-local-path-error" className="mt-1 text-[10px]" style={{ color: 'var(--sem-bad)' }}>{localPathError}</div>}
-        </section>
-
-        <div className="grid grid-cols-1 gap-3 min-[900px]:flex-1 min-[900px]:min-h-0 min-[900px]:grid-cols-[minmax(0,1.6fr)_minmax(320px,1fr)]">
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-            <div className="flex items-center gap-2 border-b px-2.5 py-2" style={{ borderColor: 'var(--sem-border)' }}>
-              <h3 className="text-[10px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>Recent and remembered</h3>
-              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[9px] leading-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{visibleRecords.length}</span>
-              <span className="ml-auto text-[9px]" style={{ color: 'var(--sem-muted)' }}>This device</span>
-            </div>
-            {/* The list owns its scroll at >=900px (min-height:0 + overflow); below 900px it flows into the one outer scroll.
-                Same ScrollCue treatment as the detail pane: this platform paints an overlay scrollbar (no track drawn at
-                rest), so a list cut at the pane's bottom edge read as the whole list rather than as scrollable. */}
-            <ScrollCue className="min-[900px]:min-h-0 min-[900px]:flex-1 min-[900px]:overflow-auto">
-              {loading && <div className="p-4 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Loading connections...</div>}
-              {!loading && visibleRecords.map((r) => <ModelRow key={r.id} r={r} />)}
-              {!loading && visibleRecords.length === 0 && <div className="p-4 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No remembered models match. Open a new model above.</div>}
-            </ScrollCue>
-          </section>
-
-          {/* The detail pane now OWNS its scroll at >=900px, so a tall detail can never push the dialog past its fixed
-              height — the fix for the outer scrollbar + cut-off cards. The new-model sources left this column entirely
-              (they are the top strip now). */}
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} aria-live="polite">
-            {/* pb-7 clears the scroll-cue gradient, so the third way to open is never half-faded at the
-                bottom of the pane the way it was. */}
-            <ScrollCue className="min-[900px]:min-h-0 min-[900px]:flex-1 min-[900px]:overflow-auto"><DetailPane /></ScrollCue>
-          </section>
-        </div>
-      </section>
+  // The Change panel behind the Jobs button: the three jobs, each a picker over the saved models, and a model that cannot do
+  // a job is struck out with the engine's reason (jobOptions reads only what the engine listed).
+  function JobsPanel() {
+    const pick = (job: Job, current: string, id: string | null, onChoose: (r: ConnectionRecord) => void, extra?: ReactNode) => (
+      <JobPicker job={job} current={current} busy={busy} open={jobPick === job}
+        onToggle={() => setJobPick(jobPick === job ? null : job)}
+        options={jobOptions(records, job, id, nameOf, kindWord)}
+        onChoose={(cid) => { const r = records.find((x) => x.id === cid); if (r) onChoose(r); }} extra={extra} />
     );
+    const addLine = <button type="button" className="hub-job-opt hub-job-add" onClick={() => { setJobPick(null); setPanel('none'); }}><span>Add Power BI Desktop or a workspace model</span></button>;
+    const rows = [
+      // Editing goes through openModel, so a model with unsaved edits asks first before it is replaced.
+      { job: 'edit' as Job, current: roleValue(editing, 'None'), picker: pick('edit', roleValue(editing, 'None'), sideId(editing), (r) => void openModel(r), addLine) },
+      { job: 'tests' as Job, current: roleValue(querying, 'None'), picker: pick('tests', roleValue(querying, 'None'), sideId(querying), (r) => void attachTests(r),
+        <>{addLine}{querying?.available && <button type="button" className="hub-job-opt hub-job-add" data-testid="hub-job-tests-off" onClick={() => void disconnectTests()}><span>None: turn tests and queries off</span></button>}</>) },
+      { job: 'publish' as Job, current: roleValue(publishing, 'Not set'), picker: pick('publish', roleValue(publishing, 'Not set'), sideId(publishing), (r) => void setPublish(r),
+        <>{addLine}{publishing?.available && <button type="button" className="hub-job-opt hub-job-add" data-testid="hub-job-publish-clear" onClick={() => void clearPublish()}><span>Not set</span></button>}</>) },
+    ];
+    return <ChangePanel rows={rows} note={notice} onDone={() => { setPanel('none'); setJobPick(null); }} />;
   }
 
-  function SetupView() {
+  function ListView() {
+    const unlinked = endpoints?.notLinked ?? [];
     return (
-      <section className="px-5 py-4">
-        <div className="flex items-start gap-3 mb-3">
-          <div><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Current setup</h2>
-            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Choose which model to edit, which one to test and where to publish. Changing these choices does not publish anything.</p></div>
-          <button className={`${BTN} ml-auto`} onClick={() => setView('open')} style={inputStyle}>Choose a model</button>
+      <section className="hub-page">
+        <div className="hub-adds">
+          <button className={records.length === 0 ? BTN_PRIMARY : BTN} data-testid="hub-add-file" onClick={() => openLocalModel()}>Open file or folder</button>
+          <button className={BTN} data-testid="hub-add-desktop" onClick={() => { setError(null); setView('desktop'); }}>Power BI Desktop</button>
+          <button className={BTN} data-testid="hub-add-workspace" onClick={() => { setError(null); setView('workspace'); }}>Workspace model</button>
+          <button className={BTN_QUIET} data-testid="hub-add-blank" onClick={() => openCreate()}>New blank model</button>
+          <button className={BTN_QUIET} data-testid="hub-add-sql" onClick={() => openStartFromSql()}>From a SQL source</button>
+          {records.length >= SEARCH_FROM && <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search models" aria-label="Search models" className="sem-field ml-auto hub-search" />}
         </div>
-        <div className="grid grid-cols-2 gap-2 max-[760px]:grid-cols-1">
-          <RoleCard n={1} label="Editing" value={roleValue(editing, 'No model open')}
-            detail={editing?.sourceControlled ? `Local files in source control · ${editing.repositoryRoot}` : (editing?.source || 'Open a local project or live model')} missing={!editing?.available} action="Change source" onAction={() => setView('open')} />
-          <RoleCard n={2} label="Tests and queries" value={roleValue(querying, 'Not connected')}
-            detail={querying?.available ? (querying.kind === 'localDesktop' || querying.kind === 'local' ? 'A running model answers tests and queries' : 'A published model answers tests and queries') : 'Choose which live model answers tests and queries'} missing={!querying?.available} action="Change test model" onAction={() => setView('open')} />
-          {/* Publish is a Current-setup role, not a way to open, so it owns its assignment here (it left the Open
-              view entirely). Choosing a destination only links it; publishing stays a separate reviewed action.
-              The Reference role card left this grid on 2026-09-14 with the footer's Reference slot: the engine
-              still has the slot, and the way in becomes an action rather than a fourth thing to set up first. */}
-          <RoleCard n={3} label="Publish to" value={roleValue(publishing, 'Not linked')}
-            detail={publishing?.available ? 'Publishing requires a separate review and confirmation.' : 'Choose the live model you want to publish to'} missing={!publishing?.available}
-            control={<label className="block text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>Set as publish destination
-              <select value={publishing?.connectionId || ''} disabled={busyId != null} onChange={(e) => { const t = xmlaRecords.find((x) => x.id === e.target.value); if (t) void setPublish(t); }} className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px] font-normal" style={inputStyle}>
-                <option value="">Choose a published destination</option>
-                {xmlaRecords.map((x) => <option key={x.id} value={x.id}>{nameOf(x)}</option>)}
-              </select></label>} />
-          {/* The fourth role. It is not a model, so it carries no account probe and no Open verb: it is the place a
-              check gets its independent number from, saved once and picked by name. The card states how many are
-              saved and hands over to the section that manages them. */}
-          <RoleCard n={4} label="SQL sources"
-            value={sqlLoading ? 'Loading...' : sqlError ? SQL_SOURCE_COPY.loadFailed : sqlSources.length > 0
-              ? `${sqlSources.length} ${sqlSources.length === 1 ? 'source saved' : 'sources saved'}`
-              : SQL_SOURCE_COPY.roleEmpty}
-            missing={!sqlLoading && sqlSources.length === 0}
-            detail={SQL_SOURCE_COPY.roleDetail} action={SQL_SOURCE_COPY.roleAction} onAction={() => setView('sqlsources')} />
-        </div>
-        {context?.summary && <p className="mt-3 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>{context.summary}</p>}
-        {/* The three outcomes, in the ratified taxonomy, so editing / querying / working-locally never blur. */}
-        <div className="mt-3 rounded-lg border p-3 text-[10px] leading-4" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
-          <div><b style={{ color: 'var(--sem-fg)' }}>Open live</b> Edit and query the published model directly. No local files are created.</div>
-          <div className="mt-1"><b style={{ color: 'var(--sem-fg)' }}>Query this model</b> Run queries and tests against this model. The model you are editing stays open.</div>
-          <div className="mt-1"><b style={{ color: 'var(--sem-fg)' }}>Work locally</b> Work on a saved copy on this computer. Publish separately when you want to update the live model.</div>
-        </div>
-      </section>
-    );
-  }
-
-  function AccountsView() {
-    // The credential family a saved profile signs in with, in plain words.
-    const methodLabel = (family?: string): string => credentialFamily(family) === 'devicecode' ? 'Device code sign-in' : 'Browser sign-in';
-    return (
-      <section className="px-5 py-4">
-        <div className="mb-3"><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Accounts</h2>
-          <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>The saved Microsoft identities on this device. Each remembered model opens with the default account for its tenant and sign-in method (shown on each row); you can open one model as a different saved account for that open only, without changing what the others use.</p></div>
-
-        <div className="rounded-md border p-2.5" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 30%, var(--sem-border))', background: 'var(--sem-accent-soft)' }}>
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full text-[11px] font-bold" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} aria-hidden>{initials(signedInAccount)}</span>
-            <div className="min-w-0"><div className="truncate text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{signedInAccount || 'No account is signed in'}</div>
-              <div className="truncate text-[9px]" style={{ color: 'var(--sem-muted)' }}>{signedInTenant ? `${signedInTenant} · current` : (signedInAccount ? 'Tenant unknown' : 'Open a published model to sign in')}</div></div>
-            {/* Never a dead end (B2): a live switchable model offers Switch account; otherwise, when nothing is signed
-                in, a primary Sign in routes to where a sign-in actually happens (adding/opening a published model). */}
-            {switchable
-              ? <button className={`${BTN} ml-auto`} data-testid="hub-switch-account" disabled={busyId != null} onClick={() => openAccountChoice(switchable)} style={inputStyle}>Switch account</button>
-              : !signedInAccount && <button className={`${BTN} ml-auto`} data-testid="hub-accounts-signin" disabled={busyId != null} onClick={() => openAddView()} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Sign in</button>}
+        {notice && panel !== 'change' && <div className="sem-text-meta note-line note-ok" data-testid="hub-notice">{notice}</div>}
+        {loading && records.length === 0 && <div className="sem-text-meta">Loading your models...</div>}
+        {!loading && records.length === 0 && (
+          <div className="hub-empty" data-testid="hub-empty">
+            <b className="sem-card-title">Open your first model</b>
+            <p className="sem-text-meta">A file or folder on this computer, a report open in Power BI Desktop, or a model in a Fabric or Power BI workspace. Models you open show up here next time.</p>
           </div>
-        </div>
-
-        {/* The saved-account list exists regardless of live state (no dead-end): a device-local, credential-free store. */}
-        <div className="mt-4 mb-1.5 flex items-center gap-2">
-          <h3 className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>Saved accounts on this device</h3>
-          <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full px-1.5 text-[9px] leading-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{profiles.length}</span>
-        </div>
-        <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-          {profiles.length === 0 && <div className="px-3 py-3 text-[10px]" style={{ color: 'var(--sem-muted)' }}>No saved accounts yet. <button className="font-semibold underline-offset-2 hover:underline" data-testid="hub-accounts-empty-add" style={{ color: 'var(--sem-accent)' }} onClick={() => openAddView()}>Add a published model</button> and sign in with a browser, and the account is remembered here.</div>}
-          {profiles.map((p) => (
-            <div key={p.id} data-testid="hub-profile-row" className="flex items-center gap-2.5 border-b px-3 py-2 last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold" style={{ background: p.isDefault ? 'var(--sem-accent)' : 'var(--sem-surface-2)', color: p.isDefault ? 'var(--sem-on-accent)' : 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} aria-hidden>{initials(p.username)}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[11px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{p.username}</div>
-                <div className="truncate text-[9px]" style={{ color: 'var(--sem-muted)' }}>{[p.tenantId ? `${p.tenantId} tenant` : 'tenant unknown', methodLabel(p.family), p.lastUseUtc ? `last used ${shortWhen(p.lastUseUtc)}` : (p.lastSignInUtc ? `signed in ${shortWhen(p.lastSignInUtc)}` : null)].filter(Boolean).join(' · ')}</div>
-              </div>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {p.isDefault && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] font-semibold uppercase" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>default</span>}
-                {!p.signedIn && <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] font-semibold uppercase" style={{ background: 'color-mix(in srgb, var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)', borderColor: 'color-mix(in srgb, var(--sem-bad) 40%, transparent)' }}>signed out</span>}
-                {/* A signed-out profile is not a dead end (MED, sol), and recovery must TARGET this profile: open the
-                    account dialog of a remembered model on its tenant+family, where "Sign in and use" re-auths THIS
-                    identity (forceReauth + loginHint). Only if no such model exists do we fall back to a generic Add. */}
-                {!p.signedIn && <button className={BTN_QUIET} data-testid="hub-profile-resignin" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => { const m = records.find((rec) => rec.kind === 'xmla' && profilesFor(rec).some((pp) => pp.id === p.id)); if (m) openAccountChoice(m); else openAddView(); }}>Sign in</button>}
-                {!p.isDefault && p.signedIn && <button className={BTN_QUIET} data-testid="hub-profile-make-default" style={{ color: 'var(--sem-accent)' }} disabled={busyId != null} onClick={() => setPendingDefault(p)}>Make default</button>}
-              </div>
+        )}
+        {records.length > 0 && (
+          <div className="hub-list" data-testid="hub-list">
+            {/* Called, never mounted as <ModelRow />: ModelRow is declared inside this component, so it is a NEW component type on every render. Mounted as an element it tore down the whole row, and the
+                SQL form's inputs with it, on every keystroke (the form's state lives here): focus was lost after each key (F15, Sol's drafts walk). */}
+            {visibleRecords.map((r) => <Fragment key={r.id}>{ModelRow({ r })}</Fragment>)}
+            {visibleRecords.length === 0 && <div className="sem-text-meta hub-list-empty">No saved models match.</div>}
+          </div>
+        )}
+        {nlRemoving && !nlRefused && removeConfirmSentence(nlRemoving) && (
+          <div className="sem-card" data-testid="hub-sql-remove-confirm">
+            <div className="sem-card-title">Remove {nlRemoving.name}?</div>
+            <div className="sem-text-meta mt-1">{removeConfirmSentence(nlRemoving)}</div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button className={BTN} onClick={() => setNlRemoving(null)}>Cancel</button>
+              <button className={BTN} data-testid="hub-sql-remove-confirm-btn" disabled={sqlBusy != null} onClick={() => void removeSource(nlRemoving)} style={{ color: 'var(--sem-bad)' }}>Remove</button>
             </div>
-          ))}
-        </div>
-
-        <div className="mt-4 mb-1.5 text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>Other authentication methods</div>
-        {/* Real entry points, not static cards (sol: they read as clickable): each jumps to Add with the method
-            preselected, where the live setup preflight shows what the engine can see. */}
-        <div className="grid grid-cols-2 gap-2.5 max-[760px]:grid-cols-1">
-          <button type="button" data-testid="hub-authmethod-azcli" className="rounded-lg border p-3 text-left" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onClick={() => openAddView('azcli')}>
-            <h3 className="text-[10px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Command-line sign-in</h3>
-            <p className="mt-1 text-[9px] leading-4" style={{ color: 'var(--sem-muted)' }}>Use the account from your current Azure command-line session. Set it up when you add a model.</p>
-          </button>
-          <button type="button" data-testid="hub-authmethod-sp" className="rounded-lg border p-3 text-left" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onClick={() => openAddView('serviceprincipal')}>
-            <h3 className="text-[10px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Service identity</h3>
-            <p className="mt-1 text-[9px] leading-4" style={{ color: 'var(--sem-muted)' }}>Use a configured service identity for automation. Check its setup when you add a model.</p>
-          </button>
-        </div>
-        <p className="mt-4 text-[9px] leading-5" style={{ color: 'var(--sem-muted)' }}>Saved account names and tenant details help you choose the right identity. Credentials stay in the encrypted Microsoft sign-in cache on this device. Connection records contain no passwords or access tokens.</p>
+          </div>
+        )}
+        {nlRefused && nlRemoving && (
+          <div className="sem-card" data-testid="hub-sql-refused">
+            <div className="sem-card-title">{nlRemoving.name} was not removed</div>
+            <div className="mt-1 text-xs leading-5 note-line note-warn">It is still in use, so nothing was removed.</div>
+            {(nlRefused.checksUsing ?? 0) > 0 && <div className="sem-text-meta mt-2"><b>Checks that use it</b> {sqlSourceUsedByNames(nlRefused.checkTitles ?? [], nlRefused.checksUsing ?? 0)}</div>}
+            {(nlRefused.tableMappingsUsing ?? 0) > 0 && <div className="sem-text-meta mt-1"><b>Table mappings that use it</b> {sqlSourceUsedByNames(nlRefused.mappedTables ?? [], nlRefused.tableMappingsUsing ?? 0)}</div>}
+            {(nlRefused.usingModels ?? []).length > 0 && <div className="sem-text-meta mt-1"><b>Saved models with those checks or mappings</b> {(nlRefused.usingModels ?? []).join(', ')}</div>}
+            {(nlRefused.linkedModels ?? []).length > 0 && <div className="sem-text-meta mt-1"><b>Models that use it as their SQL endpoint</b> {(nlRefused.linkedModels ?? []).join(', ')}</div>}
+            {/* The engine's own note only when it named nothing, so one refusal never reads as two (D-166). */}
+            {(nlRefused.checksUsing ?? 0) === 0 && (nlRefused.tableMappingsUsing ?? 0) === 0 && !(nlRefused.linkedModels ?? []).length && nlRefused.note && <div className="sem-text-meta mt-2">{nlRefused.note}</div>}
+            <div className="mt-3 flex justify-end"><button className={BTN} onClick={() => { setNlRefused(null); setNlRemoving(null); }}>Close</button></div>
+          </div>
+        )}
+        <NotLinkedList items={unlinked} busy={sqlBusy != null || busy}
+          linkTargets={records.map((r) => ({ id: r.id, name: nameOf(r) }))}
+          onLink={(sid, cid) => void linkSource(sid, cid)} onRemove={(s) => { setNlRefused(null); setNlRemoving(s); }} />
       </section>
     );
   }
 
   function HistoryView() {
-    const filtered = history.filter((e) => historyKind === 'all' ? true : historyKind === 'signin' ? isSigninEvent(e) : !isSigninEvent(e));
     const connName = historyConn ? nameOf(records.find((r) => r.id === historyConn) || { id: '', kind: '', endpoint: '' }) : null;
-    const chip = 'inline-flex h-[26px] items-center rounded-full border px-2.5 text-[9px] leading-none font-semibold';
     return (
-      <section className="px-5 py-4">
-        <div className="flex items-start gap-3 mb-3">
-          <div><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>History</h2>
-            <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Model connections and Microsoft sign-ins together. History is local to this device.</p></div>
-          <button className={`${BTN} ml-auto`} onClick={() => setView('accounts')} style={inputStyle}>Manage accounts</button>
+      <section className="hub-page">
+        <div className="flex items-center gap-2">
+          <button className={BTN_QUIET} onClick={() => setView('open')}>{'‹'} Back</button>
+          <h2 className="sem-section-title">History</h2>
+          {connName && <button type="button" className="sem-btn sem-btn-sm" onClick={() => setHistoryConn(null)} title="Show every model">{connName} {'×'}</button>}
+          <span className="sem-text-meta ml-auto">Models and sign-ins, kept on this device</span>
         </div>
-        <div className="mb-3 flex flex-wrap items-center gap-1.5">
-          {(['all', 'model', 'signin'] as const).map((k) => (
-            <button key={k} className={chip} onClick={() => setHistoryKind(k)}
-              style={historyKind === k ? { borderColor: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)' } : { borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
-              {k === 'all' ? 'All activity' : k === 'model' ? 'Models' : 'Sign-ins'}
-            </button>
-          ))}
-          {connName && <button className={`${chip} ml-1`} onClick={() => setHistoryConn(null)} style={{ borderColor: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)' }} title="Clear the model filter">{connName} ×</button>}
-        </div>
-        <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-          {filtered.length === 0 && <div className="px-3 py-3 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No connection history yet.</div>}
-          {filtered.map((e, i) => (
-            <div key={i} className="flex items-start gap-2 px-3 py-2 border-b last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
-              <span className="mt-0.5 text-[11px]" aria-hidden style={{ color: e.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{e.ok ? '●' : '○'}</span>
+        <div className="sem-card sem-card-flush">
+          {history.length === 0 && <div className="px-3 py-3 text-xs" style={{ color: 'var(--sem-muted)' }}>No connection history yet.</div>}
+          {history.map((e, i) => (
+            <div key={i} className="flex items-start gap-2 border-b px-4 py-2 last:border-b-0" style={{ borderColor: 'var(--sem-rule)' }}>
+              <span className={`note-dot mt-2 ${e.ok ? 'note-dot-ok' : 'note-dot-bad'}`} aria-hidden />
               <div className="min-w-0 flex-1">
-                <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{historyKindLabel(e)}{e.account ? ` · ${e.account}` : ''}</div>
-                <div className="text-[10px] truncate" style={{ color: 'var(--sem-muted)' }} title={e.detail || e.endpoint}>{[e.detail || e.database || short(e.endpoint), shortWhen(e.whenUtc)].filter(Boolean).join(' · ')}</div>
+                <div className="text-xs font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{historyKindLabel(e)}</div>
+                <div className="text-xs truncate" style={{ color: 'var(--sem-muted)' }} title={e.detail || e.endpoint}>{historySubLine(e)}</div>
               </div>
             </div>
           ))}
@@ -1534,62 +1447,72 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
     );
   }
 
-  // The advanced-auth PREFLIGHT panel (Kane's "what does config look like / how are secrets + key vaults managed?").
-  // It shows what the engine can actually SEE — the detected az login session, or which service-principal inputs are
-  // present on the host (names + presence only, never a value) — so choosing the method previews whether Connect will
-  // work. It states plainly that secrets live in the environment and that Key Vault is not resolved in-app.
+  // The advanced-auth PREFLIGHT panel: what the engine can actually SEE (the detected az login session, or which
+  // service-principal inputs are present on the host, names + presence only, never a value), so choosing the method
+  // previews whether Connect will work. It says plainly that secrets live in the environment and Key Vault is not read.
   function AuthPreflight() {
     const sp = authMode === 'serviceprincipal';
+    const names = prereq?.requirements.map((req) => `${req.label}: ${req.envNames.join(' or ')}`) ?? [];
     return (
-      <div data-testid="hub-auth-preflight" className="rounded-md border p-2.5 text-[10px] leading-4" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 30%, var(--sem-border))', background: 'var(--sem-surface-2)' }}>
-        <div className="flex items-center gap-1.5">
-          <span className="text-[9px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--sem-muted)' }}>{sp ? 'Service identity setup' : 'Command-line sign-in'}</span>
-          {prereqLoading && <span className="text-[9px]" style={{ color: 'var(--sem-muted)' }}>Checking...</span>}
-          {!prereqLoading && prereq && <span className="ml-auto text-[9px] font-semibold" style={{ color: prereq.ready ? 'var(--sem-good)' : 'var(--sem-warn)' }}>{prereq.ready ? 'Ready' : 'Not ready'}</span>}
+      <div data-testid="hub-auth-preflight" className="text-xs border-t pt-3" style={{ borderColor: 'var(--sem-rule)' }}>
+        <div className="flex items-center gap-2">
+          <span className="sem-label">{sp ? 'Service identity setup' : 'Command-line sign-in'}</span>
+          {prereqLoading && <span className="text-xs" style={{ color: 'var(--sem-muted)' }}>Checking...</span>}
+          {!prereqLoading && prereq && <span className={`sem-chip ml-auto ${prereq.ready ? 'sem-chip-ok' : 'sem-chip-warn'}`}>{prereq.ready ? 'Ready' : 'Not ready'}</span>}
         </div>
         {sp ? (
           <>
             {prereq && prereq.requirements.length > 0 ? (
-              <ul className="mt-1.5 space-y-1">
+              <ul className="mt-2 space-y-1">
                 {prereq.requirements.map((req) => (
-                  <li key={req.label} className="flex items-start gap-1.5">
-                    <span aria-hidden style={{ color: req.present ? 'var(--sem-good)' : 'var(--sem-warn)' }}>{req.present ? '●' : '○'}</span>
-                    <span style={{ color: 'var(--sem-fg)' }}>{req.label}<span style={{ color: 'var(--sem-muted)' }}> · {req.present ? 'found' : 'not set'} ({req.label === 'Tenant' && newTenant.trim() ? 'provided in the tenant field above' : req.envNames.join(' or ')})</span></span>
+                  <li key={req.label} className="flex items-start gap-2">
+                    <span className={`note-dot mt-2 ${req.present ? 'note-dot-ok' : 'note-dot-warn'}`} aria-hidden />
+                    <span style={{ color: 'var(--sem-fg)' }}>{req.label}<span style={{ color: 'var(--sem-muted)' }}> · {req.present ? 'found' : 'not set'}{req.label === 'Tenant' && newTenant.trim() ? ', from the tenant field above' : ''}</span></span>
                   </li>
                 ))}
               </ul>
             ) : (
-              <div className="mt-1.5" style={{ color: 'var(--sem-muted)' }}>Set the client id, secret, and tenant as environment variables (AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID, or the FABRIC_ / POWERBI_ aliases) before you connect.</div>
+              <div className="mt-2" style={{ color: 'var(--sem-muted)' }}>Set the client id, secret and tenant before you connect.</div>
             )}
-            <div className="mt-1.5" style={{ color: 'var(--sem-muted)' }}>The variables must be visible to the VS Code process; if you set them after launch, reload the window. Semanticus never stores the secret. <b style={{ color: 'var(--sem-fg)' }}>Direct Key Vault references are not supported</b> here; have your pipeline place the secret in the environment.</div>
+            {/* The variable names are for the person who sets them, so they sit behind a disclosure, not in the copy. */}
+            <details data-testid="hub-auth-names" className="mt-2">
+              <summary className="cursor-pointer select-none" style={{ color: 'var(--sem-muted)' }}>Show the variable names</summary>
+              <div className="mt-1" style={{ color: 'var(--sem-muted)' }}>
+                {names.length > 0 ? names.join('. ') : 'AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, or the FABRIC_ and POWERBI_ aliases'}.
+                {' '}Set them before VS Code starts, or reload the window.
+              </div>
+            </details>
+            <div className="mt-2" style={{ color: 'var(--sem-muted)' }}>Semanticus never stores the secret. <b style={{ color: 'var(--sem-fg)' }}>Key Vault references are not supported here;</b> have your pipeline place the secret in the environment.</div>
           </>
         ) : (
           <>
             {prereq && prereq.cliAccount
-              ? <div className="mt-1.5" style={{ color: 'var(--sem-fg)' }}>Signed in to Azure CLI as {prereq.cliAccount}{prereq.cliTenant ? ` · ${prereq.cliTenant}` : ''}.</div>
-              : <div className="mt-1.5" style={{ color: 'var(--sem-warn)' }}>{prereq?.detail || 'Not signed in to the Azure CLI. Run az login in a terminal, then reload the window.'}</div>}
-            <div className="mt-1.5" style={{ color: 'var(--sem-muted)' }}>Uses your current az login session; nothing is entered or stored here. Power BI can reject Azure CLI tokens on some tenants, where service identity or browser sign-in is more reliable.</div>
+              ? <div className="mt-2" style={{ color: 'var(--sem-fg)' }}>Signed in to Azure CLI as {prereq.cliAccount}{prereq.cliTenant ? ` · ${prereq.cliTenant}` : ''}.</div>
+              : <div className="mt-2 note-line note-warn">{prereq?.detail || 'Not signed in to the Azure CLI. Run az login in a terminal, then reload the window.'}</div>}
+            <div className="mt-2" style={{ color: 'var(--sem-muted)' }}>Uses your current az login session; nothing is entered or stored here. Power BI can reject Azure CLI tokens on some tenants, where service identity or browser sign-in is more reliable.</div>
           </>
         )}
       </div>
     );
   }
 
+  // "Other ways to sign in" and "Paste an address instead" land here: the address for endpoints the pickers cannot
+  // list, the sign-in way, and the service identity setup check.
   function AddView() {
     const advanced = authMode === 'azcli' || authMode === 'serviceprincipal';
     return (
-      <section className="px-5 py-4">
-        <button className={BTN_QUIET} style={{ color: 'var(--sem-accent)' }} onClick={() => setView('open')}>{'‹'} Back to models</button>
-        <h2 className="mt-1 text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Add a published model</h2>
-        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Enter the address of the workspace containing your model. Semanticus remembers it so you can reopen the model without entering the address again.</p>
-        <form className="mt-3 max-w-[560px] rounded-lg border p-3 grid gap-2.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onSubmit={(e) => { e.preventDefault(); void addAndConnect(); }}>
-          <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>XMLA endpoint
-            <input data-testid="hub-endpoint-input" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="powerbi://api.powerbi.com/v1.0/myorg/Workspace" autoComplete="off" className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} />
-            <span className="text-[9px] font-normal" style={{ color: 'var(--sem-muted)' }}>Paste the workspace connection address (XMLA endpoint) from the workspace settings in Power BI or Fabric.</span></label>
-          <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Model name
-            <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="Optional if the workspace has one model" autoComplete="off" className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} /></label>
-          <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Sign-in
-            <select data-testid="hub-authmode-select" value={authMode} onChange={(e) => { const m = e.target.value; setAuthMode(m); if (m !== 'azcli' && m !== 'serviceprincipal') setNewTenant(''); }} className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle}>
+      <section className="hub-page">
+        <div className="flex items-center gap-2"><button className={BTN_QUIET} onClick={() => setView('open')}>{'‹'} Back</button>
+          <h2 className="sem-section-title">Add a model by its address</h2></div>
+        <p className="sem-text-meta">For a model the workspace list cannot show.</p>
+        <form className="sem-card max-w-[560px] grid gap-3" onSubmit={(e) => { e.preventDefault(); void addAndConnect(); }}>
+          <label className="sem-field-label">Workspace address
+            <input data-testid="hub-endpoint-input" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} placeholder="powerbi://api.powerbi.com/v1.0/myorg/Workspace" autoComplete="off" className="sem-field " />
+            <span className="sem-text-meta">Copy it from the workspace settings in Power BI or Fabric.</span></label>
+          <label className="sem-field-label">Model name
+            <input value={database} onChange={(e) => setDatabase(e.target.value)} placeholder="Optional if the workspace has one model" autoComplete="off" className="sem-field " /></label>
+          <label className="sem-field-label">Sign-in
+            <select data-testid="hub-authmode-select" value={authMode} onChange={(e) => { const m = e.target.value; setAuthMode(m); if (m !== 'azcli' && m !== 'serviceprincipal') setNewTenant(''); }} className="sem-field ">
               <option value="interactive">Browser sign-in</option>
               <option value="azcli">Command-line sign-in</option>
               <option value="serviceprincipal">Service identity</option>
@@ -1597,362 +1520,176 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {/* Tenant targeting for the advanced modes: a service principal needs its tenant; az login otherwise silently
               uses its home tenant (the bug sol flagged where the add passed tenantId=null). */}
           {advanced && (
-            <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>{authMode === 'serviceprincipal' ? 'Tenant' : 'Tenant (optional)'}
-              <input data-testid="hub-tenant-input" value={newTenant} onChange={(e) => setNewTenant(e.target.value)} placeholder="Tenant ID or domain (e.g. contoso.com)" autoComplete="off" className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} />
-              <span className="text-[9px] font-normal" style={{ color: 'var(--sem-muted)' }}>{authMode === 'serviceprincipal' ? 'The tenant the service principal belongs to (or set AZURE_TENANT_ID).' : 'Leave blank to use your az login home tenant, or name the tenant this model lives in.'}</span></label>
+            <label className="sem-field-label">{authMode === 'serviceprincipal' ? 'Tenant' : 'Tenant (optional)'}
+              <input data-testid="hub-tenant-input" value={newTenant} onChange={(e) => setNewTenant(e.target.value)} placeholder="Tenant ID or domain (e.g. contoso.com)" autoComplete="off" className="sem-field " />
+              <span className="sem-text-meta">{authMode === 'serviceprincipal' ? 'Your organisation\'s tenant.' : 'Leave blank to use your az login home tenant, or name the tenant this model lives in.'}</span></label>
           )}
-          <label className="grid gap-1 text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Environment
-            <select value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="h-8 rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle}>
+          <label className="sem-field-label">Environment
+            <select value={newLabel} onChange={(e) => setNewLabel(e.target.value)} className="sem-field ">
               {ENV_OPTIONS.filter((o) => o.value !== 'local').map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
-            <span className="text-[9px] font-normal" style={{ color: 'var(--sem-muted)' }}>Environment labels control your assistant's permissions. Only a person can change them.</span></label>
+            <span className="sem-text-meta">Sets what your assistant may do on this model.</span></label>
           {advanced && AuthPreflight()}
-          <div className="flex justify-end gap-2 border-t pt-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-            <button type="button" className={BTN} onClick={() => setView('open')} style={inputStyle}>Cancel</button>
-            <button type="submit" className={BTN} disabled={!endpoint.trim() || busyId != null} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Connect and remember</button>
+          <div className="flex justify-end gap-2 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
+            <button type="button" className={BTN} onClick={() => setView('open')}>Cancel</button>
+            <button type="submit" className={BTN_PRIMARY} disabled={!endpoint.trim() || busy}>Connect and remember</button>
           </div>
         </form>
       </section>
     );
   }
 
+  // Work on a local copy keeps its own short form: where tests and queries run, where it publishes, and the folder.
   function WorkView() {
-    const src = work?.source || selected;
+    const src = work?.source;
     return (
-      <section className="px-5 py-4">
-        <button className={BTN_QUIET} style={{ color: 'var(--sem-accent)' }} onClick={() => { setWork(null); setView('open'); }}>{'‹'} Back to models</button>
-        <h2 className="mt-1 text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>Work locally from {src ? nameOf(src) : 'this model'}</h2>
-        <p className="mt-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Edit the model files on this computer. To run queries and tests, also choose a live model with data.</p>
+      <section className="hub-page">
+        <div className="flex items-center gap-2"><button className={BTN_QUIET} onClick={() => { setWork(null); setView('open'); }}>{'‹'} Back</button>
+          <h2 className="sem-section-title">Work on a local copy of {src ? nameOf(src) : 'this model'}</h2></div>
+        <p className="sem-text-meta">Edit the model files on this computer. To run tests and queries, also choose a running model with data.</p>
         {work && (
-          <div className="mt-3 max-w-[640px] rounded-lg border p-3" style={{ borderColor: 'var(--sem-accent)', background: 'var(--sem-surface)' }}>
+          <div className="sem-card max-w-[640px]">
             <div className="grid grid-cols-2 gap-3 max-[600px]:grid-cols-1">
-              <label className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Tests and queries
-                <select value={work.queryId} onChange={(e) => updateWork(e.target.value, work.publishId)} className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px]" style={inputStyle}>
-                  {records.filter((r) => r.kind !== 'file').map((r) => <option key={r.id} value={r.id}>{nameOf(r)} · {r.kind === 'localDesktop' ? 'local running' : 'published'}</option>)}
+              <label className="sem-field-label">Tests and queries
+                <select value={work.queryId} onChange={(e) => updateWork(e.target.value, work.publishId)} className="sem-field w-full ">
+                  {records.filter((r) => !r.testsRefusal).map((r) => <option key={r.id} value={r.id}>{nameOf(r)} · {kindWord(r)}</option>)}
                 </select>
               </label>
-              <label className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Final publish destination
-                <select value={work.publishId} onChange={(e) => updateWork(work.queryId, e.target.value)} className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px]" style={inputStyle}>
+              <label className="sem-field-label">Publish to
+                <select value={work.publishId} onChange={(e) => updateWork(work.queryId, e.target.value)} className="sem-field w-full ">
                   <option value="">Choose later</option>
-                  {xmlaRecords.map((r) => <option key={r.id} value={r.id}>{nameOf(r)}</option>)}
+                  {records.filter((r) => !r.publishRefusal && r.kind === 'xmla').map((r) => <option key={r.id} value={r.id}>{nameOf(r)}</option>)}
                 </select>
               </label>
             </div>
             {work.plan ? <>
-              <div className="mt-3 rounded-md p-2.5 text-[11px] leading-5" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)' }}>{work.plan.summary}</div>
-              <div className="mt-2 text-[10px] truncate" style={{ color: 'var(--sem-muted)' }} title={work.plan.targetFolder}><b style={{ color: 'var(--sem-fg)' }}>Local folder:</b> {work.plan.targetFolder}</div>
-              <ul className="mt-2 space-y-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>{work.plan.benefits?.map((b) => <li key={b}>{'✓'} {b}</li>)}</ul>
-              {work.plan.conflicts?.map((c) => <div key={c} className="mt-2 text-[11px]" style={{ color: 'var(--sem-bad)' }}>{c}</div>)}
-              {work.plan.error && <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-bad)' }}>{work.plan.error}</div>}
-              {work.plan.opened && <div className="mt-2 text-[11px]" style={{ color: 'var(--sem-good)' }}>Local working copy opened. {work.plan.queryConnected ? 'The selected test model is connected.' : 'Connect a test model when ready.'}</div>}
-              {!work.plan.opened && <div className="flex justify-end gap-2 mt-3"><button className={BTN} onClick={() => { setWork(null); setView('open'); }} style={inputStyle}>Cancel</button>
-                <button className={BTN} disabled={!work.plan.canCommit || busyId != null} onClick={() => void confirmWork()} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{busyId ? 'Preparing...' : work.plan.action === 'open' ? 'Open local copy' : 'Create local copy'}</button></div>}
-            </> : <div className="mt-3 text-[11px]" style={{ color: 'var(--sem-muted)' }}>Updating preview...</div>}
+              <div className="mt-2 text-xs truncate" style={{ color: 'var(--sem-muted)' }} title={work.plan.targetFolder}><b style={{ color: 'var(--sem-fg)' }}>Local folder:</b> {work.plan.targetFolder}</div>
+              {work.plan.conflicts?.map((c) => <div key={c} className="mt-2 text-xs note-line note-bad">{c}</div>)}
+              {work.plan.error && <div className="mt-2 text-xs note-line note-bad">{work.plan.error}</div>}
+              {work.plan.opened && <div className="mt-2 text-xs note-line note-ok">Local copy opened. {work.plan.queryConnected ? 'The chosen model answers tests and queries.' : 'Choose a model for tests and queries when ready.'}</div>}
+              {!work.plan.opened && <div className="flex justify-end gap-2 mt-3"><button className={BTN} onClick={() => { setWork(null); setView('open'); }}>Cancel</button>
+                <button className={BTN_PRIMARY} disabled={!work.plan.canCommit || busy} onClick={() => void confirmWork()}>{busyId ? 'Preparing...' : work.plan.action === 'open' ? 'Open local copy' : 'Create local copy'}</button></div>}
+            </> : <div className="mt-3 text-xs" style={{ color: 'var(--sem-muted)' }}>Updating preview...</div>}
           </div>
         )}
       </section>
     );
   }
 
-  // ================================================================================================================
-  // The fourth role's own section: the saved SQL sources, their Add / Edit form, and the four states.
-  // Called as a function, never mounted as a JSX element, so typing in the form survives a parent re-render
-  // (D-004: an inner component is a NEW component type each keystroke, which tore the inputs down).
-  // ================================================================================================================
-  function SqlSourcesView() {
-    const form = sqlForm;
-    const modeLabel = (r: SqlSourceRecord): string => {
-      const chosen = SIGN_IN_MODES.find((m) => m.value === defaultSignInMode(r));
-      return chosen ? chosen.label : 'Sign in in a browser';
-    };
-    return (
-      <section className="px-5 py-4">
-        <div className="flex items-start gap-3 mb-3">
-          <div><h2 className="text-[17px] leading-6 font-semibold" style={{ color: 'var(--sem-fg)' }}>{SQL_SOURCE_COPY.title}</h2>
-            <p className="mt-0.5 max-w-[620px] text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.lede}</p></div>
-          <button className={`${BTN} ml-auto`} data-testid="hub-sql-add" disabled={sqlBusy != null} onClick={() => openSqlForm()}
-            style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Add SQL source</button>
-        </div>
-
-        {/* The Add / Edit form. One form for both, because the fields and the rules are identical; only the title,
-            the primary verb and whether an id travels differ. */}
-        {form && (
-          <div className="mb-3 rounded-lg border p-3" data-testid="hub-sql-form" style={{ borderColor: 'color-mix(in srgb, var(--sem-accent) 45%, var(--sem-border))', background: 'var(--sem-surface)' }}>
-            <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{form.id ? SQL_SOURCE_COPY.editTitle : SQL_SOURCE_COPY.newTitle}</div>
-            <div className="mt-2 grid grid-cols-3 gap-2 max-[760px]:grid-cols-1">
-              <label className="block text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.nameLabel}
-                <input data-testid="hub-sql-name" value={form.name} autoFocus onChange={(e) => { setSqlForm({ ...form, name: e.target.value }); setSqlFormError(null); }}
-                  placeholder={SQL_SOURCE_COPY.namePlaceholder} autoComplete="off" className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px] font-normal" style={inputStyle} /></label>
-              <label className="block text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.serverLabel}
-                <input data-testid="hub-sql-server" value={form.server} onChange={(e) => { setSqlForm({ ...form, server: e.target.value }); setSqlFormError(null); }}
-                  placeholder={SQL_SOURCE_COPY.serverPlaceholder} autoComplete="off" className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px] font-normal" style={inputStyle} /></label>
-              <label className="block text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.databaseLabel}
-                <input data-testid="hub-sql-database" value={form.database} onChange={(e) => { setSqlForm({ ...form, database: e.target.value }); setSqlFormError(null); }}
-                  placeholder={SQL_SOURCE_COPY.databasePlaceholder} autoComplete="off" className="mt-1 h-8 w-full rounded-[5px] border px-2 text-[11px] font-normal" style={inputStyle} /></label>
-            </div>
-            {/* The ONE shared sign-in control, the same one the Data agent page and Promote use. A SQL source picks a
-                way to sign in exactly the way a model connection does, so there is nothing new here to learn. */}
-            <div className="mt-2.5">
-              <AccountPicker mode={form.authMode} onMode={(m) => setSqlForm({ ...form, authMode: m })}
-                tenantId={form.tenantId} onTenantId={(t) => setSqlForm({ ...form, tenantId: t })}
-                tenantLabel="where the database lives (optional)" hint={SQL_SOURCE_COPY.signInHint} />
-            </div>
-            {/* Errors in plain words, in the form, never silent: the form's own refusal and the engine's own words
-                land in the SAME place, so a person never has to look in two spots for the reason. */}
-            {sqlFormError && <div data-testid="hub-sql-form-error" className="mt-2 rounded-[5px] border px-2 py-1.5 text-[11px] leading-5"
-              style={{ borderColor: 'var(--sem-bad)', color: 'var(--sem-bad)' }}>{sqlFormError}</div>}
-            {sqlTest && <div data-testid="hub-sql-form-test" className="mt-2 rounded-[5px] border px-2 py-1.5 text-[11px] leading-5"
-              style={{ borderColor: sqlTest.ok ? 'var(--sem-good)' : 'var(--sem-bad)', color: sqlTest.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{sqlTest.note}</div>}
-            <p className="mt-2 text-[9px] leading-4" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.testExplains}</p>
-            <div className="mt-2.5 flex justify-end gap-2">
-              <button className={BTN} onClick={closeSqlForm} style={inputStyle}>Cancel</button>
-              {/* An unsaved record cannot be probed, so this saves first and says so on the button rather than
-                  pretending the typed values were tested where they stand. */}
-              <button className={BTN} data-testid="hub-sql-form-test-btn" disabled={sqlBusy != null} onClick={() => void saveAndTestSqlSource()} style={inputStyle}>
-                {sqlBusy === 'test' ? SQL_SOURCE_COPY.testing : 'Save and test connection'}</button>
-              <button className={BTN} data-testid="hub-sql-save" disabled={sqlBusy != null} onClick={() => void saveSqlSource()}
-                style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>
-                {form.id ? SQL_SOURCE_COPY.saveChanges : SQL_SOURCE_COPY.save}</button>
-            </div>
-          </div>
-        )}
-
-        {/* A refused Remove gets its own block, not a toast: it carries a list a person has to act on. */}
-        {sqlRefused && sqlRemoving && (
-          <div className="mb-3 rounded-lg border p-3" data-testid="hub-sql-refused" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
-            <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{sqlRemoving.name} was not removed</div>
-            <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--sem-warn)' }}>{SQL_SOURCE_COPY.refusedLead}</div>
-            {(sqlRefused.checksUsing ?? 0) > 0 && (
-              <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>
-                <b style={{ color: 'var(--sem-fg)' }}>{SQL_SOURCE_COPY.refusedChecks}</b> {sqlSourceUsedByNames(sqlRefused.checkTitles ?? [], sqlRefused.checksUsing ?? 0)}</div>
-            )}
-            {(sqlRefused.tableMappingsUsing ?? 0) > 0 && (
-              <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>
-                <b style={{ color: 'var(--sem-fg)' }}>{SQL_SOURCE_COPY.refusedTables}</b> {sqlSourceUsedByNames(sqlRefused.mappedTables ?? [], sqlRefused.tableMappingsUsing ?? 0)}</div>
-            )}
-            {/* Nothing was counted and nothing was deleted: the engine said why in its own words, so show those. */}
-            {(sqlRefused.checksUsing ?? 0) === 0 && (sqlRefused.tableMappingsUsing ?? 0) === 0 && sqlRefused.note &&
-              <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>{sqlRefused.note}</div>}
-            <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--sem-fg)' }}>{SQL_SOURCE_COPY.refusedNext}</div>
-            <div className="mt-2.5 flex justify-end"><button className={BTN} data-testid="hub-sql-refused-close" onClick={() => { setSqlRefused(null); setSqlRemoving(null); }} style={inputStyle}>Close</button></div>
-          </div>
-        )}
-
-        {/* The confirmation an UNUSED source still gets: removing it is quick to do and slow to undo. */}
-        {sqlRemoving && !sqlRefused && (
-          <div className="mb-3 rounded-lg border p-3" data-testid="hub-sql-remove-confirm" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
-            <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Remove {sqlRemoving.name}?</div>
-            <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.removeConfirm}</div>
-            <div className="mt-2.5 flex justify-end gap-2">
-              <button className={BTN} onClick={() => setSqlRemoving(null)} style={inputStyle}>Cancel</button>
-              <button className={BTN} data-testid="hub-sql-remove-confirm-btn" disabled={sqlBusy != null} onClick={() => void removeSqlSource(sqlRemoving)}
-                style={{ background: 'var(--sem-bad)', borderColor: 'var(--sem-bad)', color: 'var(--sem-on-accent)' }}>Remove</button>
-            </div>
-          </div>
-        )}
-
-        <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-          {sqlLoading && <div data-testid="hub-sql-loading" className="px-3 py-4 text-[11px]" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.loading}</div>}
-          {/* A list that could not be read says so. An empty list and a broken list are not the same thing, and
-              showing the empty state for a failure would invite someone to type a source they already have. */}
-          {!sqlLoading && sqlError && <div data-testid="hub-sql-error" className="px-3 py-3 text-[11px] leading-5" style={{ color: 'var(--sem-bad)' }}>
-            {SQL_SOURCE_COPY.loadFailed} {sqlError}</div>}
-          {!sqlLoading && !sqlError && sqlSources.length === 0 && (
-            <div data-testid="hub-sql-empty" className="px-3 py-4 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.empty}</div>
-          )}
-          {!sqlLoading && !sqlError && sqlSources.map((r) => {
-            const failed = r.lastTestOk === false;
-            const showing = sqlOpenId === r.id && sqlTest && sqlTest.id === r.id;
-            return (
-              <div key={r.id} data-testid="hub-sql-row" className="border-b px-3 py-2.5 last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
-                <div className="flex items-center gap-2">
-                  <span className="truncate text-[12px] font-semibold" style={{ color: 'var(--sem-fg)' }}>{r.name}</span>
-                  <span className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] leading-none font-semibold uppercase tracking-[0.05em]"
-                    style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>SQL source</span>
-                  {/* A source whose last test failed says so in the row, not only when you open it. */}
-                  {failed && <span data-testid="hub-sql-failed" className="inline-flex h-[18px] items-center rounded-full border px-1.5 text-[8px] leading-none font-semibold uppercase tracking-[0.05em]"
-                    style={{ background: 'color-mix(in srgb, var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)', borderColor: 'color-mix(in srgb, var(--sem-bad) 40%, transparent)' }}>last test failed</span>}
-                  <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <button className={BTN_COMPACT} data-testid="hub-sql-test" disabled={sqlBusy != null} style={inputStyle}
-                      onClick={() => { setSqlOpenId(r.id); void testSqlSource(r); }}>{sqlBusy === r.id ? SQL_SOURCE_COPY.testing : 'Test connection'}</button>
-                    <button className={BTN_COMPACT} data-testid="hub-sql-edit" disabled={sqlBusy != null} style={inputStyle} onClick={() => openSqlForm(r)}>Edit</button>
-                    <button className={BTN_COMPACT} data-testid="hub-sql-remove" disabled={sqlBusy != null} style={inputStyle}
-                      onClick={() => { setSqlRefused(null); setSqlRemoving(r); }}>Remove</button>
-                  </div>
-                </div>
-                <div className="mt-1.5 grid grid-cols-[92px_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>
-                  <span>Server</span><b className="truncate font-semibold" style={{ color: 'var(--sem-fg)' }} title={r.server}>{r.server}</b>
-                  <span>Database</span><b className="truncate font-semibold" style={{ color: 'var(--sem-fg)' }}>{r.database}</b>
-                  <span>Sign in as</span><b className="truncate font-semibold" style={{ color: 'var(--sem-fg)' }}>{modeLabel(r)}{r.tenantId ? ` · ${r.tenantId}` : ''}</b>
-                  <span>Last test</span><b className="truncate font-semibold" style={{ color: failed ? 'var(--sem-bad)' : r.lastTestOk ? 'var(--sem-good)' : 'var(--sem-muted)' }}>
-                    {sqlSourceTestLine(r.lastTestOk, shortWhen(r.lastTestedUtc))}</b>
-                  <span>Used by</span><b className="truncate font-semibold" style={{ color: 'var(--sem-fg)' }}>{sqlSourceUsageLine(checksUsing(r.id), mapsUsing(r.id), sqlUsage !== null)}</b>
-                </div>
-                {/* The result of THIS row's Test connection, in the row that was tested. */}
-                {showing && <div data-testid="hub-sql-test-result" className="mt-1.5 rounded-[5px] border px-2 py-1 text-[10px] leading-4"
-                  style={{ borderColor: sqlTest.ok ? 'var(--sem-good)' : 'var(--sem-bad)', color: sqlTest.ok ? 'var(--sem-good)' : 'var(--sem-bad)' }}>{sqlTest.note}</div>}
-              </div>
-            );
-          })}
-        </div>
-        <p className="mt-3 text-[9px] leading-5" style={{ color: 'var(--sem-muted)' }}>{SQL_SOURCE_COPY.footnote}</p>
-      </section>
-    );
-  }
-
-  const navBtn = (v: HubView, glyph: string, label: string) => (
-    <button data-hubnav={v} onClick={() => setView(v)} className="flex h-[30px] w-full items-center gap-2 rounded-[5px] px-2 text-left text-[11px] leading-none" style={{ background: view === v ? 'var(--sem-accent-soft)' : 'transparent', color: view === v ? 'var(--sem-fg)' : 'var(--sem-muted)', fontWeight: view === v ? 600 : 400 }}>
-      <span className="w-3.5 text-center text-[12px]" style={{ color: view === v ? 'var(--sem-accent)' : 'var(--sem-muted)' }} aria-hidden>{glyph}</span><span>{label}</span>
-    </button>
-  );
-
+  // The frame: the header (title, Jobs, the one account button, close), then the page. It sits on the
+  // 12-column grid (One Visual Language): every row spans all twelve columns.
   const body = (
-    <div ref={panelRef} tabIndex={-1} className="flex h-full min-h-0 w-full flex-col outline-none" style={{ background: 'var(--sem-bg)', color: 'var(--sem-fg)' }}>
-      <header className="flex min-h-[52px] items-center gap-2.5 border-b px-4 py-2" style={{ borderColor: 'var(--sem-border)' }}>
-        <div className="min-w-0"><h1 className="text-[15px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Connections</h1>
-          <p className="text-[10px] leading-4" style={{ color: 'var(--sem-muted)' }}>Open a model, choose where tests run and manage your saved accounts.</p></div>
-        <button className="ml-auto flex h-8 items-center gap-2 rounded-[5px] border px-1.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} onClick={() => setView('accounts')} title="Manage the current account">
-          <span className="flex h-5 w-5 items-center justify-center rounded-full text-[9px] font-bold" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} aria-hidden>{initials(signedInAccount)}</span>
-          <span className="min-w-0 text-left"><span className="block text-[10px] font-semibold truncate max-w-[140px]" style={{ color: 'var(--sem-fg)' }}>{signedInAccount || 'Account unknown'}</span>
-            <span className="block text-[9px] truncate max-w-[140px]" style={{ color: 'var(--sem-muted)' }}>{signedInTenant || 'Manage accounts'}</span></span>
-        </button>
-        <button onClick={onClose} className="inline-flex h-7 w-7 items-center justify-center rounded text-[18px] leading-none" style={{ color: 'var(--sem-muted)' }} aria-label="Close Connections">{'×'}</button>
+    <div ref={panelRef} tabIndex={-1} className="hub-frame" style={{ background: 'var(--sem-bg)', color: 'var(--sem-fg)' }}>
+      <header className="hub-head">
+        <h1 className="sem-page-title">Connections</h1>
+        {/* Which model does which job. It replaces the Now strip: each row names its own job and the bar at the foot of
+            Studio names them too. The id is the strip's old one, so the screenshot drivers still find it. */}
+        <button type="button" className={`${BTN_QUIET} ml-auto`} data-testid="hub-now-change" aria-expanded={panel === 'change'} disabled={busy}
+          onClick={() => { setMenuId(null); setJobPick(null); setView('open'); setPanel(panel === 'change' ? 'none' : 'change'); }}>Jobs</button>
+        <div className="hub-acct">
+          <button className="sem-btn max-w-[260px]" data-testid="hub-account-button" aria-haspopup="dialog" aria-expanded={panel === 'account'}
+            onClick={() => { setMenuId(null); setPanel(panel === 'account' ? 'none' : 'account'); }} title="Your accounts">
+            {signedInAccount && <span className="note-dot note-dot-ok" aria-hidden />}
+            <span className="min-w-0 truncate">{signedInAccount || 'Sign in'}</span><span aria-hidden>{'▾'}</span>
+          </button>
+          {panel === 'account' && AccountMenu()}
+        </div>
+        <button onClick={onClose} className="sem-btn sem-btn-quiet hub-close" aria-label="Close Connections">{'×'}</button>
       </header>
-
-      <div className="grid min-h-0 flex-1" style={{ gridTemplateColumns: '160px minmax(0, 1fr)' }}>
-        <nav className="border-r p-2" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }} aria-label="Connections sections">
-          <div className="flex h-5 items-center px-2 text-[9px] font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--sem-muted)' }}>Models</div>
-          {navBtn('open', '▣', 'Open a model')}
-          {navBtn('setup', '⑂', 'Current setup')}
-          <div className="mx-1.5 my-2 border-t" style={{ borderColor: 'var(--sem-border)' }} />
-          {/* The fourth role. It sits in its own group because a SQL source is not a model: it never answers DAX,
-              it answers the independent number a check compares against. */}
-          <div className="flex h-5 items-center px-2 text-[9px] font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--sem-muted)' }}>Data</div>
-          {navBtn('sqlsources', '▤', 'SQL sources')}
-          <div className="mx-1.5 my-2 border-t" style={{ borderColor: 'var(--sem-border)' }} />
-          <div className="flex h-5 items-center px-2 text-[9px] font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--sem-muted)' }}>Identity</div>
-          {navBtn('accounts', '○', 'Accounts')}
-          {navBtn('history', '↺', 'History')}
-          <div className="mx-1 mt-2.5 rounded-md border p-2" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
-            <div className="text-[9px] font-semibold uppercase tracking-[0.06em]" style={{ color: 'var(--sem-muted)' }}>Open now</div>
-            <div className="mt-1 text-[10px] font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{roleValue(editing, 'No model open')}</div>
-            {editing?.source && <div className="text-[9px] leading-4 break-all" style={{ color: 'var(--sem-muted)' }} title={endpointText(editing.source)} data-testid="hub-open-now-path">{endpointText(editing.source)}</div>}
-            <div className="text-[9px] leading-4" style={{ color: 'var(--sem-muted)' }}>Editing, tests, and publishing can point to different models.</div>
-          </div>
-        </nav>
-
-        <div className="min-h-0 overflow-auto" style={{ background: 'var(--sem-bg)' }}>
+      <div className="hub-main">
           {openConfirm && pendingOpen && (
-            <div className="m-4 rounded-lg border p-3" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }} data-testid="hub-open-unsaved">
-              <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>This model has unsaved changes.</div>
-              <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--sem-warn)' }}>Opening another model throws those changes away unless you save first.</div>
+            <div className="sem-card mb-3" data-testid="hub-open-unsaved">
+              <div className="sem-card-title">This model has unsaved changes.</div>
+              <div className="mt-2 text-xs leading-5 note-line note-warn">Opening another model throws those changes away unless you save first.</div>
               <div className="mt-3 flex justify-end gap-2">
-                <button className={BTN} onClick={() => { setOpenConfirm(false); setPendingOpen(null); }} style={inputStyle}>Cancel</button>
-                <button className={BTN} data-testid="hub-open-discard" disabled={busyId != null} onClick={() => { const p = pendingOpen; if (p === 'path') void openTypedLocal(); else if (p) void openModel(p); }} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Discard</button>
+                <button className={BTN} onClick={() => { setOpenConfirm(false); setPendingOpen(null); }}>Cancel</button>
+                <button className={BTN_PRIMARY} data-testid="hub-open-discard" disabled={busy} onClick={() => { const p = pendingOpen; if (p) void openModel(p); }}>Discard</button>
               </div>
             </div>
           )}
           {createOpen && (
-            <div className="m-4 rounded-lg border p-3" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
-              <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Create a new model</div>
-              <label className="mt-2 block text-[10px] font-semibold" style={{ color: 'var(--sem-muted)' }}>Model name
-                <input data-testid="hub-create-name" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Sales analytics" autoFocus className="mt-1 h-8 w-full rounded-[5px] border px-2.5 text-[11px] font-normal" style={inputStyle} />
+            <div className="sem-card mb-3">
+              <div className="sem-card-title">New blank model</div>
+              <label className="sem-field-label mt-2">Model name
+                <input data-testid="hub-create-name" value={createName} onChange={(e) => setCreateName(e.target.value)} placeholder="Sales analytics" autoFocus className="sem-field w-full" />
               </label>
-              {createDirty && <div className="mt-2 text-[11px] leading-5" style={{ color: 'var(--sem-warn)' }}>Creating {createName.trim() || 'a new model'} replaces the open model, which has unsaved changes.</div>}
+              {createDirty && <div className="mt-2 text-xs leading-5 note-line note-warn">Creating {createName.trim() || 'a new model'} replaces the open model, which has unsaved changes.</div>}
               <div className="mt-3 flex justify-end gap-2">
-                <button className={BTN} onClick={() => { setCreateOpen(false); setCreateConfirm(false); }} style={inputStyle}>Cancel</button>
-                <button className={BTN} data-testid="hub-create-submit" disabled={!createName.trim() || busyId != null} onClick={() => void submitCreate()} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{createDirty ? 'Create and replace open model' : 'Create model'}</button>
+                <button className={BTN} onClick={() => { setCreateOpen(false); setCreateConfirm(false); }}>Cancel</button>
+                <button className={BTN_PRIMARY} data-testid="hub-create-submit" disabled={!createName.trim() || busy} onClick={() => void submitCreate()}>{createDirty ? 'Create and replace open model' : 'Create model'}</button>
+              </div>
+            </div>
+          )}
+          {startSqlOpen && (
+            <div className="sem-card mb-3 hub-start-sql" data-testid="hub-start-sql">
+              <Suspense fallback={<div className="sem-text-meta" role="status">Opening the form...</div>}>
+                <StartFromSqlForm pro={pro} onStarted={() => void startedFromSql()}
+                  onAddOnConnections={() => { setStartSqlOpen(false); goTo('sqlsources'); }} />
+              </Suspense>
+              <div className="mt-3 flex justify-end">
+                <button className={BTN} data-testid="hub-start-sql-cancel" onClick={() => setStartSqlOpen(false)}>Cancel</button>
               </div>
             </div>
           )}
           {switchTarget && <AccountDialog r={switchTarget} />}
-          {pendingDefault && (
-            <div className="m-4 rounded-lg border p-3" style={{ borderColor: 'var(--sem-warn)', background: 'var(--sem-surface)' }}>
-              <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-fg)' }}>Make {pendingDefault.username} the default account?</div>
-              <div className="mt-1 text-[11px] leading-5" style={{ color: 'var(--sem-muted)' }}>{profileDefaultBlast(pendingDefault)} Every switch is recorded in the connection history.</div>
-              <div className="mt-3 flex justify-end gap-2">
-                <button className={BTN} onClick={() => setPendingDefault(null)} style={inputStyle}>Cancel</button>
-                <button className={BTN} data-testid="hub-make-default-confirm" disabled={busyId != null} onClick={() => void makeDefaultFor(pendingDefault)} style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>Make default</button>
-              </div>
-            </div>
-          )}
-          {view === 'open' && OpenView()}
-          {view === 'setup' && SetupView()}
-          {view === 'accounts' && AccountsView()}
+          {!switchTarget && panel !== 'account' && defaultConfirm}
+          {view === 'open' && panel === 'change' && JobsPanel()}
+          {view === 'open' && panel !== 'change' && ListView()}
           {view === 'history' && HistoryView()}
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
-          {view === 'sqlsources' && SqlSourcesView()}
-        </div>
+          {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
+          {view === 'workspace' && <WorkspacePicker account={signedInAccount} onBack={() => setView('open')}
+            onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
-
-      <footer className="flex items-center gap-2 border-t px-4 py-1 text-[9px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)', color: 'var(--sem-muted)' }}>
-        <span aria-hidden style={{ color: 'var(--sem-accent)' }}>{'◇'}</span>
-        <span>Connections and sign-in history are stored on this device. Environment labels also protect your assistant's actions.</span>
-        <button className={`${BTN_QUIET} ml-auto`} style={{ color: 'var(--sem-accent)' }} onClick={() => openLocalModel()}>Open local file or project</button>
-        <span className="text-[9px]">Existing files remain user-owned, including files already in source control.</span>
-      </footer>
-      {error && !switchTarget && <div className="absolute bottom-14 left-4 right-4 rounded-md border px-3 py-2 text-[11px]" style={{ background: 'var(--sem-bg)', borderColor: 'var(--sem-bad)', color: 'var(--sem-bad)' }}>{error}</div>}
+      {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}
     </div>
   );
 
   // ONE shared floating frame for BOTH doors (P1). The hub is a centered floating dialog whether it overlays Studio or
   // is hosted full-page in the standalone panel; only the close callback differs (the caller wires overlay-close vs
-  // panel-dispose). The backdrop dims + blurs; a click on it, or Escape, dismisses. In the standalone panel the area
-  // behind the backdrop is just the empty editor-tab background, which is expected.
+  // panel-dispose). The backdrop dims + blurs; a click on it, or Escape, dismisses. The frame is sized from the window
+  // (the space rule, 27 September 2026): it was a fixed 1130 x 790 at every size, so thirty saved models scrolled
+  // inside it on a 2000 x 1200 screen with half the screen around it.
   return (
     <div className="fixed z-[80] grid place-items-center" role="dialog" aria-modal="true" aria-label="Connections"
-      style={{ inset: '36px 0 23px', padding: 18, background: 'rgba(8,10,13,.66)', backdropFilter: 'blur(2px)' }}
+      style={{ inset: '36px 0 23px', padding: 'var(--sem-space-4)', background: 'rgba(8,10,13,.66)', backdropFilter: 'blur(2px)' }}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="relative flex flex-col overflow-hidden rounded-[10px] border shadow-2xl"
-        style={{ width: 'min(1130px, 96vw)', height: 'min(790px, calc(100vh - 84px))', minHeight: 'min(590px, calc(100vh - 84px))', borderColor: 'var(--sem-border)' }}>
+      <div className="relative flex flex-col overflow-hidden rounded-(--sem-radius-card) border"
+        style={{ width: 'min(1760px, 92vw)', height: 'calc(100vh - 84px)', borderColor: 'var(--sem-border)' }}>
         {body}
       </div>
     </div>
   );
 }
 
-function MenuItem({ children, onClick, disabled, danger }: { children: ReactNode; onClick: () => void; disabled?: boolean; danger?: boolean }) {
+// One ⋯ menu item. A job this model cannot do stays in the menu, greyed, with the engine's reason under it.
+function MenuItem({ children, onClick, disabled, danger, why }: { children: ReactNode; onClick: () => void; disabled?: boolean; danger?: boolean; why?: string | null }) {
   return (
-    <button role="menuitem" disabled={disabled} onClick={onClick} className="flex h-7 w-full items-center px-3 text-left text-[10px] leading-none disabled:opacity-40 hover:bg-[color:var(--sem-surface-2)]"
-      style={{ color: danger ? 'var(--sem-bad)' : 'var(--sem-fg)' }}>{children}</button>
-  );
-}
-
-function QuickCard({ glyph, title, body, onClick }: { glyph: string; title: string; body: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="grid min-h-[50px] grid-cols-[14px_minmax(0,1fr)] grid-rows-[auto_auto] content-center gap-x-2 rounded-md border px-2.5 py-1.5 text-left" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-      <span className="row-span-2 mt-0.5 text-[12px] leading-4" style={{ color: 'var(--sem-muted)' }} aria-hidden>{glyph}</span>
-      <b className="block text-[10px] leading-4" style={{ color: 'var(--sem-fg)' }}>{title}</b>
-      <span className="block text-[9px] leading-[13px]" style={{ color: 'var(--sem-muted)' }}>{body}</span>
-    </button>
-  );
-}
-
-// One opening outcome: the verb as the label, its one-line consequence as VISIBLE microcopy right under it, so the UI
-// explains itself at the decision point (Kane's direct ask). The primary outcome carries the accent.
-function OutcomeButton({ label, micro, onClick, disabled, primary, busy }: { label: string; micro: string; onClick: () => void; disabled?: boolean; primary?: boolean; busy?: boolean }) {
-  return (
-    <button type="button" disabled={disabled || busy} onClick={onClick} data-testid="hub-outcome"
-      className="grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-3 py-1.5 text-left disabled:opacity-50"
-      style={primary
-        ? { background: 'var(--sem-accent-soft)', borderColor: 'color-mix(in srgb, var(--sem-accent) 45%, var(--sem-border))' }
-        : { background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-      <span className="min-w-0">
-        <span className="block text-[11px] font-semibold" style={{ color: primary ? 'var(--sem-accent)' : 'var(--sem-fg)' }}>{label}</span>
-        {/* Progress is VISIBLE (Kane: Query "did nothing"): the same slot shows "Connecting..." while the connect runs. */}
-        <span className="mt-0.5 block text-[9px] leading-[13px]" style={{ color: 'var(--sem-muted)' }}>{busy ? 'Connecting...' : micro}</span>
-      </span>
-      <span aria-hidden className="text-[13px]" style={{ color: 'var(--sem-muted)' }}>{busy ? '⋯' : '›'}</span>
+    <button role="menuitem" disabled={disabled} onClick={onClick} className="hub-menu-item" data-danger={danger ? 'true' : undefined} data-refused={why ? 'true' : undefined}>
+      <span>{children}</span>{why && <em className="hub-job-why">{why}</em>}
     </button>
   );
 }
 
 // Standalone host: main.tsx mounts this (instead of <App/>) when the host page sets window.__semanticusInitialView =
 // 'connections'. The hub fills the dedicated panel (as the same shared floating frame); its close button disposes the
-// panel via the host. An optional initial section lets "Manage Connections" land on Current setup.
+// panel via the host. An optional initial section lets "Manage Connections" land on the Change panel.
 export function ConnectionsStandalone({ initialSection }: { initialSection?: HubView }) {
+  // The Studio page names the model it shows on every request (App.tsx, drafts.ts setDraftModel), and the engine refuses a write from the extension that names none while a model is open
+  // (drafts-sol round 3). This page runs without <App/>, so it names the model its own session read shows, the same way, or the hub's own writes (a SQL source, a label, a publish destination)
+  // would all be refused whenever a model is open.
+  const { session } = useConnection();
+  setPageModelIdentity(session?.sessionId ? session.modelIdentity : undefined);
   // closeConnectionsPanel is a module-level import (stable identity), passed directly so the hub's focus/Escape effect
   // never retriggers on a re-render (a fresh arrow would). The hub disposes the panel via this on close.
-  return <ConnectionsHub open standalone initialView={initialSection} onClose={closeConnectionsPanel} />;
+  //
+  // The permission card is mounted here as well as under App (Astra 4, 2026-09-22). With Studio closed, the hub can
+  // still raise it, and a card mounted only inside App would leave the press moving a store nothing listens to.
+  return (
+    <>
+      <ConsentCard />
+      <ConnectionsHub open standalone initialView={initialSection} onClose={closeConnectionsPanel} />
+    </>
+  );
 }

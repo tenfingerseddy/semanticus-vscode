@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<!-- The screen check's self-test page. It is built ONLY from the shared primitives (.sem-page, .sem-card,
+     .sem-span-N, .sem-inset, .sem-list-row, .sem-chip, .sem-btn, .sem-seg, .sem-field and the text classes), so
+     at ?gap=12 it must score zero in every kind, in all three themes: a page that uses the primitives gets the
+     rules for free. ?gap=13 plants a 13 px gap between the cards and must fail. visual-check.mjs renders both
+     before it scores any real page. Names are Contoso examples. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Screen check self-test</title>
+  <link rel="stylesheet" href="../../../media/studio/studio.css" />
+  <style>main { height: 100vh; overflow: auto; }</style>
+</head>
+<body>
+  <main>
+    <div class="sem-page" id="page">
+      <section class="sem-card sem-span-6 sem-stack">
+        <div class="sem-inline"><h2 class="sem-card-title">Sales</h2><span class="sem-push sem-chip sem-chip-warn">Needs you</span></div>
+        <p class="sem-text-meta">Contoso Retail, <span class="sem-num">12</span> tables</p>
+        <div class="sem-inline">
+          <button class="sem-btn sem-btn-primary" type="button">Run the plan</button>
+          <button class="sem-btn" type="button">See the plan</button>
+          <button class="sem-btn sem-btn-quiet" type="button">Open</button>
+        </div>
+      </section>
+      <section class="sem-card sem-span-6 sem-stack">
+        <div class="sem-inline"><h2 class="sem-card-title">Checks</h2><span class="sem-push sem-chip sem-chip-ok">Passing</span></div>
+        <p class="sem-label">17 of 23 pass</p>
+        <div class="sem-inline">
+          <div class="sem-seg" role="group" aria-label="View"><button class="sem-seg-item" aria-pressed="true" type="button">List</button><button class="sem-seg-item" aria-pressed="false" type="button">Map</button></div>
+          <input class="sem-field" placeholder="Filter by table" aria-label="Filter" />
+        </div>
+      </section>
+      <section class="sem-card sem-card-flush sem-span-12">
+        <div class="sem-card-head"><h2 class="sem-section-title">Next</h2><span class="sem-push sem-text-meta">the top 2 of 17</span></div>
+        <div class="sem-list-row sem-list-row-2"><span class="sem-num">1</span><span>Decide the Sales columns</span><span class="sem-push sem-chip sem-chip-neutral">Your assistant</span></div>
+        <div class="sem-list-row sem-list-row-2"><span class="sem-num">2</span><span>Mark Date as the date table</span><span class="sem-push sem-chip sem-chip-bad">Blocked</span></div>
+      </section>
+      <section class="sem-card sem-span-12 sem-stack">
+        <h2 class="sem-card-title">Why it is on the plan</h2>
+        <div class="sem-inset sem-text-meta">Mark Date as the date table so time intelligence works.</div>
+      </section>
+    </div>
+  </main>
+  <script>
+    const gap = new URLSearchParams(location.search).get('gap');
+    if (gap) document.getElementById('page').style.gap = gap + 'px';
+  </script>
+</body>
+</html>

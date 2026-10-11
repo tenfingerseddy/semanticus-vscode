@@ -279,7 +279,7 @@ namespace Semanticus.Engine
 
         public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human", string[] only = null, string[] sections = null)
         {
-            RequireProFeature();
+            if (persist) GuardOutsideWrite(origin);
             var sw = System.Diagnostics.Stopwatch.StartNew();
             var s = _sessions.Current;
             if (s == null) return new TestSuiteRunResult { Error = "No open model. Use open_model, connect_local or connect_xmla first." };
@@ -301,6 +301,8 @@ namespace Semanticus.Engine
 
             var dir = TestsDirFor(s);
             var loaded = await LoadScopedTestDefinitionsAsync(s);
+            // a run that keeps its record was approved for the tests as they stood: a test added or changed since is a new question
+            if (persist) RequireApprovedBasis(nameof(RunTestSuiteAsync), SuiteBasis(dir), "tests");
             var defs = loaded.Defs;
             var badDefs = loaded.Unreadable;
             var identities = loaded.Identities;
@@ -350,13 +352,16 @@ namespace Semanticus.Engine
             // SOURCE RESOLUTION: the table mappings this model has saved. A mapped table counts against the named SQL
             // source the person chose; an unmapped one still reads the model's own partitions, exactly as before.
             var tableMappings = runTableCounts ? await ScopedTableMappingsAsync(s) : new List<TableSourceMapping>();
+            // An unmapped table reads the model's SQL endpoint next, then the old partition reading (contract 19.3).
+            var tableEndpoint = runTableCounts ? await ModelSqlEndpointResolutionAsync(s) : null;
+            var tablesOnPartitions = TablesOnPartitions(s);   // after the upgrade pass the line above ran
             // ONE model read builds every pure input (relationship endpoints + def bindings).
             var (relInputs, tableInputs, reconPlans, unmappedMeasures, modelName) = await s.ReadAsync(m =>
             {
                 var plans = BindReconcileDefs(m, measureDefs, identities);
                 var unmapped = runMeasures && !selected ? BuildUnmappedMeasureOutcomes(m, plans, measureDefs) : new List<ReconcileOutcome>();
                 return (runRelationships ? BuildRelationshipInputs(m) : new List<RelationshipCheckInput>(),
-                    runTableCounts ? TableRowCountReconciliation.Discover(m, tableMappings).ToList() : new List<TableRowCountInput>(),
+                    runTableCounts ? TableRowCountReconciliation.Discover(m, tableMappings, tableEndpoint, tablesOnPartitions).ToList() : new List<TableRowCountInput>(),
                     plans, unmapped,
                     string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
             });
@@ -398,8 +403,9 @@ namespace Semanticus.Engine
             var outcomes = new List<ReconcileOutcome>(runMeasures ? unmappedMeasures : Enumerable.Empty<ReconcileOutcome>());
             if (runMeasures)
             {
+                var modelEndpointId = reconPlans.Count == 0 ? null : await ModelSqlEndpointIdAsync(s);
                 foreach (var plan in reconPlans)
-                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin));
+                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin, modelEndpointId));
                 foreach (var d in measureDefs.Where(d => d.Enabled && string.Equals(d.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)))
                     outcomes.Add(await RunMeasureValueDefAsync(d, identities, live != null, origin));
             }
@@ -427,8 +433,8 @@ namespace Semanticus.Engine
             // not a second root — demoted to Suspect naming the dependency, BEFORE the analyzer counts roots.
             // (The relationship→measure cascade remains a later refinement.)
             DemoteDependentFailures(outcomes, reconPlans
-                .Where(p => !string.IsNullOrWhiteSpace(p.Request?.MeasureRef))
-                .ToDictionary(p => p.Def.Id, p => (p.Request.MeasureRef, (IReadOnlyList<string>)p.DependsOnBound)));
+                .Where(p => !string.IsNullOrWhiteSpace(p.KeyName))
+                .ToDictionary(p => p.Def.Id, p => (p.KeyName, (IReadOnlyList<string>)p.DependsOnBound)));
 
             // E5: the OPT-IN clear-cache timing pass — only tests that DECLARED a budget are timed-judged, so
             // the Performance category can never activate (and move the grade) by surprise.
@@ -575,7 +581,7 @@ namespace Semanticus.Engine
         /// of the run named by <paramref name="runId"/>. Recording the same run twice keeps one snapshot.</summary>
         public Task<TestRunRecordResult> RecordTestRunAsync(string runId, string origin = "human")
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             TestRunRecordResult No(string note) => new TestRunRecordResult { RunId = runId, Note = note };
             var s = _sessions.Current;
             if (s == null) return Task.FromResult(No("No open model."));
@@ -621,7 +627,6 @@ namespace Semanticus.Engine
         /// row-returning query, because that is the path this uses.</summary>
         public async Task<UnmatchedRowsResult> GetUnmatchedRowsAsync(string relationship, int limit = 200, string origin = "human")
         {
-            RequireProFeature();
             const int HardCap = 200;
             var s = _sessions.Current;
             if (s == null) return new UnmatchedRowsResult { Relationship = relationship, Note = "No open model." };
@@ -690,7 +695,6 @@ namespace Semanticus.Engine
 
         public Task<TestReportResult> ExportTestReportAsync()
         {
-            RequireProFeature();
             var s = _sessions.Current;
             if (s == null)
                 return Task.FromResult(new TestReportResult { Error = "No open model. Use open_model, connect_local or connect_xmla first." });
@@ -714,7 +718,6 @@ namespace Semanticus.Engine
 
         public async Task<TestSuiteInfo> ListTestDefinitionsAsync()
         {
-            RequireProFeature();
             return await ListTestDefinitionsCoreAsync();
         }
 
@@ -735,7 +738,6 @@ namespace Semanticus.Engine
         /// included; probe_measure is the free way to check one number.</summary>
         public async Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin = "human")
         {
-            RequireProFeature();
             var s = _sessions.Current ?? throw new InvalidOperationException("No open model. Use open_model or connect first.");
             if (def == null || string.IsNullOrWhiteSpace(def.Kind))
                 throw new ArgumentException("A try needs a test kind and a title.");
@@ -744,7 +746,7 @@ namespace Semanticus.Engine
             if (string.Equals(def.Kind, TestKinds.MeasureReconcile, StringComparison.OrdinalIgnoreCase))
             {
                 var plans = await s.ReadAsync(m => BindReconcileDefs(m, new List<TestDefinition> { def }, identities));
-                return await RunReconcileDefAsync(plans[0], live, origin);
+                return await RunReconcileDefAsync(plans[0], live, origin, await ModelSqlEndpointIdAsync(s));
             }
             if (string.Equals(def.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase))
                 return await RunMeasureValueDefAsync(def, identities, live, origin);
@@ -760,9 +762,9 @@ namespace Semanticus.Engine
         /// <summary>Upsert a saved definition. The PERSISTED suite is the Pro side of the ratified line (the
         /// ambient suite runs free forever). Ground truth is AI-drafted, HUMAN-ACCEPTED — callers surface the
         /// SQL to the user before saving (the MCP description says so; the UI makes acceptance explicit).</summary>
-        public async Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin = "human")
+        public async Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin = "human", string expectedJson = null)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             var s = _sessions.Current ?? throw new InvalidOperationException("No open model. Use open_model or connect first.");
             var dir = TestsDirFor(s) ?? throw new InvalidOperationException(
                 "This session has no on-disk home. Save the model (save_model) so the .semanticus sidecar exists, then retry.");
@@ -836,25 +838,30 @@ namespace Semanticus.Engine
                 def.AuthoredAgainst = LiveIdentityFor(_live);
                 def.AuthoredAgainstLabel = LiveTargetLabel(_live);
             }
-            var stored = TestSuiteStore.Upsert(dir, def, () => Guid.NewGuid().ToString("N"))
+            // the stored test this save replaces, as it was when the person was asked (a test they rewrote since is theirs)
+            if (GateContext.Ticket?.ContentBasis != null)
+                RequireApprovedBasis(nameof(SaveTestDefinitionAsync), TestDefinitionBasis(dir, def.Id), "test");
+            var stored = TestSuiteStore.Upsert(dir, def, () => Guid.NewGuid().ToString("N"),
+                expectedJson == null ? null : prior => GuardExpectedFields("check", expectedJson, prior))
                 ?? throw new InvalidOperationException("The test could not be written to .semanticus/tests/suite.jsonl.");
             return stored;
         }
 
         public async Task<bool> DeleteTestDefinitionAsync(string id, string origin = "human")
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             var s = _sessions.Current ?? throw new InvalidOperationException("No open model.");
             var scoped = await LoadScopedTestDefinitionsAsync(s);
             if (!scoped.Defs.Any(d => string.Equals(d.Id, id, StringComparison.Ordinal))) return false;
-            return TestSuiteStore.Remove(TestsDirFor(s), id);
+            // checked under the store's own lock: the stored test this removes, as it was when the person was asked (a test they rewrote since is theirs)
+            return TestSuiteStore.Remove(TestsDirFor(s), id, GateContext.Ticket?.ContentBasis == null ? null
+                : stored => Stale(() => RequireApprovedBasis(nameof(DeleteTestDefinitionAsync), TestDefinitionBasisOf(stored), "test")));
         }
 
         /// <summary>Run history, the drift-trend substrate, fingerprint-filtered to the open model. Pro with the
         /// rest of the Tests feature, refused at entry rather than degraded to a note.</summary>
         public Task<TestHistoryInfo> ListTestRunsAsync(int last = 20)
         {
-            RequireProFeature();
             var s = _sessions.Current;
             if (s == null) return Task.FromResult(new TestHistoryInfo { Note = "No open model." });
             var fp = VitalsFingerprintFor(s);
@@ -875,7 +882,6 @@ namespace Semanticus.Engine
         /// recorded before 1.2.0, which kept its totals but no per-check outcomes.</summary>
         public Task<TestRunDetail> GetTestRunAsync(string runId)
         {
-            RequireProFeature();
             var s = _sessions.Current;
             if (s == null) return Task.FromResult(new TestRunDetail { Note = "No open model." });
             if (string.IsNullOrWhiteSpace(runId))
@@ -1077,6 +1083,13 @@ namespace Semanticus.Engine
             public ReconcileRequest Request;   // null = unparseable params (reported, not thrown)
             public bool Missing;               // tag-bound target vanished
             public string BindError;
+            /// <summary>The bound measure's own NAME, taken from the resolved object at bind time. A measure name is unique in a model, so the by-name consumers (the cascade, the
+            /// time-intelligence variants, the timing pass) key on this and never on <see cref="ReconcileRequest.MeasureRef"/>, which now holds the resolved object's full ref
+            /// (a measure literally named 'measure:Revenue' parses as 'Revenue' when its ref is read back as a name; Sol join 11, A5 finding 1). Null when the plan never bound an object.</summary>
+            public string MeasureName;
+            /// <summary>How the run finds the bound measure again: by identity, never by a ref string that is parsed (<see cref="ReconcileBinding"/>). Null for a check bound to nothing.</summary>
+            public ReconcileBinding Binding;
+            public string KeyName => MeasureName ?? Request?.MeasureRef;
             // OTHER bound measures this plan's measure transitively depends on (I3's cross-measure cascade:
             // a Fail whose dependency also failed is demoted to Suspect naming the root). Captured during the
             // one model read; empty when unresolved.
@@ -1107,7 +1120,7 @@ namespace Semanticus.Engine
                     // against a same-named impostor (the FindTableBy terminal-miss discipline).
                     var measure = m.Tables.SelectMany(t => t.Measures).FirstOrDefault(x => x.LineageTag == d.TargetTag);
                     if (measure == null) plan.Missing = true;
-                    else plan.Request.MeasureRef = measure.Name;
+                    else { plan.Request.MeasureRef = ObjectRefs.For(measure); plan.MeasureName = measure.Name; plan.Binding = ReconcileBinding.ForTag(d.TargetTag); }   // the run finds it by its tag: neither its name nor its ref is read back as a name
                 }
                 else if (!string.IsNullOrEmpty(d.TargetIdentity))
                 {
@@ -1116,6 +1129,8 @@ namespace Semanticus.Engine
                     else
                     {
                         plan.Request.MeasureRef = measure.Ref;
+                        plan.MeasureName = measure.MeasureName;
+                        plan.Binding = ReconcileBinding.ForNames(measure.TableName, measure.MeasureName);
                         d.TargetRef = measure.Ref;
                     }
                 }
@@ -1172,8 +1187,8 @@ namespace Semanticus.Engine
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             foreach (var plan in plans)
             {
-                if (plan.Missing || string.IsNullOrWhiteSpace(plan.Request?.MeasureRef)) continue;
-                if (!byName.TryGetValue(plan.Request.MeasureRef, out var baseMeasure)) continue;
+                if (plan.Missing || string.IsNullOrWhiteSpace(plan.KeyName)) continue;
+                if (!byName.TryGetValue(plan.KeyName, out var baseMeasure)) continue;
                 var direct = new List<ReconcileVariantPlan>();
                 foreach (var candidate in measures)
                 {
@@ -1200,16 +1215,16 @@ namespace Semanticus.Engine
         /// dependency read that throws just yields no edges (cascade is a refinement, never a blocker).</summary>
         private static void CaptureBoundDependencies(Model m, List<ReconcilePlan> plans)
         {
-            var bound = plans.Where(p => !p.Missing && !string.IsNullOrWhiteSpace(p.Request?.MeasureRef))
-                .Select(p => p.Request.MeasureRef).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var bound = plans.Where(p => !p.Missing && !string.IsNullOrWhiteSpace(p.KeyName))
+                .Select(p => p.KeyName).ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (bound.Count < 2) return;   // nothing to cascade between
             var byName = m.Tables.SelectMany(t => t.Measures)
                 .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
             foreach (var plan in plans)
             {
-                if (plan.Missing || string.IsNullOrWhiteSpace(plan.Request?.MeasureRef)) continue;
-                if (!byName.TryGetValue(plan.Request.MeasureRef, out var start)) continue;
+                if (plan.Missing || string.IsNullOrWhiteSpace(plan.KeyName)) continue;
+                if (!byName.TryGetValue(plan.KeyName, out var start)) continue;
                 var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { start.Name };
                 var queue = new Queue<Measure>();
                 queue.Enqueue(start);
@@ -1255,7 +1270,7 @@ namespace Semanticus.Engine
             }
         }
 
-        private async Task<ReconcileOutcome> RunReconcileDefAsync(ReconcilePlan plan, bool live, string origin)
+        private async Task<ReconcileOutcome> RunReconcileDefAsync(ReconcilePlan plan, bool live, string origin, string modelEndpointId)
         {
             var o = new ReconcileOutcome
             {
@@ -1283,11 +1298,12 @@ namespace Semanticus.Engine
             }
             if (plan.BindError != null) { o.Verdict = Verdict.NotVerifiable; o.Message = plan.BindError; return o; }
             // ---- SQL SOURCE RESOLUTION (the only place in this file that decides WHERE the ground truth is read) ----
-            // A named SQL source wins over this check's inline server / database / sign-in; no named source means the
-            // inline values, so every definition saved before named sources existed runs unchanged. A source that has
+            // The check's own choice wins (a named source, then its inline server / database / sign-in), so every
+            // definition saved before named sources existed runs unchanged; a check that names nothing reads the
+            // model's SQL endpoint (contract 19.3), and only then the old fallback of the model's own partitions. A source that has
             // been removed is reported HERE, before the live check, so the person is told what to fix rather than told
             // to connect. Everything downstream reads the request's own fields and never learns named sources exist.
-            var sqlSource = SqlSources.Apply(plan.Request);
+            var sqlSource = SqlSources.Apply(plan.Request, EndpointForCheck(_sessions.Current, plan.Def?.Id, modelEndpointId));
             if (sqlSource.Error != null) { o.Verdict = Verdict.NotVerifiable; o.Message = sqlSource.Error; return o; }
             // ---- end SQL source resolution --------------------------------------------------------------------------
             // The settings this run is ABOUT to use, stamped now so a run that cannot execute still records what it
@@ -1297,7 +1313,9 @@ namespace Semanticus.Engine
             o.ToleranceNote = ToleranceSettingText(plan.Request?.ToleranceAbsolute, plan.Request?.ToleranceRelative, plan.Request?.BlankPolicy);
             if (!live) { o.Verdict = Verdict.NotVerifiable; o.Message = "reconciliation needs a live connection. Connect a live model in Connections and re-run"; return o; }
 
-            var r = await ReconcileMeasureAsync(plan.Request, origin);
+            // Resolved ONCE, above: the run executes exactly where it just reported, so a check pinned to the model's
+            // partitions is never handed the model's endpoint on the way to the query.
+            var r = await ReconcileMeasureCoreAsync(plan.Request, origin, sqlSource, plan.Binding);
             o.Dax = r.DaxQuery;
             o.Rows = BuildCompareRows(r.Cells, out var rowsTotal);
             o.RowsTotal = rowsTotal;
@@ -1370,7 +1388,7 @@ namespace Semanticus.Engine
                 else if (!string.IsNullOrEmpty(def.TargetIdentity))
                 {
                     var snap = identities.Resolve(def.TargetIdentity, TestObjectIdentityStore.Capture(m));
-                    if (snap != null) measure = ObjectRefs.Resolve(m, snap.Ref) as Measure;
+                    if (snap != null) measure = ReconcileBinding.ForNames(snap.TableName, snap.MeasureName).Find(m);   // by the recorded names, not by a ref that splits at its first '/'
                 }
                 else
                     measure = ObjectRefs.Resolve(m, def.TargetRef ?? request.MeasureRef) as Measure;
@@ -2035,7 +2053,7 @@ namespace Semanticus.Engine
         /// NotVerifiable rather than selling a warm number as cold. The run's QueryData gate was already answered
         /// for this suite run, so there is no second ask here.</summary>
         private static List<ReconcilePlan> BudgetedPlans(List<ReconcilePlan> plans) => plans
-            .Where(p => !p.Missing && p.BindError == null && !string.IsNullOrWhiteSpace(p.Request?.MeasureRef)
+            .Where(p => !p.Missing && p.BindError == null && !string.IsNullOrWhiteSpace(p.KeyName)
                         && p.Def.BudgetMs.HasValue && p.Def.BudgetMs.Value > 0)
             .ToList();
 
@@ -2048,7 +2066,7 @@ namespace Semanticus.Engine
             // One target per distinct measure; when several tests share a measure the TIGHTEST budget judges it
             // (the strictest declared expectation is the honest bar).
             var byMeasure = budgeted
-                .GroupBy(p => p.Request.MeasureRef.Trim(), StringComparer.OrdinalIgnoreCase)
+                .GroupBy(p => p.KeyName.Trim(), StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
             var policy = new TimingPolicy
             {

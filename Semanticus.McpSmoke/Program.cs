@@ -24,6 +24,8 @@ namespace Semanticus.McpSmoke
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("mcpsmoke");
             var policyRoot = Path.Combine(Path.GetTempPath(), "semanticus-mcpsmoke-policy-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             var realApprovalPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".semanticus", "agent-approvals.json");
             var realApprovalBefore = ReadSnapshot(realApprovalPath);
@@ -317,6 +319,21 @@ namespace Semanticus.McpSmoke
                 Check("MCP validate_dax: a balanced expr over a real table+column is Valid with no diagnostics",
                     okRef.Valid && okRef.Diagnostics.Length == 0);
 
+                // MCP tool: ask_data (Jev question-to-DAX) across the process boundary: parts given are taken as said, the
+                // engine builds its one query shape and checks it. No data model is connected here, so it is built, not
+                // run, and the ask lands in the model's question history (list_data_questions), read over the same proxy.
+                var measureName = measureRef.Substring(measureRef.IndexOf('/') + 1);
+                var measureTable = measureRef.Substring("measure:".Length, measureRef.IndexOf('/') - "measure:".Length);
+                var homeCol = colRows.FirstOrDefault(c => c.Table == measureTable) ?? realCol;
+                var asked = await McpTools.AskData(claude, measures: new[] { measureName }, group_by: new[] { $"'{homeCol.Table}'[{homeCol.Name}]" });
+                Check("MCP ask_data builds the one query shape through the proxy and says it is not run without data",
+                    asked.Outcome == Semanticus.Engine.Query.DataAnswer.Built && asked.ReadBy == "you"
+                    && asked.Dax != null && asked.Dax.Contains("SUMMARIZECOLUMNS") && asked.Reading != null && asked.Reading.StartsWith(measureName)
+                    && asked.Checks.Any(c => c.Name == "dax" && c.Passed));
+                var askHistory = await McpTools.ListDataQuestions(claude);
+                Check("MCP list_data_questions reads that ask back, newest first, with its reading and no rows",
+                    askHistory.Questions.Length >= 1 && askHistory.Questions[0].Reading == asked.Reading && askHistory.Questions[0].Origin == "agent");
+
                 var unbalanced = await McpTools.ValidateDax(claude, "CALCULATE ( SUM ( Sales[Amount] )");
                 Check("MCP validate_dax: unbalanced parentheses → Valid=false with an error diagnostic (line:col set)",
                     !unbalanced.Valid && unbalanced.Diagnostics.Any(d => d.Severity == "error" && d.Line >= 1 && d.Column >= 1));
@@ -444,8 +461,8 @@ namespace Semanticus.McpSmoke
 
                 // Token-efficient readiness surface: cheap summary (no findings list) + filtered scan.
                 var full = await McpTools.AiReadinessScan(claude);
-                var summary = await McpTools.AiReadinessSummary(claude);
-                Check("MCP ai_readiness_summary: grade + total-finding count, no findings list dumped",
+                var summary = (ReadinessSummary)await McpTools.AiReadinessScanOp(claude, detail: "summary");
+                Check("MCP ai_readiness_scan(detail=summary): grade + total-finding count, no findings list dumped",
                     summary != null && !string.IsNullOrEmpty(summary.Grade)
                     && summary.TotalFindings == full.Findings.Length && summary.Categories != null);
                 var firstCat = full.Findings.FirstOrDefault()?.Category;
@@ -470,8 +487,8 @@ namespace Semanticus.McpSmoke
 
                 // Same token-efficient treatment for BPA: cheap summary + filtered scan.
                 var bpaFull = await McpTools.BpaScan(claude);
-                var bpaSum = await McpTools.BpaScanSummary(claude);
-                Check("MCP bpa_summary: rule/violation counts, no violations list dumped",
+                var bpaSum = (BpaSummary)await McpTools.BpaScanOp(claude, detail: "summary");
+                Check("MCP bpa_scan(detail=summary): rule/violation counts, no violations list dumped",
                     bpaSum != null && bpaSum.ViolationCount == bpaFull.Violations.Length && bpaSum.ByCategory != null);
                 if (bpaFull.Violations.Length > 0)
                 {
@@ -494,25 +511,25 @@ namespace Semanticus.McpSmoke
 
                 // BPA now defaults to the bundled Power BI STANDARD ruleset (not the small curated set).
                 Check("MCP bpa_scan defaults to the bundled standard ruleset (the full set, not the ~9 curated)",
-                    bpaFull.RuleCount == Semanticus.Analysis.BpaRuleSet.Standard().Count && bpaFull.RuleCount > 9);
+                    bpaFull.RuleCount == Semanticus.Analysis.BpaRuleSet.Standard().Count + Semanticus.Analysis.BpaRuleSet.Native().Count && bpaFull.RuleCount > 9);
 
-                // load_bpa_rules: a custom inline rule layers on top of the standard set (persisted on the model,
-                // undoable, dual-drive); reset_bpa_rules reverts to standard-only.
+                // load_rules(system='bpa'): a custom inline rule layers on top of the standard set (persisted on the model,
+                // undoable, dual-drive); reset_rules(system='bpa') reverts to standard-only.
                 var stdCount = bpaFull.RuleCount;
                 const string customRule = "[{\"ID\":\"SMOKE_CUSTOM_RULE\",\"Name\":\"smoke custom\",\"Category\":\"Test\",\"Severity\":1,\"Scope\":\"Model\",\"Expression\":\"Name <> null\"}]";
                 var loadWait = ui.Notify.WaitNextAsync();
-                var loadedRules = await McpTools.LoadBpaRules(claude, customRule, false);
-                Check("MCP load_bpa_rules (inline) layers a custom rule on top of the standard set",
+                var loadedRules = (BpaRulesInfo)await McpTools.LoadRules(claude, "bpa", customRule, false);
+                Check("MCP load_rules(bpa, inline) layers a custom rule on top of the standard set",
                     loadedRules != null && loadedRules.Loaded == 1 && loadedRules.StandardRules == stdCount && loadedRules.ActiveRules == stdCount + 1);
                 var loadNote = await loadWait.WaitAsync(TimeSpan.FromSeconds(5));
-                Check("load_bpa_rules broadcasts model/didChange to the UI, tagged origin=agent (dual-drive, persisted)",
+                Check("load_rules(bpa) broadcasts model/didChange to the UI, tagged origin=agent (dual-drive, persisted)",
                     loadNote != null && loadNote.Origin == "agent");
                 var afterLoad = await McpTools.BpaScan(claude);
                 Check("the loaded custom rule is active in a scan (fires on the Model)",
                     afterLoad.RuleCount == stdCount + 1 && afterLoad.Violations.Any(v => v.RuleId == "SMOKE_CUSTOM_RULE"));
                 // It is a normal undoable edit on the shared timeline: undo removes it, redo restores it.
                 await McpTools.UndoChange(claude);
-                Check("undo reverts load_bpa_rules (the custom rule is gone)", (await McpTools.BpaScan(claude)).RuleCount == stdCount);
+                Check("undo reverts load_rules(bpa) (the custom rule is gone)", (await McpTools.BpaScan(claude)).RuleCount == stdCount);
                 await McpTools.RedoChange(claude);
                 Check("redo restores the loaded custom rule", (await McpTools.BpaScan(claude)).RuleCount == stdCount + 1);
 
@@ -521,31 +538,31 @@ namespace Semanticus.McpSmoke
                 try
                 {
                     System.IO.File.WriteAllText(tmpRules, customRule);
-                    var fromFile = await McpTools.LoadBpaRules(claude, tmpRules, true);   // replace=true -> exactly this set
-                    Check("MCP load_bpa_rules (file path) loads from disk and reports Source=file",
+                    var fromFile = (BpaRulesInfo)await McpTools.LoadRules(claude, "bpa", tmpRules, true);   // replace=true -> exactly this set
+                    Check("MCP load_rules(bpa, file path) loads from disk and reports Source=file",
                         fromFile.Source == "file" && fromFile.Loaded == 1 && fromFile.ActiveRules == stdCount + 1);
                 }
                 finally { try { System.IO.File.Delete(tmpRules); } catch { } }
 
                 // Error path: an unresolvable source (not inline / not a URL / no such file) fails LOUDLY.
                 var loadThrew = false;
-                try { await McpTools.LoadBpaRules(claude, "C:/no/such/rules-file-x9z.json", false); } catch (Exception) { loadThrew = true; }
-                Check("MCP load_bpa_rules with an unresolvable source throws a clear error (no silent no-op)", loadThrew);
+                try { await McpTools.LoadRules(claude, "bpa", "C:/no/such/rules-file-x9z.json", false); } catch (Exception) { loadThrew = true; }
+                Check("MCP load_rules(bpa) with an unresolvable source throws a clear error (no silent no-op)", loadThrew);
 
                 // Leniency: a hand-edited rule file (trailing comma + string-encoded number) still parses — matching
                 // the Newtonsoft reader TabularEditor itself uses, so real-world community/org BPARules.json load here.
-                var lenient = await McpTools.LoadBpaRules(claude,
+                var lenient = (BpaRulesInfo)await McpTools.LoadRules(claude, "bpa",
                     "[{\"ID\":\"SMOKE_LENIENT\",\"Name\":\"x\",\"Category\":\"Test\",\"Severity\":\"1\",\"Scope\":\"Model\",\"Expression\":\"Name <> null\"},]", true);
-                Check("MCP load_bpa_rules tolerates trailing commas + string-encoded numbers (TE-compatible leniency)",
+                Check("MCP load_rules(bpa) tolerates trailing commas + string-encoded numbers (TE-compatible leniency)",
                     lenient.Loaded == 1 && lenient.ActiveRules == stdCount + 1);
 
-                var resetRules = await McpTools.ResetBpaRules(claude);
+                var resetRules = (BpaRulesInfo)await McpTools.ResetRules(claude, "bpa");
                 var afterReset = await McpTools.BpaScan(claude);
-                Check("MCP reset_bpa_rules reverts to the standard ruleset only",
+                Check("MCP reset_rules(bpa) reverts to the standard ruleset only",
                     resetRules.ActiveRules == stdCount && afterReset.RuleCount == stdCount
                     && afterReset.Violations.All(v => v.RuleId != "SMOKE_CUSTOM_RULE"));
 
-                // ---- Custom READINESS rules (the readiness mirror of load_bpa_rules) over the agent door:
+                // ---- Custom READINESS rules (load_rules with system='air') over the agent door:
                 // validate_rule previews without saving -> load layers additively -> scan carries provenance ->
                 // undo reverts -> a built-in id collision refuses -> get_custom_rules lists -> reset clears.
                 const string customAirRule = "[{\"ID\":\"SMOKE-AIR-CUSTOM\",\"Name\":\"smoke readiness custom\",\"Category\":\"BestPractice\",\"Severity\":\"Info\",\"Scope\":\"Model\",\"Expression\":\"Name <> null\",\"Message\":\"%object% flagged by the smoke rule\"}]";
@@ -556,28 +573,28 @@ namespace Semanticus.McpSmoke
                 Check("MCP validate_rule teaches on an invalid category (the error lists the valid ones)",
                     !airBad.AllValid && airBad.Rules[0].Errors.Any(e => e.Contains("Naming") && e.Contains("DataAgentConfig")));
                 var airLoadWait = ui.Notify.WaitNextAsync();
-                var airLoaded = await McpTools.LoadReadinessRules(claude, customAirRule, false);
-                Check("MCP load_readiness_rules layers a custom rule (additive to the built-ins, never overriding)",
+                var airLoaded = (ReadinessRulesInfo)await McpTools.LoadRules(claude, "air", customAirRule, false);
+                Check("MCP load_rules(air) layers a custom rule (additive to the built-ins, never overriding)",
                     airLoaded.Loaded == 1 && airLoaded.ModelRules == 1 && airLoaded.ActiveRules == airLoaded.BuiltinRules + 1);
                 var airNote = await airLoadWait.WaitAsync(TimeSpan.FromSeconds(5));
-                Check("load_readiness_rules broadcasts model/didChange to the UI, tagged origin=agent (dual-drive, persisted)",
+                Check("load_rules(air) broadcasts model/didChange to the UI, tagged origin=agent (dual-drive, persisted)",
                     airNote != null && airNote.Origin == "agent");
                 var airScan = await McpTools.AiReadinessScan(claude);
                 Check("the custom readiness rule fires in ai_readiness_scan and carries custom provenance",
                     airScan.Findings.Any(f => f.RuleId == "SMOKE-AIR-CUSTOM" && f.Custom));
                 await McpTools.UndoChange(claude);
-                Check("undo reverts load_readiness_rules (the custom finding is gone)",
+                Check("undo reverts load_rules(air) (the custom finding is gone)",
                     (await McpTools.AiReadinessScan(claude)).Findings.All(f => f.RuleId != "SMOKE-AIR-CUSTOM"));
                 await McpTools.RedoChange(claude);
                 var airCollided = false;
-                try { await McpTools.LoadReadinessRules(claude, customAirRule.Replace("SMOKE-AIR-CUSTOM", "DESC-MEASURE"), false); }
+                try { await McpTools.LoadRules(claude, "air", customAirRule.Replace("SMOKE-AIR-CUSTOM", "DESC-MEASURE"), false); }
                 catch (Exception) { airCollided = true; }
-                Check("MCP load_readiness_rules refuses a built-in rule id collision (teaching refusal)", airCollided);
+                Check("MCP load_rules(air) refuses a built-in rule id collision (teaching refusal)", airCollided);
                 var customList = await McpTools.GetCustomRules(claude);
                 Check("MCP get_custom_rules lists the model's custom rules + the category/scope vocabularies",
                     customList.Readiness.Length == 1 && customList.ReadinessCategories.Length > 0 && customList.Scopes.Length > 0);
-                var airReset = await McpTools.ResetReadinessRules(claude);
-                Check("MCP reset_readiness_rules reverts scans to the built-in rules only",
+                var airReset = (ReadinessRulesInfo)await McpTools.ResetRules(claude, "air");
+                Check("MCP reset_rules(air) reverts scans to the built-in rules only",
                     airReset.ModelRules == 0 && (await McpTools.AiReadinessScan(claude)).Findings.All(f => f.RuleId != "SMOKE-AIR-CUSTOM"));
 
                 // ---- Row-Level Security (RLS) roles: create -> permission -> filter -> member -> list -> clear -> delete (net-zero).
@@ -901,8 +918,8 @@ namespace Semanticus.McpSmoke
 
                 // Cheap structural overview vs the full graph.
                 var mg = await McpTools.GetModelGraph(claude);
-                var mgSum = await McpTools.ModelGraphSummary(claude);
-                Check("MCP model_graph_summary: counts match the full graph, no per-table detail dumped",
+                var mgSum = (ModelGraphSummary)await McpTools.GetModelGraphOp(claude, detail: "summary");
+                Check("MCP get_model_graph(detail=summary): counts match the full graph, no per-table detail dumped",
                     mgSum != null && mgSum.TableCount == mg.Tables.Length
                     && mgSum.RelationshipCount == mg.Relationships.Length && mgSum.DisconnectedTables != null);
 
@@ -973,8 +990,8 @@ namespace Semanticus.McpSmoke
                     !Semanticus.Engine.LiveDeploy.IsLocalEndpoint("powerbi://api.powerbi.com/v1.0/myorg/WS"));
 
                 // Cold/warm benchmark: reachable through the door; 'Not connected' without a live engine (no throw).
-                var cw = await McpTools.BenchmarkDaxColdWarm(claude, "EVALUATE ROW(\"x\", 1)", 3, true, false);
-                Check("benchmark_dax_coldwarm: 'Not connected' when no live connection (no throw)",
+                var cw = (ColdWarmBenchmark)await McpTools.BenchmarkDaxOp(claude, "EVALUATE ROW(\"x\", 1)", 3, mode: "coldWarm", clearForCold: true, confirm: false);
+                Check("benchmark_dax(mode=coldWarm): 'Not connected' when no live connection (no throw)",
                     cw != null && (cw.Error ?? "").IndexOf("Not connected", StringComparison.OrdinalIgnoreCase) >= 0);
                 var qp = await McpTools.CaptureQueryPlan(claude, "EVALUATE ROW(\"x\", 1)");
                 Check("capture_query_plan: 'Not connected' when no live connection (no throw)",
@@ -1197,8 +1214,8 @@ namespace Semanticus.McpSmoke
                 int sumBpa = Bytes(bpaSum), fullBpa = Bytes(bpaFull);
                 int sumG = Bytes(mgSum), fullG = Bytes(mg);
                 Console.WriteLine($"[lens] payload bytes (summary/full): readiness {sumAir}/{fullAir}  bpa {sumBpa}/{fullBpa}  graph {sumG}/{fullG}");
-                Check("token lens: ai_readiness_summary is materially smaller than the full ai_readiness_scan", sumAir < fullAir);
-                Check("token lens: model_graph_summary is smaller than the full get_model_graph", sumG < fullG);
+                Check("token lens: ai_readiness_scan detail=summary is materially smaller than detail=full", sumAir < fullAir);
+                Check("token lens: get_model_graph detail=summary is smaller than detail=full", sumG < fullG);
 
                 // ---- PRO-MODE WORKFLOW ENGINE (docs/pro-mode-spec.md §7 — the dual-drive workflow proof) ----------
                 // The owner has AdventureWorks open (a saved model), so the STOCK library beside the McpSmoke binary
@@ -1206,8 +1223,24 @@ namespace Semanticus.McpSmoke
                 // the RemoteEngine proxy exactly like every section above — this exercises the tool bodies + proxy +
                 // cross-process dual-drive against one live session.
                 var wfList = await McpTools.ListWorkflows(claude);
-                Check("MCP list_workflows returns the 16 stock workflows, all parsed clean (Error==null) and Gated (Pro to start)",
-                    wfList.Length == 16 && wfList.All(w => w.Error == null) && wfList.All(w => w.Gated));
+                Check("MCP list_workflows returns the 9 stock workflows, all parsed clean (Error==null) and Gated (Pro to start)",
+                    wfList.Length == 9 && wfList.All(w => w.Error == null) && wfList.All(w => w.Gated));
+
+                // Contract 21.2 (lane W3): new-measure is a PARKED starter. An unpinned start by name teaches what
+                // replaced it (never "not found"), across the real process boundary.
+                string wfParked = null;
+                try { await McpTools.StartWorkflow(claude, "new-measure"); }
+                catch (Exception ex) { wfParked = ex.Message; }
+                Check("MCP start_workflow('new-measure') on a parked starter returns the teaching sentence naming its replacement",
+                    wfParked != null && wfParked.Contains("'new-measure' is no longer a starter workflow")
+                    && wfParked.Contains("Describe the task in words") && !wfParked.Contains("not found"));
+
+                // The run below drives new-measure from its compatibility freeze (the bytes that last shipped as stock),
+                // loaded as a project copy, and the copy is deleted after the evidence checks so the library returns to 9.
+                var wfFrozen = System.IO.File.ReadAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "workflows-compat", "v1.2.2", "new-measure.md"));
+                var wfLoaded = await McpTools.SaveWorkflow(claude, "new-measure", wfFrozen);
+                Check("MCP save_workflow loads the frozen new-measure as a project copy (10 in the library while it runs)",
+                    wfLoaded.Length == 10 && wfLoaded.Any(w => w.Name == "new-measure" && w.Error == null && w.Source == "user"));
 
                 var wfStart = await McpTools.StartWorkflow(claude, "new-measure");
                 var wfRunId = wfStart.RunId;
@@ -1286,11 +1319,15 @@ namespace Semanticus.McpSmoke
                     savedWorkflowRead?.Json?.Contains("\"kind\":\"workflow-run\"") == true
                     && savedWorkflowRead.Html?.Contains(savedWorkflowRead.ContentHash) == true);
 
+                var wfUnloaded = await McpTools.DeleteWorkflow(claude, "new-measure");
+                Check("MCP delete_workflow removes the frozen new-measure copy, so the library is back at 9",
+                    wfUnloaded.Length == 9 && wfUnloaded.All(w => w.Name != "new-measure"));
+
                 // ---- WORKFLOW TEMPLATES (docs/pro-mode-spec.md §10-T1 — the customisation layer, dual-drive) --------
-                // The template shelf lives in its OWN dir beside the binary, so it never leaks into the 16-workflow
-                // library (asserted above at ==15). Drive the 5 template ops through the RemoteEngine proxy — the same
+                // The template shelf lives in its OWN dir beside the binary, so it never leaks into the 9-workflow
+                // library (asserted above at ==9). Drive the 5 template ops through the RemoteEngine proxy — the same
                 // cross-process dual-drive path every section above uses. We instantiate ONE template into the model's
-                // sidecar, prove the invariant refuses an injection, then delete it so the shared dir returns to 16.
+                // sidecar, prove the invariant refuses an injection, then delete it so the shared dir returns to 9.
                 var tmplNames = new[] { "metric-certification", "month-end-close", "deploy-freeze-guard", "hard-measure" };
                 var tmplList = await McpTools.ListWorkflowTemplates(claude);
                 Check("MCP list_workflow_templates returns the 4 stock templates (parsed clean, with slots) and NONE leak into list_workflows",
@@ -1309,13 +1346,13 @@ namespace Semanticus.McpSmoke
                     ["escalation_rule"] = "stop and raise with the owner — never adjust finance figures to match the model",
                     ["certification_tag"] = "Certified FY26-Q1",
                 });
-                var wfCountBefore = (await McpTools.ListWorkflows(claude)).Length;   // 15 — templates don't count
+                var wfCountBefore = (await McpTools.ListWorkflows(claude)).Length;   // 9: templates don't count
                 try
                 {
                     var instLib = await McpTools.InstantiateWorkflowTemplate(claude, "metric-certification", "smoke-metric-cert", goodVals);
                     var afterInst = await McpTools.ListWorkflows(claude);
                     Check("MCP instantiate_workflow_template renders a runnable workflow (#33) from the template, admission-clean",
-                        wfCountBefore == 16 && afterInst.Length == wfCountBefore + 1
+                        wfCountBefore == 9 && afterInst.Length == wfCountBefore + 1
                         && afterInst.Any(w => w.Name == "smoke-metric-cert" && w.Error == null)
                         && instLib.Any(w => w.Name == "smoke-metric-cert"));
 
@@ -1340,17 +1377,17 @@ namespace Semanticus.McpSmoke
                 }
                 finally
                 {
-                    // Return the shared AdventureWorks sidecar to 16 so a re-run sees the same count (the ==16 assert above).
+                    // Return the shared AdventureWorks sidecar to 9 so a re-run sees the same count (the ==9 assert above).
                     try { await McpTools.DeleteWorkflow(claude, "smoke-metric-cert"); } catch { }
                 }
-                Check("templates leg leaves the workflow library back at 16 (a shelf is not the board)",
-                    (await McpTools.ListWorkflows(claude)).Length == 16);
+                Check("templates leg leaves the workflow library back at 9 (a shelf is not the board)",
+                    (await McpTools.ListWorkflows(claude)).Length == 9);
 
                 // ---- DYNAMIC WORKFLOW ACTIVATION (docs/pro-mode-spec.md §10.6 — 10-T2, dual-drive) ------------------
                 // set_workflow_activation curates the MENU (show/hide a workflow when a condition holds). Drive it +
                 // list/policy through the RemoteEngine proxy (cross-process — catches the "missed RemoteEngine
                 // implementer" trap). The harness is DevPro, so the Pro write succeeds. governed-rename is a stock
-                // workflow we curate then RESTORE (15 in, 15 out — activation adds/drops no content).
+                // workflow we curate then RESTORE (9 in, 9 out: activation adds/drops no content).
                 const string actWf = "governed-rename";
                 try
                 {
@@ -1358,12 +1395,19 @@ namespace Semanticus.McpSmoke
                     // Predicate-matched (this workflow, now inactive) so an in-flight library rebroadcast from an
                     // earlier transition can never consume the waiter (no cross-pipe ordering guarantee).
                     var libWait1 = ui.Notify.WaitWorkflowLibraryAsync(l => l.Any(w => w.Name == actWf && !w.Active));
-                    await McpTools.SetWorkflowActivation(claude, actWf, "date.dayOfMonth >= 1", "off");
+                    // Hiding a workflow can hide a mandate the person put on the assistant, so the assistant may not do it (the ratchet): the
+                    // hide is the PERSON's, driven through their door. The assistant's own attempt is refused in plain words and changes nothing.
+                    string hideRefusal = null;
+                    try { await McpTools.SetWorkflowActivation(claude, actWf, "date.dayOfMonth >= 1", "off"); }
+                    catch (Exception ex) { hideRefusal = ex.Message; }
+                    Check("the assistant is refused when it tries to hide a workflow (the person's to do), and nothing is hidden",
+                        hideRefusal != null && hideRefusal.Contains("person") && (await McpTools.ListWorkflows(claude)).Single(w => w.Name == actWf).Active);
+                    await ui.Invoke<WorkflowInfo[]>("setWorkflowActivation", actWf, "date.dayOfMonth >= 1", "off");
                     var offList = await McpTools.ListWorkflows(claude);
                     var offWf = offList.Single(w => w.Name == actWf);
                     Check("MCP set_workflow_activation(set:off) deactivates the workflow with a PLAIN reason (no predicate echo)",
                         !offWf.Active && !string.IsNullOrWhiteSpace(offWf.ActiveReason) && !offWf.ActiveReason.Contains("dayOfMonth"));
-                    Check("activation write leaves the library at exactly 16 (curation is not content)", offList.Length == 16);
+                    Check("activation write leaves the library at exactly 9 (curation is not content)", offList.Length == 9);
                     var libNote1 = await libWait1.WaitAsync(TimeSpan.FromSeconds(5));
                     Check("set_workflow_activation broadcasts workflow/libraryDidChange to the UI door (dual-drive)",
                         libNote1 != null && libNote1.Any(w => w.Name == actWf && !w.Active));
@@ -1378,7 +1422,7 @@ namespace Semanticus.McpSmoke
 
                     // (3) get_workflow_policy: per-workflow active + a lint on a PLANTED contradiction (dead rule —
                     // a rule turns it on while it's manually turned off; manual disable wins, the rule is dead).
-                    await McpTools.SetWorkflowEnabled(claude, actWf, false);
+                    await ui.Invoke<WorkflowInfo[]>("setWorkflowEnabled", actWf, false);   // turning a workflow off is the person's too
                     await McpTools.SetWorkflowActivation(claude, actWf, "date.dayOfMonth >= 1", "on");
                     var pol = await McpTools.GetWorkflowPolicy(claude);
                     var polEntry = pol.Workflows.Single(w => w.Name == actWf);
@@ -1388,13 +1432,13 @@ namespace Semanticus.McpSmoke
                 }
                 finally
                 {
-                    // Restore the shared AdventureWorks sidecar so a re-run starts clean (15, re-enabled, un-curated).
+                    // Restore the shared AdventureWorks sidecar so a re-run starts clean (9, re-enabled, un-curated).
                     try { await McpTools.SetWorkflowEnabled(claude, actWf, true); } catch { }
                     try { await McpTools.SetWorkflowActivation(claude, actWf, null, null); } catch { }
                 }
                 var actRestored = await McpTools.ListWorkflows(claude);
-                Check("activation leg leaves the library back at exactly 15, the workflow re-enabled + active",
-                    actRestored.Length == 16 && actRestored.Single(w => w.Name == actWf) is { Active: true, Enabled: true });
+                Check("activation leg leaves the library back at exactly 9, the workflow re-enabled + active",
+                    actRestored.Length == 9 && actRestored.Single(w => w.Name == actWf) is { Active: true, Enabled: true });
 
                 // ---- THE MODEL INTERVIEW (docs/product-innovation-brainstorm.md §1 — dual-drive) --------------------
                 // Drive all 4 ops through the RemoteEngine proxy (the cross-process door). Offline honesty is the
@@ -1637,6 +1681,180 @@ namespace Semanticus.McpSmoke
                 await ui.Invoke<UndoState>("undo");   // remove the calendar table
                 await ui.Invoke<UndoState>("undo");   // restore the fixture's original compatibility level
 
+                // ---- the queue on both doors (Plan at the heart, lane E3): the person gives two tasks to the
+                // assistant in Studio; the MCP tools list, claim, answer and decline them; the person takes one.
+                Console.WriteLine("---- the assistant queue (E3) ----");
+                var qa = (await ui.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest
+                    { Words = "E3 smoke task A", Objects = new[] { "measure:E3 Smoke/Task A" } })).ItemId;
+                var qb = (await ui.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest
+                    { Words = "E3 smoke task B", Objects = new[] { "measure:E3 Smoke/Task B" } })).ItemId;
+                var offerLine = await claude.PullPlanOfferAsync();
+                // Free-form tasks are never called independent: words bound nothing (Sol 6, slice 7, finding 3).
+                Check("E3/MCP: the fold line offers both tasks and does not call them independent",
+                    offerLine != null && offerLine.StartsWith("Plan: 2 tasks are ready for you.\n", StringComparison.Ordinal)
+                    && !offerLine.Contains("They do not depend on each other")
+                    && offerLine.Contains("(" + qa + ")") && offerLine.Contains("(" + qb + ")"));
+                Check("E3/MCP: the same offer again carries no line", await claude.PullPlanOfferAsync() == null);
+                var offered = await McpTools.ListAssistantRequests(claude);
+                Check("E3/MCP: list_assistant_requests lists both, in order, neither independent",
+                    offered.Switch == "on" && offered.Requests.Select(r => r.RequestId).SequenceEqual(new[] { qa, qb })
+                    && offered.Requests.All(r => !r.Independent));
+                var qClaim = await McpTools.ClaimRequest(claude, qa);
+                Check("E3/MCP: claim_request hands back a token once", qClaim.Ok && qClaim.Request?.ClaimToken?.StartsWith("ct-") == true);
+                var uiSees = (await ui.Invoke<ModelPlanView>("getModelPlan")).Items.First(i => i.Id == qa);
+                Check("E3/dual-drive: the UI reads the claim as On it, since its last call",
+                    uiSees.StateWord == PlanStateWords.OnIt && uiSees.StateNote == PlanTasks.SinceLastCallNote);
+                var qDone = await McpTools.CompleteRequest(claude, qa, qClaim.Request.ClaimToken, "Done in the smoke.");
+                var uiDone = (await ui.Invoke<ModelPlanView>("getModelPlan")).Items.First(i => i.Id == qa);
+                Check("E3/MCP: complete_request closes it and the UI shows the reply",
+                    qDone.Ok && uiDone.StateWord == PlanStateWords.Done && uiDone.Reply == "Done in the smoke.");
+                var bClaim = await McpTools.ClaimRequest(claude, qb);
+                var qDecline = await McpTools.DeclineRequest(claude, qb, bClaim.Request?.ClaimToken, "The smoke says no.");
+                var uiDeclined = (await ui.Invoke<ModelPlanView>("getModelPlan")).Items.First(i => i.Id == qb);
+                Check("E3/MCP: decline_request hands it back as Needs you with the reason",
+                    qDecline.Ok && uiDeclined.StateWord == PlanStateWords.NeedsYou && uiDeclined.StateNote == "The smoke says no.");
+                var took = (await ui.Invoke<ModelPlanView>("claimPlanTask", qb)).Items.First(i => i.Id == qb);
+                var marked = (await ui.Invoke<ModelPlanView>("completePlanTask", qb, "The person did it.")).Items.First(i => i.Id == qb);
+                Check("E3/UI: the person takes it and marks it done over the same queue",
+                    took.StateWord == PlanStateWords.OnIt && took.StateNote == PlanTasks.YouTookItNote
+                    && marked.StateWord == PlanStateWords.Done && marked.Reply == "The person did it.");
+                string aimRefusal = null;
+                try { await McpTools.AddPlanTarget(claude, "An invented aim", ModelPlanSections.Meaning); }
+                catch (Exception ex) { aimRefusal = ex.Message; }
+                Check("E3/MCP: add_plan_target is refused with the person's sentence",
+                    aimRefusal != null && aimRefusal.Contains("Aims and tasks are the person's to add, remove and mark done."));
+
+                // ---- lane L4: a draft on both doors. The assistant composes through its tools; the part goes on its own
+                //      queue at once; the UI reads the same view and is pushed draft/didChange; run_draft plus the last
+                //      part runs it as ONE change the UI hears once and one UI undo takes back. ----
+                Console.WriteLine("---- a draft on both doors (L4) ----");
+                var l4Measure = (await claude.ListMeasuresAsync()).First().Ref;
+                var l4Table = "table:" + l4Measure.Substring("measure:".Length, l4Measure.IndexOf('/') - "measure:".Length);
+                var l4Ref = l4Table.Replace("table:", "measure:") + "/L4 mcp count";
+                var l4Steps = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(new object[]
+                {
+                    new { id = "add", title = "Add L4 mcp count", op = "create_measure",
+                          args = new { tableRef = l4Table, name = "L4 mcp count", expression = "{{blanks.formula}}" },
+                          blanks = new[] { new { name = "formula", kind = "dax", fills = "expression" } } },
+                })).RootElement;
+                var draftsSeen = ui.Notify.DraftCount;
+                var l4 = await McpTools.ComposeTask(claude, l4Steps, title: "L4 mcp draft");
+                var l4Ui = await ui.Invoke<Semanticus.Engine.Composer.DraftView>("getDraft", l4.DraftId);
+                Check("L4/MCP: compose_task queues the part at once and nothing changes",
+                    l4.State == Semanticus.Engine.Composer.DraftStates.WaitingForAssistant && l4.PartsWaiting == 1);
+                Check("L4/dual-drive: the UI reads the same draft view",
+                    System.Text.Json.JsonSerializer.Serialize(l4Ui) == System.Text.Json.JsonSerializer.Serialize(await McpTools.GetDraft(claude, l4.DraftId)));
+                await Task.Delay(100);
+                Check("L4/dual-drive: the UI is pushed draft/didChange", ui.Notify.DraftCount > draftsSeen);
+                await McpTools.RunDraft(claude, l4.DraftId);
+                var l4Part = l4.Blanks.Single().RequestId;
+                var l4Claim = await McpTools.ClaimRequest(claude, l4Part);
+                var l4Wait = ui.Notify.WaitNextAsync();
+                var l4Done = await McpTools.CompleteRequest(claude, l4Part, l4Claim.Request?.ClaimToken, "1");
+                var l4Note = await l4Wait.WaitAsync(TimeSpan.FromSeconds(5));
+                var l4After = await McpTools.GetDraft(claude, l4.DraftId);
+                Check("L4/MCP: the last part passing runs the approved draft as one change the UI hears",
+                    l4Done.Ok && l4After.State == Semanticus.Engine.Composer.DraftStates.Done && l4Note?.Label == "L4 mcp draft"
+                    && l4Note.By == "semanticus" && l4Note.Cause?.Ids?.Contains(l4.DraftId) == true);
+                await ui.Invoke<UndoState>("undo");
+                Check("L4/dual-drive: one UI undo takes the draft's change back",
+                    !(await claude.ListMeasuresAsync()).Any(m => m.Ref == l4Ref));
+
+                // ---- lane sf-doors: the spec-first start on both doors. The eight tools are on the surface and none of
+                //      them approves; the assistant and the UI read one view; the person's approval is not reachable from
+                //      the assistant's connection. (The start itself needs a Fabric endpoint, so it is the unit suite's.) ----
+                Console.WriteLine("---- the spec-first start on both doors (sf-doors) ----");
+                var sfTools = typeof(McpTools).Assembly.GetTypes().Where(t => t.IsAbstract && t.IsSealed)
+                    .SelectMany(t => t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                    .Select(m => m.GetCustomAttributes(true).FirstOrDefault(a => a.GetType().Name == "McpServerToolAttribute"))
+                    .Where(a => a != null).Select(a => (string)a.GetType().GetProperty("Name")?.GetValue(a)).ToHashSet(StringComparer.Ordinal);
+                Check("sf-doors/MCP: the eight start tools are on the tool list",
+                    new[] { "start_model_from_sql", "get_start_plan", "edit_start_plan", "grant_start_disclosure", "get_start_words", "write_start_words", "build_start_plan", "discard_start_plan" }.All(sfTools.Contains));
+                Check("sf-doors/MCP: no tool approves a start plan", !sfTools.Any(n => n.Contains("approve", StringComparison.Ordinal) && n.Contains("start", StringComparison.Ordinal)));
+                var sfMcp = await McpTools.GetStartPlan(claude);
+                var sfUi = await ui.Invoke<Semanticus.Engine.StartPlan.StartPlanView>("getStartPlan");
+                Check("sf-doors/dual-drive: with no start plan both doors read the same view, and it says so",
+                    sfMcp != null && !sfMcp.Exists && System.Text.Json.JsonSerializer.Serialize(sfMcp) == System.Text.Json.JsonSerializer.Serialize(sfUi));
+                string sfApprove = null;
+                try { await claude.ApproveStartPlanAsync("not-a-digest"); } catch (Exception ex) { sfApprove = ex.Message; }
+                Check("sf-doors/MCP: an assistant's connection cannot approve a start plan (the method is not there)", sfApprove != null);
+                // ---- Plan-heart E4: History through the MCP door. The person edits in Studio, the assistant edits
+                //      through its tools; get_plan_history names both by who made them, and undo_change(toEntry)
+                //      takes both back in one commit the UI hears once. ----
+                var histMeasure = (await claude.ListMeasuresAsync()).First().Ref;
+                await ui.Invoke<SetResult>("setDescription", histMeasure, "history: by the person");
+                await McpTools.SetDescription(claude, histMeasure, "history: by the assistant");
+                var history = await McpTools.GetPlanHistory(claude, limit: 10);
+                var top2 = history.Rows.Where(r => r.Kind == "edit").Take(2).ToArray();
+                Check("history/MCP: get_plan_history names the assistant then the person, both undoable",
+                    top2.Length == 2 && top2[0].By == "assistant" && top2[1].By == "you" && top2.All(r => r.Undoable)
+                    && top2[1].LaterCount == 1 && top2[0].Deltas.Any(d => d.Ref == histMeasure && d.After == "history: by the assistant"));
+                // The waiter takes the next broadcast; a straggler from the edits above may arrive first, so skip past it.
+                var walkWait = ui.Notify.WaitNextAsync();
+                await McpTools.UndoChange(claude, top2[1].Id);
+                ChangeNotification walk = null;
+                for (var tries = 0; tries < 4 && walk == null; tries++)
+                {
+                    var heard = await walkWait.WaitAsync(TimeSpan.FromSeconds(5));
+                    if (heard?.Label != null && heard.Label.StartsWith("Undo to ", StringComparison.Ordinal)) walk = heard;
+                    else walkWait = ui.Notify.WaitNextAsync();
+                }
+                Check("history/MCP: undo_change(toEntry) is one commit the UI hears, as the assistant",
+                    walk != null && walk.Origin == "agent" && walk.Deltas.Any(d => d.Ref == histMeasure));
+                var afterWalk = (await McpTools.GetPlanHistory(claude, limit: 10)).Rows.Where(r => r.Kind == "edit").Take(2).ToArray();
+                Check("history/MCP: both rows now read undone and redoable", afterWalk.All(r => r.Undone && r.Redoable));
+                await McpTools.RedoChange(claude, top2[0].Id);
+                await ui.Invoke<UndoState>("undo");   // net-zero: take both descriptions back off the fixture
+                await ui.Invoke<UndoState>("undo");
+                // ---- slice C: one SQL endpoint per model, and clearing the publish destination (contract 19) ----
+                // The agent sets the open model's endpoint through the real MCP tool over the RemoteEngine proxy; the UI
+                // door reads the same link on the same engine; a row count with no source argument lands on it; and a
+                // publish destination set by the agent is cleared by the agent and read back as none by the UI.
+                var endpointSource = SqlSourceRegistry.Save(null, "Contoso Retail warehouse",
+                    "contoso-retail-sql.database.windows.net", "Warehouse", "interactive", null);
+                var endpointSet = await McpTools.SetModelSqlEndpoint(claude, endpointSource.Id);
+                Check("sql endpoint/MCP: set_model_sql_endpoint links the open model",
+                    endpointSet.SqlEndpoint?.SourceId == endpointSource.Id && endpointSet.Changed);
+                var agentContext = await McpTools.GetConnectionContext(claude);
+                var uiContext = await ui.Invoke<ConnectionContext>("connectionContext");
+                Check("sql endpoint/dual-drive: connection_context and connectionContext read the same endpoint",
+                    agentContext.SqlEndpoint?.SourceId == endpointSource.Id && uiContext.SqlEndpoint?.SourceId == endpointSource.Id
+                    && uiContext.SqlEndpoint.Name == "Contoso Retail warehouse");
+                var uiEndpoints = await ui.Invoke<ModelSqlEndpointList>("listModelSqlEndpoints");
+                Check("sql endpoint/dual-drive: the UI's list shows the agent's link",
+                    uiEndpoints.Rows.Any(r => r.SqlEndpoint?.SourceId == endpointSource.Id));
+
+                var countedTable = "Contoso Retail Rows";
+                // The fixture is compatibility level 1200, which cannot hold an M partition, so it is raised for this
+                // check. The two edits are NOT undone: undoing the table add on this raised fixture throws inside the
+                // vendored TOMWrapper (TableOLSIndexer.SetValue, a null role permission, reported separately), and this
+                // scenario is the last model edit in the run, so nothing after it reads the fixture's shape.
+                await McpTools.SetCompatibilityLevel(claude, 1701);
+                await McpTools.CreateImportTable(claude, countedTable,
+                    "let Source = Sql.Database(\"fabric.example.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t");
+                var counted = await McpToolsTesting.RunTests(claude, sections: new[] { "tableCounts" });
+                var countedRow = counted.Relationships?.TableRowCounts?.FirstOrDefault(t => t.ModelTable == countedTable);
+                Check("sql endpoint/MCP: a row count with no source argument resolves to the model's endpoint",
+                    countedRow != null && countedRow.SqlSourceId == endpointSource.Id
+                    && countedRow.Server == "contoso-retail-sql.database.windows.net" && countedRow.Entity == "fact_sales");
+
+                var endpointCleared = await ui.Invoke<ModelSqlEndpointResult>("setModelSqlEndpoint", null, null, "human");
+                Check("sql endpoint/dual-drive: the UI clears it and the agent reads none",
+                    endpointCleared.SqlEndpoint == null && (await McpTools.GetConnectionContext(claude)).SqlEndpoint == null);
+
+                var publishTarget = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso", "Contoso Retail", "Contoso Retail", null, "interactive");
+                var publishSet = await McpTools.SetPublishDestination(claude, publishTarget.Id);
+                Check("publish destination/MCP: set_publish_destination links it",
+                    publishSet.Publishing.Available && publishSet.Publishing.ConnectionId == publishTarget.Id);
+                var publishCleared = await McpTools.SetPublishDestination(claude, connectionId: null, clear: true);
+                var uiAfterClear = await ui.Invoke<ConnectionContext>("connectionContext");
+                Check("publish destination/dual-drive: the agent clears it and both doors report none",
+                    !publishCleared.Publishing.Available && !uiAfterClear.Publishing.Available
+                    && (await McpTools.GetConnectionContext(claude)).Publishing.Available == false);
+                var clearAgain = await ui.Invoke<ConnectionContext>("setPublishDestination", null, "human", true);
+                Check("publish destination/UI: clearing with none set is a no-op that says so",
+                    !clearAgain.Publishing.Available && (clearAgain.Note ?? "").Contains("nothing changed"));
+
                 Check("MCP smoke keeps fixture approvals out of the developer ledger",
                     SameSnapshot(realApprovalBefore, ReadSnapshot(realApprovalPath)));
                 Console.WriteLine();
@@ -1694,7 +1912,25 @@ namespace Semanticus.McpSmoke
 
         private const string IncrementalFixtureTemplate = """{"name":"IncrementalReady","compatibilityLevel":__CL__,"model":{__EXPRESSIONS__"defaultPowerBIDataSourceVersion":"powerBI_V3","tables":[{"name":"Sales","columns":[{"name":"Date","dataType":"dateTime","sourceColumn":"Date"},{"name":"Amount","dataType":"double","sourceColumn":"Amount"}],"partitions":[{"name":"Sales","mode":"import","source":{"type":"m","expression":"let Source = #table(type table [Date = datetime, Amount = number], {}), Filtered = Table.SelectRows(Source, each [Date] >= RangeStart and [Date] < RangeEnd) in Filtered"}}]},{"name":"Raw","columns":[{"name":"Id","dataType":"int64","sourceColumn":"Id"},{"name":"Date","dataType":"dateTime","sourceColumn":"Date"}],"partitions":[{"name":"Raw","mode":"import","source":{"type":"m","expression":"let Source = #table(type table [Id = Int64.Type, Date = datetime], {}) in Source"}}]},{"name":"Bare","columns":[{"name":"Date","dataType":"dateTime","sourceColumn":"Date"}],"partitions":[{"name":"Bare","mode":"import","source":{"type":"m","expression":"#table(type table [Date = datetime], {})"}}]},{"name":"Sneaky","columns":[{"name":"Id","dataType":"int64","sourceColumn":"Id"}],"partitions":[{"name":"Sneaky","mode":"import","source":{"type":"m","expression":"let Source = #table(type table [Id = Int64.Type], {}) /* filter on RangeStart and RangeEnd someday */ in Source"}}]}]}}""";
 
+
+        // THE SMOKE OPENS A COPY. Opening the vendored AdventureWorks.bim in place writes the model's sidecar (plan
+        // memory, evidence, report scope, workflow settings) into .semanticus/ beside it, which is inside the
+        // TabularEditor submodule and left it dirty after every run. The copy lives in a scratch folder whose name
+        // does NOT start with "semanticus-", because that prefix marks an ephemeral anchor (ExperienceLog).
+        private static string _testBimCopy;
         private static string FindTestBim()
+        {
+            if (_testBimCopy != null) return _testBimCopy;
+            var source = FindVendoredTestBim();
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return _testBimCopy = copy;
+        }
+
+        private static string FindVendoredTestBim()
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
             while (dir != null)
@@ -1782,6 +2018,13 @@ namespace Semanticus.McpSmoke
             private readonly object _activityGate = new object();
             private TaskCompletionSource<ActivityEvent> _nextActivity;
             private Func<ActivityEvent, bool> _activityMatch;
+
+            private int _draftCount;
+            public int DraftCount => System.Threading.Volatile.Read(ref _draftCount);
+
+            // draft/didChange: every change to a composer draft, pushed to the UI door (lane L4, composer 10.8).
+            [JsonRpcMethod("draft/didChange")]
+            public void OnDraftDidChange(Semanticus.Engine.Composer.DraftView v) => System.Threading.Interlocked.Increment(ref _draftCount);
 
             [JsonRpcMethod("model/activity")]
             public void OnActivity(ActivityEvent e)

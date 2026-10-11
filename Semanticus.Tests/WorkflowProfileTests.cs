@@ -43,7 +43,7 @@ namespace Semanticus.Tests
                 var currentRevision = "sha256:" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(currentFile))).ToLowerInvariant();
                 Assert.Equal(currentRevision, settings["requiredWorkflowRevisions"]["verified-measure"].GetValue<string>());
 
-                await engine.SetWorkflowActivationAsync("make-ai-ready", "date.dayOfMonth >= 28", "off", "human");
+                await engine.SetWorkflowActivationAsync("optimize-dax", "date.dayOfMonth >= 28", "off", "human");
                 Assert.Equal("custom", (await engine.GetWorkflowPolicyAsync()).ActiveProfile);
 
                 var reset = await engine.ActivateWorkflowProfileAsync("standard", "human");

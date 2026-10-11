@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const extension = readFileSync(resolve(root, 'src', 'extension.ts'), 'utf8');
-const compare = readFileSync(resolve(root, 'webview', 'src', 'compare.tsx'), 'utf8');
+const compare = readFileSync(resolve(root, 'webview', 'src', 'publish-changes.tsx'), 'utf8');
 const preview = readFileSync(resolve(root, 'webview', 'src', 'datapreview.tsx'), 'utf8');
 const lab = readFileSync(resolve(root, 'webview', 'src', 'daxlab.tsx'), 'utf8');
 const authcopy = readFileSync(resolve(root, 'webview', 'src', 'authcopy.ts'), 'utf8');
@@ -27,7 +27,7 @@ assert.match(authcopy, /sign-in cancelled/i);
 assert.match(authcopy, /sign-in timed out/i);
 assert.match(authcopy, /live sign-in expired/i);
 assert.match(compare, /isSignInError/,
-  'Ship Review must recognise a cancelled sign-in so the page stops waiting');
+  'The Publish page must recognise a cancelled sign-in so the page stops waiting');
 assert.match(compare, /from '\.\/authcopy'/,
   'Ship Review must share the sign-in detector so cancelled copy cannot drift');
 assert.match(preview, /signin-again/,

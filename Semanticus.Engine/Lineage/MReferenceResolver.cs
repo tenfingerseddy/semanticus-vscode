@@ -124,7 +124,7 @@ namespace Semanticus.Engine.Lineage
         /// or step name (e.g. the near-universal <c>Source = …</c>) from drawing a phantom source edge to a shared
         /// expression of the same name. Not a full parser — enough for the common staging-query pattern (correction #4).
         /// </summary>
-        private static (HashSet<string> idents, string connector) Lex(string src)
+        internal static (HashSet<string> idents, string connector) Lex(string src)
         {
             var refs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);    // identifiers in REFERENCE position
             var bound = new HashSet<string>(StringComparer.OrdinalIgnoreCase);   // let/record binding NAMES (definitions)

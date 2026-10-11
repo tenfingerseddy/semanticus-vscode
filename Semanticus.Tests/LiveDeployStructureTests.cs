@@ -1331,5 +1331,133 @@ namespace Semanticus.Tests
             var delItem = diff.Items.Single(i => i.ObjectType == "Relationship" && i.Action == "Delete");
             Assert.True(delItem.ReplacementCreateRefs == null || delItem.ReplacementCreateRefs.Length == 0);   // uncoupled — no false requirement
         }
+        // ---- Publish: the key mark and the default-label mark go to the live model (hero journey 3) ----
+        // The fix-the-model rows set both on matched columns. The live push used to hold them back ("carries authored column
+        // metadata this live push cannot sync"), so 7 of 26 changes of one run stayed on the person's side.
+        [Fact]
+        public void A_matched_column_carries_its_key_mark_and_default_label_mark_to_the_live_model()
+        {
+            static TOM.Model Model(bool marks)
+            {
+                var db = new TOM.Database("t") { CompatibilityLevel = 1604, Model = new TOM.Model() };
+                var customer = new TOM.Table { Name = "Customer", LineageTag = "tag-customer" };
+                customer.Partitions.Add(new TOM.Partition { Name = "Customer", Source = new TOM.MPartitionSource { Expression = "let S = 1 in S" } });
+                customer.Columns.Add(new TOM.DataColumn { Name = "CustomerKey", SourceColumn = "CustomerKey", DataType = TOM.DataType.Int64, LineageTag = "tag-ck", IsKey = marks });
+                customer.Columns.Add(new TOM.DataColumn { Name = "CustomerName", SourceColumn = "CustomerName", DataType = TOM.DataType.String, LineageTag = "tag-cn", IsDefaultLabel = marks });
+                db.Model.Tables.Add(customer);
+                return db.Model;
+            }
+            var pushed = Model(marks: true);
+            var live = Model(marks: false);
+
+            var rep = LiveDeploy.SyncAndApply(pushed, live, commit: true, "ep", "db", null,
+                saveChanges: () => { }, recalcCalcTables: _ => { }, identityStrict: true);
+
+            Assert.True(rep.Committed);
+            Assert.True(live.Tables["Customer"].Columns["CustomerKey"].IsKey);
+            Assert.True(live.Tables["Customer"].Columns["CustomerName"].IsDefaultLabel);
+            Assert.Contains("column:Customer/CustomerKey", rep.SyncedRefs);
+            Assert.Contains("column:Customer/CustomerName", rep.SyncedRefs);
+            Assert.DoesNotContain(rep.Unmatched, u => u.Contains("authored column metadata"));
+        }
+
+        // ---- publish as a new model (r1/newmodel) ------------------------------------------------------
+
+        [Fact]
+        public void A_new_model_takes_the_chosen_name_and_drops_the_legacy_data_source_Power_BI_refuses()
+        {
+            var m = NewStar();
+            m.DataSources.Add(new TOM.StructuredDataSource { Name = "FabricSql" });
+            var json = TOM.JsonSerializer.SerializeDatabase((TOM.Database)m.Database);
+
+            var db = NewModelPublish.Prepare(json, "Contoso Sales (test)");
+
+            Assert.Equal("Contoso Sales (test)", db.Name);
+            Assert.Equal("Contoso Sales (test)", db.ID);
+            Assert.Empty(db.Model.DataSources);
+            Assert.Equal(2, db.Model.Tables.Count);
+            // Power BI gives a model with no culture en-US; saying so keeps the Changes list from showing a Model row
+            // that can never be published (live run 9 Oct).
+            Assert.Equal("en-US", db.Model.Culture);
+            Assert.Equal("powerbi://api.powerbi.com/v1.0/myorg/Semanticus Demo", NewModelPublish.Endpoint("Semanticus Demo"));
+
+            // The create request carries the model as model.bim plus the definition.pbism marker, base64 inline.
+            using var body = System.Text.Json.JsonDocument.Parse(NewModelPublish.CreateBody(db));
+            Assert.Equal("Contoso Sales (test)", body.RootElement.GetProperty("displayName").GetString());
+            var parts = body.RootElement.GetProperty("definition").GetProperty("parts").EnumerateArray().ToArray();
+            Assert.Equal(new[] { "model.bim", "definition.pbism" }, parts.Select(x => x.GetProperty("path").GetString()).ToArray());
+            var bim = System.Text.Encoding.UTF8.GetString(System.Convert.FromBase64String(parts[0].GetProperty("payload").GetString()));
+            Assert.Contains("\"Sales\"", bim);
+            Assert.DoesNotContain("FabricSql", bim);
+            // Power BI's refusal for a model with no sign-in to its source is what starts the second try.
+            Assert.True(NewModelPublish.NeedsSourceSignIn("We cannot refresh this semantic model because this semantic model uses a default data connection without explicit connection credentials."));
+            Assert.False(NewModelPublish.NeedsSourceSignIn("The table fact_sales was not found."));
+            var m2 = NewStar(); m2.Expressions.Add(new TOM.NamedExpression { Name = "FabricSource", Kind = TOM.ExpressionKind.M, Expression = "let Source = Sql.Database(\"abc.datawarehouse.fabric.microsoft.com\", \"Gold\") in Source" });
+            Assert.Equal(("abc.datawarehouse.fabric.microsoft.com", "Gold"), NewModelPublish.SourceOf((TOM.Database)m2.Database));
+
+            // A Fabric SQL source goes as Direct Lake: entity partitions over the shared expression, pointed at the endpoint.
+            Assert.True(NewModelPublish.IsFabricSql("abc.datawarehouse.fabric.microsoft.com"));
+            Assert.False(NewModelPublish.IsFabricSql("contoso.database.windows.net"));
+            Assert.False(NewModelPublish.ToDirectLake((TOM.Database)m2.Database, "abc.datawarehouse.fabric.microsoft.com", "ep-1"), "a table that is not a plain navigation keeps the model as import");
+            var dl = new TOM.Database("dl") { CompatibilityLevel = 1600, Model = new TOM.Model() };
+            dl.Model.Expressions.Add(new TOM.NamedExpression { Name = "FabricSource", Kind = TOM.ExpressionKind.M, Expression = "let Source = Sql.Database(\"abc.datawarehouse.fabric.microsoft.com\", \"Gold\") in Source" });
+            var fs = new TOM.Table { Name = "fact_sales" };
+            fs.Partitions.Add(new TOM.Partition { Name = "fact_sales", Source = new TOM.MPartitionSource { Expression = "let Source = #\"FabricSource\", Data = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in Data" } });
+            fs.Columns.Add(new TOM.DataColumn { Name = "amount", SourceColumn = "amount", DataType = TOM.DataType.Double });
+            dl.Model.Tables.Add(fs);
+            Assert.True(NewModelPublish.ToDirectLake(dl, "abc.datawarehouse.fabric.microsoft.com", "ep-1"));
+            var part = dl.Model.Tables["fact_sales"].Partitions[0];
+            Assert.Equal(TOM.ModeType.DirectLake, part.Mode);
+            var ent = Assert.IsType<TOM.EntityPartitionSource>(part.Source);
+            Assert.Equal(("fact_sales", "dbo", "FabricSource"), (ent.EntityName, ent.SchemaName, ent.ExpressionSource.Name));
+            Assert.Contains("\"ep-1\"", dl.Model.Expressions["FabricSource"].Expression);
+            Assert.Equal(1604, dl.CompatibilityLevel);
+        }
+
+        [Fact]
+        public async System.Threading.Tasks.Task The_assistant_previews_a_new_model_first_and_an_import_model_says_to_set_the_source_sign_in()
+        {
+            // The line the person reads when Power BI has no sign-in for the source: a next step, said plainly.
+            var o = new NewModelPublish.Outcome { SignInNeeded = true, LoadError = NewModelPublish.SignInStep };
+            Assert.Equal("Published Sales (test) to Semanticus Demo. To load its data: Set the data source sign-in in the Power BI service, then refresh.",
+                NewModelPublish.ResultNote("Sales (test)", "Semanticus Demo", o));
+            Assert.Equal("Published Sales (test) to Semanticus Demo. Its data is loaded.",
+                NewModelPublish.ResultNote("Sales (test)", "Semanticus Demo", new NewModelPublish.Outcome { Loaded = true }));
+
+            // Whether a publish goes as Direct Lake is read from a copy: the model itself is left as it is.
+            var dl = new TOM.Database("dl") { CompatibilityLevel = 1604, Model = new TOM.Model() };
+            dl.Model.Expressions.Add(new TOM.NamedExpression { Name = "FabricSource", Kind = TOM.ExpressionKind.M, Expression = "let Source = Sql.Database(\"abc.datawarehouse.fabric.microsoft.com\", \"Gold\") in Source" });
+            var fs = new TOM.Table { Name = "fact_sales" };
+            fs.Partitions.Add(new TOM.Partition { Name = "fact_sales", Source = new TOM.MPartitionSource { Expression = "let Source = #\"FabricSource\", Data = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in Data" } });
+            fs.Columns.Add(new TOM.DataColumn { Name = "amount", SourceColumn = "amount", DataType = TOM.DataType.Double });
+            dl.Model.Tables.Add(fs);
+            Assert.True(NewModelPublish.WillBeDirectLake(dl));
+            Assert.IsType<TOM.MPartitionSource>(dl.Model.Tables["fact_sales"].Partitions[0].Source);
+            // A local copy that is already Direct Lake (it was published as a new model before) goes as Direct Lake too.
+            Assert.True(NewModelPublish.ToDirectLake(dl, "abc.datawarehouse.fabric.microsoft.com", "ep-1"));
+            Assert.True(NewModelPublish.WillBeDirectLake(dl), "live run 9 Oct: a Direct Lake copy was previewed as an import model with a sign-in step");
+
+            // The agent door: a dry run by default, which reads the open model only (no sign-in, no network).
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro);
+            await engine.CreateModelAsync("Sales", 1604);
+            await engine.CreateImportTableAsync("Sales",
+                "let Source = Sql.Database(\"contoso.database.windows.net\", \"Sales\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t", "human");
+            var preview = await McpTools.PublishNewModel(engine, "Semanticus Demo", "Sales (test)");
+            Assert.True(preview.Preview);
+            Assert.Equal("Import", preview.Mode);
+            Assert.Equal("Sales (test)", preview.Database);
+            Assert.Equal("powerbi://api.powerbi.com/v1.0/myorg/Semanticus Demo", preview.Endpoint);
+            Assert.Equal("Would publish Sales (test) to Semanticus Demo as a new import model. After it is created: Set the data source sign-in in the Power BI service, then refresh.", preview.Note);
+        }
+
+        // Hero run 5 (9 Oct): publishing as a new model under a name the workspace already has. The create call is a POST of a new item, so the existing model is never
+        // touched; the check before it says so in plain words and names the workspace.
+        [Fact]
+        public void A_name_the_workspace_already_has_is_refused_in_plain_words_before_anything_is_sent()
+        {
+            var existing = new[] { new FabricSemanticModel { Id = "1", DisplayName = "Contoso Sales" }, new FabricSemanticModel { Id = "2", DisplayName = "Gold" } };
+            Assert.Equal("A model called Gold is already in Semanticus Demo. Pick another name.", NewModelPublish.TakenNameProblem("gold", "Semanticus Demo", existing));
+            Assert.Null(NewModelPublish.TakenNameProblem("Gold 2", "Semanticus Demo", existing));
+        }
     }
 }

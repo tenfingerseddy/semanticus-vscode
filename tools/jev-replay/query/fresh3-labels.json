@@ -1,0 +1,3719 @@
+{
+ "point": "query.summarize",
+ "set": "fresh3",
+ "written": "2026-09-27",
+ "writtenBeforeFirstRun": true,
+ "note": "The THIRD fresh held-out set (168), written for the reader that ships after the m11/query-split review fixes. Distinct from labels.json (62), fresh-labels.json (80) and fresh2-labels.json (160): no question repeats any of them, word for word or with the punctuation taken out (checked when written). Written and committed before any run on it; nothing was tuned on it. What is new about this set is the second model: the earlier sets scored two RAW models, and this one scores one raw model (northstar, no descriptions and no synonyms) and one prepared for AI (contoso-ai: the same Contoso-style model with a description on every table, column and measure, and the words a person would use for each). The reader that ships reads all three, so a set of raw models alone would not score what it does. Same conventions as fresh2-labels.json: each measures and groupBy entry is one slot listing every right reading; a filter is right when its column is one of those listed, its op matches, and its values are the same set; order is not scored; decline means nothing should be settled; refused means the right reading exists and the reach check must refuse it. Placeholder names only: Northstar is the UAT fixture, Contoso is built in JevQueryReplay.cs.",
+ "items": [
+  {
+   "id": "hns-001",
+   "model": "northstar",
+   "words": "gross profit by store region",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-002",
+   "model": "northstar",
+   "words": "units for each product brand",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-003",
+   "model": "northstar",
+   "words": "order count by customer segment",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-004",
+   "model": "northstar",
+   "words": "average order value by store channel",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-005",
+   "model": "northstar",
+   "words": "total cost per product subcategory",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-006",
+   "model": "northstar",
+   "words": "margin % by category",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-007",
+   "model": "northstar",
+   "words": "net sales by day of week",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-008",
+   "model": "northstar",
+   "words": "returns amount by store city",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-009",
+   "model": "northstar",
+   "words": "return rate % for each region",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-010",
+   "model": "northstar",
+   "words": "units by quarter",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-011",
+   "model": "northstar",
+   "words": "gross profit for each year",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-012",
+   "model": "northstar",
+   "words": "order count by month",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-013",
+   "model": "northstar",
+   "words": "net sales by customer city",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-014",
+   "model": "northstar",
+   "words": "total cost by store name",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-015",
+   "model": "northstar",
+   "words": "average order value per customer segment",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-016",
+   "model": "northstar",
+   "words": "units by sku",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-017",
+   "model": "northstar",
+   "words": "net sales by product name",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-018",
+   "model": "northstar",
+   "words": "gross profit by channel",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-019",
+   "model": "northstar",
+   "words": "margin % per store",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]",
+      "Store[StoreCode]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-020",
+   "model": "northstar",
+   "words": "return rate % for each product category",
+   "expect": {
+    "measures": [
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-021",
+   "model": "northstar",
+   "words": "net sales by category in 2025",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-022",
+   "model": "northstar",
+   "words": "units by month for 2024",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-023",
+   "model": "northstar",
+   "words": "gross profit by channel in the coast region",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "Coast"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-024",
+   "model": "northstar",
+   "words": "order count by month in the south region",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "South"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-025",
+   "model": "northstar",
+   "words": "units by brand for the apparel category",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Apparel"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-026",
+   "model": "northstar",
+   "words": "net sales by subcategory for outdoor",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Outdoor"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-027",
+   "model": "northstar",
+   "words": "gross profit by region for online stores",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Channel]"
+      ],
+      "op": "is",
+      "values": [
+       "Online"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-028",
+   "model": "northstar",
+   "words": "units by quarter for the electronics category",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Electronics"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-029",
+   "model": "northstar",
+   "words": "net sales by category excluding samples",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is_not",
+      "values": [
+       "Samples"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-030",
+   "model": "northstar",
+   "words": "average order value by month for trade customers",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Customer[Segment]"
+      ],
+      "op": "is",
+      "values": [
+       "Trade"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-031",
+   "model": "northstar",
+   "words": "order count by store city for retail customers",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Customer[Segment]"
+      ],
+      "op": "is",
+      "values": [
+       "Retail"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-032",
+   "model": "northstar",
+   "words": "units by day of week for 2025",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-033",
+   "model": "northstar",
+   "words": "net sales by category for polaris line",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Brand]"
+      ],
+      "op": "is",
+      "values": [
+       "Polaris Line"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-034",
+   "model": "northstar",
+   "words": "gross profit by subcategory for northstar studio",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Brand]"
+      ],
+      "op": "is",
+      "values": [
+       "Northstar Studio"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-035",
+   "model": "northstar",
+   "words": "units by channel in pine crest",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[City]",
+       "Customer[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Pine Crest"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-036",
+   "model": "northstar",
+   "words": "order count by category in lakeside",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[City]",
+       "Customer[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Lakeside"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-037",
+   "model": "northstar",
+   "words": "net sales by store channel for the kitchen category",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Kitchen"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-038",
+   "model": "northstar",
+   "words": "margin % by brand for 2024",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-039",
+   "model": "northstar",
+   "words": "units by customer region for pop-up stores",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Channel]"
+      ],
+      "op": "is",
+      "values": [
+       "Pop-up"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-040",
+   "model": "northstar",
+   "words": "net sales by month for the mountain region",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "Mountain"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-041",
+   "model": "northstar",
+   "words": "top 10 products by net sales",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Net Sales"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-042",
+   "model": "northstar",
+   "words": "bottom 5 stores by gross profit",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[StoreName]",
+      "Store[StoreCode]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Gross Profit"
+     ],
+     "lowest": true
+    }
+   }
+  },
+  {
+   "id": "hns-043",
+   "model": "northstar",
+   "words": "top 3 categories by units",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Units"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-044",
+   "model": "northstar",
+   "words": "top 20 customers by net sales",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[CustomerName]",
+      "Customer[CustomerCode]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 20,
+     "by": [
+      "Net Sales"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-045",
+   "model": "northstar",
+   "words": "top 5 subcategories by gross profit in 2025",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": {
+     "n": 5,
+     "by": [
+      "Gross Profit"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-046",
+   "model": "northstar",
+   "words": "worst 5 products by margin %",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Margin %"
+     ],
+     "lowest": true
+    }
+   }
+  },
+  {
+   "id": "hns-047",
+   "model": "northstar",
+   "words": "top 8 cities by order count",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]",
+      "Customer[City]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 8,
+     "by": [
+      "Order Count"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-048",
+   "model": "northstar",
+   "words": "top 4 brands by units",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 4,
+     "by": [
+      "Units"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-049",
+   "model": "northstar",
+   "words": "top 15 products by units for the outdoor category",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[ProductName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Outdoor"
+      ]
+     }
+    ],
+    "top": {
+     "n": 15,
+     "by": [
+      "Units"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-050",
+   "model": "northstar",
+   "words": "bottom 3 channels by net sales",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Net Sales"
+     ],
+     "lowest": true
+    }
+   }
+  },
+  {
+   "id": "hns-051",
+   "model": "northstar",
+   "words": "top 6 months by gross profit",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 6,
+     "by": [
+      "Gross Profit"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-052",
+   "model": "northstar",
+   "words": "top 10 skus by returns amount",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[SKU]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Returns Amount"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hns-053",
+   "model": "northstar",
+   "words": "net sales and total cost by category",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ],
+     [
+      "Total Cost"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-054",
+   "model": "northstar",
+   "words": "units and order count by store region",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ],
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-055",
+   "model": "northstar",
+   "words": "gross profit and margin % by brand",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ],
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-056",
+   "model": "northstar",
+   "words": "net sales and gross profit by quarter",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ],
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-057",
+   "model": "northstar",
+   "words": "units and net sales by channel for 2025",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ],
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-058",
+   "model": "northstar",
+   "words": "order count and average order value by customer segment",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ],
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-059",
+   "model": "northstar",
+   "words": "returns amount and return rate % by category",
+   "expect": {
+    "measures": [
+     [
+      "Returns Amount"
+     ],
+     [
+      "Return Rate %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-060",
+   "model": "northstar",
+   "words": "total cost and gross profit by subcategory",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ],
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-061",
+   "model": "northstar",
+   "words": "net sales and units by month in 2024",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ],
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-062",
+   "model": "northstar",
+   "words": "average order value and order count by store city",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ],
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-063",
+   "model": "northstar",
+   "words": "net sales by category and year",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-064",
+   "model": "northstar",
+   "words": "units by region and quarter",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ],
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-065",
+   "model": "northstar",
+   "words": "gross profit by brand and channel",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ],
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-066",
+   "model": "northstar",
+   "words": "order count by segment and month",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ],
+     [
+      "Date[MonthName]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-067",
+   "model": "northstar",
+   "words": "net sales by store city and category",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[City]"
+     ],
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-068",
+   "model": "northstar",
+   "words": "units by subcategory and year",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Subcategory]"
+     ],
+     [
+      "Date[Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-069",
+   "model": "northstar",
+   "words": "margin % by category and channel",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-070",
+   "model": "northstar",
+   "words": "total cost by brand and quarter",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ],
+     [
+      "Date[Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-071",
+   "model": "northstar",
+   "words": "net sales by day of week and channel",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Date[DayOfWeek]"
+     ],
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-072",
+   "model": "northstar",
+   "words": "average order value by segment and region",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Customer[Segment]"
+     ],
+     [
+      "Store[Region]",
+      "Customer[Region]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-073",
+   "model": "northstar",
+   "words": "what were total net sales in 2025",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-074",
+   "model": "northstar",
+   "words": "how many units were sold",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-075",
+   "model": "northstar",
+   "words": "what is the gross profit for the outdoor category",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Outdoor"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-076",
+   "model": "northstar",
+   "words": "total order count for trade customers",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Customer[Segment]"
+      ],
+      "op": "is",
+      "values": [
+       "Trade"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-077",
+   "model": "northstar",
+   "words": "what is the margin % overall",
+   "expect": {
+    "measures": [
+     [
+      "Margin %"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-078",
+   "model": "northstar",
+   "words": "net sales for online",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[Channel]"
+      ],
+      "op": "is",
+      "values": [
+       "Online"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-079",
+   "model": "northstar",
+   "words": "total cost in the south region",
+   "expect": {
+    "measures": [
+     [
+      "Total Cost"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Store[Region]",
+       "Customer[Region]"
+      ],
+      "op": "is",
+      "values": [
+       "South"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-080",
+   "model": "northstar",
+   "words": "average order value across 2024",
+   "expect": {
+    "measures": [
+     [
+      "Average Order Value"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-081",
+   "model": "northstar",
+   "words": "net sales from 2025 onwards",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "from",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-082",
+   "model": "northstar",
+   "words": "units before 2025",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "before",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-083",
+   "model": "northstar",
+   "words": "gross profit by category excluding the samples range",
+   "expect": {
+    "measures": [
+     [
+      "Gross Profit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is_not",
+      "values": [
+       "Samples"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-084",
+   "model": "northstar",
+   "words": "order count by channel not counting pop-up stores",
+   "expect": {
+    "measures": [
+     [
+      "Order Count"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Store[Channel]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Store[Channel]"
+      ],
+      "op": "is_not",
+      "values": [
+       "Pop-up"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-085",
+   "model": "northstar",
+   "words": "net sales up to 2024",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "up_to",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-086",
+   "model": "northstar",
+   "words": "units by brand after 2024",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Date[Year]"
+      ],
+      "op": "after",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hns-087",
+   "model": "northstar",
+   "words": "how many people walked into the shops last week",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-088",
+   "model": "northstar",
+   "words": "what did we spend on advertising",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-089",
+   "model": "northstar",
+   "words": "which suppliers are late with deliveries",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-090",
+   "model": "northstar",
+   "words": "what is the average delivery time to customers",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-091",
+   "model": "northstar",
+   "words": "how many items are left in the warehouse",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-092",
+   "model": "northstar",
+   "words": "what do customers say about the new packaging",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-093",
+   "model": "northstar",
+   "words": "how many staff work in each shop",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-094",
+   "model": "northstar",
+   "words": "what will net sales be next quarter",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-095",
+   "model": "northstar",
+   "words": "which competitors dropped their prices",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-096",
+   "model": "northstar",
+   "words": "how many website visits turned into orders",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-097",
+   "model": "northstar",
+   "words": "what is the carbon footprint of each delivery",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-098",
+   "model": "northstar",
+   "words": "how many support tickets were raised",
+   "expect": "decline"
+  },
+  {
+   "id": "hns-099",
+   "model": "northstar",
+   "words": "net sales by metric selector",
+   "expect": {
+    "measures": [
+     [
+      "Net Sales"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Metric Selector[Metric Selector]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "refused": true
+  },
+  {
+   "id": "hns-100",
+   "model": "northstar",
+   "words": "units for each metric selector",
+   "expect": {
+    "measures": [
+     [
+      "Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Metric Selector[Metric Selector]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "refused": true
+  },
+  {
+   "id": "hct-001",
+   "model": "contoso-ai",
+   "words": "turnover by country",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-002",
+   "model": "contoso-ai",
+   "words": "revenue for each product colour",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-003",
+   "model": "contoso-ai",
+   "words": "order quantity by brand",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-004",
+   "model": "contoso-ai",
+   "words": "units by category",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-005",
+   "model": "contoso-ai",
+   "words": "revenue per unit for each nation",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-006",
+   "model": "contoso-ai",
+   "words": "sales by fiscal quarter",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-007",
+   "model": "contoso-ai",
+   "words": "total revenue by state",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-008",
+   "model": "contoso-ai",
+   "words": "order quantity for each town",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-009",
+   "model": "contoso-ai",
+   "words": "revenue by offer",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-010",
+   "model": "contoso-ai",
+   "words": "returns by product name",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-011",
+   "model": "contoso-ai",
+   "words": "total revenue by month",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-012",
+   "model": "contoso-ai",
+   "words": "volume by province",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-013",
+   "model": "contoso-ai",
+   "words": "average price by category",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-014",
+   "model": "contoso-ai",
+   "words": "turnover for each year",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-015",
+   "model": "contoso-ai",
+   "words": "revenue by colour for road bike",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Product Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Road Bike"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-016",
+   "model": "contoso-ai",
+   "words": "total revenue by country in 2024",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-017",
+   "model": "contoso-ai",
+   "words": "order quantity by month for australia",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Australia"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-018",
+   "model": "contoso-ai",
+   "words": "revenue by state for the bikes range",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Bikes"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-019",
+   "model": "contoso-ai",
+   "words": "units by brand in melbourne",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[City]"
+      ],
+      "op": "is",
+      "values": [
+       "Melbourne"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-020",
+   "model": "contoso-ai",
+   "words": "sales by category for the summer sale",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Promotion[Promotion Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Summer Sale"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-021",
+   "model": "contoso-ai",
+   "words": "revenue by town for red products",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Color]"
+      ],
+      "op": "is",
+      "values": [
+       "Red"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-022",
+   "model": "contoso-ai",
+   "words": "total revenue by fiscal quarter in canada",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Canada"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-023",
+   "model": "contoso-ai",
+   "words": "order quantity by colour excluding black",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Color]"
+      ],
+      "op": "is_not",
+      "values": [
+       "Black"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-024",
+   "model": "contoso-ai",
+   "words": "turnover by month for contoso",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Brand]"
+      ],
+      "op": "is",
+      "values": [
+       "Contoso"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-025",
+   "model": "contoso-ai",
+   "words": "revenue per unit by category in 2025",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-026",
+   "model": "contoso-ai",
+   "words": "revenue by country for the accessories range",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Product[Category]"
+      ],
+      "op": "is",
+      "values": [
+       "Accessories"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-027",
+   "model": "contoso-ai",
+   "words": "units by state for the holiday offer",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Promotion[Promotion Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Holiday Offer"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-028",
+   "model": "contoso-ai",
+   "words": "total revenue by brand in texas",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Geography[State]"
+      ],
+      "op": "is",
+      "values": [
+       "Texas"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-029",
+   "model": "contoso-ai",
+   "words": "top 5 products by revenue",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-030",
+   "model": "contoso-ai",
+   "words": "top 3 countries by order quantity",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Order Quantity"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-031",
+   "model": "contoso-ai",
+   "words": "bottom 4 colours by turnover",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 4,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": true
+    }
+   }
+  },
+  {
+   "id": "hct-032",
+   "model": "contoso-ai",
+   "words": "top 10 towns by revenue",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 10,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-033",
+   "model": "contoso-ai",
+   "words": "top 2 brands by average price",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 2,
+     "by": [
+      "Revenue per Unit"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-034",
+   "model": "contoso-ai",
+   "words": "top 6 months by total revenue in 2024",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": {
+     "n": 6,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-035",
+   "model": "contoso-ai",
+   "words": "worst 3 states by revenue",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 3,
+     "by": [
+      "Total Revenue"
+     ],
+     "lowest": true
+    }
+   }
+  },
+  {
+   "id": "hct-036",
+   "model": "contoso-ai",
+   "words": "top 5 offers by units",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": {
+     "n": 5,
+     "by": [
+      "Order Quantity"
+     ],
+     "lowest": false
+    }
+   }
+  },
+  {
+   "id": "hct-037",
+   "model": "contoso-ai",
+   "words": "revenue and units by country",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-038",
+   "model": "contoso-ai",
+   "words": "total revenue and revenue per unit by category",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-039",
+   "model": "contoso-ai",
+   "words": "turnover and volume by brand",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-040",
+   "model": "contoso-ai",
+   "words": "revenue and units by month in 2025",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-041",
+   "model": "contoso-ai",
+   "words": "total revenue and order quantity by fiscal quarter",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-042",
+   "model": "contoso-ai",
+   "words": "sales and returns by product name",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ],
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Product Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-043",
+   "model": "contoso-ai",
+   "words": "turnover by nation and year",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[Country]"
+     ],
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-044",
+   "model": "contoso-ai",
+   "words": "units by category and colour",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ],
+     [
+      "Product[Color]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-045",
+   "model": "contoso-ai",
+   "words": "turnover by state and month",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[State]"
+     ],
+     [
+      "Calendar[Month Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-046",
+   "model": "contoso-ai",
+   "words": "revenue by brand and offer",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Brand]"
+     ],
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-047",
+   "model": "contoso-ai",
+   "words": "order quantity by town and category",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ],
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-048",
+   "model": "contoso-ai",
+   "words": "total revenue by fiscal quarter and country",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Fiscal Quarter]"
+     ],
+     [
+      "Geography[Country]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-049",
+   "model": "contoso-ai",
+   "words": "what was total revenue in 2023",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "is",
+      "values": [
+       "2023"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-050",
+   "model": "contoso-ai",
+   "words": "how many units were sold in germany",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "Germany"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-051",
+   "model": "contoso-ai",
+   "words": "what is the revenue per unit for the helmet",
+   "expect": {
+    "measures": [
+     [
+      "Revenue per Unit"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Product[Product Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Helmet"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-052",
+   "model": "contoso-ai",
+   "words": "total turnover for the summer sale",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Promotion[Promotion Name]"
+      ],
+      "op": "is",
+      "values": [
+       "Summer Sale"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-053",
+   "model": "contoso-ai",
+   "words": "how many items came back",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-054",
+   "model": "contoso-ai",
+   "words": "what was the revenue in france",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Geography[Country]"
+      ],
+      "op": "is",
+      "values": [
+       "France"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-055",
+   "model": "contoso-ai",
+   "words": "revenue from 2024 onwards",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "from",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-056",
+   "model": "contoso-ai",
+   "words": "order quantity before 2025",
+   "expect": {
+    "measures": [
+     [
+      "Order Quantity"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "before",
+      "values": [
+       "2025"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-057",
+   "model": "contoso-ai",
+   "words": "total revenue up to 2024",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "up_to",
+      "values": [
+       "2024"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-058",
+   "model": "contoso-ai",
+   "words": "revenue by category after 2023",
+   "expect": {
+    "measures": [
+     [
+      "Total Revenue"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Product[Category]"
+     ]
+    ],
+    "filters": [
+     {
+      "column": [
+       "Calendar[Calendar Year]"
+      ],
+      "op": "after",
+      "values": [
+       "2023"
+      ]
+     }
+    ],
+    "top": null
+   }
+  },
+  {
+   "id": "hct-059",
+   "model": "contoso-ai",
+   "words": "how many people opened the newsletter",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-060",
+   "model": "contoso-ai",
+   "words": "what is the stock level for each item",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-061",
+   "model": "contoso-ai",
+   "words": "which shops are open on sundays",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-062",
+   "model": "contoso-ai",
+   "words": "what did we pay each supplier",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-063",
+   "model": "contoso-ai",
+   "words": "how long does delivery take to each state",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-064",
+   "model": "contoso-ai",
+   "words": "how many complaints were logged this month",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-065",
+   "model": "contoso-ai",
+   "words": "what is next year's sales target",
+   "expect": "decline"
+  },
+  {
+   "id": "hct-066",
+   "model": "contoso-ai",
+   "words": "returned units by town",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Geography[City]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "refused": true
+  },
+  {
+   "id": "hct-067",
+   "model": "contoso-ai",
+   "words": "returns by offer",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Promotion[Promotion Name]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "refused": true
+  },
+  {
+   "id": "hct-068",
+   "model": "contoso-ai",
+   "words": "returned units by calendar year",
+   "expect": {
+    "measures": [
+     [
+      "Returned Units"
+     ]
+    ],
+    "groupBy": [
+     [
+      "Calendar[Calendar Year]"
+     ]
+    ],
+    "filters": [],
+    "top": null
+   },
+   "refused": true
+  }
+ ]
+}

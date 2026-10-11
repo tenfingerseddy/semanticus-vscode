@@ -95,6 +95,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowLayout> SaveWorkflowLayoutAsync(string name, Dictionary<string, WorkflowPosition> positions, string expectedRevision = null)
         {
+            GuardOutsideWrite(null);
             RequireProFeature();
             var context = _sessions.CurrentContext;
             // Save As can move SourcePath without replacing the context while this operation is queued.
@@ -113,6 +114,8 @@ namespace Semanticus.Engine
                 // Explicit {} reset also recovers a corrupt sidecar. Other writes must first read it successfully.
                 if (positions.Count != 0) ReadWorkflowLayout(def, file, definition, bytes);
                 var next = new WorkflowLayout { Name = name, Positions = clean };
+                // the canvas file as it was when the person was asked: positions they placed since are theirs (checked under the workflow gate)
+                RequireApprovedBasis(nameof(SaveWorkflowLayoutAsync), GateFileState(file), "workflow canvas");
                 Directory.CreateDirectory(Path.GetDirectoryName(file));
                 var temp = file + "." + Guid.NewGuid().ToString("N") + ".tmp";
                 try

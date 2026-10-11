@@ -47,7 +47,9 @@ namespace Semanticus.Tests
 
                 // (3) Now that it EXISTS, TMDL apply edits it (script → re-apply round-trips the existing-object route).
                 var tmdl = await engine.ScriptObjectsAsync(new[] { tableRef }, "TMDL");
-                var edited = await engine.ApplyTmdlScriptAsync(tmdl, "agent");
+                // An edit: a script nobody edited writes nothing (join 6), and this proves the route writes an existing object.
+                Assert.Contains("= 1", tmdl);
+                var edited = await engine.ApplyTmdlScriptAsync(tmdl.Replace("= 1", "= 2"), "agent");
                 Assert.Empty(edited.Skipped);
                 Assert.Contains(edited.Applied, p => p.Contains(name));
 
@@ -182,29 +184,25 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Deleting_a_table_after_a_CL_bump_with_roles_gives_a_clear_error_not_an_NRE()
+        public async Task Deleting_a_table_after_a_CL_bump_with_roles_deletes_and_undoes()
         {
-            // A known vendored TOMWrapper limitation (docs/op-routing-map.md): a ModelRole created at CL<1400 keeps a
-            // NULL MetadataPermission (its OLS indexer is built in ModelRole.Init only at CL>=1400), and a CL bump does
-            // NOT rebuild it (the vendored Reinit reuses existing wrappers). Deleting a table then clears OLS across
-            // every role and the vendored code throws a bare NullReferenceException. We can't fix the vendored wrapper
-            // from our layer (without modifying the pinned submodule), so DeleteObjectAsync GUARDS it: a clear,
-            // actionable InvalidOperationException instead of an opaque NRE. (A natively-modern model is unaffected; its
-            // roles have OLS indexers — see Tmdl_apply_rejects_..., which deletes on a fresh CL-1604 model and succeeds.)
+            // A ModelRole created at CL<1400 is born with a NULL MetadataPermission (ModelRole.Init builds that OLS
+            // indexer only at CL>=1400). Deleting a table at CL>=1400 clears OLS across every role, which used to throw
+            // a bare NullReferenceException after an in-session bump (so this test once pinned a "reopen the model"
+            // refusal). The session now fills the indexers when the level changes (CompatibilityGatedMembers), so the
+            // delete succeeds and undoes like on a natively modern model.
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, TestEntitlements.Pro);
             try
             {
                 await engine.OpenAsync(TestModels.FindBim());                   // AdventureWorks @ CL 1200
-                await engine.CreateRoleAsync("OlsDeleteProbe", "Read", "agent");// role at CL<1400 → null OLS indexer
-                await engine.SetCompatibilityLevelAsync(1604, "agent");         // crosses the 1400 OLS boundary (no wrapper rebuild)
+                await engine.CreateRoleAsync("OlsDeleteProbe", "Read", "agent");// role at CL<1400 -> null OLS indexer
+                await engine.SetCompatibilityLevelAsync(1604, "agent");         // crosses the 1400 OLS boundary
                 var tref = await engine.CreateTableAsync("OlsDelProbeTbl", "agent");
 
-                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.DeleteObjectAsync(tref, "agent"));
-                Assert.Contains("compatibility level 1400", ex.Message);
-                Assert.Contains("Reopen", ex.Message);
-
-                // The guard rolled the delete back cleanly — the model is still coherent and the table remains.
+                await engine.DeleteObjectAsync(tref, "agent");
+                Assert.DoesNotContain((await engine.GetModelGraphAsync()).Tables, t => t.Name == "OlsDelProbeTbl");
+                await engine.UndoAsync("human");
                 Assert.Contains((await engine.GetModelGraphAsync()).Tables, t => t.Name == "OlsDelProbeTbl");
             }
             finally { engine.Dispose(); }

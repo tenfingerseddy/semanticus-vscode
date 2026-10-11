@@ -25,17 +25,30 @@ namespace Semanticus.Engine
         private readonly string _pipeName;
         private readonly string _uiChallenge;
         private readonly List<JsonRpc> _clients = new List<JsonRpc>();
+        // The agent-role subset of _clients. An attached assistant (the MCP proxy) connects as an agent, so
+        // this count is one of the engine's two PRESENCE signals for the assistant handoff: see
+        // LocalEngine.Jev.cs. Held as its own set rather than derived, so the two cannot drift.
+        private readonly HashSet<JsonRpc> _agentClients = new HashSet<JsonRpc>();
         private readonly object _gate = new object();
         private readonly CancellationTokenSource _stop = new CancellationTokenSource();
+        // Null except in the owner `serve` host. Handed only to the HUMAN target, so adoptParent cannot be
+        // reached from an agent connection: an agent must not retarget which process this engine dies with.
+        private readonly ParentLifetime _parentLifetime;
+        // Null except in the owner `serve` host, and handed only to the HUMAN target for the same reason (F-244).
+        private readonly CleanStop _cleanStop;
 
-        public RpcServer(SessionManager sessions, IEngine engine, string pipeName, string uiChallenge = null)
+        public RpcServer(SessionManager sessions, IEngine engine, string pipeName, string uiChallenge = null, ParentLifetime parentLifetime = null,
+                         CleanStop cleanStop = null)
         {
+            _cleanStop = cleanStop;
             _sessions = sessions;
             _engine = engine;
             _pipeName = pipeName;
+            _parentLifetime = parentLifetime;
             _uiChallenge = uiChallenge == null ? null : RpcHandshake.ValidateChallenge(uiChallenge);
             _sessions.Bus.Changed += OnChanged;
             _sessions.Bus.PlanChanged += OnPlanChanged;
+            _sessions.Bus.PlanRunProgressed += OnPlanRunProgress;
             _sessions.Bus.Progress += OnProgress;
             _sessions.Bus.SpecChanged += OnSpecChanged;
             _sessions.Bus.Activity += OnActivity;
@@ -43,12 +56,24 @@ namespace Semanticus.Engine
             _sessions.Bus.WorkflowChanged += OnWorkflowChanged;
             _sessions.Bus.WorkflowLibraryChanged += OnWorkflowLibraryChanged;
             _sessions.Bus.WorkflowLayoutChanged += OnWorkflowLayoutChanged;
+            _sessions.Bus.DraftChanged += OnDraftChanged;
+            _sessions.Bus.StartPlanChanged += OnStartPlanChanged;
+            _sessions.Bus.SessionChanged += OnSessionChanged;
         }
 
         public string PipeName => _pipeName;
 
+        /// <summary>How many AGENT-role clients are attached right now. A human UI connection is not one of
+        /// these. The assistant handoff reads it to answer "is anyone there to ask", so a job stops at a named
+        /// stub instead of queueing words nobody will ever read.</summary>
+        public int AgentClientCount { get { lock (_gate) return _agentClients.Count; } }
+
+        /// <summary>Every attached client, either role.</summary>
+        public int ClientCount { get { lock (_gate) return _clients.Count; } }
+
         private void OnChanged(ChangeNotification n) => Broadcast("model/didChange", n);
         private void OnPlanChanged(ChangePlanView v) => Broadcast("plan/didChange", v);
+        private void OnPlanRunProgress(PlanRunProgress v) => Broadcast("plan/runProgress", v);
         private void OnProgress(OperationProgress v) => Broadcast("progress/didChange", v);
         private void OnSpecChanged(SpecView v) => Broadcast("spec/didChange", v);
         private void OnActivity(ActivityEvent e) => Broadcast("model/activity", e);
@@ -56,13 +81,20 @@ namespace Semanticus.Engine
         private void OnWorkflowChanged(WorkflowRunView v) => Broadcast("workflow/didChange", v);
         private void OnWorkflowLibraryChanged(WorkflowInfo[] v) => Broadcast("workflow/libraryDidChange", v);
         private void OnWorkflowLayoutChanged(WorkflowLayout v) => Broadcast("workflow/layoutDidChange", v);
+        private void OnDraftChanged(Composer.DraftView v) => Broadcast("draft/didChange", v);
+        // The spec-first start plan (M11): the whole view, to both roles, like a draft. The agent door learns of it on its next call (the fold).
+        private void OnStartPlanChanged(StartPlan.StartPlanView v) => Broadcast("startPlan/didChange", v);
+        // The connection that asked for the swap is skipped: it refreshes from its own answer, and an echo racing that
+        // answer would tell its Studio the model was replaced while the request was still in flight.
+        private void OnSessionChanged(SessionChangeNotification n) => Broadcast("session/didChange", n, exceptWriter: n?.Writer);
 
-        private void Broadcast(string method, object payload)
+        private void Broadcast(string method, object payload, string exceptWriter = null)
         {
             JsonRpc[] snapshot;
             lock (_gate) snapshot = _clients.ToArray();
             foreach (var c in snapshot)
             {
+                if (exceptWriter != null && c is WriterStampedJsonRpc w && w.Writer == exceptWriter) continue;
                 try { _ = c.NotifyAsync(method, payload); }
                 catch { /* client may be disconnecting */ }
             }
@@ -97,6 +129,7 @@ namespace Semanticus.Engine
         private async Task ServeAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)
         {
             JsonRpc rpc = null;
+            string connectionId = null;
             try
             {
                 RpcConnectionRole role;
@@ -112,23 +145,70 @@ namespace Semanticus.Engine
                     return;
                 }
                 await RpcHandshake.WriteResponseAsync(pipe, true, cancellationToken).ConfigureAwait(false);
-                rpc = new JsonRpc(CreateHandler(pipe));
-                rpc.AddLocalRpcTarget(new EngineRpcTarget(_engine, role == RpcConnectionRole.Human ? "human" : "agent"));
+                // F-246: every request on this connection is stamped with its id, so a commit knows who sent it, and
+                // an agent connection is a reader of the change journal from this moment on (its own commits excluded).
+                connectionId = "rpc:" + Interlocked.Increment(ref _nextConnection);
+                rpc = new WriterStampedJsonRpc(CreateHandler(pipe), connectionId, _engine);
+                var reader = role == RpcConnectionRole.Human ? null : connectionId;
+                if (reader != null) _sessions.Changes.Register(reader);
+                rpc.AddLocalRpcTarget(new EngineRpcTarget(_engine, role == RpcConnectionRole.Human ? "human" : "agent", reader));
                 if (role == RpcConnectionRole.Human)
-                    rpc.AddLocalRpcTarget(new HumanGovernanceRpcTarget(_engine));
-                lock (_gate) _clients.Add(rpc);
+                    rpc.AddLocalRpcTarget(new HumanGovernanceRpcTarget(_engine, _parentLifetime, _cleanStop));
+                lock (_gate)
+                {
+                    _clients.Add(rpc);
+                    if (role != RpcConnectionRole.Human) _agentClients.Add(rpc);
+                }
                 rpc.StartListening();
                 await rpc.Completion.ConfigureAwait(false);
             }
             catch { /* malformed/auth-failed handshakes and disconnects are closed without a method surface */ }
             finally
             {
+                if (connectionId != null) _sessions.Changes.Unregister(connectionId);
                 if (rpc != null)
                 {
-                    lock (_gate) _clients.Remove(rpc);
+                    lock (_gate)
+                    {
+                        _clients.Remove(rpc);
+                        _agentClients.Remove(rpc);
+                    }
                     rpc.Dispose();
                 }
                 try { pipe.Dispose(); } catch { }
+            }
+        }
+
+        private long _nextConnection;
+
+        /// <summary>F-246: runs every request of one connection under that connection's writer id
+        /// (<see cref="ChangeWriter"/>), so <c>Session.TrackAsync</c> can stamp the commits it causes.</summary>
+        private sealed class WriterStampedJsonRpc : JsonRpc
+        {
+            private readonly string _writer;
+            private readonly IEngine _engine;
+            public WriterStampedJsonRpc(IJsonRpcMessageHandler handler, string writer, IEngine engine = null) : base(handler)
+            {
+                _writer = writer;
+                _engine = engine;
+            }
+
+            internal string Writer => _writer;
+
+            protected override async ValueTask<StreamJsonRpc.Protocol.JsonRpcMessage> DispatchRequestAsync(
+                StreamJsonRpc.Protocol.JsonRpcRequest request, TargetMethod targetMethod, CancellationToken cancellationToken)
+            {
+                // Lane E3, contract 8.4: an attached assistant's edits count toward the task this connection claimed
+                // most recently, stamped here in the owner because the proxy's ambient scope does not cross the pipe.
+                // C1 (drafts-sol round 2): the model the sender's page was showing rides on the request itself, so the person's door can refuse a write
+                // whose page is not on the model that is open (PersonFence), whichever method it is and whichever editor sent it.
+                request.TryGetTopLevelProperty<string>(RequestModelIdentity.WireName, out var named);
+                // Round 3: the extension's own writer says it names a model on EVERY request. One that says so and names none could not tell which model it meant.
+                request.TryGetTopLevelProperty<bool>(RequestModelIdentity.StrictWireName, out var strict);
+                using (RequestModelIdentity.Begin(named, strict))
+                using (ChangeWriter.Begin(_writer))
+                using (McpHealthAppender.TaskCause(_engine, _writer))
+                    return await base.DispatchRequestAsync(request, targetMethod, cancellationToken).ConfigureAwait(false);
             }
         }
 
@@ -159,6 +239,7 @@ namespace Semanticus.Engine
             _stop.Cancel();
             _sessions.Bus.Changed -= OnChanged;
             _sessions.Bus.PlanChanged -= OnPlanChanged;
+            _sessions.Bus.PlanRunProgressed -= OnPlanRunProgress;
             _sessions.Bus.Progress -= OnProgress;
             _sessions.Bus.SpecChanged -= OnSpecChanged;
             _sessions.Bus.Activity -= OnActivity;
@@ -166,8 +247,11 @@ namespace Semanticus.Engine
             _sessions.Bus.WorkflowChanged -= OnWorkflowChanged;
             _sessions.Bus.WorkflowLibraryChanged -= OnWorkflowLibraryChanged;
             _sessions.Bus.WorkflowLayoutChanged -= OnWorkflowLayoutChanged;
+            _sessions.Bus.DraftChanged -= OnDraftChanged;
+            _sessions.Bus.StartPlanChanged -= OnStartPlanChanged;
+            _sessions.Bus.SessionChanged -= OnSessionChanged;
             JsonRpc[] snapshot;
-            lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); }
+            lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); _agentClients.Clear(); }
             foreach (var c in snapshot) { try { c.Dispose(); } catch { } }
             _stop.Dispose();
         }

@@ -111,7 +111,7 @@ assert.match(treeProvider, /setIdentity\(/,
   'the provider must be TOLD the identity from the session path, the same signal the dropped bar used');
 
 // What the row renders: name as the label, source and live state as the description, full path as tooltip,
-// a model icon, not collapsible, and a click that lands on Studio's Overview.
+// a model icon, not collapsible, and a click that lands on Studio's start page, the Plan (the Overview retired in slice 11).
 const item = treeProvider.slice(treeProvider.indexOf("if (n.kind === 'modelIdentity')"),
   treeProvider.indexOf("if (n.kind === 'modelIdentity')") + 2200);
 assert.ok(item.length > 200, 'no getTreeItem branch for the identity row');
@@ -119,8 +119,8 @@ assert.match(item, /TreeItemCollapsibleState\.None/, 'the identity row is not co
 assert.match(item, /ThemeIcon\('database'\)/, 'the identity row carries a model icon');
 assert.match(item, /\.description = /, 'the source and live state ride in the row description, beside the name');
 assert.match(item, /\.tooltip = /, 'the full path belongs in the tooltip, where a narrow tree cannot cut it');
-assert.match(item, /command: 'semanticus\.studioGoTab'[\s\S]{0,140}arguments: \['modelhome'\]/,
-  "clicking the model name must land on Studio's Overview");
+assert.match(item, /command: 'semanticus\.studioGoTab'[\s\S]{0,140}arguments: \['plan'\]/,
+  "clicking the model name must land on Studio's start page, the Plan");
 
 // The unsaved marker is a leading dot in the DESCRIPTION, because the icon slot already holds the model icon
 // and a TreeItem has only one.
@@ -236,4 +236,109 @@ assert.ok(!shortcuts.includes('semanticusReference'),
 assert.ok(!shortcuts.includes('Reference Model tree'),
   'docs/keyboard-shortcuts.md still documents the Reference Model tree');
 
+
+// ---- r1 min4: the native bar, the right-click menu and the command list say less ---------------------------
+// These parts are VS Code's own, so they cannot be screenshotted headless. They are proved from what feeds them: the
+// pure text functions (compiled to out/), and package.json.
+{
+  const T = await import('../out/statusBarText.js');
+  const free = { sessionId: 's1', modelName: 'Contoso Retail', source: 'C:/Models/ContosoRetail', measures: 12 };
+  // V1: the model item is the name and nothing else.
+  assert.equal(T.modelItem(free).text, '$(database) Contoso Retail');
+  assert.equal(T.modelItem({ ...free, liveConnected: true, liveBound: true, liveDatabase: 'ContosoSales', currentAccount: 'analyst@contoso.com' }).text, '$(database) Contoso Retail',
+    'the file, the measure count, "live" and the account are not words on the bar');
+  const tip = T.modelItem({ ...free, liveConnected: true, liveBound: true, liveDatabase: 'ContosoSales', currentAccount: 'analyst@contoso.com', currentTenant: 'contoso.com' }).tooltip;
+  for (const fact of ['C:/Models/ContosoRetail', '12 measures', 'Signed in as analyst@contoso.com · contoso.com', 'Editing: ContosoSales', 'Querying: ContosoSales'])
+    assert.ok(tip.includes(fact), `the tooltip keeps ${fact}`);
+  // V2: the sync warning lives on the model item, only while it is provably true.
+  const warned = T.modelItem({ ...free, liveConnected: true, liveBound: true, liveDatabase: 'ContosoSales', hasUnsavedChanges: true });
+  assert.equal(warned.warn, true);
+  assert.equal(warned.text, '$(warning) Contoso Retail');
+  assert.equal(warned.command, 'semanticus.openCompareSeeded', 'the warned item opens the seeded Compare');
+  assert.match(warned.tooltip, /Unsaved edits are not in the model you're querying\./);
+  const calm = T.modelItem({ ...free, liveConnected: true, liveBound: true, liveDatabase: 'ContosoSales' });
+  assert.deepEqual([calm.warn, calm.command], [false, 'semanticusModel.focus']);
+  assert.equal(T.modelItem({ ...free, hasUnsavedChanges: true }).warn, false, 'unsaved edits with no live connection prove nothing, so no warning');
+  // V4: the health chip is a few words, and the tooltip still has the sentence.
+  assert.equal(T.healthText({ grade: 'B->C' }), '$(pulse) Health B → C');
+  assert.equal(T.healthText({ findings: 3 }), '$(pulse) Health: 3 new issues');
+  assert.equal(T.healthText({ findings: 1 }), '$(pulse) Health: 1 new issue');
+  assert.equal(T.healthText({ impact: 4 }), '$(pulse) Affects 4');
+  // The bar's items: the model, health, Connect (until connected), Publish (the publish lane's) and Undo. No sync item.
+  assert.doesNotMatch(extension, /syncStatus/, 'the sync chip is not a separate item any more');
+  assert.match(extension, /aiConnectStatus\.text = '\$\(plug\) Connect your assistant';/);
+  assert.doesNotMatch(extension, /\$\(broadcast\) live|\(\$\{info\.measures\} measures\)/, 'no long model text is built for the bar');
+  assert.doesNotMatch(extension, /Semanticus rev \$\{/, 'no revision text replaces the model name after a change');
+
+  // T1 to T5: the right-click menu on a measure.
+  const ctxMenu = manifest.contributes.menus['view/item/context'];
+  const sub = manifest.contributes.menus;
+  const entriesFor = (viewItem, clipboard) => {
+    const test = (when) => {
+      const w = when.replace(/view == semanticusModel/g, 'true');
+      // Evaluate the small when-language these entries use: viewItem equality, viewItem regex and the clipboard key.
+      const expr = w
+        .replace(/viewItem =~ \/(.+?)\/(?= &&|$)/g, (_, re) => String(new RegExp(re).test(viewItem)))
+        .replace(/viewItem == (\w+)/g, (_, v) => String(viewItem === v))
+        .replace(/semanticus\.treeClipboard == '(\w+)'/g, (_, v) => String(clipboard === v))
+        .replace(/semanticus\.treeClipboard =~ \/(.+?)\/(?= &&|$)/g, (_, re) => String(new RegExp(re).test(clipboard ?? '')));
+      return !/[^truefalse &|()]/.test(expr) && new Function(`return (${expr});`)();
+    };
+    return ctxMenu.filter((m) => test(m.when ?? 'true'));
+  };
+  const measure = entriesFor('measure', null);
+  assert.ok(measure.length <= 15, `a measure's right-click menu has ${measure.length} entries, 15 at most`);
+  assert.equal(entriesFor('measure', 'measure').length, measure.length + 1, 'Paste joins the menu only while a measure is copied');
+  const names = measure.map((m) => m.command ?? m.submenu);
+  for (const gone of ['semanticus.renameObjectInputBox', 'semanticus.showDependents', 'semanticus.editProperties', 'semanticus.scriptDax', 'semanticus.scriptTmdl', 'semanticus.scriptTmsl'])
+    assert.ok(!names.includes(gone), `${gone} left the measure menu`);
+  assert.ok(names.includes('semanticus.scriptAs'), 'the three scripts sit in one Script as submenu');
+  assert.deepEqual(sub['semanticus.scriptAs'].map((m) => m.command), ['semanticus.scriptDax', 'semanticus.scriptTmdl', 'semanticus.scriptTmsl']);
+  assert.deepEqual(manifest.contributes.submenus.find((m) => m.id === 'semanticus.scriptAs'), { id: 'semanticus.scriptAs', label: 'Script as' });
+  const titleOf = (id) => manifest.contributes.commands.find((c) => c.command === id).title;
+  assert.deepEqual(['semanticus.scriptDax', 'semanticus.scriptTmdl', 'semanticus.scriptTmsl'].map(titleOf), ['Script as DAX', 'Script as TMDL', 'Script as TMSL']);
+  assert.deepEqual(['semanticus.addToDiagram', 'semanticus.showLineage', 'semanticus.timeIntelligence'].map(titleOf), ['Add to Diagram', 'Show Lineage', 'Generate Time Intelligence…']);
+  // Nothing became unreachable: the commands are still registered, F2 still renames, and Properties follows the selection.
+  for (const id of ['semanticus.renameObjectInputBox', 'semanticus.showDependents', 'semanticus.editProperties'])
+    assert.ok(manifest.contributes.commands.some((c) => c.command === id) && extension.includes(`'${id}'`), `${id} is still a registered command`);
+  // T6: New Calculation Group and New Role are in the Advanced Modelling and Roles builders, so the Model view's menu drops its copies.
+  const viewTitleIds = manifest.contributes.menus['view/title'].map((m) => m.command ?? m.submenu);
+  assert.ok(!viewTitleIds.includes('semanticus.newCalcGroup') && !viewTitleIds.includes('semanticus.newRole'));
+  assert.ok(manifest.contributes.menus['semanticus.advancedModelling'].some((m) => m.command === 'semanticus.amCalcGroup' && true) && manifest.contributes.menus['semanticus.advancedModelling'].some((m) => m.command === 'semanticus.amRlsOls'));
+
+  // P1 to P3: the command list. Node commands show only while the Model tree has focus; the licence commands and the
+  // folded Studio navigation commands are registered but not listed.
+  const palette = new Map(manifest.contributes.menus.commandPalette.map((m) => [m.command, m.when]));
+  const listed = manifest.contributes.commands.map((c) => c.command).filter((id) => !palette.has(id));
+  assert.ok(listed.length <= 38, `${listed.length} commands are listed without the tree focused, 38 at most`);
+  for (const id of ['semanticus.activateLicense', 'semanticus.showLicense', 'semanticus.upgradeToPro', 'semanticus.manageSubscription', 'semanticus.studioGoGroup', 'semanticus.studioNextTab', 'semanticus.studioPrevTab'])
+    assert.equal(palette.get(id), 'false', `${id} is registered but not listed`);
+  for (const id of ['semanticus.setFormat', 'semanticus.summarizeBy', 'semanticus.dataCategory', 'semanticus.relToggleActive', 'semanticus.roleAddMember', 'semanticus.deleteObject', 'semanticus.renameObject'])
+    assert.equal(palette.get(id), 'focusedView == semanticusModel', `${id} is listed only with the Model tree focused`);
+  assert.equal(titleOf('semanticus.manageLicense'), 'Semanticus Pro');
+  for (const [id, title] of [['semanticus.restartEngine', 'Restart Engine'], ['semanticus.studioSearch', 'Find and Replace'], ['semanticus.scanBpa', 'Check Model Quality'],
+    ['semanticus.scanReadiness', 'Check AI Readiness'], ['semanticus.quickOpenModel', 'Semanticus: Open Recent Model…'], ['semanticus.amCalendar', 'New Calendar…'], ['semanticus.amDaxLib', 'Browse DaxLib…']])
+    assert.equal(titleOf(id), title);
+  for (const c of manifest.contributes.commands) assert.ok(!/[—–]/.test(c.title), `no em dash in ${c.title}`);
+}
+
 console.log('Semanticus side bar identity contract passed');
+
+// ---- r1 fix-plan: the close question and the consent marker ---------------------------------------------------
+{
+  const T = await import('../out/statusBarText.js');
+  assert.equal(T.guardWanted(undefined), false, 'no model, nothing to lose');
+  assert.equal(T.guardWanted({ sessionId: 's1', hasUnsavedEdits: true, hasUnsavedChanges: true }), true, 'unsaved edits: VS Code asks before it closes');
+  assert.equal(T.guardWanted({ sessionId: 's1', hasUnsavedEdits: false, hasUnsavedChanges: true }), false, "Jev's permission marker alone is not the person's work");
+  assert.equal(T.guardWanted({ sessionId: 's1', hasUnsavedChanges: true }), true, 'an older engine says only hasUnsavedChanges');
+  assert.equal(T.guardWanted({ sessionId: 's1', liveBound: true, hasUnsavedEdits: true, hasUnsavedChanges: true }), false, 'a live model keeps its edits in the engine: no tab opens by itself after a run');
+  const warn = T.syncVerdict({ sessionId: 's1', modelName: 'M', liveConnected: true, liveBound: true, liveDatabase: 'M', liveDataSource: 'x', hasUnsavedChanges: true, hasUnsavedEdits: false });
+  assert.equal(warn.warn, false, 'the marker alone must not say "unsaved edits are not in the model you are querying"');
+  const real = T.syncVerdict({ sessionId: 's1', modelName: 'M', liveConnected: true, liveBound: true, liveDatabase: 'M', liveDataSource: 'x', hasUnsavedChanges: true, hasUnsavedEdits: true });
+  assert.equal(real.warn, true);
+  const guard = readFileSync(resolve(root, 'src', 'unsavedGuard.ts'), 'utf8');
+  assert.match(guard, /want === this\.wanted && \(want \? !!this\.document : !this\.document\)/, 'a guard tab restored from an earlier session closes when nothing is unsaved');
+  assert.match(guard, /backupCustomDocument/u);
+  const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
+  assert.ok(pkg.contributes.customEditors.some((e) => e.viewType === 'semanticus.unsavedModel'), 'the guard tab is a declared custom editor');
+}

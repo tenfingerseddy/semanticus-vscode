@@ -112,13 +112,16 @@ const inOrder = (src, labels, what) => {
     at = next;
   }
 };
-// The row itself, then the arrange cluster it holds. The cluster is a named group because below the fold
-// width it collapses into one "Arrange" menu, and a group cannot fold while it is spelled out inline.
-inOrder(rowRegion(diagram, 'the Diagram tool row'), ['New', 'arrangeControls', 'Snap', 'Fit', 'Show'], 'the Diagram tool row');
+// The row itself, then the arrange cluster it holds. The cluster is always one "Arrange" menu (Kane's minimalism
+// pass, 8 Oct): Snap lives inside it, and Fit is the zoom stack's own button at the canvas corner, so the row has
+// neither as a button of its own.
+inOrder(rowRegion(diagram, 'the Diagram tool row'), ['New', '<RowMenu label="Arrange"', '<RowMenu label="Show"'], 'the Diagram tool row');
+assert.doesNotMatch(rowRegion(diagram, 'the Diagram tool row'), />Fit<|>Snap</, 'Fit and Snap are not buttons on the row');
+assert.match(diagram, /<Controls showInteractive=\{false\} \/>/, 'the canvas keeps React Flow\'s own zoom stack, whose fit button replaces the row\'s Fit');
 {
   const at = diagram.indexOf('const arrangeControls');
-  assert.notEqual(at, -1, 'the arrange cluster must be a named group so it can fold');
-  inOrder(diagram.slice(at, diagram.indexOf(');', at)), ['Vertical', 'Layered', 'Bus matrix', 'Expand all', 'Collapse all'], 'the Diagram arrange cluster');
+  assert.notEqual(at, -1, 'the arrange cluster must be a named group');
+  inOrder(diagram.slice(at, diagram.indexOf(');', at)), ['Vertical', 'Layered', 'Bus matrix', 'Expand all', 'Collapse all', 'Snap to grid'], 'the Diagram arrange cluster');
 }
 
 // 12) The counts and the legend move INSIDE the canvas as quiet chips, positioned clear of the canvas's own
@@ -143,11 +146,13 @@ assert.match(diagram, /canvasH\s*>=\s*CANVAS_CHIP_MIN_H/,
 //     second line, so a control that does not fit must have folded before it could wrap.
 assert.match(toolrow, /export const TOOL_ROW_FOLD_WIDTH\s*=\s*1000/,
   'the fold width must be a named constant at 1000px');
-assert.match(diagram, /narrow\s*\?\s*<RowMenu label="Show"/,
-  'below the fold width the Show filters must collapse into one Show menu');
+assert.match(diagram, /<RowMenu label="Show"/,
+  'the Show filters are always one Show menu');
+assert.doesNotMatch(diagram, /no description<|>isolated</, 'the table cards no longer repeat the description and not-linked facts');
 assert.match(css, /\.sem-toolrow\s*\{[^}]*flex-wrap:\s*nowrap/,
   'the tool row must refuse to wrap onto a second line');
-assert.match(css, /\.sem-toolrow\s*\{[^}]*height:\s*40px/,
+// 40px is --sem-bar-h (tokens.css), One Visual Language.
+assert.match(css, /\.sem-toolrow\s*\{[^}]*height:\s*(40px|var\(--sem-bar-h\))/,
   'the tool row must be the 40px row the design gives every tool');
 
 // 15) The row is on the shared 24px control scale — the same buttons and segments as the rest of Studio,

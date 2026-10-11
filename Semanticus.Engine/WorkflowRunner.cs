@@ -87,10 +87,7 @@ namespace Semanticus.Engine
             }
             var step = current.Planned.Step;
             var result = run.Results[current.PlanIndex];
-            if (result.VerifyHistory.Count >= MaxSubmissionsPerStep)
-                throw new InvalidOperationException(
-                    $"Step '{step.Id}' has been submitted {MaxSubmissionsPerStep} times: the evidence archive is capped by refusing further submissions, never by truncating history. skip_workflow_step with a reason (recorded) or abort_workflow."
-                    + SkipConsequence(run, current.Planned));
+            RefuseOverCap(run, current, result);
 
             // Pairing block: no await, no branch, and no throw between these five statements. The source
             // answer and the expansion decision become durable together; a later await cannot split them.
@@ -183,6 +180,38 @@ namespace Semanticus.Engine
             // status may be done/failed/skipped; the frame still finished (warn failures do not retry).
             CompleteIterationFrame(current, "passed");
             Advance(run);
+        }
+
+        private static void RefuseOverCap(WorkflowRunState run, CoherentCurrentStep current, StepResult result)
+        {
+            if (result.VerifyHistory.Count >= MaxSubmissionsPerStep)
+                throw new InvalidOperationException(
+                    $"Step '{current.Planned.Step.Id}' has been submitted {MaxSubmissionsPerStep} times: the evidence archive is capped by refusing further submissions, never by truncating history. skip_workflow_step with a reason (recorded) or abort_workflow."
+                    + SkipConsequence(run, current.Planned));
+        }
+
+        /// <summary>The refusals a submission meets before its verify runs: the address and coherence checks, the
+        /// submission cap, the input gate and its input policies. PURE: nothing about the run changes. A direct step's
+        /// writes land only after this passes (Sol 6, slice 8, finding 4), so a submission refused here leaves the
+        /// model as it was. The model inventory is the one the writes WOULD leave, read from their rehearsal. The
+        /// transition runs the same checks again; this is the early answer, not a second rule. Returns false for an
+        /// expansion-only row, which takes no writes.</summary>
+        internal static bool PreflightSubmission(
+            WorkflowRunState run, string stepId, Dictionary<string, AnswerValue> answers,
+            IReadOnlyCollection<string> modelMeasureNames,
+            IReadOnlyCollection<(string Table, string Name, bool IsCalculated)> modelColumns,
+            IReadOnlyCollection<string> modelFunctionNames,
+            IReadOnlyCollection<(string Name, bool IsCalculated)> modelTables)
+        {
+            var current = ValidateSubmissionCore(run, stepId, answers);
+            if (IsExpansionOnlyRow(current.Planned)) return false;
+            RefuseOverCap(run, current, run.Results[current.PlanIndex]);
+            var step = current.Planned.Step;
+            if (step.Gate == null || EffectiveStrictness(run, current.Planned) == "off") return true;
+            var all = ProjectedAnswersAt(run, current.PlanIndex, current.PlanIndex, current.CommittedAnswers);
+            EnforceInputs(step, all);
+            EnforceInputPolicies(step, all, modelMeasureNames, modelColumns, modelFunctionNames, modelTables);
+            return true;
         }
 
         /// <summary>The badge follows the record. Passed means a check passed. Done means the step finished
@@ -2436,6 +2465,7 @@ namespace Semanticus.Engine
                 WorkflowVersion = run.Def.Version,
                 Status = run.Status,
                 AbortReason = run.AbortReason,
+                DraftId = run.DraftId,
                 StartedUtc = run.StartedUtc,
                 FinishedUtc = run.FinishedUtc,
                 ModelName = run.ModelName,
@@ -2481,6 +2511,25 @@ namespace Semanticus.Engine
             return view;
         }
 
+        /// <summary>The Plan's word for a guided run's row (Plan-heart contract 14, "Guided run rows get the Plan's state
+        /// words"; composer contract 4.3). A question still open on the current step is a person's: in v1 and v2 every
+        /// gate input is, and a v3 guided step carries no questions of its own. Otherwise the assistant is doing the
+        /// step: On it, step N of M. Kept OFF the run view itself, whose no-call bytes are a ratified guard
+        /// (WorkflowCallTests Case16); the Plan row carries it.</summary>
+        public static (string Word, string Note, string Doer) PlanWordOf(WorkflowRunView view)
+        {
+            switch (view?.Status)
+            {
+                case "completed": return (PlanStateWords.Done, null, PlanDoers.Assistant);
+                case "aborted": return (PlanStateWords.SetAside, view.AbortReason, PlanDoers.Assistant);
+            }
+            var open = view?.CurrentStep?.Questions?.FirstOrDefault();
+            if (open != null)
+                return (PlanStateWords.NeedsYou, "Answer: " + (string.IsNullOrWhiteSpace(open.Question) ? open.Name : open.Question), PlanDoers.You);
+            return (PlanStateWords.OnIt, "step " + ((view?.StepIndex ?? 0) + 1).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                       + " of " + (view?.TotalSteps ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture), PlanDoers.Assistant);
+        }
+
         /// <summary>One projection of every CurrentStepView member for the current row. Expansion-only
         /// templates get the synthetic setup phrase and hide body questions, ops, verify kinds and strictness.
         /// After a nonempty expansion, #0 is a real iteration and authored metadata (after Unit 11 render)
@@ -2513,13 +2562,36 @@ namespace Semanticus.Engine
                 Title = step.Title,
                 Instructions = RenderCurrentInstructions(step.Instructions, current, planned.InstanceId),
                 Questions = CurrentQuestions(step.Gate, planned),
+                AssistantFills = AssistantFills(run, CurrentQuestions(step.Gate, planned)),
                 ProvidedAnswers = ProvidedAnswers(run, current, CurrentQuestions(step.Gate, planned)),
                 VerifyKinds = step.Gate?.Verify.Select(v => v.Kind).ToArray() ?? Array.Empty<string>(),
                 EffectiveStrictness = step.Gate == null ? null
                     : EffectiveStrictness(run, planned),
-                Ops = step.Ops,
+                Ops = OpAliases.Canonical(step.Ops),   // a saved file may name a retired id; offer the op that exists
                 HandOff = BuildHandOff(run, planned, step),
             };
+        }
+
+        /// <summary>F12: which of these questions Semanticus reads as data. An answer is data when a check names it
+        /// (probe, anchors, openShapesFrom), when a proof runs over it (equivalenceGrid and openGrains for
+        /// anchor_coverage and dax_equivalence, the countersign machine exit), or when the run folds it (the
+        /// certificate claim). Bindings resolve run-wide, so every check in every definition the run holds counts.</summary>
+        private static string[] AssistantFills(WorkflowRunState run, GateInput[] questions)
+        {
+            if (questions == null || questions.Length == 0) return null;
+            var read = new HashSet<string>(StringComparer.Ordinal) { "certificate" };
+            var defs = run.OwnerClosure?.Definitions ?? (IEnumerable<WorkflowDef>)new[] { run.Def };
+            foreach (var verify in defs.SelectMany(d => d.Steps ?? Array.Empty<WorkflowStep>())
+                         .SelectMany(st => st.Gate?.Verify ?? Array.Empty<VerifySpec>()))
+            {
+                if (!string.IsNullOrWhiteSpace(verify.Probe)) read.Add(verify.Probe);
+                if (!string.IsNullOrWhiteSpace(verify.Anchors)) read.Add(verify.Anchors);
+                if (!string.IsNullOrWhiteSpace(verify.OpenShapesFrom)) read.Add(verify.OpenShapesFrom);
+                if (string.Equals(verify.OpenMismatch, "countersign", StringComparison.Ordinal)) read.Add("countersign");
+                if (verify.Kind == "anchor_coverage" || verify.Kind == "dax_equivalence") { read.Add("equivalenceGrid"); read.Add("openGrains"); }
+            }
+            var fills = questions.Where(q => q != null && read.Contains(q.Name)).Select(q => q.Name).ToArray();
+            return fills.Length == 0 ? null : fills;
         }
 
         private static HandOffWarning BuildHandOff(WorkflowRunState run, PlannedStep planned, WorkflowStep step)

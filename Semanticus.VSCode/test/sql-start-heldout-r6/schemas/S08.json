@@ -1,0 +1,132 @@
+{
+  "Server": "s08-sql.example.invalid",
+  "Database": "SensorTelemetry",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_sensor",
+      "KeyColumns": [
+        "SENSOR_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SENSOR_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SENSOR_CLASS",
+          "DataType": "String"
+        },
+        {
+          "Name": "LOCATION_CODE",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_station",
+      "KeyColumns": [
+        "STATION_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "STATION_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ZONE_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_reading",
+      "KeyColumns": [
+        "READING_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "READING_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SENSOR_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "STATION_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CAPTURED_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "VALUE",
+          "DataType": "Double"
+        },
+        {
+          "Name": "SAMPLE_COUNT",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_alarm",
+      "KeyColumns": [
+        "ALARM_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ALARM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SENSOR_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ALARM_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "SEVERITY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "DURATION_SEC",
+          "DataType": "Double"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_reading",
+      "FromColumn": "SENSOR_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sensor",
+      "ToColumn": "SENSOR_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_reading",
+      "FromColumn": "STATION_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_station",
+      "ToColumn": "STATION_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_alarm",
+      "FromColumn": "SENSOR_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sensor",
+      "ToColumn": "SENSOR_ID"
+    }
+  ]
+}

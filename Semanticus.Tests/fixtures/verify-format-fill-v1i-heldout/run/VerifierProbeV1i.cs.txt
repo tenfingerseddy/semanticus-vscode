@@ -1,0 +1,702 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using Semanticus.Analysis;
+using Semanticus.Decisions;
+using Semanticus.Engine;
+using Semanticus.Engine.Decisions;
+using TabularEditor.TOMWrapper;
+using Xunit;
+
+namespace Semanticus.Tests
+{
+    // VERIFIER PROBE V1i (never committed): the ONE run of Sol's blind held-out set (committed in e1acfc85 before this file
+    // was run on it), by the protocol committed beside it. Every model, both doors, Free and Pro (Jev scripted: whole-number
+    // everywhere, the labels' own family, slow, silent; and live once). The scripted person ticks only lines Sol's judge
+    // calls RIGHT at the moment of the tick; Sol's changes are made between the suggestion and the write. Everything seen is
+    // written to V1I_OUT/runs/<tag>.json; scoring is done afterwards by Sol's judge, unedited.
+    public sealed class VerifierProbeV1i
+    {
+        private static readonly string Set = Environment.GetEnvironmentVariable("V1I_SET") ?? "/nonexistent-set";
+        private static readonly string Out = Environment.GetEnvironmentVariable("V1I_OUT") ?? "/home/tenfingers/.cache/v1iv/out/run";
+        private static readonly string JevScript = Environment.GetEnvironmentVariable("V1I_JEV") ?? Path.Combine(Set, "..", "jev-script.json");
+        private static readonly bool LiveOnly = Environment.GetEnvironmentVariable("V1I_LIVE") == "1";
+
+        public static readonly string[] Paths = { "run_plan", "apply_plan", "row_approve", "one_press", "fix_all", "safe_fixes", "ai_ready" };
+
+        public static IEnumerable<object[]> Cases()
+        {
+            var dir = Path.Combine(Set, "models");
+            if (!Directory.Exists(dir)) yield break;
+            var models = Directory.GetDirectories(dir).Select(Path.GetFileName).OrderBy(n => n, StringComparer.Ordinal).ToArray();
+            if (LiveOnly)
+            {
+                foreach (var m in models) yield return new object[] { m, "studio", "live", "all" };
+                yield break;
+            }
+            foreach (var m in models)
+                foreach (var door in new[] { "studio", "mcp" })
+                {
+                    foreach (var mode in new[] { "free", "whole", "label", "slow", "silent" }) yield return new object[] { m, door, mode, "all" };
+                    foreach (var p in Paths) yield return new object[] { m, door, "free", p };
+                    foreach (var mode in new[] { "whole", "label" })
+                        foreach (var p in new[] { "run_plan", "apply_plan", "row_approve" }) yield return new object[] { m, door, mode, p };
+                }
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // The set: Sol's changes, read as written (tmdl_after is read for the object's own properties).
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private sealed class Change
+        {
+            public string Id, Model, When, Target, Text, TmdlAfter, NewId;
+            public string[] LabelIds = Array.Empty<string>();
+            public bool BeforeTick => When.StartsWith("before", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static List<Change> LoadChanges()
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Set, "changes.json")));
+            return doc.RootElement.EnumerateArray().Select(c => new Change
+            {
+                Id = c.GetProperty("id").GetString(),
+                Model = c.GetProperty("model").GetString(),
+                When = c.GetProperty("when").GetString(),
+                Target = c.GetProperty("target").GetString(),
+                Text = c.GetProperty("change").GetString(),
+                TmdlAfter = c.GetProperty("tmdl_after").GetString(),
+                NewId = c.TryGetProperty("new_id", out var n) ? n.GetString() : null,
+                LabelIds = c.GetProperty("labels_after").EnumerateArray().Select(l => l.GetProperty("id").GetString()).ToArray(),
+            }).ToList();
+        }
+
+        private static (Dictionary<string, string> Base, Dictionary<string, string> After) LoadJevScript()
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(JevScript));
+            Dictionary<string, string> Read(string k) => doc.RootElement.GetProperty(k).EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString(), StringComparer.Ordinal);
+            return (Read("base"), Read("after"));
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // Sol's judge, unedited, as a subprocess. One call per batch; the rows come back in order.
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private static List<string> Judge(IReadOnlyList<(string Id, string Format, bool After)> rows)
+        {
+            if (rows.Count == 0) return new List<string>();
+            var tmp = Path.Combine(Path.GetTempPath(), "v1i-judge-" + Guid.NewGuid().ToString("N") + ".json");
+            File.WriteAllText(tmp, JsonSerializer.Serialize(rows.Select(r => new Dictionary<string, object> { ["id"] = r.Id, ["format"] = r.Format, ["after_changes"] = r.After })));
+            try
+            {
+                var psi = new ProcessStartInfo("python3") { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, WorkingDirectory = Set };
+                psi.ArgumentList.Add(Path.Combine(Set, "judge.py"));
+                psi.ArgumentList.Add(tmp);
+                using var p = Process.Start(psi);
+                var stdout = p.StandardOutput.ReadToEnd();
+                var stderr = p.StandardError.ReadToEnd();
+                p.WaitForExit();
+                var lines = stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                if (p.ExitCode != 0 || lines.Length != rows.Count) throw new InvalidOperationException($"judge failed (exit {p.ExitCode}, {lines.Length} of {rows.Count} rows): {stderr}");
+                return lines.Select(l => l.Substring(l.LastIndexOf('\t') + 1).Trim()).ToList();
+            }
+            finally { try { File.Delete(tmp); } catch { } }
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // Jev, scripted: whole_number everywhere, or the family of the object's label as it stands; can be held (slow) or
+        // silent (not decided). The folder question is always answered "no folder".
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private sealed class ScriptedJev : IDecisionOracle
+        {
+            public string Mode;
+            public Func<string, string, string, string> FamilyFor;   // (kind, table, name) -> family
+            public volatile bool Silent;
+            public volatile TaskCompletionSource<bool> Hold;
+            public readonly List<Dictionary<string, object>> Asked = new List<Dictionary<string, object>>();
+            public bool Available => true;
+
+            public async Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
+            {
+                var hold = Hold;
+                var held = hold != null;
+                if (held) await Task.WhenAny(hold.Task, Task.Delay(TimeSpan.FromMinutes(10), ct));
+                string kind = null, table = null, name = null;
+                if (request.PointName == DecisionRegistry.MeasureFolderAndFormat) { kind = "measure"; name = request.Snapshot.TryGetValue("measure_name", out var n) ? n as string : null; }
+                else if (request.PointName == DecisionRegistry.ColumnFormat) { kind = "column"; name = request.Snapshot.TryGetValue("column_name", out var n) ? n as string : null; }
+                table = request.Snapshot.TryGetValue("table_name", out var t) ? t as string : null;
+                var family = kind == null ? null : Mode == "whole" ? "whole_number" : FamilyFor(kind, table, name);
+                lock (Asked) Asked.Add(new Dictionary<string, object> { ["point"] = request.PointName, ["kind"] = kind, ["table"] = table, ["name"] = name, ["family"] = family, ["silent"] = Silent, ["held"] = held, ["utc"] = DateTime.UtcNow.ToString("O") });
+                if (kind == null || family == null || Silent) return DecisionAnswers.NotDecided(request, Silent ? "the service did not answer" : "not asked in this script");
+                var parts = new List<string>();
+                foreach (var q in request.Questions)
+                {
+                    if (q.Name == "display_folder") parts.Add("\"display_folder\":{\"type\":\"choice\",\"choice\":\"" + DecisionRegistry.NoFolder + "\",\"confidence\":0.95}");
+                    else if (q.Name == "format_family") parts.Add("\"format_family\":{\"type\":\"choice\",\"choice\":" + JsonSerializer.Serialize(family) + ",\"confidence\":0.97}");
+                }
+                var sb = new StringBuilder("{\"servedModelVersion\":\"jev-test-1\",\"entries\":[{\"digest\":");
+                sb.Append(JsonSerializer.Serialize(request.Digest)).Append(",\"point\":\"").Append(request.PointName).Append('"');
+                sb.Append(",\"usage\":{\"input_tokens\":900,\"output_tokens\":40},\"answers\":{").Append(string.Join(",", parts)).Append("}}]}");
+                return await new RecordedDecisionOracle(sb.ToString(), "jev-test-1").AskAsync(request, ct);
+            }
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // One run.
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private sealed class Ctx
+        {
+            public string Model, Door, Mode, Path;
+            public DecisionFixture F;
+            public LocalEngine E => F.Engine;
+            public EngineRpcTarget Person;           // the person's door (Studio); ticks always go here
+            public readonly HashSet<string> Applied = new HashSet<string>(StringComparer.Ordinal);
+            public List<Change> Changes;
+            public ScriptedJev Jev;
+            public readonly List<string> Errors = new List<string>();
+        }
+
+        private static string Short(string s, int n = 600) => s == null ? null : (s.Length <= n ? s : s.Substring(0, n) + "...").Replace("\n", " ").Replace("\r", " ");
+
+        private static string SolId(string model, string objRef)
+        {
+            if (string.IsNullOrEmpty(objRef)) return null;
+            var colon = objRef.IndexOf(':');
+            var slash = objRef.IndexOf('/', colon + 1);
+            if (colon < 0 || slash < 0) return null;
+            var kind = objRef.Substring(0, colon);
+            if (kind != "measure" && kind != "column") return null;
+            return $"{model}|{objRef.Substring(colon + 1, slash - colon - 1)}|{kind}|{objRef.Substring(slash + 1)}";
+        }
+
+        // An object's label is the one after a change once that change has been made to it; else its base label.
+        private static bool AfterFor(Ctx c, string id) => id != null && c.Changes.Any(ch => c.Applied.Contains(ch.Id) && ch.LabelIds.Contains(id));
+
+        private static Task<Dictionary<string, string>> FormatsAsync(Ctx c) =>
+            c.F.Sessions.Require().ReadAsync(m =>
+            {
+                var d = new Dictionary<string, string>(StringComparer.Ordinal);
+                foreach (var t in m.Tables)
+                {
+                    foreach (var me in t.Measures)
+                        d[$"{c.Model}|{t.Name}|measure|{me.Name}"] = (me.FormatString ?? "") + (string.IsNullOrEmpty(me.FormatStringExpression) ? "" : " fse=" + me.FormatStringExpression);
+                    foreach (var col in t.Columns.Where(x => x.Type != ColumnType.RowNumber))
+                        d[$"{c.Model}|{t.Name}|column|{col.Name}"] = col.FormatString ?? "";
+                    if (t is CalculationGroupTable cg)
+                        foreach (var it in cg.CalculationItems)
+                            d[$"{c.Model}|{t.Name}|calcitem|{it.Name}"] = "fse=" + (it.FormatStringExpression ?? "");
+                }
+                return d;
+            });
+
+        private static List<Dictionary<string, object>> Diff(Dictionary<string, string> before, Dictionary<string, string> after) =>
+            after.Where(kv => !before.TryGetValue(kv.Key, out var b) || b != kv.Value)
+                 .Select(kv => new Dictionary<string, object> { ["id"] = kv.Key, ["before"] = before.TryGetValue(kv.Key, out var b) ? b : null, ["after"] = kv.Value })
+                 .Concat(before.Where(kv => !after.ContainsKey(kv.Key)).Select(kv => new Dictionary<string, object> { ["id"] = kv.Key, ["before"] = kv.Value, ["after"] = null, ["gone"] = true }))
+                 .ToList();
+
+        private static Task<ModelPlanView> ModelPlanAsync(Ctx c) => c.Door == "mcp" ? McpTools.GetModelPlan(c.E) : new EngineRpcTarget(c.E).getModelPlan();
+        private static Task<ChangePlanView> ChangePlanAsync(Ctx c) => c.Door == "mcp" ? McpTools.GetPlan(c.E) : new EngineRpcTarget(c.E).getPlan();
+
+        private static async Task SettleAsync(Ctx c)
+        {
+            if (c.Mode == "free") { await c.E.GetModelPlanAsync(); return; }
+            var hold = c.Jev?.Hold;
+            await c.E.GetModelPlanAsync();
+            if (hold == null) await c.E.JevSettledForTest();
+        }
+
+        private static bool IsFormatLine(ModelPlanChangeLine l) =>
+            l.Op == "set_measure_format" || l.Op == "set_format_string" || l.Op == "set_measure_format_expression" || l.Op == "bpa_fix"
+            || (l.Property ?? "").IndexOf("formatstring", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static bool IsFormatItem(ChangeItem i) =>
+            i.Kind == "set_measure_format" || i.Kind == "set_format_string" || i.Kind == "set_measure_format_expression"
+            || (i.Target ?? "").IndexOf("formatstring", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        private static readonly Regex Suggests = new Regex("suggests \"((?:[^\"\\\\]|\\\\.)*)\"", RegexOptions.Compiled);
+
+        private static async Task<List<Dictionary<string, object>>> SuggestionsAsync(Ctx c, string phase, bool withAdvice = true)
+        {
+            var list = new List<Dictionary<string, object>>();
+            try
+            {
+                var mp = await ModelPlanAsync(c);
+                foreach (var row in mp?.Items ?? Array.Empty<ModelPlanItem>())
+                    foreach (var l in row.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>())
+                        if (IsFormatLine(l))
+                            list.Add(new Dictionary<string, object>
+                            {
+                                ["phase"] = phase, ["src"] = "model_plan", ["row"] = row.Id, ["rowDoer"] = row.Doer, ["rowState"] = row.StateWord,
+                                ["rowStale"] = row.ChangeSet?.Stale, ["line"] = l.Id, ["planItemId"] = l.PlanItemId, ["op"] = l.Op, ["target"] = l.Target,
+                                ["prop"] = l.Property, ["before"] = l.Before, ["after"] = l.After, ["kept"] = l.Kept, ["suggestion"] = l.Suggestion,
+                                ["note"] = l.Note, ["word"] = l.Provenance?.ConfidenceWord, ["check"] = l.Check?.Exists, ["id"] = SolId(c.Model, l.Target),
+                            });
+                list.Add(new Dictionary<string, object> { ["phase"] = phase, ["src"] = "model_plan_rows", ["readyDigest"] = mp?.ReadyDigest,
+                    ["rows"] = (mp?.Items ?? Array.Empty<ModelPlanItem>()).Where(r => r.ChangeSet?.Lines?.Length > 0)
+                        .Select(r => $"{r.Id} doer={r.Doer} state={r.StateWord} stale={r.ChangeSet?.Stale} lines={r.ChangeSet?.Lines?.Length} note={Short(r.StateNote, 200)}").ToArray() });
+            }
+            catch (Exception ex) { c.Errors.Add($"{phase} model plan threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+            try
+            {
+                var cp = await ChangePlanAsync(c);
+                foreach (var it in cp?.Items ?? Array.Empty<ChangeItem>())
+                    if (IsFormatItem(it))
+                        list.Add(new Dictionary<string, object>
+                        {
+                            ["phase"] = phase, ["src"] = "change_plan", ["planItemId"] = it.Id, ["kind"] = it.Kind, ["target"] = it.Target, ["objectRef"] = it.ObjectRef,
+                            ["status"] = it.Status, ["risk"] = it.Risk, ["source"] = it.Source, ["ruleId"] = it.RuleId, ["before"] = it.Before, ["after"] = it.After,
+                            ["note"] = Short(it.Note), ["keptByPerson"] = it.KeptByPerson, ["droppedBy"] = it.DroppedBy, ["id"] = SolId(c.Model, it.ObjectRef),
+                        });
+            }
+            catch (Exception ex) { c.Errors.Add($"{phase} change plan threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+            if (withAdvice)
+                try
+                {
+                    var scan = await c.E.BpaScanAsync();
+                    foreach (var v in scan.Violations.Where(v => v.Advice || (v.RuleId ?? "").IndexOf("FORMAT", StringComparison.OrdinalIgnoreCase) >= 0))
+                    {
+                        string prompt = null, named = null;
+                        try { prompt = (await c.E.BpaGetFixPromptAsync(v.RuleId, v.ObjectRef))?.Prompt; } catch (Exception ex) { prompt = "threw " + Short(ex.Message, 200); }
+                        var m = prompt == null ? null : Suggests.Match(prompt);
+                        if (m != null && m.Success) named = m.Groups[1].Value.Replace("\\\"", "\"");
+                        list.Add(new Dictionary<string, object>
+                        {
+                            ["phase"] = phase, ["src"] = "bpa_advice", ["ruleId"] = v.RuleId, ["objectRef"] = v.ObjectRef, ["advice"] = v.Advice, ["canAutoFix"] = v.CanAutoFix,
+                            ["after"] = named, ["prompt"] = Short(prompt, 900), ["id"] = SolId(c.Model, v.ObjectRef),
+                        });
+                    }
+                }
+                catch (Exception ex) { c.Errors.Add($"{phase} bpa scan threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+            return list;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // Sol's changes, made as the person in Studio.
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private static string Unquote(string s)
+        {
+            s = s.Trim();
+            return s.Length >= 2 && s[0] == '\'' && s[s.Length - 1] == '\'' ? s.Substring(1, s.Length - 2).Replace("''", "'") : s;
+        }
+
+        private static string MType(string dataType) => dataType?.ToLowerInvariant() switch
+        {
+            "int64" => "Int64.Type", "double" => "type number", "decimal" => "type number", "string" => "type text",
+            "datetime" => "type datetime", "boolean" => "type logical", _ => "type any",
+        };
+
+        private static async Task<Dictionary<string, object>> ApplyChangeAsync(Ctx c, Change ch)
+        {
+            var rec = new Dictionary<string, object> { ["id"] = ch.Id, ["when"] = ch.When, ["target"] = ch.Target };
+            var steps = new List<string>();
+            try
+            {
+                var parts = ch.Target.Split('|');
+                var (table, kind, name) = (parts[1], parts[2], parts[3]);
+                var objRef = $"{kind}:{table}/{name}";
+                if (ch.TmdlAfter == "deleted")
+                {
+                    var r = await c.E.DeleteObjectAsync(objRef, "human");
+                    steps.Add($"deleted rev {r?.Revision}");
+                }
+                else
+                {
+                    var lines = ch.TmdlAfter.Replace("\r", "").Split('\n');
+                    var head = lines[0].Trim();
+                    string newName, expr = null;
+                    var props = new Dictionary<string, string>(StringComparer.Ordinal);
+                    if (kind == "measure")
+                    {
+                        var m = Regex.Match(head, @"^measure\s+('(?:[^']|'')*'|[^\s=]+)\s*=\s*(.*)$");
+                        if (!m.Success) throw new InvalidOperationException("cannot read the measure line: " + head);
+                        newName = Unquote(m.Groups[1].Value);
+                        expr = m.Groups[2].Value.Trim();
+                    }
+                    else
+                    {
+                        var m = Regex.Match(head, @"^column\s+('(?:[^']|'')*'|\S+)\s*$");
+                        if (!m.Success) throw new InvalidOperationException("cannot read the column line: " + head);
+                        newName = Unquote(m.Groups[1].Value);
+                    }
+                    foreach (var l in lines.Skip(1))
+                    {
+                        var pm = Regex.Match(l.Trim(), @"^([A-Za-z]+)\s*:\s*(.*)$");
+                        if (pm.Success) props[pm.Groups[1].Value] = pm.Groups[2].Value.Trim();
+                    }
+                    if (!string.Equals(newName, name, StringComparison.Ordinal))
+                    {
+                        var r = await c.E.RenameObjectAsync(objRef, newName, "human");
+                        steps.Add($"renamed to {newName}");
+                        objRef = $"{kind}:{table}/{newName}";
+                    }
+                    var current = await c.F.Sessions.Require().ReadAsync(m =>
+                    {
+                        var o = ObjectRefs.Resolve(m, objRef);
+                        return (Expr: (o as Measure)?.Expression, Desc: (o as IDescriptionObject)?.Description, DataType: (o as Column)?.DataType.ToString(),
+                                Source: (o as DataColumn)?.SourceColumn, Summarize: (o as Column)?.SummarizeBy.ToString(), Format: (o as IFormattableObject)?.FormatString);
+                    });
+                    if (kind == "measure" && expr != null && !string.Equals(expr, current.Expr?.Trim(), StringComparison.Ordinal))
+                    {
+                        await c.E.SetDaxAsync(objRef, expr, "human");
+                        steps.Add("expression set");
+                    }
+                    if (kind == "column" && props.TryGetValue("dataType", out var dt) && !string.Equals(dt, current.DataType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        var r = await c.E.SetColumnDataTypeAsync(objRef, dt, "human");
+                        steps.Add($"data type {current.DataType} -> {dt} changed={r?.Changed}");
+                    }
+                    if (kind == "column" && props.TryGetValue("sourceColumn", out var src) && !string.Equals(src, current.Source, StringComparison.Ordinal))
+                    {
+                        var oldSrc = current.Source;
+                        var newType = props.TryGetValue("dataType", out var dt2) ? dt2 : current.DataType;
+                        await c.F.Sessions.Require().MutateAsync("human", "source column", m =>
+                        {
+                            var col = (DataColumn)ObjectRefs.Resolve(m, objRef);
+                            col.SourceColumn = src;
+                            foreach (var p in col.Table.Partitions.OfType<MPartition>())
+                                p.Expression = Regex.Replace(p.Expression ?? "", @"\b" + Regex.Escape(oldSrc) + @"\s*=\s*(?:Int64\.Type|type\s+\w+)", src + " = " + MType(newType));
+                        });
+                        steps.Add($"source column {oldSrc} -> {src}, partition schema updated");
+                    }
+                    else if (kind == "column" && props.TryGetValue("dataType", out var dt3) && Regex.IsMatch(ch.Text, "partition", RegexOptions.IgnoreCase))
+                    {
+                        var srcName = current.Source;
+                        await c.F.Sessions.Require().MutateAsync("human", "partition schema", m =>
+                        {
+                            var col = (DataColumn)ObjectRefs.Resolve(m, objRef);
+                            foreach (var p in col.Table.Partitions.OfType<MPartition>())
+                                p.Expression = Regex.Replace(p.Expression ?? "", @"\b" + Regex.Escape(srcName) + @"\s*=\s*(?:Int64\.Type|type\s+\w+)", srcName + " = " + MType(dt3));
+                        });
+                        steps.Add("partition schema updated");
+                    }
+                    var desc = props.TryGetValue("description", out var d) ? d : "";
+                    if (!string.Equals(desc, current.Desc ?? "", StringComparison.Ordinal))
+                    {
+                        await c.E.SetDescriptionAsync(objRef, desc, "human");
+                        steps.Add(desc.Length == 0 ? "description cleared" : "description set");
+                    }
+                    if (props.TryGetValue("summarizeBy", out var sb) && kind == "column" && !string.Equals(sb, current.Summarize, StringComparison.OrdinalIgnoreCase))
+                    {
+                        await c.F.Sessions.Require().MutateAsync("human", "summarize by", m =>
+                        {
+                            var col = (Column)ObjectRefs.Resolve(m, objRef);
+                            col.SummarizeBy = (AggregateFunction)Enum.Parse(typeof(AggregateFunction), sb, true);
+                        });
+                        steps.Add($"summarizeBy {current.Summarize} -> {sb}");
+                    }
+                    if (props.TryGetValue("formatString", out var fs) && !string.Equals(fs, current.Format, StringComparison.Ordinal))
+                        steps.Add("NOTE tmdl_after carries a formatString; not applied (a change is not a format write)");
+                }
+                c.Applied.Add(ch.Id);
+                rec["applied"] = true;
+            }
+            catch (Exception ex) { rec["applied"] = false; rec["error"] = $"{ex.GetType().Name}: {Short(ex.Message)}"; c.Applied.Add(ch.Id); }
+            rec["steps"] = steps;
+            return rec;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // The scripted person: ticks (Studio) every suggestion line Sol's judge calls RIGHT for the object as it stands.
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private static bool Tickable(Dictionary<string, object> s) =>
+            s["src"] as string == "model_plan"
+                ? (s["suggestion"] is bool sg && sg) && !(s["kept"] is bool k && k) && s["planItemId"] is string && s["after"] is string a && a.Length > 0
+                : s["src"] as string == "change_plan" && s["status"] as string == "proposed" && s["after"] is string a2 && a2.Length > 0;
+
+        private static List<Dictionary<string, object>> DecideTicks(Ctx c, List<Dictionary<string, object>> suggestions)
+        {
+            var cand = suggestions.Where(s => Tickable(s) && s["id"] is string).ToList();
+            var verdicts = Judge(cand.Select(s => ((string)s["id"], (string)s["after"], AfterFor(c, (string)s["id"]))).ToList());
+            var picks = new List<Dictionary<string, object>>();
+            for (var i = 0; i < cand.Count; i++)
+            {
+                cand[i]["personJudged"] = verdicts[i];
+                if (verdicts[i] == "RIGHT") picks.Add(cand[i]);
+            }
+            return picks;
+        }
+
+        private static async Task<Dictionary<string, object>> TickAsync(Ctx c, Dictionary<string, object> s, string why)
+        {
+            var id = (string)s["planItemId"];
+            var rec = new Dictionary<string, object> { ["planItemId"] = id, ["id"] = s["id"], ["after"] = s["after"], ["why"] = why, ["seenPhase"] = s["phase"] };
+            try
+            {
+                var view = await c.Person.setPlanItem(id, null, true);
+                var it = view?.Items?.FirstOrDefault(x => x.Id == id);
+                rec["status"] = it?.Status; rec["keptByPerson"] = it?.KeptByPerson; rec["note"] = Short(it?.Note); rec["itemAfter"] = it?.After;
+                rec["viewNote"] = Short(view?.Note);
+            }
+            catch (Exception ex) { rec["refused"] = $"{ex.GetType().Name}: {Short(ex.Message)}"; }
+            return rec;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // The writes, on the run's door.
+        // ---------------------------------------------------------------------------------------------------------------
+
+        private static async Task<List<string>> RunPathAsync(Ctx c, string path)
+        {
+            var said = new List<string>();
+            var rpc = new EngineRpcTarget(c.E);
+            var mcp = c.Door == "mcp";
+            switch (path)
+            {
+                case "run_plan":
+                    for (var pass = 0; pass < 4; pass++)
+                    {
+                        await SettleAsync(c);
+                        var plan = await ModelPlanAsync(c);
+                        if (string.IsNullOrEmpty(plan.ReadyDigest)) { said.Add($"pass {pass}: nothing ready"); break; }
+                        try
+                        {
+                            var run = mcp ? await McpTools.ApplyPlanItems(c.E, null, plan.ReadyDigest) : await rpc.applyPlanItems(null, "human", plan.ReadyDigest);
+                            said.Add($"pass {pass}: performed={run.Performed} applied={run.Applied} items={string.Join(",", run.ItemIds ?? Array.Empty<string>())} skipped={string.Join(" | ", (run.Skipped ?? Array.Empty<ApplyPlanSkip>()).Select(k => k.ItemId + ": " + Short(k.Reason, 300)))} :: {Short(run.Sentence, 700)}");
+                            if (!run.Performed) break;
+                        }
+                        catch (Exception ex) { said.Add($"pass {pass}: threw {ex.GetType().Name}: {Short(ex.Message)}"); break; }
+                    }
+                    break;
+                case "apply_plan":
+                    try
+                    {
+                        var rep = mcp ? await McpTools.ApplyPlan(c.E, null) : await rpc.applyPlan(null);
+                        said.Add($"applied={rep.AppliedCount} skipped={rep.SkippedCount} failed={rep.FailedCount} rejected={rep.RejectedCount} note={Short(rep.Note)}");
+                        foreach (var i in rep.Items.Where(IsFormatItem)) said.Add($"  {i.Kind} {i.ObjectRef} {i.Status} after={JsonSerializer.Serialize(i.After)} note={Short(i.Note, 300)}");
+                    }
+                    catch (Exception ex) { said.Add($"threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    break;
+                case "row_approve":
+                    var tried = new HashSet<string>(StringComparer.Ordinal);
+                    for (var guard = 0; guard < 40; guard++)
+                    {
+                        await SettleAsync(c);
+                        var plan = await ModelPlanAsync(c);
+                        var row = plan.Items.FirstOrDefault(r => !tried.Contains(r.Id) && r.ChangeSet?.Lines?.Any(IsFormatLine) == true);
+                        if (row == null) break;
+                        tried.Add(row.Id);
+                        try
+                        {
+                            var r = mcp ? await McpTools.ModelPlanAction(c.E, row.Id, "approve", row.ChangeSet.Digest) : await rpc.modelPlanAction(row.Id, "approve", "human", row.ChangeSet.Digest);
+                            said.Add($"{row.Id} doer={row.Doer} state={row.StateWord}: performed={r.Performed} :: {Short(r.Sentence, 700)}");
+                        }
+                        catch (Exception ex) { said.Add($"{row.Id}: threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    }
+                    break;
+                case "one_press":
+                    try
+                    {
+                        var scan = await c.E.BpaScanAsync();
+                        foreach (var v in scan.Violations.Where(v => v.CanAutoFix))
+                        {
+                            try
+                            {
+                                var r = mcp ? await McpTools.ApplyFix(c.E, "bpa", v.RuleId, v.ObjectRef) : await rpc.bpaFix(v.RuleId, v.ObjectRef);
+                                said.Add($"{v.RuleId} {v.ObjectRef}: changed={r?.Changed} rev={r?.Revision}");
+                            }
+                            catch (Exception ex) { said.Add($"{v.RuleId} {v.ObjectRef}: refused {Short(ex.Message, 400)}"); }
+                        }
+                    }
+                    catch (Exception ex) { said.Add($"scan threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    break;
+                case "fix_all":
+                    try
+                    {
+                        if (mcp) { var r = await McpTools.ApplySafeFixes(c.E, "bpa"); said.Add(Short(JsonSerializer.Serialize(r), 1500)); }
+                        else { var r = await rpc.bpaFixAll(); said.Add($"applied={r.Applied} remaining={r.Remaining} unfixed={Short(JsonSerializer.Serialize(r.Unfixed), 1200)}"); }
+                    }
+                    catch (Exception ex) { said.Add($"threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    break;
+                case "safe_fixes":
+                    try
+                    {
+                        if (mcp) { var r = await McpTools.ApplySafeFixes(c.E, "air"); said.Add(Short(JsonSerializer.Serialize(r), 1500)); }
+                        else { var r = await rpc.applySafeFixes(); said.Add($"applied={string.Join(", ", r.Applied ?? Array.Empty<string>())}"); }
+                    }
+                    catch (Exception ex) { said.Add($"threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    break;
+                case "ai_ready":
+                    try
+                    {
+                        var r = mcp ? await McpTools.MakeModelAiReady(c.E) : await rpc.makeAiReady();
+                        said.Add(Short(JsonSerializer.Serialize(r), 600));
+                    }
+                    catch (Exception ex) { said.Add($"threw {ex.GetType().Name}: {Short(ex.Message)}"); }
+                    break;
+            }
+            return said;
+        }
+
+        private static object Try(Func<bool> f) { try { return f(); } catch (Exception ex) { return "threw " + ex.GetType().Name; } }
+
+        private static Task<Dictionary<string, object>> MayFillAsync(Ctx c) =>
+            c.F.Sessions.Require().ReadAsync(m =>
+            {
+                var d = new Dictionary<string, object>(StringComparer.Ordinal);
+                foreach (var t in m.Tables)
+                {
+                    foreach (var me in t.Measures) d[$"{c.Model}|{t.Name}|measure|{me.Name}"] = Try(() => FormatFill.MayFill(me, "#,0"));
+                    foreach (var col in t.Columns.Where(x => x.Type != ColumnType.RowNumber)) d[$"{c.Model}|{t.Name}|column|{col.Name}"] = Try(() => FormatFill.MayFill(col, "#,0"));
+                }
+                return d;
+            });
+
+        private static void CopyDir(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+            foreach (var f in Directory.GetFiles(from)) File.Copy(f, Path.Combine(to, Path.GetFileName(f)), true);
+            foreach (var d in Directory.GetDirectories(from)) CopyDir(d, Path.Combine(to, Path.GetFileName(d)));
+        }
+
+        [Theory]
+        [MemberData(nameof(Cases))]
+        public async Task Run(string model, string door, string mode, string path)
+        {
+            var tag = $"{model}-{door}-{mode}-{path}";
+            var rec = new Dictionary<string, object> { ["model"] = model, ["door"] = door, ["mode"] = mode, ["path"] = path, ["startUtc"] = DateTime.UtcNow.ToString("O") };
+            var c = new Ctx { Model = model, Door = door, Mode = mode, Path = path, Changes = LoadChanges().Where(x => x.Model == model).ToList() };
+            JevDecisionOracle live = null;
+            var budget = new DecisionBudget();
+            using (c.F = new DecisionFixture(mode == "free" ? TestEntitlements.Free : TestEntitlements.Pro))
+            {
+                try
+                {
+                    c.Person = new EngineRpcTarget(c.E);
+                    var copy = Path.Combine(c.F.Workspace, model);
+                    CopyDir(Path.Combine(Set, "models", model), copy);
+                    var opened = await c.E.OpenAsync(copy);
+                    rec["opened"] = opened?.ModelName;
+                    if (mode == "free") c.F.UseNull();
+                    else
+                    {
+                        await c.F.ConsentAsync();
+                        if (mode == "live")
+                        {
+                            var key = Environment.GetEnvironmentVariable("TYPESAFE_API_KEY");
+                            if (string.IsNullOrWhiteSpace(key)) throw new InvalidOperationException("live mode without a key in this process");
+                            live = new JevDecisionOracle(key, budget);
+                            c.E.UseDecisionsForTest(new DecisionService(live, budget));
+                        }
+                        else
+                        {
+                            var (bmap, amap) = LoadJevScript();
+                            c.Jev = new ScriptedJev
+                            {
+                                Mode = mode == "whole" ? "whole" : "label",
+                                FamilyFor = (kind, table, name) =>
+                                {
+                                    var id = $"{model}|{table}|{kind}|{name}";
+                                    var map = AfterFor(c, id) ? amap : bmap;
+                                    return map.TryGetValue(id, out var fam) ? fam : "text_or_none";
+                                },
+                            };
+                            c.E.UseDecisionsForTest(new DecisionService(c.Jev, budget));
+                        }
+                    }
+                    rec["start"] = await FormatsAsync(c);
+
+                    // 1. THE SUGGESTION: the plan is worked out and read on the run's door.
+                    try
+                    {
+                        var proposed = door == "mcp" ? await McpTools.ProposePlan(c.E, null, true, 200) : await new EngineRpcTarget(c.E).proposePlan(null, true, 200);
+                        rec["proposed"] = $"items={proposed?.Items?.Length} note={Short(proposed?.Note)}";
+                    }
+                    catch (Exception ex) { c.Errors.Add("propose threw " + Short(ex.Message)); }
+                    await SettleAsync(c);
+                    var s0 = await SuggestionsAsync(c, "S0");
+                    rec["S0"] = s0;
+                    var decidedAtS0 = DecideTicks(c, s0);
+
+                    // 2. The changes made before the person ticks; Jev turns slow or silent from here in those modes.
+                    if (mode == "slow") c.Jev.Hold = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    if (mode == "silent") c.Jev.Silent = true;
+                    var changeRecs = new List<Dictionary<string, object>>();
+                    foreach (var ch in c.Changes.Where(x => x.BeforeTick)) changeRecs.Add(await ApplyChangeAsync(c, ch));
+                    await SettleAsync(c);
+                    var s1 = await SuggestionsAsync(c, "S1", withAdvice: false);
+                    rec["S1"] = s1;
+
+                    // 3. The person ticks what they judged RIGHT when they read it (the line they saw), then anything now shown
+                    //    that is RIGHT for the object as it now stands.
+                    var ticks = new List<Dictionary<string, object>>();
+                    var tickedItems = new HashSet<string>(StringComparer.Ordinal);
+                    foreach (var s in decidedAtS0)
+                    {
+                        var pid = (string)s["planItemId"];
+                        var now = s1.FirstOrDefault(x => x["src"] as string == s["src"] as string && x.TryGetValue("planItemId", out var q) && q as string == pid);
+                        if (now != null && !string.Equals(now["after"] as string, s["after"] as string, StringComparison.Ordinal))
+                        {
+                            ticks.Add(new Dictionary<string, object> { ["planItemId"] = pid, ["id"] = s["id"], ["after"] = s["after"], ["why"] = "judged RIGHT at S0; not ticked, the page now shows " + (now["after"] as string ?? "no format"), ["skipped"] = true });
+                            continue;
+                        }
+                        if (tickedItems.Add(pid)) ticks.Add(await TickAsync(c, s, now == null ? "judged RIGHT at S0; the line is no longer listed" : "judged RIGHT at S0; the page still shows it"));
+                    }
+                    foreach (var s in DecideTicks(c, s1))
+                        if (tickedItems.Add((string)s["planItemId"])) ticks.Add(await TickAsync(c, s, "judged RIGHT at S1"));
+                    rec["ticks"] = ticks;
+
+                    // 4. The changes made after the tick and before the write.
+                    foreach (var ch in c.Changes.Where(x => !x.BeforeTick)) changeRecs.Add(await ApplyChangeAsync(c, ch));
+                    rec["changes"] = changeRecs;
+                    await SettleAsync(c);
+                    rec["mayFillBeforeWrites"] = await MayFillAsync(c);
+                    rec["S2"] = await SuggestionsAsync(c, "S2", withAdvice: false);
+                    var beforeWrites = await FormatsAsync(c);
+                    rec["beforeWrites"] = beforeWrites;
+
+                    // 5. THE WRITES.
+                    var pathRecs = new List<Dictionary<string, object>>();
+                    var order = path == "all" ? Paths : new[] { path };
+                    foreach (var p in order)
+                    {
+                        var b = await FormatsAsync(c);
+                        var said = await RunPathAsync(c, p);
+                        var a = await FormatsAsync(c);
+                        pathRecs.Add(new Dictionary<string, object> { ["path"] = p, ["said"] = said, ["writes"] = Diff(b, a) });
+                    }
+                    if (mode == "slow")
+                    {
+                        c.Jev.Hold?.TrySetResult(true);
+                        c.Jev.Hold = null;
+                        await SettleAsync(c);
+                        rec["S3slow"] = await SuggestionsAsync(c, "S3", withAdvice: false);
+                        foreach (var p in new[] { "run_plan", "apply_plan" })
+                        {
+                            var b = await FormatsAsync(c);
+                            var said = await RunPathAsync(c, p);
+                            var a = await FormatsAsync(c);
+                            pathRecs.Add(new Dictionary<string, object> { ["path"] = p + "_after_release", ["said"] = said, ["writes"] = Diff(b, a) });
+                        }
+                    }
+                    rec["paths"] = pathRecs;
+                    rec["final"] = await FormatsAsync(c);
+                    rec["S4"] = await SuggestionsAsync(c, "S4");
+                }
+                catch (Exception ex) { c.Errors.Add($"RUN THREW {ex.GetType().Name}: {Short(ex.Message, 1200)} {Short(ex.StackTrace, 1200)}"); }
+                finally
+                {
+                    if (c.Jev?.Hold != null) c.Jev.Hold.TrySetResult(true);
+                    if (c.Jev != null) lock (c.Jev.Asked) rec["jevAsked"] = c.Jev.Asked.ToList();
+                    rec["budget"] = new Dictionary<string, object> { ["requests"] = budget.Requests, ["inputTokens"] = budget.UsedInputTokens, ["exhausted"] = budget.Exhausted };
+                    rec["errors"] = c.Errors;
+                    rec["endUtc"] = DateTime.UtcNow.ToString("O");
+                    Directory.CreateDirectory(Path.Combine(Out, "runs"));
+                    File.WriteAllText(Path.Combine(Out, "runs", tag + ".json"), JsonSerializer.Serialize(rec, new JsonSerializerOptions { WriteIndented = true }));
+                    live?.Dispose();
+                }
+            }
+        }
+    }
+}

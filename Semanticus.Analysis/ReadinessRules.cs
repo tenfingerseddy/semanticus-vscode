@@ -53,6 +53,8 @@ namespace Semanticus.Analysis
         public abstract Severity Severity { get; }
         public abstract RuleKind Kind { get; }
         public abstract FixKind Fix { get; }
+        /// <summary>A rule that holds a gate and a finding, and counts in no category average: its passes and its violations are left out of the score, so a model cannot gain a point for passing it.</summary>
+        public virtual bool GateOnly => false;
         public abstract RuleEvaluation Evaluate(Model model);
 
         /// <summary>Scoped incremental re-evaluation (the health probe's per-commit path): re-evaluate ONLY the
@@ -157,11 +159,12 @@ namespace Semanticus.Analysis
         public override Severity Severity { get; }
         public override RuleKind Kind { get; }
         public override FixKind Fix { get; }
+        public override bool GateOnly { get; }
 
         public ModelRule(string id, string title, ReadinessCategory category, Severity severity, RuleKind kind, FixKind fix,
-            Func<Model, ModelRule, RuleEvaluation> eval)
+            Func<Model, ModelRule, RuleEvaluation> eval, bool gateOnly = false)
         {
-            Id = id; Title = title; Category = category; Severity = severity; Kind = kind; Fix = fix; _eval = eval;
+            Id = id; Title = title; Category = category; Severity = severity; Kind = kind; Fix = fix; _eval = eval; GateOnly = gateOnly;
         }
 
         public ReadinessFinding NewFinding(ITabularObject obj, string name, params object[] parts) => Finding(obj, name, parts);
@@ -211,7 +214,7 @@ namespace Semanticus.Analysis
             "CEO","CFO","COO","CTO","CIO","VP","GAAP","IFRS","ESG","ETA",
         };
 
-        // Text columns whose values are month/weekday labels need a Sort By Column or Q&A/Copilot sort them alphabetically.
+        // Text columns whose values are month/weekday labels need a Sort By Column or Copilot sorts them alphabetically.
         private static readonly Regex MonthOrWeekday = new Regex(@"(?i)\b(month\s*name|month|weekday|day\s*of\s*(the\s*)?week|day\s*name)\b", RegexOptions.Compiled);
 
         // A second high-confidence Sort By signal: a text label with one unambiguous numeric companion on the same
@@ -231,6 +234,13 @@ namespace Semanticus.Analysis
                     return key.Substring(0, key.Length - suffix.Length);
             return key;
         }
+
+        /// <summary>A Y/N or true/false flag kept as text ("Is Weekday", "IsWeekday", "Has Month End", "Weekday Flag"). Its name carries a month or
+        /// weekday word, but its values are two states with no order to set, so FMT-SORTBY leaves it out of its population and never asks for one.</summary>
+        private static readonly Regex BooleanLikeName = new Regex(
+            @"^\s*(?:[Ii]s|[Hh]as|[Ww]as|[Cc]an)(?:[\s_]|(?=[A-Z]))|(?i:[\s_](?:flag|indicator|ind|yn|y/n|bool|boolean))\s*$", RegexOptions.Compiled);
+
+        private static bool IsBooleanLike(Column c) => BooleanLikeName.IsMatch(c.Name ?? string.Empty);
 
         private static Column SortCompanion(Column label)
         {
@@ -264,7 +274,75 @@ namespace Semanticus.Analysis
             @"(?i)(guid\b|uuid\b|(?<![A-Za-z0-9])rowversion(?![A-Za-z0-9])|row[\s_]version(?![A-Za-z0-9])|(?<![A-Za-z0-9])hash(?![A-Za-z0-9])|(?<![A-Za-z0-9])hashbytes(?![A-Za-z0-9])|(?<![A-Za-z0-9])etl(?![A-Za-z0-9])|_sk\b|_bk\b|(?<![A-Za-z0-9])surrogate[\s_]?key(?![A-Za-z0-9])|(?<![A-Za-z0-9])load[\s_]?(id|date|time)(?![A-Za-z0-9])|(?<![A-Za-z0-9])batch[\s_]?id(?![A-Za-z0-9])|(?<![A-Za-z0-9])source[\s_]?system(?![A-Za-z0-9])|(?<![A-Za-z0-9])(created|modified|inserted|updated|loaded)[\s_]?by(?![A-Za-z0-9]))",
             RegexOptions.Compiled);
 
+        /// <summary>FMT-COLUMN's population: a visible number or date column that a person reads as a value, not
+        /// a key, a relationship end or an identifier. Public because the column format Jev family asks about
+        /// exactly these columns (Semanticus.Engine, Plan/JevFamilies/ColumnFormatFamily.cs), so the rule and the
+        /// family can never disagree about which columns want a format.</summary>
+        public static bool ColumnFormatApplies(Column x) =>
+            x != null && !x.IsHidden && x.Type != ColumnType.RowNumber && !(x.Table is CalculationGroupTable)
+            && !x.IsKey && !x.UsedInRelationships.Any() && !IsNonAdditiveDimensionName(x.Name)
+            && (IsNumeric(x) || x.DataType == DataType.DateTime);
+
+        /// <summary>The rules whose POPULATION reads a column's IsKey, so a column that gains or loses its key can join or
+        /// leave what they evaluate (FMT-SUMMARIZE's keys, the non-keys of FMT-COLUMN, FMT-DATATYPE, SUMMARIZE-DIMENSION
+        /// and DAC-IMPLICIT-MEASURE, VIS-KEY's keys). Public because the plan orders a date mark, the only plan line that
+        /// moves a key, against the rows these rules feed (Semanticus.Engine, Plan/PlanFootprint.cs). A test flips every
+        /// column's key and runs every rule again, which keeps this list and <see cref="KeyStatusCanMatter"/> honest.</summary>
+        public static readonly IReadOnlyCollection<string> KeyStatusRules = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            { "FMT-SUMMARIZE", "FMT-COLUMN", "FMT-DATATYPE", "SUMMARIZE-DIMENSION", "DAC-IMPLICIT-MEASURE", "VIS-KEY" };
+
+        /// <summary>True when some rule in <see cref="KeyStatusRules"/> would FIND something different about this column
+        /// if its key flipped, the column as it is otherwise. A finding, not only the population: the plan's rows are
+        /// made of findings, so a column that joins or leaves a population with nothing to fix changes no row. Each line
+        /// below is one rule's finding with IsKey taken out. So Northstar's Date[Date] (a date with a format and no
+        /// summary) is seen by none of them, and a key that sums, or an old number key with no format, is.</summary>
+        public static bool KeyStatusCanMatter(Column x)
+        {
+            if (x == null || x.Type == ColumnType.RowNumber) return false;
+            var end = x.UsedInRelationships.Any();
+            var visible = !x.IsHidden;
+            var aggregates = x.SummarizeBy != AggregateFunction.None;
+            // FMT-SUMMARIZE: a key (or a relationship end, which is in whatever its key) that aggregates.
+            if (!end && AutoAggregates(x)) return true;
+            // FMT-COLUMN: a visible number or date that is no key and no relationship end, with no format.
+            if (!end && visible && !(x.Table is CalculationGroupTable) && !IsNonAdditiveDimensionName(x.Name)
+                && (IsNumeric(x) || x.DataType == DataType.DateTime) && string.IsNullOrWhiteSpace(x.FormatString)) return true;
+            // FMT-DATATYPE: a visible text column that is no key, named like a date or a number.
+            if (visible && x.DataType == DataType.String && TypeImplyingName.IsMatch(x.Name ?? "")) return true;
+            // SUMMARIZE-DIMENSION and DAC-IMPLICIT-MEASURE: a visible number that is no key and no relationship end and aggregates.
+            if (!end && visible && IsNumeric(x) && aggregates) return true;
+            // VIS-KEY: a visible key that is not a date, not the many side's column and not technically named.
+            return visible && x.DataType != DataType.DateTime && !x.UsedInRelationships.Any(r => r.FromColumn == x)
+                && !TechColumn.IsMatch(x.Name ?? "");
+        }
+
+        /// <summary>DATE-MARK's trigger: some measure, calculated column or calculation item calls a core time
+        /// intelligence function (the token path, never text in a string or a comment). Public because the date table
+        /// Jev family (Semanticus.Engine, Plan/JevFamilies/DateTableFamily.cs) tells Jev this same fact, so the rule and
+        /// the family read "this model uses time intelligence" the one way.</summary>
+        public static bool UsesTimeIntelligence(Model m) =>
+            m != null && DaxObjects(m).Any(o =>
+            {
+                var toks = DaxScan.Tokenize(o.expr);
+                return CoreTiFunctions.Any(fn => DaxScan.CallsFunction(toks, fn));
+            });
+
+        /// <summary>A hidden table Power BI's auto date/time made (BP-AUTO-DATETIME's footprint). Generated, never
+        /// chosen by an author, so it is never a date table anyone decides about.</summary>
+        public static bool IsAutoDateTable(Table t) =>
+            t != null && (t.GetAnnotation("__PBI_LocalDateTable") != null
+                          || t.GetAnnotation("__PBI_TemplateDateTable") != null
+                          || AutoDateTableName.IsMatch(t.Name ?? ""));
+
         private static bool IsNumeric(Column c) => c.DataType == DataType.Int64 || c.DataType == DataType.Double || c.DataType == DataType.Decimal;
+
+        /// <summary>FMT-SUMMARIZE's finding on a key or relationship column: it adds itself up when dragged into a visual.
+        /// Any aggregation but None does, and so does Default on a NUMBER column, because a number's Default is Sum; a
+        /// text or date column's Default does not add up. Public because the safe fix (SafeFixes step 2) must clear
+        /// exactly what the rule finds: it used to skip every Default, so a numeric key at Default stayed a finding
+        /// after the fix reported success.</summary>
+        public static bool AutoAggregates(Column c) =>
+            c != null && c.SummarizeBy != AggregateFunction.None && (c.SummarizeBy != AggregateFunction.Default || IsNumeric(c));
 
         // A numeric column whose NAME marks it as a non-additive IDENTIFIER/label, not a real measure: a year, a
         // month/quarter/week NUMBER, a postal/zip code, or anything ending in an id/code/key/number token. Summing
@@ -321,7 +399,7 @@ namespace Semanticus.Analysis
 
         // A name that has leading/trailing whitespace, an embedded control char (tab / line break) or an emoji /
         // surrogate-pair char — Microsoft's naming guidance forbids these on visible objects (they read badly to
-        // Copilot/Q&A and can break references). Deliberately NARROW (clearly-invalid only) so ordinary punctuation
+        // Copilot and can break references). Deliberately NARROW (clearly-invalid only) so ordinary punctuation
         // like "Sales (USD)" or "# Orders" never false-positives.
         private static bool HasInvalidNameChars(string name) =>
             !string.IsNullOrEmpty(name) && (name != name.Trim() || name.Any(c => char.IsControl(c) || char.IsSurrogate(c)));
@@ -336,7 +414,7 @@ namespace Semanticus.Analysis
             return Regex.Replace(noComments, @"\s+", " ").Trim().ToLowerInvariant();
         }
 
-        // A description that is really a PLACEHOLDER (not the field's actual meaning) — useless to Copilot/Q&A. Catches
+        // A description that is really a PLACEHOLDER (not the field's actual meaning) — useless to Copilot. Catches
         // the LONG placeholders DESC-ECHO's "< 12 chars" test misses ("TODO: write this", "to be completed"). "todo"/
         // "fixme" and the dictionary phrases fire as the OPENER (no real description starts that way); but the ambiguous
         // finance acronyms TBD/TBA (To-Be-Announced MBS, etc.) fire ONLY when STANDALONE — so "TBA mortgage-backed
@@ -371,6 +449,70 @@ namespace Semanticus.Analysis
                 if (!BusinessAcronyms.Contains(m.Value) && !RomanNumeral.IsMatch(m.Value)) return true;
             return false;
         }
+
+        /// <summary>The naming rule that fires for <paramref name="obj"/> when it is called <paramref name="name"/>, or null when none does: NAME-COLUMN or NAME-COLUMN-ID for
+        /// a visible column, NAME-MEASURE for a visible measure, NAME-TABLE for a visible table. These are the four naming rules whose fix is words (FixKind.AiContent), the
+        /// ones the start plan's words queue asks a business name for. It holds the rules' own predicates in one place (a test holds the two together, over the real scan), so
+        /// a name the words check accepts is a name the scan will not flag after the build, and a name the check refuses is one it would.</summary>
+        public static string NamingRuleFor(ITabularNamedObject obj, string name)
+        {
+            switch (obj)
+            {
+                case Column c:
+                    if (c.Type == ColumnType.RowNumber) return null;
+                    return NamingRuleForName("column", c.IsHidden, name, c.Table is CalculationGroupTable);
+                case Measure me:
+                    return NamingRuleForName("measure", me.IsHidden, name);
+                case Table t:
+                    return NamingRuleForName("table", t.IsHidden, name, t is CalculationGroupTable);
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary><see cref="NamingRuleFor"/> from what the rules read of an object that is not in a model yet: its kind ("column", "measure" or "table"), whether it is hidden,
+        /// and the name. The start plan says which names of its tables, columns and base measures the rules would flag before anything is built (join 8, K1); this is the one
+        /// place the predicate lives, so the plan and the scan after the build cannot disagree.</summary>
+        public static string NamingRuleForName(string objectKind, bool hidden, string name, bool calculationGroup = false)
+        {
+            if (hidden) return null;
+            switch (objectKind)
+            {
+                case "column":
+                    if (IsCrypticName(name)) return "NAME-COLUMN";
+                    return !calculationGroup && IdentifierShapedColumnName.IsMatch(name ?? "") && BareIdentifierColumnName.IsMatch((name ?? "").Trim()) ? "NAME-COLUMN-ID" : null;
+                case "measure":
+                    return IsCrypticName(name) ? "NAME-MEASURE" : null;
+                case "table":
+                    return !calculationGroup && IsCrypticName(name) ? "NAME-TABLE" : null;
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>Accept the naming finding that the object's current name raises, with the reason, so the scan counts it as passed (an acceptance like any other: it
+        /// shows as accepted, it is undoable, and it follows the object through a rename). Returns false, writing nothing, when no naming rule fires for the name (it
+        /// already passes, so there is nothing to accept). Called inside the caller's write, never on its own.</summary>
+        public static bool AcceptKeptName(Model m, ITabularNamedObject obj, string by, string reason)
+        {
+            var rule = NamingRuleFor(obj, obj?.Name);
+            if (rule == null) return false;
+            var recs = WaiverStore.LoadForWrite(m, out var corruptRaw);
+            if (corruptRaw != null) WaiverStore.PreserveCorrupt((IAnnotationObject)m, WaiverStore.Annotation, corruptRaw);
+            WaiverStore.Add(recs, new WaiverRecord
+            {
+                System = "air", RuleId = rule, ObjectRef = Refs.For((ITabularObject)obj), Reason = reason,
+                By = string.IsNullOrWhiteSpace(by) ? "agent" : by, When = DateTimeOffset.UtcNow.ToString("o"),
+            });
+            WaiverStore.Save(m, recs);
+            return true;
+        }
+
+        /// <summary>Why a name would be flagged by <see cref="NamingRuleFor"/>, in plain words for the one who wrote it.</summary>
+        public static string NamingRuleWhy(string ruleId, string name) =>
+            ruleId == "NAME-COLUMN-ID"
+                ? "'" + (name ?? "").Trim() + "' alone does not say what the column identifies. Put what it identifies in the name, for example 'Product Code'."
+                : "'" + name + "' would still read as a code or an abbreviation: an underscore, words run together, a name that ends in Key, ID or Cd, or capital letters that are not a known acronym.";
 
         // Collapse runs of whitespace (incl. line wraps) to single spaces so incidental spacing differences
         // between a calc-item name and how it was typed into a description don't break a text match.
@@ -424,6 +566,187 @@ namespace Semanticus.Analysis
             return false;
         }
 
+        /// <summary>Is the linguistic schema in play? DAC-QNA-NAME-COLLISIONS' own gate, shared so any rule that
+        /// defers to it agrees on when it is live.</summary>
+        private static bool LinguisticSchemaEngaged(Model m)
+        {
+            var cfg = PrepForAiReader.Read(m);
+            return cfg.HasLinguisticSchema || cfg.QnaEnabled == true;
+        }
+
+        /// <summary>SYN-SCHEMA's condition: a model that can hold a linguistic schema (CL 1465+) and has none. SYN-SCHEMA
+        /// flags that High and its fix creates one, so on such a model the schema is one accepted fix away.</summary>
+        private static bool NeedsLinguisticSchema(Model m) =>
+            (m.Database?.CompatibilityLevel ?? 0) >= 1465 && !m.Cultures.Any(c => !string.IsNullOrWhiteSpace(c.Content));
+
+        /// <summary>The fields DAC-QNA-NAME-COLLISIONS compares, with their finding labels: visible columns (not RowNumber)
+        /// and visible measures on visible, non-calc-group tables. Tables and hierarchies stay out. Power BI Desktop
+        /// saves a table beside its own label column ('Customer'[Customer]), 'Date'[Date] and the 'Sales' table beside
+        /// its '# Sales' measure in Microsoft's own samples, and nothing documents a table name confusing Copilot with a
+        /// field; the documented confusion is between FIELDS (Kane's ruling, 27 Sep).</summary>
+        private static List<(string Label, ITabularNamedObject Obj)> LinguisticPopulation(Model m)
+        {
+            var pop = new List<(string Label, ITabularNamedObject Obj)>();
+            foreach (var t in m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)))
+            {
+                foreach (var c in t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber)) pop.Add(($"column '{t.Name}'[{c.Name}]", c));
+                foreach (var me in t.Measures.Where(x => !x.IsHidden)) pop.Add(($"measure '{t.Name}'[{me.Name}]", me));
+            }
+            return pop;
+        }
+
+        /// <summary>A set of visible fields that read as the same word, <paramref name="Key"/>. Each member carries its
+        /// finding label and whether it entered through an old name term rather than its name.</summary>
+        public sealed class FieldNameClash
+        {
+            public string Key { get; set; }
+            public List<(string Label, ITabularNamedObject Obj, bool ViaTerm)> Members { get; set; }
+            /// <summary>True when fewer than two of the members meet by NAME: the clash exists only through an old
+            /// name term.</summary>
+            public bool OnlyThroughOldTerm { get; set; }
+
+            /// <summary>The field the finding is filed on: for a clash that exists only through an old name term, the
+            /// field whose entity carries the old word (the remedy is on that field); otherwise the first member.</summary>
+            public ITabularNamedObject Anchor =>
+                (OnlyThroughOldTerm ? Members.FirstOrDefault(x => x.ViaTerm).Obj : null) ?? Members[0].Obj;
+        }
+
+        /// <summary>The words an old-name-term-only clash's message carries, and the Model Plan reads, so the plan names
+        /// that clash's own remedy (clear the old word) rather than a rename.</summary>
+        public const string OldNameTermOnly = "only through an old name term";
+
+        /// <summary>The field name clashes of a model, the one reading behind DAC-QNA-NAME-COLLISIONS and the advisory
+        /// create_linguistic_schema returns. Two or more visible fields (see <see cref="LinguisticPopulation"/>) whose
+        /// names, or whose old name terms (see <see cref="StaleNameTerms"/>), normalise to the same term
+        /// (<see cref="QnaTerms.Normalize"/>: lower case, camelCase split, punctuation as a break, so 'Profit' and
+        /// 'Profit %' meet, which is Microsoft's own example of Copilot answering the wrong one). The evidence is
+        /// Microsoft's Copilot guidance: "avoid duplicate field names across tables" and "distinguish between similarly
+        /// named fields, such as Name in the Customer table and Name in the Store table" (Learn, "Prepare semantic model
+        /// for AI" and "Use Copilot with semantic models"). It is an answer-quality problem, never a write that fails:
+        /// no source shows the validator refusing two visible fields, and Power BI Desktop saves such models. Columns
+        /// joined by a relationship are one key seen from two tables (Power BI Desktop saves Customer[CustomerKey]
+        /// beside Sales[CustomerKey]), so a clash needs at least two members that no relationship joins. The plural
+        /// fold is not used: it was our approximation of the lemmatiser, with nothing behind it. One clash per set of
+        /// fields: two fields that meet on two words are still one clash.</summary>
+        public static List<FieldNameClash> FieldNameClashes(Model m)
+        {
+            var stale = StaleNameTerms(m, PrepForAiReader.SelectLinguisticCulture(m, out _));
+            var entries = new List<(string Label, ITabularNamedObject Obj, string Term, bool ViaTerm)>();
+            var order = new Dictionary<ITabularNamedObject, int>();
+            foreach (var (label, obj) in LinguisticPopulation(m))
+            {
+                order[obj] = order.Count;
+                entries.Add((label, obj, obj.Name, false));
+                if (stale.TryGetValue(obj, out var term)) entries.Add(($"{label} (through its old name term '{term}')", obj, term, true));
+            }
+            // Relationship keys: a family of same-term columns joined by relationships counts once, including through a
+            // hidden column (the usual shape: 'Product Key' visible on two fact tables, hidden on the dimension).
+            var joined = new Dictionary<ITabularNamedObject, HashSet<ITabularNamedObject>>();
+            foreach (var r in m.Relationships.OfType<SingleColumnRelationship>())
+            {
+                if (r.FromColumn == null || r.ToColumn == null) continue;
+                foreach (var (a, b) in new[] { (r.FromColumn, r.ToColumn), (r.ToColumn, r.FromColumn) })
+                {
+                    if (!joined.TryGetValue(a, out var set)) joined[a] = set = new HashSet<ITabularNamedObject>();
+                    set.Add(b);
+                }
+            }
+            // Each column's relationship component (every column reachable through relationships, hidden ones too).
+            var family = new Dictionary<ITabularNamedObject, int>();
+            foreach (var start in joined.Keys)
+            {
+                if (family.ContainsKey(start)) continue;
+                var id = family.Count;
+                var stack = new Stack<ITabularNamedObject>(new[] { start });
+                while (stack.Count > 0)
+                {
+                    var x = stack.Pop();
+                    if (family.ContainsKey(x)) continue;
+                    family[x] = id;
+                    foreach (var y in joined[x]) stack.Push(y);
+                }
+            }
+            int Families(IEnumerable<ITabularNamedObject> members) =>
+                members.Distinct().Select((x, i) => family.TryGetValue(x, out var f) ? f : -1 - i).Distinct().Count();   // an unrelated field is its own family
+
+            var result = new List<FieldNameClash>();
+            var reported = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var g in entries.GroupBy(x => QnaTerms.Normalize(x.Term), StringComparer.Ordinal).Where(g => g.Key.Length > 0))
+            {
+                var members = g.GroupBy(x => x.Obj).Select(o => o.OrderBy(x => x.ViaTerm).First()).OrderBy(x => order[x.Obj]).ToList();
+                if (members.Count < 2 || Families(members.Select(x => x.Obj)) < 2) continue;
+                if (!reported.Add(string.Join("|", members.Select(x => order[x.Obj])))) continue;
+                result.Add(new FieldNameClash
+                {
+                    Key = g.Key,
+                    Members = members.Select(x => (x.Label, x.Obj, x.ViaTerm)).ToList(),
+                    OnlyThroughOldTerm = Families(members.Where(x => !x.ViaTerm).Select(x => x.Obj)) < 2,
+                });
+            }
+            return result;
+        }
+
+        /// <summary>A term's number property (Weight) when it is a number; <paramref name="fallback"/> for a missing,
+        /// null, string or any other kind. JsonElement.TryGetDouble THROWS on a non-number, which the JsonException
+        /// catches around these readers do not cover, so an unchecked read fails the whole scan on valid JSON.</summary>
+        private static double NumberOr(JsonElement props, string name, double fallback) =>
+            props.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDouble(out var d) ? d : fallback;
+
+        /// <summary>A term's State as <see cref="QnaTerms.CountsAsNameTerm"/> reads it: null when missing (or JSON null),
+        /// the string when a string, and "?" for any other kind (or a term that is not an object), which is neither
+        /// generated nor stateless.</summary>
+        private static string TermState(JsonElement props) =>
+            props.ValueKind != JsonValueKind.Object ? "?"
+            : !props.TryGetProperty("State", out var st) || st.ValueKind == JsonValueKind.Null ? null
+            : st.ValueKind == JsonValueKind.String ? st.GetString() : "?";
+
+        /// <summary>Each object whose entity carries a STALE name term (see <see cref="QnaTerms.StaleNameTerm"/>, the one
+        /// definition set_synonyms also uses): nothing in the entity reads as the object's current name any more, and a
+        /// word Power BI wrote (QnaTerms.IsPowerBiWord, read over the whole schema) still records an older one. Tables, columns and measures only (a hierarchy binding
+        /// is not a ConceptualProperty binding). Malformed JSON yields nothing, the same contract as
+        /// <see cref="PrimaryAuthoredSynonyms"/>.</summary>
+        private static Dictionary<ITabularNamedObject, string> StaleNameTerms(Model m, Culture culture)
+        {
+            var result = new Dictionary<ITabularNamedObject, string>();
+            if (culture?.ContentType != ContentType.Json || string.IsNullOrWhiteSpace(culture.Content)) return result;
+            try
+            {
+                using var doc = JsonDocument.Parse(culture.Content);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object
+                    || !doc.RootElement.TryGetProperty("Entities", out var entities) || entities.ValueKind != JsonValueKind.Object)
+                    return result;
+                static bool IsStamped(JsonElement v) => v.ValueKind == JsonValueKind.Object && v.TryGetProperty("LastModified", out _);
+                // Whether a stateless unstamped word is Power BI's is a question about the whole schema (QnaTerms.IsPowerBiWord).
+                var desktopStamps = QnaTerms.AuthoredWordsStamped(entities.EnumerateObject()
+                    .Where(e => e.Value.ValueKind == JsonValueKind.Object && e.Value.TryGetProperty("Terms", out var ts) && ts.ValueKind == JsonValueKind.Array)
+                    .SelectMany(e => e.Value.GetProperty("Terms").EnumerateArray()).Where(o => o.ValueKind == JsonValueKind.Object)
+                    .SelectMany(o => o.EnumerateObject()).Select(p => (TermState(p.Value), IsStamped(p.Value))).ToList());
+                var seen = new HashSet<ITabularNamedObject>();
+                foreach (var candidate in entities.EnumerateObject())
+                {
+                    var entity = candidate.Value;
+                    if (!TryReadBinding(entity, out var table, out var property)) continue;
+                    var binding = entity.TryGetProperty("Binding", out var flat) ? flat : entity.GetProperty("Definition").GetProperty("Binding");
+                    if (binding.TryGetProperty("Hierarchy", out _) || binding.TryGetProperty("HierarchyLevel", out _)) continue;
+                    var t = m.Tables.FirstOrDefault(x => string.Equals(x.Name, table, StringComparison.OrdinalIgnoreCase));
+                    if (t == null) continue;
+                    ITabularNamedObject obj = property == null ? t
+                        : (ITabularNamedObject)t.Columns.FirstOrDefault(c => string.Equals(c.Name, property, StringComparison.OrdinalIgnoreCase))
+                          ?? t.Measures.FirstOrDefault(x => string.Equals(x.Name, property, StringComparison.OrdinalIgnoreCase));
+                    if (obj == null || !seen.Add(obj)) continue;
+                    if (!entity.TryGetProperty("Terms", out var terms) || terms.ValueKind != JsonValueKind.Array) continue;
+
+                    var stale = QnaTerms.StaleNameTerm(terms.EnumerateArray().Where(o => o.ValueKind == JsonValueKind.Object)
+                        .SelectMany(o => o.EnumerateObject())
+                        .Select(p => (p.Name, TermState(p.Value), IsStamped(p.Value),
+                                      p.Value.ValueKind == JsonValueKind.Object ? NumberOr(p.Value, "Weight", 1.0) : 1.0)), obj.Name, desktopStamps);
+                    if (stale != null) result[obj] = stale;
+                }
+            }
+            catch (JsonException) { }
+            return result;
+        }
+
         // Read only the highest-weight USER-AUTHORED term for each visible object. Generated/Suggested terms caused
         // the rejected naive SYN-COLLIDE prototype to flag legitimate recurring thesaurus words across a curated
         // model. Missing State means Authored in the published LSDL contract; equal weights preserve array order.
@@ -468,8 +791,7 @@ namespace Semanticus.Analysis
                             var state = term.Value.TryGetProperty("State", out var stateNode) && stateNode.ValueKind == JsonValueKind.String
                                 ? stateNode.GetString() : "Authored";
                             if (!string.Equals(state, "Authored", StringComparison.OrdinalIgnoreCase)) continue;
-                            var weight = term.Value.TryGetProperty("Weight", out var weightNode) && weightNode.TryGetDouble(out var parsed)
-                                ? parsed : 1.0;
+                            var weight = NumberOr(term.Value, "Weight", 1.0);
                             if (primary == null || weight > bestWeight)
                             {
                                 primary = term.Name;
@@ -562,14 +884,14 @@ namespace Semanticus.Analysis
 
         // "<Table> Name" / "<Table>Name" / "<Table> Description": the conventional label-column shapes MS's naming
         // guidance says should just carry the table's own name. Exact forms only - no stemming, no inference.
-        // ORDERED by how strongly each shape reads as THE label, because DIM-PRIMARY-NAME now has to name one
-        // specific column as its rename target (see TableLabelRank).
+        // ORDERED by how strongly each shape reads as THE label, because DIM-PRIMARY-NAME names one specific column as
+        // the row label to set (see TableLabelRank).
         private static readonly string[] TableLabelSuffixes = { " Name", "Name", " Title", " Description" };
 
         private static bool IsTableLabelName(string tableName, string columnName) => TableLabelRank(tableName, columnName) >= 0;
 
         /// <summary>Index of the label shape <paramref name="columnName"/> matches in <see cref="TableLabelSuffixes"/>,
-        /// or -1 for no match. Lower = more strongly the table's label column. DIM-PRIMARY-NAME renames a specific
+        /// or -1 for no match. Lower = more strongly the table's label column. DIM-PRIMARY-NAME marks a specific
         /// column, so when a dimension carries several label-shaped columns ("Product Name" AND "Product Description")
         /// the target has to be chosen the same way on every scan, not by table column order.</summary>
         private static int TableLabelRank(string tableName, string columnName)
@@ -578,6 +900,84 @@ namespace Semanticus.Analysis
             for (var i = 0; i < TableLabelSuffixes.Length; i++)
                 if (string.Equals(columnName, tableName + TableLabelSuffixes[i], StringComparison.OrdinalIgnoreCase)) return i;
             return -1;
+        }
+
+        /// <summary>DIM-PRIMARY-NAME's population, shared with its fixes (SafeFixes and apply_fix) so the scan and the fix
+        /// name the same column: each dimension (only ever the one side of a many-to-one relationship, visible, not a
+        /// calc group) that carries a visible text label column, with the column its row label should be (a column
+        /// named after the table first, then the label shapes in <see cref="TableLabelSuffixes"/> order, ordinal name
+        /// as the tie-break) and whether it is clean (a visible column of the table is already its row label).</summary>
+        public static IEnumerable<(Table Table, Column Label, bool Clean)> DimensionRowLabels(Model m)
+        {
+            var manyToOne = m.Relationships.OfType<SingleColumnRelationship>()
+                .Where(r => r.FromCardinality == RelationshipEndCardinality.Many
+                    && r.ToCardinality == RelationshipEndCardinality.One
+                    && r.FromTable != null && r.ToTable != null).ToList();
+            var asFact = manyToOne.Select(r => r.FromTable).ToHashSet();
+            foreach (var t in manyToOne.Select(r => r.ToTable).Distinct()
+                         .Where(t => t != null && !t.IsHidden && !(t is CalculationGroupTable) && !asFact.Contains(t)))
+            {
+                var label = t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber && c.DataType == DataType.String
+                        && (string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase) || IsTableLabelName(t.Name, c.Name)))
+                    .OrderBy(c => string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase) ? -1 : TableLabelRank(t.Name, c.Name))
+                    .ThenBy(c => c.Name, StringComparer.Ordinal)
+                    .FirstOrDefault();
+                if (label == null) continue;
+                yield return (t, label, t.Columns.Any(c => !c.IsHidden && c.IsDefaultLabel));
+            }
+        }
+
+        /// <summary>The JSON culture the synonym rules read, or null when there is none. <paramref name="dormant"/> is true
+        /// in two cases with no JSON schema. The only schema is the legacy XML kind: SYN-LSDL-XML owns that case and the
+        /// writer cannot patch it. Or the person waived SYN-SCHEMA with a reason: that is a recorded decision to have no
+        /// schema, and the only fix for a synonym gap (set_synonyms) creates the schema, so counting the gaps would dock the
+        /// grade for a choice already made and offer the very thing declined. Otherwise, with no schema at all the work is
+        /// counted, because set_synonyms creates the schema itself and every visible field truly has no synonyms yet. Once
+        /// a JSON schema exists the waiver no longer matters: nothing a fix does would create it.</summary>
+        private static Culture SynonymCulture(Model m, out bool dormant)
+        {
+            var json = m.Cultures.FirstOrDefault(c => c.ContentType == ContentType.Json && !string.IsNullOrEmpty(c.Content));
+            dormant = json == null && (m.Cultures.Any(c => !string.IsNullOrWhiteSpace(c.Content)) || IsWaived(m, "SYN-SCHEMA", m));
+            return json;
+        }
+
+        /// <summary>Whether the person has waived readiness rule <paramref name="ruleId"/> on <paramref name="target"/> (or
+        /// rule-wide). The analyzer tags waived findings only after every rule has run; this lets a rule read the same store,
+        /// with the same match, while it runs, for the rare rule whose population exists only because of the thing a
+        /// waiver declined. Both doors refuse a waiver without a written reason (WaiveFindingAsync), so a match is always a
+        /// documented decision, and a rule reading it agrees with the finding the analyzer shows as waived.</summary>
+        private static bool IsWaived(Model m, string ruleId, ITabularObject target) =>
+            WaiverStore.Match(WaiverStore.Load(m), "air", ruleId, Refs.For(target)) != null;
+
+        private static bool HasNoSynonyms(TabularNamedObject o, Culture culture) =>
+            culture == null || string.IsNullOrWhiteSpace(SynonymHelper.GetSynonyms(o, culture));
+
+        /// <summary>Why VIS-TECH-COLUMN must not advise removing <paramref name="c"/>, in plain words, or null when BPA's
+        /// UNNECESSARY_COLUMNS raises it once it is hidden. This mirrors that rule's expression clause by clause (a key or
+        /// a declared key part, a DAX reference, a relationship, a sort, a hierarchy level, a security filter naming it,
+        /// object-level security) so the removal sentence is never shown for a column BPA would leave alone.</summary>
+        private static string TechColumnKeepReason(Column c)
+        {
+            const StringComparison ci = StringComparison.OrdinalIgnoreCase;
+            var name = c.Name ?? "";
+            var table = c.Table?.Name ?? "";
+            if (c.IsKey) return "it is its table's key";
+            if (SourceKeys.IsDeclaredKey(c)) return "it is part of the key the model spec declares for its table";
+            if (c.UsedInRelationships.Any()) return "a relationship runs on it";
+            if (c.UsedInSortBy.Any()) return "another column is sorted by it";
+            if (c.UsedInHierarchies.Any()) return "a hierarchy uses it";
+            if (c.ReferencedBy.Count > 0) return "a formula refers to it";
+            if ((c.Table?.RowLevelSecurity.Any(f => f != null && f.IndexOf("[" + name + "]", ci) >= 0) ?? false)
+                || c.Model.Roles.Any(r => r.RowLevelSecurity.Any(f => f != null
+                    && (f.IndexOf(table + "[" + name + "]", ci) >= 0 || f.IndexOf("'" + table + "'[" + name + "]", ci) >= 0))))
+                return "a security filter refers to it";
+            // Object-level security exists from compatibility level 1400: below it TOM leaves the column's setting null and
+            // the table's throws, and there is nothing to read.
+            if ((c.Model.Database?.CompatibilityLevel ?? 0) >= 1400
+                && (c.ObjectLevelSecurity.Any(p => p.ToString() == "None") || (c.Table?.ObjectLevelSecurity.Any(p => p.ToString() == "None") ?? false)))
+                return "a security role hides it";
+            if (IsFieldParameterTable(c.Table)) return "it belongs to a field parameter";
+            return null;
         }
 
         /// <summary>Every LSDL entity that carries a resolvable-shaped Binding, as (table, property-or-null). Entities
@@ -692,6 +1092,56 @@ namespace Semanticus.Analysis
             Table t => !t.IsHidden,
             _ => false,
         };
+
+        // ---- what Copilot sees: shared with the ai.schema Jev family -------------------------------------------
+        // The family (Semanticus.Engine, Plan/JevFamilies/AiSchemaFamily.cs) asks about exactly these objects, reads
+        // the current schema the way AISCHEMA-DEP-MISSING reads it, and checks a proposal against the same
+        // dependency walk, so the family can never propose what that rule would then flag.
+
+        /// <summary>An object a person can put in or leave out of the AI data schema: a visible table, or a visible
+        /// column or measure on a visible table. Hidden objects are already out (Power BI excludes them when the
+        /// schema is first set), a row-number column is not a field, and a calculation group's own column is
+        /// decided with its table.</summary>
+        public static bool AiSchemaEligible(TabularNamedObject obj) => obj switch
+        {
+            Column c => IsVisibleInModel(c) && !(c.Table is CalculationGroupTable),
+            _ => IsVisibleInModel(obj),
+        };
+
+        /// <summary>The objects the model's linguistic schema leaves out of what Copilot sees, read from the same
+        /// culture and the same bindings as AISCHEMA-DEP-MISSING. Empty when there is no schema.</summary>
+        public static HashSet<TabularNamedObject> AiSchemaExcluded(Model m) =>
+            ExcludedFromAiSchema(m, PrepForAiReader.SelectLinguisticCulture(m, out _));
+
+        /// <summary>Effective membership: out when the object or its table is left out.</summary>
+        public static bool IsAiSchemaExcluded(HashSet<TabularNamedObject> excluded, TabularNamedObject obj) =>
+            IsExcludedFromAiSchema(excluded, obj);
+
+        /// <summary>The model objects a measure's formula uses, through the shared DAX token scanner.</summary>
+        public static IReadOnlyList<TabularNamedObject> AiSchemaDependencies(Model m, Measure measure) =>
+            ResolveDaxReferences(m, measure).Distinct().ToList();
+
+        /// <summary>A field parameter table: its columns carry ParameterMetadata. It switches fields in a report.</summary>
+        public static bool IsFieldParameterTable(Table t) =>
+            t != null && !(t is CalculationGroupTable) && t.Columns.Any(c => c.HasExtendedProperty("ParameterMetadata"));
+
+        /// <summary>TODAY'S RULES, as one answer to "should Copilot see this": out when a readiness rule already calls
+        /// it noise for Copilot. VIS-FK (the many end of a relationship), VIS-KEY (a key that is not a date),
+        /// VIS-TECH-COLUMN (a technical or audit name), VIS-HELPER (a helper measure name), and the field parameter
+        /// finding. The ai.schema replay scores Jev against this, so it is exactly those rules and nothing tuned.</summary>
+        public static bool AiSchemaRuleExcludes(Model m, TabularNamedObject obj)
+        {
+            switch (obj)
+            {
+                case Table t: return IsFieldParameterTable(t);
+                case Measure me: return HelperMeasure.IsMatch(me.Name ?? string.Empty);
+                case Column c:
+                    if (m.Relationships.OfType<SingleColumnRelationship>().Any(r => ReferenceEquals(r.FromColumn, c))) return true;
+                    if (c.IsKey && c.DataType != DataType.DateTime) return true;
+                    return TechColumn.IsMatch(c.Name ?? string.Empty);
+                default: return false;
+            }
+        }
 
         private static string DependencyLabel(TabularNamedObject obj) => obj switch
         {
@@ -925,7 +1375,7 @@ namespace Semanticus.Analysis
             // ---- Descriptions -------------------------------------------------------------------
             rules.Add(new ObjectRule<Measure>("DESC-MEASURE", "Measure has no description", ReadinessCategory.Descriptions, Severity.High, RuleKind.LlmGenerate, FixKind.AiContent,
                 m => m.AllMeasures, x => !x.IsHidden, x => string.IsNullOrWhiteSpace(x.Description),
-                x => $"Measure [{x.Name}] has no description; Copilot/Q&A rely on descriptions to answer questions about it."));
+                x => $"Measure [{x.Name}] has no description; Copilot relies on descriptions to answer questions about it."));
 
             // Calc-group tables/columns are excluded here — their documentation is owned solely by DAC-CALC-GROUP
             // (otherwise one undescribed calc group is counted under DESC-TABLE, DESC-COLUMN and DAC-CALC-GROUP).
@@ -945,7 +1395,7 @@ namespace Semanticus.Analysis
                 x => $"Measure [{x.Name}] description is non-informative (repeats the name, is too short, or is a placeholder)."));
 
             // The same placeholder check for TABLES and visible COLUMNS that DESC-ECHO applies to measures: a PRESENT
-            // description that's really a placeholder ("TODO: …") is useless to Copilot/Q&A. DESC-TABLE/DESC-COLUMN own
+            // description that's really a placeholder ("TODO: …") is useless to Copilot. DESC-TABLE/DESC-COLUMN own
             // the MISSING-description case (mutually exclusive — they only evaluate objects with no description); measures
             // are owned by DESC-ECHO (no double-count). Calc-group objects excluded (DAC-CALC-GROUP owns their docs).
             rules.Add(new ModelRule("DESC-PLACEHOLDER", "Table/column description is a placeholder", ReadinessCategory.Descriptions, Severity.Info, RuleKind.LlmJudgment, FixKind.AiContent,
@@ -958,7 +1408,7 @@ namespace Semanticus.Analysis
                         described.Add((c, c.Name, c.Description));
                     var ev = new RuleEvaluation { Applicable = described.Count };
                     foreach (var d in described.Where(d => PlaceholderDesc.IsMatch(d.desc.Trim())))
-                        ev.Violations.Add(rule.NewFinding(d.obj, d.name, $"Description of '{d.name}' is a placeholder, not what the field actually means; replace it with the real meaning so Copilot and Q&A can answer questions about the field."));
+                        ev.Violations.Add(rule.NewFinding(d.obj, d.name, $"Description of '{d.name}' is a placeholder, not what the field actually means; replace it with the real meaning so Copilot can answer questions about the field."));
                     return ev;
                 }));
 
@@ -1014,7 +1464,7 @@ namespace Semanticus.Analysis
 
             // The DESC-ECHO test (description repeats the name / too short) applied to TABLES and visible COLUMNS —
             // DESC-ECHO owns measures. A description that just echoes the object name (or is too short to inform) is
-            // useless grounding for Copilot/Q&A. Mutually exclusive by construction with DESC-PLACEHOLDER (placeholder
+            // useless grounding for Copilot. Mutually exclusive by construction with DESC-PLACEHOLDER (placeholder
             // text) and DESC-LONG-OBJECT (>200 chars): this evaluates only echo/too-short on described, non-placeholder
             // objects. Presence design (Applicable = the offending described objects; dormant on an undocumented or
             // clean model). AiContent — the user's Claude rewrites the description.
@@ -1034,7 +1484,7 @@ namespace Semanticus.Analysis
                         var echo = string.Equals(desc, (d.name ?? "").Trim(), StringComparison.OrdinalIgnoreCase) || desc.Length < 12;
                         if (!echo) continue;
                         ev.Applicable++;
-                        ev.Violations.Add(rule.NewFinding(d.obj, d.name, $"'{d.name}' description is non-informative (repeats the name or is too short); write what it means and how to use it so Copilot/Q&A can answer questions about it."));
+                        ev.Violations.Add(rule.NewFinding(d.obj, d.name, $"'{d.name}' description is non-informative (repeats the name or is too short); write what it means and how to use it so Copilot can answer questions about it."));
                     }
                     return ev;
                 }));
@@ -1086,7 +1536,7 @@ namespace Semanticus.Analysis
                 }));
 
             // Microsoft naming guidance: "object names must not contain emojis, tabs, line breaks, or other
-            // non-standard characters, and must not start or end with a space." These read badly to Copilot/Q&A and
+            // non-standard characters, and must not start or end with a space." These read badly to Copilot and
             // can break DAX references. Deterministic + NARROW (HasInvalidNameChars only flags clearly-invalid: edge
             // whitespace, control chars, surrogate/emoji), so ordinary punctuation never false-positives. Proposal —
             // a rename (the user/Claude cleans it). Applicable = visible measures + columns + (non-calc-group) tables.
@@ -1099,24 +1549,27 @@ namespace Semanticus.Analysis
                     named.AddRange(m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)).Select(t => ((ITabularObject)t, t.Name)));
                     var ev = new RuleEvaluation { Applicable = named.Count };
                     foreach (var n in named.Where(n => HasInvalidNameChars(n.name)))
-                        ev.Violations.Add(rule.NewFinding(n.obj, n.name, $"Name '{n.name}' has invalid characters (a leading/trailing space, tab, line break, or emoji); clean it so Copilot/Q&A read it correctly and references stay stable."));
+                        ev.Violations.Add(rule.NewFinding(n.obj, n.name, $"Name '{n.name}' has invalid characters (a leading/trailing space, tab, line break, or emoji); clean it so Copilot reads it correctly and references stay stable."));
                     return ev;
                 }));
 
             // Microsoft naming guidance: visible tables should NOT carry ETL/modelling technical prefixes (Fact, Dim,
-            // Dimension, Stg, Staging) — Copilot/Q&A read the table name in every NL question ("sales by region"), and
+            // Dimension, Stg, Staging) — Copilot reads the table name in every NL question ("sales by region"), and
             // the prefix is modelling jargon, not business language. NAME-TABLE (via IsCrypticName) already catches the
             // lowercase/underscore/camelCase forms (dim_, fact_, FactSales); this owns the capitalised, space/dash-
             // separated forms it misses ("Fact Sales", "Dim Product"). Excludes names already flagged cryptic so there
             // is no Naming double-count. Proposal — a rename (the user/Claude drops the prefix). Applies = visible,
             // non-calc-group, non-cryptic tables (the candidates this rule actually evaluates).
+            //
+            // Its one target (the name without its prefix) never collides: DAC-QNA-NAME-COLLISIONS compares fields, and
+            // a table beside its own label column ('Product'[Product]) is a shape Power BI Desktop saves (27 Sep ruling).
             rules.Add(new ObjectRule<Table>("NAME-TECH-PREFIX", "Visible table has an ETL/modelling prefix (Fact/Dim/Staging)", ReadinessCategory.Naming, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 m => m.Tables, x => !x.IsHidden && !(x is CalculationGroupTable) && !IsCrypticName(x.Name),
                 x => IsTechPrefixedTableName(x.Name),
-                x => $"Table '{x.Name}' carries an ETL/modelling prefix (Fact/Dim/Staging); drop it so the name reads as business language; Copilot/Q&A use the table name in every question."));
+                x => $"Table '{x.Name}' carries an ETL/modelling prefix (Fact/Dim/Staging); drop it so the name reads as business language; Copilot uses the table name in every question."));
 
             // Auto-generated placeholder names ("Table1", "Column 2", "Measure3", "col1") are the modelling tool's
-            // defaults — meaningless to Copilot/Q&A, which ground on names. Deterministic + anchored, so real names
+            // defaults — meaningless to Copilot, which ground on names. Deterministic + anchored, so real names
             // never match; the !IsCrypticName guard (in IsGenericPlaceholderName) keeps it disjoint from NAME-*.
             // Presence design: Applicable = the placeholder-named population (dormant on a clean model, docks when
             // present) — never an always-pass rule inflating Naming toward 100. Proposal (a rename).
@@ -1131,12 +1584,12 @@ namespace Semanticus.Analysis
                     foreach (var n in named.Where(n => IsGenericPlaceholderName(n.name)))
                     {
                         ev.Applicable++;
-                        ev.Violations.Add(rule.NewFinding(n.obj, n.name, $"Name '{n.name}' is an auto-generated placeholder (Table1 / Column2 / Measure 3), not business language; rename it to something meaningful so Copilot/Q&A can answer questions about the field."));
+                        ev.Violations.Add(rule.NewFinding(n.obj, n.name, $"Name '{n.name}' is an auto-generated placeholder (Table1 / Column2 / Measure 3), not business language; rename it to something meaningful so Copilot can answer questions about the field."));
                     }
                     return ev;
                 }));
 
-            // Cryptic HIERARCHY names (tbl_/camelCase/unknown all-caps) — Q&A/Copilot surface a hierarchy as a drill
+            // Cryptic HIERARCHY names (tbl_/camelCase/unknown all-caps) — Copilot surfaces a hierarchy as a drill
             // path, so a cryptic hierarchy name is as opaque to grounding as a cryptic column. NAME-MEASURE/COLUMN/TABLE
             // already own those object types; this extends the same IsCrypticName test to hierarchies (an uncovered
             // naming surface). Presence design (Applicable = the cryptic-named population) so it can only DOCK Naming,
@@ -1150,19 +1603,34 @@ namespace Semanticus.Analysis
                         foreach (var h in t.Hierarchies.Where(h => !h.IsHidden && IsCrypticName(h.Name)))
                         {
                             ev.Applicable++;
-                            ev.Violations.Add(rule.NewFinding(h, h.Name, $"Hierarchy '{t.Name}'[{h.Name}] has a cryptic name; Q&A/Copilot offer it as a drill path, so rename it to business language", ReadinessCopy.Op("rename_object"), "."));
+                            ev.Violations.Add(rule.NewFinding(h, h.Name, $"Hierarchy '{t.Name}'[{h.Name}] has a cryptic name; Copilot offers it as a drill path, so rename it to business language", ReadinessCopy.Op("rename_object"), "."));
                         }
                     return ev;
                 }));
 
             // ---- Synonyms / Linguistic ----------------------------------------------------------
-            rules.Add(new ModelRule("SYN-SCHEMA", "Model has no Q&A linguistic schema (synonyms)", ReadinessCategory.Synonyms, Severity.High, RuleKind.Deterministic, FixKind.AiContent,
+            rules.Add(new ModelRule("SYN-SCHEMA", "Model has no linguistic schema for Copilot (synonyms)", ReadinessCategory.Synonyms, Severity.High, RuleKind.Deterministic, FixKind.AiContent,
                 (m, rule) =>
                 {
                     if ((m.Database?.CompatibilityLevel ?? 0) < 1465) return new RuleEvaluation { Applicable = 0 }; // linguistic schema needs CL>=1465
                     var ev = new RuleEvaluation { Applicable = 1 };
-                    var has = m.Cultures.Any(c => !string.IsNullOrWhiteSpace(c.Content));
-                    if (!has) ev.Violations.Add(rule.NewFinding(m, m.Name, "This model has no Q&A synonyms set up. Synonyms help users' everyday words reach the right field when those words don't match the field name. Enable Q&A and add synonyms (Copilot and Q&A use the same model)."));
+                    if (NeedsLinguisticSchema(m))
+                    {
+                        // Stage what creating the schema turns on, so the fix opens nothing unannounced: the synonym gaps
+                        // are already their own SYN-FIELD / SYN-TABLE findings, and the name collisions, the AI
+                        // instructions and the AI data schema are only checked once the schema exists, so they are named
+                        // here first. No severity word: the MCP door says High where the Studio says Error.
+                        // The clashes are the ones DAC-QNA-NAME-COLLISIONS raises (FieldNameClashes: visible fields, Kane's ruling of 27 Sep).
+                        var collisions = FieldNameClashes(m);
+                        var staged = collisions.Count == 0 ? "" :
+                            $" Before you create it, fix {collisions.Count} {(collisions.Count == 1 ? "name" : "names")} that Copilot would read as the same word as another visible field, or {(collisions.Count == 1 ? "it becomes its own finding" : "each becomes its own finding")} once the schema exists: {string.Join("; ", collisions.Take(5).Select(c => string.Join(", ", c.Members.Select(x => x.Label))))}{(collisions.Count > 5 ? $"; and {collisions.Count - 5} more" : "")}.";
+                        // A waived SYN-SCHEMA puts SYN-FIELD and SYN-TABLE to sleep (SynonymCulture), and the analyzer still
+                        // shows the waived finding with this message, so it must not claim the gaps are listed then.
+                        var gaps = IsWaived(m, "SYN-SCHEMA", m)
+                            ? " While this finding is accepted, the fields and tables without synonyms are not listed or scored; each becomes its own finding once the schema exists."
+                            : " Each field and table without synonyms is already listed as its own finding.";
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This model has no linguistic schema, so Copilot has no synonyms to read. Synonyms help users' everyday words reach the right field when those words don't match the field name. Set up the schema and add synonyms to the key fields." + gaps + staged + " Once the schema exists, the model's AI instructions and its AI data schema (which fields Copilot is shown) are checked too."));
+                    }
                     return ev;
                 }));
 
@@ -1178,18 +1646,24 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
+            // Counted from the start, not only once a schema exists (the Plan statement check, 28 Sep): the fields have no
+            // synonyms either way, and a dormant rule that woke up when SYN-SCHEMA was fixed opened 48 findings at once.
+            // The grade does not move for that: before the schema the Synonyms category already scores 0 (SYN-SCHEMA
+            // fails and every field and table lacks synonyms), and after it nothing changed. The one model it would have
+            // moved is one whose person waived SYN-SCHEMA, and that stays as it was: see SynonymCulture, which also
+            // covers the legacy XML case.
             rules.Add(new ModelRule("SYN-FIELD", "Visible field has no synonyms", ReadinessCategory.Synonyms, Severity.Medium, RuleKind.LlmGenerate, FixKind.AiContent,
                 (m, rule) =>
                 {
                     if ((m.Database?.CompatibilityLevel ?? 0) < 1465) return new RuleEvaluation { Applicable = 0 };
-                    var culture = m.Cultures.FirstOrDefault(c => c.ContentType == ContentType.Json && !string.IsNullOrEmpty(c.Content));
-                    if (culture == null) return new RuleEvaluation { Applicable = 0 };
+                    var culture = SynonymCulture(m, out var dormant);
+                    if (dormant) return new RuleEvaluation { Applicable = 0 };
                     var fields = new List<TabularNamedObject>();
                     fields.AddRange(m.AllMeasures.Where(x => !x.IsHidden));
                     fields.AddRange(m.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber));
                     var ev = new RuleEvaluation { Applicable = fields.Count };
                     foreach (var f in fields)
-                        if (string.IsNullOrWhiteSpace(SynonymHelper.GetSynonyms(f, culture)))
+                        if (HasNoSynonyms(f, culture))
                             ev.Violations.Add(rule.NewFinding(f, f.Name, $"'{f.Name}' has no synonyms; users may phrase questions differently."));
                     return ev;
                 }));
@@ -1201,12 +1675,12 @@ namespace Semanticus.Analysis
                 (m, rule) =>
                 {
                     if ((m.Database?.CompatibilityLevel ?? 0) < 1465) return new RuleEvaluation { Applicable = 0 };
-                    var culture = m.Cultures.FirstOrDefault(c => c.ContentType == ContentType.Json && !string.IsNullOrEmpty(c.Content));
-                    if (culture == null) return new RuleEvaluation { Applicable = 0 };
+                    var culture = SynonymCulture(m, out var dormant);
+                    if (dormant) return new RuleEvaluation { Applicable = 0 };
                     var tables = m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)).ToList();
                     var ev = new RuleEvaluation { Applicable = tables.Count };
                     foreach (var table in tables)
-                        if (string.IsNullOrWhiteSpace(SynonymHelper.GetSynonyms(table, culture)))
+                        if (HasNoSynonyms(table, culture))
                             ev.Violations.Add(rule.NewFinding(table, table.Name, $"Table '{table.Name}' has no synonyms; users may use a different business name for it."));
                     return ev;
                 }));
@@ -1226,13 +1700,13 @@ namespace Semanticus.Analysis
                             var names = group.Select(x => x.Object.Name).Distinct(StringComparer.Ordinal).ToArray();
                             foreach (var item in group)
                                 ev.Violations.Add(rule.NewFinding(item.Object, item.Object.Name,
-                                    $"Primary authored synonym '{item.Term}' is assigned to {group.Count()} visible objects ({string.Join(", ", names)}). Give each object a unique primary synonym so Q&A restatements identify the intended field."));
+                                    $"Primary authored synonym '{item.Term}' is assigned to {group.Count()} visible objects ({string.Join(", ", names)}). Give each object a unique primary synonym so Copilot can tell which field the word means."));
                         }
                     }
                     return ev;
                 }));
 
-            // OLS is correct governance, not a readiness defect, but it deliberately narrows what Copilot/Q&A can
+            // OLS is correct governance, not a readiness defect, but it deliberately narrows what Copilot can
             // answer for restricted users. Surface that boundary once at model scope so an analyst doesn't mistake
             // a governed refusal for poor grounding. Applicable=0 keeps intentional security out of the score.
             rules.Add(new ModelRule("SEC-OLS-AWARENESS", "Object-level security narrows the AI answer surface", ReadinessCategory.Visibility, Severity.Info, RuleKind.Deterministic, FixKind.None,
@@ -1258,7 +1732,7 @@ namespace Semanticus.Analysis
                     var ev = new RuleEvaluation { Applicable = 0 };   // advisory only; governance never lowers the grade
                     if (hiddenTables + hiddenColumns > 0)
                         ev.Violations.Add(rule.NewFinding(m, m.Name,
-                            $"Object-level security restricts {hiddenTables} table assignment(s) and {hiddenColumns} column assignment(s) across {restrictedRoles.Count} role(s). Copilot/Q&A respect those boundaries, so restricted users cannot ask about the hidden objects. This is expected governance, not a readiness failure."));
+                            $"Object-level security restricts {hiddenTables} table assignment(s) and {hiddenColumns} column assignment(s) across {restrictedRoles.Count} role(s). Copilot respects those boundaries, so restricted users cannot ask about the hidden objects. This is expected governance, not a readiness failure."));
                     return ev;
                 }));
 
@@ -1272,7 +1746,7 @@ namespace Semanticus.Analysis
                     // else a few exposed FKs out of hundreds of columns score as ~99% clean and hide the problem.
                     var ev = new RuleEvaluation { Applicable = fkCols.Count };
                     foreach (var c in fkCols.Where(c => !c.IsHidden))
-                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Foreign-key column [{c.Table?.Name}].[{c.Name}] is usually a join key rather than something users ask about; hide it from Copilot/Q&A unless it's a business code users genuinely ask for."));
+                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Foreign-key column [{c.Table?.Name}].[{c.Name}] is usually a join key rather than something users ask about; hide it from Copilot unless it's a business code users genuinely ask for."));
                     return ev;
                 }));
 
@@ -1286,10 +1760,8 @@ namespace Semanticus.Analysis
                     // score reflects "fraction of key columns set correctly" rather than being diluted to ~100%.
                     var pop = m.AllColumns.Where(c => c.Type != ColumnType.RowNumber && (c.IsKey || endpoints.Contains(c))).ToList();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
-                    // AggregateFunction.Default resolves to Sum for NUMERIC columns (TOM enum), so a numeric key
-                    // left at Default still auto-aggregates; only text/date keys (whose Default is None) are exempt.
-                    foreach (var c in pop.Where(c => c.SummarizeBy != AggregateFunction.None
-                                                      && (c.SummarizeBy != AggregateFunction.Default || IsNumeric(c))))
+                    // A numeric key left at Default still sums (see AutoAggregates); the safe fix reads the same test.
+                    foreach (var c in pop.Where(AutoAggregates))
                         ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] is a key/relationship column but auto-aggregates ({(c.SummarizeBy == AggregateFunction.Default ? "Sum (default)" : c.SummarizeBy.ToString())}); set its SummarizeBy to None so it isn't summed."));
                     return ev;
                 }));
@@ -1313,19 +1785,17 @@ namespace Semanticus.Analysis
                         && IsNumeric(c) && !c.IsKey && !endpoints.Contains(c) && IsNonAdditiveDimensionName(c.Name)).ToList();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
                     foreach (var c in pop.Where(c => c.SummarizeBy != AggregateFunction.None))
-                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] reads as a non-additive identifier (year / number / code / id) but auto-aggregates ({(c.SummarizeBy == AggregateFunction.Default ? "Sum (default)" : c.SummarizeBy.ToString())}); summing it is meaningless; set SummarizeBy=None so Copilot/Q&A don't offer a nonsensical total."));
+                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] reads as a non-additive identifier (year / number / code / id) but auto-aggregates ({(c.SummarizeBy == AggregateFunction.Default ? "Sum (default)" : c.SummarizeBy.ToString())}); summing it is meaningless; set SummarizeBy=None so Copilot doesn't offer a nonsensical total."));
                     return ev;
                 }));
 
             rules.Add(new ObjectRule<Measure>("FMT-MEASURE", "Measure has no format string", ReadinessCategory.Formatting, Severity.Medium, RuleKind.LlmGenerate, FixKind.AiContent,
-                m => m.AllMeasures, x => !x.IsHidden, x => string.IsNullOrEmpty(x.FormatString) && string.IsNullOrEmpty(x.FormatStringExpression),
+                m => m.AllMeasures, x => !x.IsHidden, x => string.IsNullOrWhiteSpace(x.FormatString) && string.IsNullOrWhiteSpace(x.FormatStringExpression),   // blank spaces are "no format" (the format fill rule, item 7), as FMT-COLUMN already reads them
                 x => $"Measure [{x.Name}] has no format string."));
 
             rules.Add(new ObjectRule<Column>("FMT-COLUMN", "Visible numeric/date column has no format string", ReadinessCategory.Formatting, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 m => m.AllColumns,
-                x => !x.IsHidden && x.Type != ColumnType.RowNumber && !(x.Table is CalculationGroupTable)
-                    && !x.IsKey && !x.UsedInRelationships.Any() && !IsNonAdditiveDimensionName(x.Name)
-                    && (IsNumeric(x) || x.DataType == DataType.DateTime),
+                ColumnFormatApplies,
                 x => string.IsNullOrWhiteSpace(x.FormatString),
                 x => $"Column [{x.Table?.Name}].[{x.Name}] has no model format string. Copilot uses column formats as grounding metadata; set a reviewed number or date format before exposing this field."));
 
@@ -1335,7 +1805,7 @@ namespace Semanticus.Analysis
                 x => string.IsNullOrEmpty(x.DataCategory),
                 x => $"Column [{x.Table?.Name}].[{x.Name}] looks geographic; set a Data Category."));
 
-            // A visible column stored as Text whose NAME implies a date or a monetary/quantity number: Q&A/Copilot
+            // A visible column stored as Text whose NAME implies a date or a monetary/quantity number: Copilot
             // won't treat a string-typed date/number correctly (sorting, filtering, aggregation all break) and it
             // signals a bad import. TIGHT name set (TypeImplyingName) keeps precision high; excludes keys (a string
             // key is fine). Proposal, NOT SafeFix — a data-type change can fail refresh / alter downstream DAX, so a
@@ -1347,7 +1817,7 @@ namespace Semanticus.Analysis
                         && c.DataType == DataType.String && TypeImplyingName.IsMatch(c.Name ?? "")).ToList();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
                     foreach (var c in pop)
-                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] is stored as Text but its name implies a date or number; Q&A/Copilot won't sort, filter, or aggregate a string-typed date/number correctly; fix the data type (or rename the column if it really is text)."));
+                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] is stored as Text but its name implies a date or number; Copilot won't sort, filter, or aggregate a string-typed date/number correctly; fix the data type (or rename the column if it really is text)."));
                     return ev;
                 }));
 
@@ -1375,12 +1845,7 @@ namespace Semanticus.Analysis
             rules.Add(new ModelRule("DATE-MARK", "No marked date table", ReadinessCategory.Relationships, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
-                    var usesTi = DaxObjects(m).Any(o =>
-                    {
-                        var toks = DaxScan.Tokenize(o.expr);
-                        return CoreTiFunctions.Any(fn => DaxScan.CallsFunction(toks, fn));
-                    });
-                    if (!usesTi) return new RuleEvaluation { Applicable = 0 };   // no TI DAX ⇒ dormant
+                    if (!UsesTimeIntelligence(m)) return new RuleEvaluation { Applicable = 0 };   // no TI DAX ⇒ dormant
                     var hasDate = m.Tables.Any(t => string.Equals(t.DataCategory, "Time", StringComparison.OrdinalIgnoreCase));
                     var ev = new RuleEvaluation { Applicable = 1 };
                     if (!hasDate) ev.Violations.Add(rule.NewFinding(m, m.Name, "No table is marked as a date table (DataCategory='Time'); this model uses time-intelligence DAX, which relies on a marked date table."));
@@ -1463,33 +1928,18 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
-            // Direct Lake / Lakehouse semantic models are NOT supported by Power BI Q&A live-connect in Desktop — the
-            // Desktop Q&A tooling can't index them (Microsoft). ADVISORY: Applicable=0 (never scores — it's a context
-            // warning, not a fixable model defect), FixKind.None; the finding still surfaces. Detects Direct Lake via
-            // the effective partition storage mode (same Effective(p) pattern as DAC-QNA-STORAGE).
-            rules.Add(new ModelRule("MODE-DIRECTLAKE-QNA", "Direct Lake model: Desktop Q&A cannot index it", ReadinessCategory.CopilotLimits, Severity.Info, RuleKind.Deterministic, FixKind.None,
-                (m, rule) =>
-                {
-                    ModeType Effective(Partition p) => p.Mode == ModeType.Default ? m.DefaultMode : p.Mode;
-                    var directLake = m.AllPartitions.Any(p => Effective(p) == ModeType.DirectLake);
-                    var ev = new RuleEvaluation { Applicable = 0 };   // advisory only — never scores the category
-                    if (directLake)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This is a Direct Lake / Lakehouse model; Power BI Desktop Q&A live-connect and Q&A setup linguistic teaching do not support it. Author and validate Prep-for-AI and Q&A in the Fabric service instead."));
-                    return ev;
-                }));
-
-            // The Q&A index (which Copilot data questions AND the Fabric Data Agent DAX tool rely on) is built from only
+            // Copilot's model index (which Copilot data questions AND the Fabric Data Agent DAX tool rely on) covers only
             // the FIRST 1,000 model entities (tables + fields); entities beyond that are silently never indexed — a
             // correctness killer distinct from LIMIT-SCALE's raw ceilings. Deterministic entity count (tables + non-
             // RowNumber columns + measures). Presence design: Applicable=1 (High) ONLY when over 1,000 — dormant (never
             // scores) below, so it can only DOCK CopilotLimits when the ceiling is actually breached, never inflate it.
-            rules.Add(new ModelRule("LIMIT-QNA-INDEX", "Exceeds the Q&A 1,000-entity index ceiling", ReadinessCategory.CopilotLimits, Severity.High, RuleKind.Deterministic, FixKind.None,
+            rules.Add(new ModelRule("LIMIT-QNA-INDEX", "Exceeds Copilot's 1,000-entity index ceiling", ReadinessCategory.CopilotLimits, Severity.High, RuleKind.Deterministic, FixKind.None,
                 (m, rule) =>
                 {
                     var entities = m.Tables.Count + m.AllColumns.Count(c => c.Type != ColumnType.RowNumber) + m.AllMeasures.Count();
                     var ev = new RuleEvaluation { Applicable = entities > 1000 ? 1 : 0 };
                     if (entities > 1000)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, $"This model has {entities} indexable entities (tables + columns + measures); Q&A/Copilot index only the FIRST 1,000, so entities past that are never indexed and become unanswerable. Trim unused objects", ReadinessCopy.Op("unused_objects"), " or scope the analytical subset via the AI data schema", ReadinessCopy.Op("set_ai_data_schema"), " so the fields you need fall inside the index."));
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, $"This model has {entities} indexable entities (tables + columns + measures); Copilot indexes only the FIRST 1,000, so entities past that are never indexed and become unanswerable. Trim unused objects", ReadinessCopy.Op("unused_objects"), " or scope the analytical subset via the AI data schema", ReadinessCopy.Op("set_ai_data_schema"), " so the fields you need fall inside the index."));
                     return ev;
                 }));
 
@@ -1526,18 +1976,21 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
-            // Q&A is the prerequisite for Copilot data questions AND every Prep-for-AI feature; it is NOT on by
-            // default for DirectQuery/Direct Lake. ADVISORY: Applicable=0 keeps it out of the score; it only nudges,
-            // and only when we COULDN'T read the actual Q&A state (DAC-QNA-DISABLED handles the readable case), so a
-            // PBIP model is never double-flagged.
-            rules.Add(new ModelRule("DAC-QNA-STORAGE", "DirectQuery/Direct Lake model: verify Q&A is enabled", ReadinessCategory.DataAgentConfig, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
+            // Copilot and data agents index a model's text values only while the model setting Power BI still labels
+            // "Q&A" is on (definition.pbism qnaEnabled), and Prep data for AI requires it (Microsoft Learn,
+            // copilot-prepare-data-ai-faq and semantic-model-best-practices). It is on by default for Import AND
+            // Direct Lake, so only DirectQuery needs the nudge. ADVISORY: Applicable=0 keeps it out of the score; it
+            // only nudges, and only when we COULDN'T read the actual setting (DAC-QNA-DISABLED handles the readable
+            // case), so a PBIP model is never double-flagged. No fix-op hint: create_linguistic_schema (once enable_qna) seeds the linguistic schema
+            // and never turns this setting on. The id keeps its old name so saved waivers still match.
+            rules.Add(new ModelRule("DAC-QNA-STORAGE", "DirectQuery model: check Copilot can index its values", ReadinessCategory.DataAgentConfig, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
                     ModeType Effective(Partition p) => p.Mode == ModeType.Default ? m.DefaultMode : p.Mode;
-                    var dqOrDl = m.AllPartitions.Any(p => { var md = Effective(p); return md == ModeType.DirectQuery || md == ModeType.DirectLake; });
+                    var directQuery = m.AllPartitions.Any(p => Effective(p) == ModeType.DirectQuery);
                     var ev = new RuleEvaluation { Applicable = 0 }; // advisory only — never scores the category
-                    if (dqOrDl && !PrepForAiReader.Read(m).QnaEnabled.HasValue)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, $"Model uses DirectQuery/Direct Lake storage; Power BI Q&A (prerequisite for Copilot data questions and Prep-for-AI) is not on by default for these; verify it is enabled", ReadinessCopy.Op("enable_qna"), "."));
+                    if (directQuery && !PrepForAiReader.Read(m).QnaEnabled.HasValue)
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This model uses DirectQuery. Copilot and data agents index its text values only when the model's Q&A setting is on, and that setting is off by default for DirectQuery. Prep data for AI needs it too. Check it is on in the model's settings in Power BI."));
                     return ev;
                 }));
 
@@ -1557,15 +2010,18 @@ namespace Semanticus.Analysis
                 }));
 
             // ---- DataAgentConfig: Prep-for-AI surface (read from the on-disk PBIP, capability-gated) ----------
-            // Q&A enablement and verified answers live in FILES beside the TMDL (definition.pbism / VerifiedAnswers/),
+            // The indexing setting and verified answers live in FILES beside the TMDL (definition.pbism / VerifiedAnswers/),
             // not in TOM. PrepForAiReader surfaces them for an on-disk PBIP; otherwise both rules stay dormant.
-            rules.Add(new ModelRule("DAC-QNA-DISABLED", "Q&A is disabled (Copilot/Prep-for-AI prerequisite)", ReadinessCategory.DataAgentConfig, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+            // The setting Power BI labels "Q&A" is what lets Copilot and data agents index the model's values, and Prep
+            // data for AI requires it. The fix is a Power BI setting, not an op: create_linguistic_schema (once enable_qna) seeds the linguistic schema
+            // and never touches definition.pbism, so the old "(enable_qna)" hint sent the agent to the wrong tool.
+            rules.Add(new ModelRule("DAC-QNA-DISABLED", "Copilot cannot index this model's values", ReadinessCategory.DataAgentConfig, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
                     var cfg = PrepForAiReader.Read(m);
                     var ev = new RuleEvaluation { Applicable = cfg.QnaEnabled.HasValue ? 1 : 0 };
                     if (cfg.QnaEnabled == false)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, $"Power BI Q&A is disabled on this model (definition.pbism qnaEnabled=false); it is the prerequisite for Copilot data questions and every Prep-for-AI feature. Enable it", ReadinessCopy.Op("enable_qna"), "."));
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "This model's Q&A setting is off (definition.pbism qnaEnabled=false). Copilot and data agents need it on to index the model's values, and Prep data for AI requires it. Turn it on in the model's settings in Power BI."));
                     return ev;
                 }));
 
@@ -1573,71 +2029,46 @@ namespace Semanticus.Analysis
                 (m, rule) =>
                 {
                     var cfg = PrepForAiReader.Read(m);
-                    // Only meaningful for an AI-intended model (Q&A on) we can actually inspect on disk.
+                    // Only meaningful for an AI-intended model (indexing setting on) we can actually inspect on disk.
                     var ev = new RuleEvaluation { Applicable = (cfg.SourceReadable && cfg.QnaEnabled == true) ? 1 : 0 };
                     if (ev.Applicable == 1 && cfg.VerifiedAnswerCount == 0)
                         ev.Violations.Add(rule.NewFinding(m, m.Name, "No verified answers defined. For semantic-model data agents, verified answers are the model-level way to answer common/complex questions accurately (example queries aren't supported for semantic models); add a few for your top questions."));
                     return ev;
                 }));
 
-            // Q&A/Copilot fold object names (lower-case + camel-split + lemmatise) into ONE term dictionary: two
-            // VISIBLE objects whose names normalise to the same term are indistinguishable to term matching, and
-            // the AS validator refuses to commit a linguistic schema holding entities for both — which blocks EVERY
-            // synonym write, model-wide (docs/bug-set_synonyms-duplicate-name-collision.md). QnaTerms is the same
-            // two-tier normaliser the set_synonyms guard uses, so scan and write agree: an EXACT normalised match
-            // is a certain collision (the write refuses it); a plural-fold match is our approximation of the closed
-            // AS lemmatiser (the write proceeds with a warning), so its finding says "likely", same rule/severity.
-            // Population mirrors the writer's guard: calc-group tables are excluded (the neighbouring DAC rules'
-            // convention — their names are calc-item machinery, not Q&A vocabulary), RowNumber columns are excluded
-            // (system columns nobody synonymises, though the writer can technically target one), and hierarchy
-            // LEVELS are excluded (level names duplicate their source column by construction — grouping them would
-            // flag every hierarchy; the writer's guard skips them for the same reason). Only meaningful when Q&A is
-            // engaged: dormant without a JSON linguistic culture and without a positive qnaEnabled signal.
-            // Applicable = the collision groups, every one a violation (the dormant-or-dock convention).
-            rules.Add(new ModelRule("DAC-QNA-NAME-COLLISIONS", "Object names collide under Q&A term matching", ReadinessCategory.DataAgentConfig, Severity.High, RuleKind.Deterministic, FixKind.Proposal,
+            // Two visible FIELDS that read as the same word to Copilot (see FieldNameClashes, which carries the evidence
+            // and the shapes that are not clashes). This rule used to claim more: that the linguistic validator refuses a
+            // schema holding entities for two objects whose names normalise alike, so "every synonym write fails", and it
+            // flagged tables beside their own fields and the plural fold too. The one refusal ever recorded (15 Jul) came
+            // from entities bound to HIDDEN shadow columns, which set_synonyms prunes; no source shows a refusal for two
+            // visible objects, and Power BI Desktop saves 'Customer' beside 'Customer'[Customer], 'Date'[Date], a key on
+            // two tables and 'Sales' beside '# Sales' in Microsoft's own samples (Kane's ruling, 27 Sep). What stays is
+            // Microsoft's documented Copilot ambiguity, an answer-quality problem: Medium, and never a failed write.
+            // Only meaningful when the linguistic schema is engaged: dormant without a JSON linguistic culture and
+            // without a positive qnaEnabled signal. Applicable = the clashes, every one a violation (dormant-or-dock).
+            rules.Add(new ModelRule("DAC-QNA-NAME-COLLISIONS", "Fields share a name Copilot cannot tell apart", ReadinessCategory.DataAgentConfig, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
-                    var cfg = PrepForAiReader.Read(m);
                     var ev = new RuleEvaluation();
-                    if (!cfg.HasLinguisticSchema && cfg.QnaEnabled != true) return ev;   // Q&A not engaged → dormant
-
-                    var pop = new List<(string Label, ITabularNamedObject Obj)>();
-                    foreach (var t in m.Tables.Where(t => !t.IsHidden && !(t is CalculationGroupTable)))
-                    {
-                        pop.Add(($"table '{t.Name}'", t));
-                        foreach (var c in t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber)) pop.Add(($"column '{t.Name}'[{c.Name}]", c));
-                        foreach (var me in t.Measures.Where(x => !x.IsHidden)) pop.Add(($"measure '{t.Name}'[{me.Name}]", me));
-                        foreach (var h in t.Hierarchies.Where(x => !x.IsHidden)) pop.Add(($"hierarchy '{t.Name}'[{h.Name}]", h));
-                    }
-
-                    List<List<(string Label, ITabularNamedObject Obj)>> GroupsBy(Func<string, string> normalize) => pop
-                        .GroupBy(x => normalize(x.Obj.Name), StringComparer.Ordinal)
-                        .Where(g => g.Key.Length > 0 && g.Count() > 1)
-                        .Select(g => g.ToList()).ToList();
-
-                    var exactMembers = new HashSet<ITabularNamedObject>();
-                    foreach (var g in GroupsBy(QnaTerms.Normalize))
+                    if (!LinguisticSchemaEngaged(m)) return ev;   // linguistic schema not engaged → dormant
+                    const string staleNote = " An old name term is a name the linguistic schema still records for a field after a rename that did not update it. Setting that field's synonyms without the old word clears it.";
+                    foreach (var clash in FieldNameClashes(m))
                     {
                         ev.Applicable++;
-                        foreach (var x in g) exactMembers.Add(x.Obj);
-                        ev.Violations.Add(rule.NewFinding(g[0].Obj, QnaTerms.Normalize(g[0].Obj.Name),
-                            $"These visible objects all normalise to the Q&A term '{QnaTerms.Normalize(g[0].Obj.Name)}': {string.Join(", ", g.Select(v => v.Label))}. Q&A and Copilot treat them as the same term, and the linguistic schema cannot hold entities for more than one (every synonym write fails). Rename or hide the duplicates."));
-                    }
-                    // Fold-tier groups that the fold CREATED (members span 2+ exact terms) — likely, not certain.
-                    foreach (var g in GroupsBy(QnaTerms.NormalizeFolded).Where(g => g.Select(x => QnaTerms.Normalize(x.Obj.Name)).Distinct(StringComparer.Ordinal).Count() > 1))
-                    {
-                        ev.Applicable++;
-                        // Anchor on a member the exact tier didn't already flag when one exists (all-flagged is
-                        // possible: the fold can merge two whole exact groups into one fold group).
-                        var anchor = g.FirstOrDefault(x => !exactMembers.Contains(x.Obj)).Obj ?? g[0].Obj;
-                        ev.Violations.Add(rule.NewFinding(anchor, QnaTerms.NormalizeFolded(g[0].Obj.Name),
-                            $"These visible objects likely collide on the Q&A term '{QnaTerms.NormalizeFolded(g[0].Obj.Name)}' after plural folding (an approximation of the validator's lemmatiser): {string.Join(", ", g.Select(v => v.Label))}. Q&A and Copilot may treat them as the same term. Rename or hide the duplicates."));
+                        var labels = string.Join(", ", clash.Members.Select(x => x.Label));
+                        ev.Violations.Add(rule.NewFinding(clash.Anchor, clash.Key, clash.OnlyThroughOldTerm
+                            ? $"These visible fields meet on the word '{clash.Key}' {OldNameTermOnly}: {labels}. Copilot may read them as the same field." + staleNote
+                            : $"These visible fields read as the same word, '{clash.Key}': {labels}. Copilot cannot tell them apart by name (Microsoft's Copilot guidance: avoid the same field name across tables). Rename or hide one of them, or describe each so Copilot knows which to use. Synonym writes still work."
+                              + (clash.Members.Any(x => x.ViaTerm) ? staleNote : "")));
                     }
                     return ev;
                 }));
 
             // AI instructions live in the LSDL as the top-level "CustomInstructions" string (read from TOM, so this
             // works for any model with a linguistic schema). Recommend adding them; enforce the documented 10k cap.
+            // The finding cites Microsoft's page because its "AI instructions and AI data schemas save to the LSDL"
+            // line is what a reader of the PBIP Copilot folder docs needs to see (dogfood feedback, 27 Sep). Host and
+            // path only, like this file's other Microsoft citations, so the release gate's URL scan has nothing to judge.
             rules.Add(new ModelRule("DAC-AI-INSTRUCTIONS", "No AI instructions for Copilot/data agents", ReadinessCategory.DataAgentConfig, Severity.Medium, RuleKind.Deterministic, FixKind.AiContent,
                 (m, rule) =>
                 {
@@ -1647,7 +2078,7 @@ namespace Semanticus.Analysis
                     // "missing" on a migrated model — DAC-COPILOT-TOOLING-FORMAT surfaces that case instead.
                     var ev = new RuleEvaluation { Applicable = (cfg.HasLinguisticSchema && !cfg.CopilotToolingFormatPresent) ? 1 : 0 };
                     if (ev.Applicable == 1 && string.IsNullOrWhiteSpace(cfg.AiInstructions))
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, "No AI instructions set (Prep-for-AI). AI instructions give Copilot/data agents business context, terminology and analysis rules (stored on the model as LSDL CustomInstructions, ≤10,000 chars); add a focused set."));
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "No AI instructions set (Prep data for AI). AI instructions give Copilot and data agents business context, terminology and analysis rules. Microsoft's Prep data for AI page (learn.microsoft.com/power-bi/create-reports/copilot-prepare-data-ai) says they save to the model's linguistic schema, here the LSDL CustomInstructions string, up to 10,000 characters. Add a focused set."));
                     return ev;
                 }));
 
@@ -1705,8 +2136,8 @@ namespace Semanticus.Analysis
             // It does NOT measure whether the schema is "focused" (that needs per-field judgement we don't have): Power BI
             // auto-excludes model-hidden fields (keys/RowNumber/technical) by writing Visibility:Hidden, so any model that
             // has actually been through Prep-for-AI almost always excludes >0 and passes. So the real signal here is "you
-            // enabled Q&A / have a linguistic schema but never curated the AI data schema at all" — e.g. a freshly
-            // enable_qna'd model (seeded Entities:{}) or one untouched by Prep-for-AI. Gate on relationships (a flat
+            // have a linguistic schema but never curated the AI data schema at all" — e.g. a freshly
+            // created linguistic schema (seeded Entities:{}) or one untouched by Prep-for-AI. Gate on relationships (a flat
             // single-table model may legitimately exclude nothing). Info: a soft nudge, not a hard finding.
             rules.Add(new ModelRule("DAC-AI-DATA-SCHEMA", "AI data schema is empty (no field excluded)", ReadinessCategory.DataAgentConfig, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
@@ -1772,7 +2203,7 @@ namespace Semanticus.Analysis
             rules.Add(new ModelRule("FMT-SORTBY", "Ordered text column has no Sort By Column", ReadinessCategory.Formatting, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
-                    var pop = m.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber && c.DataType == DataType.String)
+                    var pop = m.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber && c.DataType == DataType.String && !IsBooleanLike(c))
                         .Select(c => new { Column = c, Companion = SortCompanion(c) })
                         .Where(x => MonthOrWeekday.IsMatch(x.Column.Name ?? string.Empty) || x.Companion != null)
                         .ToList();
@@ -1783,7 +2214,7 @@ namespace Semanticus.Analysis
                             ? "it is a month/weekday label and will sort alphabetically"
                             : $"the table has numeric order column [{x.Companion.Name}]";
                         ev.Violations.Add(rule.NewFinding(x.Column, x.Column.Name,
-                            $"Column [{x.Column.Table?.Name}].[{x.Column.Name}] has no Sort By Column; {reason}. Set the intended logical order so Q&A/Copilot does not present an alphabetical sequence."));
+                            $"Column [{x.Column.Table?.Name}].[{x.Column.Name}] has no Sort By Column; {reason}. Set the intended logical order so Copilot does not present an alphabetical sequence."));
                     }
                     return ev;
                 }));
@@ -1826,7 +2257,7 @@ namespace Semanticus.Analysis
                     {
                         var names = grp.Select(v => v.m.Name).ToList();
                         foreach (var v in grp)
-                            ev.Violations.Add(rule.NewFinding(v.m, v.m.Name, $"Measure [{v.m.Name}] has the same DAX as {grp.Count() - 1} other visible measure(s) on the same table ({string.Join(", ", names.Where(n => n != v.m.Name).Take(4))}); consolidate to one or clearly differentiate them so Copilot/Q&A pick the right measure."));
+                            ev.Violations.Add(rule.NewFinding(v.m, v.m.Name, $"Measure [{v.m.Name}] has the same DAX as {grp.Count() - 1} other visible measure(s) on the same table ({string.Join(", ", names.Where(n => n != v.m.Name).Take(4))}); consolidate to one or clearly differentiate them so Copilot picks the right measure."));
                     }
                     return ev;
                 }));
@@ -1842,7 +2273,11 @@ namespace Semanticus.Analysis
             // noise the AI may offer as a real field. VIS-FK owns the MANY-side FK endpoints (FromColumn) ONLY, so
             // exclude just those to avoid a Visibility double-count. The ONE-side PK (ToColumn) is unowned by VIS-FK —
             // keep it in scope, because a visible tech-named surrogate PK (e.g. Customer_SK) is exactly the target here.
-            // Proposal (heuristic name match → human confirms before hiding).
+            // Proposal (heuristic name match → human confirms before hiding). The message says what happens next, because
+            // BPA's UNNECESSARY_COLUMNS raises a hidden column nothing uses, and a message that only asked to hide it made
+            // following this rule open that one unannounced (the Plan statement check, 28 Sep). It names removal ONLY for a
+            // column BPA would really raise once hidden (TechColumnKeepReason is null); a key or a column something runs
+            // on is told to stay, because deleting it breaks the relationship, sort, hierarchy, formula or row identity.
             rules.Add(new ModelRule("VIS-TECH-COLUMN", "Technical/audit column is visible", ReadinessCategory.Visibility, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
@@ -1850,12 +2285,27 @@ namespace Semanticus.Analysis
                         .Select(r => r.FromColumn).Where(c => c != null).ToHashSet();
                     var pop = m.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber && !fkEndpoints.Contains(c)).ToList();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
+                    var waivers = WaiverStore.Load(m);
                     foreach (var c in pop.Where(c => TechColumn.IsMatch(c.Name ?? "")))
-                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] looks like a technical/audit/ETL column (surrogate key, GUID, hash, load/batch/audit metadata); hide it from Copilot/Q&A so it isn't offered as a field."));
+                    {
+                        var keep = TechColumnKeepReason(c);
+                        // Below compatibility level 1400 UNNECESSARY_COLUMNS cannot evaluate at all (its object-level
+                        // security clause has nothing to read, so BPA reports the rule as unknown), so it is not named there.
+                        // Nor is it named when the person accepted that finding (a Semanticus waiver, rule-wide or on this
+                        // column, or Tabular Editor's ignore annotation): BPA then lists the column as accepted, not as advice.
+                        var bpaAdvises = (m.Database?.CompatibilityLevel ?? 0) >= 1400
+                            && WaiverStore.Match(waivers, "bpa", "UNNECESSARY_COLUMNS", Refs.For(c)) == null
+                            && !WaiverStore.IsTeIgnored(c, "UNNECESSARY_COLUMNS");
+                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] looks like a technical/audit/ETL column (surrogate key, GUID, hash, load/batch/audit metadata); hide it from Copilot so it isn't offered as a field. " + (keep != null
+                            ? $"Keep the column itself: {keep}."
+                            : bpaAdvises
+                                ? "Nothing in the model uses it, so once it is hidden Model quality (BPA) suggests removing it; do that only if no report uses it either."
+                                : "Nothing in the model uses it, so once it is hidden you can remove it; do that only if no report uses it either.")));
+                    }
                     return ev;
                 }));
 
-            // A VISIBLE column flagged IsKey (a primary/business key) — keys are identifiers Copilot/Q&A shouldn't
+            // A VISIBLE column flagged IsKey (a primary/business key) — keys are identifiers Copilot shouldn't
             // offer as answerable fields (Microsoft: hide key columns). VIS-FK owns the many-side FK (relationship
             // FromColumn) and VIS-TECH-COLUMN owns technically-NAMED columns; this rule owns the remaining IsKey
             // columns (a cleanly-named PK still marked IsKey), DISJOINT from both to avoid a Visibility double-count.
@@ -1871,12 +2321,12 @@ namespace Semanticus.Analysis
                         && !fkFrom.Contains(c) && !TechColumn.IsMatch(c.Name ?? "")).ToList();
                     var ev = new RuleEvaluation { Applicable = pop.Count };
                     foreach (var c in pop.Where(c => !c.IsHidden))
-                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] is a key (IsKey) but visible; keys are identifiers, not answerable fields, so hide it from Copilot/Q&A (unless it's a business code users genuinely ask for)."));
+                        ev.Violations.Add(rule.NewFinding(c, c.Name, $"Column [{c.Table?.Name}].[{c.Name}] is a key (IsKey) but visible; keys are identifiers, not answerable fields, so hide it from Copilot (unless it's a business code users genuinely ask for)."));
                     return ev;
                 }));
 
             // A VISIBLE table whose every data column is hidden AND that has no visible measure contributes only its
-            // NAME to Copilot/Q&A grounding while exposing nothing answerable — noise (a bridge/utility table left
+            // NAME to Copilot grounding while exposing nothing answerable — noise (a bridge/utility table left
             // visible). Hide the table (or mark it private). Excludes calc-group tables and measure-only holders (a
             // table with visible measures is answerable; a table with no data columns is a legitimate holder).
             // Presence design; Proposal.
@@ -1891,7 +2341,7 @@ namespace Semanticus.Analysis
                         if (dataCols.Any(c => !c.IsHidden)) continue;         // has a visible field — fine
                         if (t.Measures.Any(me => !me.IsHidden)) continue;     // visible measures make it answerable
                         ev.Applicable++;
-                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' is visible but every column is hidden and it has no visible measure; it only adds noise for Copilot/Q&A. Hide the table (or mark it private)."));
+                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' is visible but every column is hidden and it has no visible measure; it only adds noise for Copilot. Hide the table (or mark it private)."));
                     }
                     return ev;
                 }));
@@ -1945,23 +2395,23 @@ namespace Semanticus.Analysis
                     return ev;
                 }));
 
-            // An INACTIVE relationship can only be reached in DAX via USERELATIONSHIP — Q&A/Copilot cannot traverse
+            // An INACTIVE relationship can only be reached in DAX via USERELATIONSHIP — Copilot cannot traverse
             // it, so the role it plays (e.g. Ship Date vs Order Date) is unanswerable in natural language. Detection
             // is deterministic (IsActive); the remediation is structural (denormalize the role column, or expose it
             // another way) → Proposal, not an auto-fix. Presence design: Applicable = the inactive relationships
             // (dormant on a model with none; a role-play-heavy model docks proportionally to Info weight).
-            rules.Add(new ModelRule("REL-INACTIVE", "Inactive relationship (Q&A/Copilot cannot traverse it)", ReadinessCategory.Relationships, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
+            rules.Add(new ModelRule("REL-INACTIVE", "Inactive relationship (Copilot cannot traverse it)", ReadinessCategory.Relationships, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
                     var inactive = m.Relationships.OfType<SingleColumnRelationship>().Where(r => !r.IsActive).ToList();
                     var ev = new RuleEvaluation { Applicable = inactive.Count };   // presence design
                     foreach (var r in inactive)
-                        ev.Violations.Add(rule.NewFinding(r, r.Name, $"Relationship {r.FromTable?.Name}->{r.ToTable?.Name} is inactive; Q&A/Copilot can't use it (only DAX via USERELATIONSHIP can). If the role it plays should be answerable in natural language, copy the role column into the fact table or expose it another way."));
+                        ev.Violations.Add(rule.NewFinding(r, r.Name, $"Relationship {r.FromTable?.Name}->{r.ToTable?.Name} is inactive; Copilot can't use it (only DAX via USERELATIONSHIP can). If the role it plays should be answerable in natural language, copy the role column into the fact table or expose it another way."));
                     return ev;
                 }));
 
             // A dimension that clearly supports a drill — a DATE table (>=2 year/quarter/month/week/day columns) or a
-            // GEO table (>=2 recognised geographic columns) — but defines NO hierarchy. A hierarchy helps Q&A/Copilot
+            // GEO table (>=2 recognised geographic columns) — but defines NO hierarchy. A hierarchy helps Copilot
             // drill naturally (year->quarter->month, country->state->city). Name/GeoCategory based (no live data).
             // Presence design; Proposal (the user's Claude picks the level order). Calc-group tables excluded.
             rules.Add(new ModelRule("REL-HIERARCHY-MISSING", "Date/geo dimension has drill columns but no hierarchy", ReadinessCategory.Relationships, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
@@ -1974,13 +2424,13 @@ namespace Semanticus.Analysis
                     foreach (var t in pop)
                     {
                         var kind = GeoColumnCount(t) >= 2 ? "geographic (country/state/city)" : "date (year/quarter/month)";
-                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' has {kind} drill columns but no hierarchy; add one so Q&A/Copilot can drill down naturally."));
+                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' has {kind} drill columns but no hierarchy; add one so Copilot can drill down naturally."));
                     }
                     return ev;
                 }));
 
             // A visible table exposing >=2 visible DateTime columns (and NOT the marked date table) is the classic
-            // multiple-date-fields ambiguity: Q&A/Copilot can't tell which date a time question means (Order vs Ship vs
+            // multiple-date-fields ambiguity: Copilot can't tell which date a time question means (Order vs Ship vs
             // Due), and only ONE date can drive a marked date table. Deterministic (DateTime type + DataCategory!=Time);
             // presence design (dormant unless a table actually has the ambiguity). Precise on star schemas whose facts
             // carry integer date KEYS (those aren't DateTime, so they don't fire — the role-play case is REL-INACTIVE's).
@@ -2000,13 +2450,13 @@ namespace Semanticus.Analysis
                             && c.DataType == DataType.DateTime && !RangeBoundaryDateName.IsMatch(c.Name ?? "")).ToList();
                         if (dateCols.Count < 2) continue;
                         ev.Applicable++;
-                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' exposes {dateCols.Count} visible date columns ({string.Join(", ", dateCols.Take(3).Select(c => c.Name))}{(dateCols.Count > 3 ? ", …" : "")}); Q&A/Copilot can't tell which one a time question means. Keep one canonical date and relate through it", ReadinessCopy.Op("mark_date_table"), ", hide the extra date columns", ReadinessCopy.Op("set_column_hidden"), ", or state the default date in AI instructions", ReadinessCopy.Op("set_ai_instructions"), "."));
+                        ev.Violations.Add(rule.NewFinding(t, t.Name, $"Table '{t.Name}' exposes {dateCols.Count} visible date columns ({string.Join(", ", dateCols.Take(3).Select(c => c.Name))}{(dateCols.Count > 3 ? ", …" : "")}); Copilot can't tell which one a time question means. Keep one canonical date and relate through it", ReadinessCopy.Op("mark_date_table"), ", hide the extra date columns", ReadinessCopy.Op("set_column_hidden"), ", or state the default date in AI instructions", ReadinessCopy.Op("set_ai_instructions"), "."));
                     }
                     return ev;
                 }));
 
             // A visible hierarchy with a single level offers no drill path — it contributes a name to grounding but no
-            // Year>Quarter>Month structure Q&A/Copilot can drill. Deterministic (Levels.Count<2); presence design
+            // Year>Quarter>Month structure Copilot can drill. Deterministic (Levels.Count<2); presence design
             // (dormant unless a single-level hierarchy exists). Proposal — add the missing levels or remove the stub.
             rules.Add(new ModelRule("REL-HIERARCHY-SINGLE-LEVEL", "Hierarchy has only one level (no drill path)", ReadinessCategory.Relationships, Severity.Info, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
@@ -2016,7 +2466,7 @@ namespace Semanticus.Analysis
                         foreach (var h in t.Hierarchies.Where(h => !h.IsHidden && h.Levels.Count < 2))
                         {
                             ev.Applicable++;
-                            ev.Violations.Add(rule.NewFinding(h, h.Name, $"Hierarchy '{t.Name}'[{h.Name}] has only one level, so it offers no drill path for Q&A/Copilot; add the remaining drill levels", ReadinessCopy.Op("create_hierarchy"), " or remove the single-level hierarchy."));
+                            ev.Violations.Add(rule.NewFinding(h, h.Name, $"Hierarchy '{t.Name}'[{h.Name}] has only one level, so it offers no drill path for Copilot; add the remaining drill levels", ReadinessCopy.Op("create_hierarchy"), " or remove the single-level hierarchy."));
                         }
                     return ev;
                 }));
@@ -2054,20 +2504,37 @@ namespace Semanticus.Analysis
             rules.Add(DaxAdvisory("BP-DAX-DISTINCTCOUNT", "COUNTROWS(DISTINCT/VALUES) idiom", "distinctcount-over-countrows-distinct-values"));
             rules.Add(DaxAdvisory("BP-DAX-REMOVEFILTERS", "ALL as a CALCULATE filter modifier", "dax-prefer-removefilters-over-all-modifier"));
 
+            // A formula that names an object the model does not have (plan statement check 4, P2). The model cannot compute that number, and no other rule notices, so a model
+            // whose measures all point at renamed or removed tables still read A. The verdict is the engine's own reference check (FormulaReferences). Applicable = the formulas
+            // read (every measure, calculated column, calculation item and role filter that has one), so it is dormant on a model with no formula. The grade is also capped
+            // (ReadinessAnalyzer, by this id): a clean average cannot lift a model that cannot compute. Category Naming: the defect is a name that points at nothing.
+            // GATE ONLY (Kane, 4 Oct): a safety check, not a quality score. Its passes and violations count in no average, so a healthy model gains nothing for having formulas.
+            rules.Add(new ModelRule("DAX-REFERENCE", "A formula refers to an object the model does not have", ReadinessCategory.Naming, Severity.High, RuleKind.Deterministic, FixKind.None,
+                (m, rule) =>
+                {
+                    var ev = new RuleEvaluation();
+                    var check = FormulaReferences.HostChecker(m);
+                    foreach (var holder in FormulaReferences.Holders(m))
+                    {
+                        ev.Applicable += FormulaReferences.FormulasOf(holder).Count();
+                        var broken = FormulaReferences.BrokenIn(holder, check).ToList();
+                        if (broken.Count == 0) continue;
+                        // One finding for the object, so a waiver and the Plan name it once: its first broken formula, and how many others share the fault.
+                        ev.Violations.Add(rule.NewFinding(holder, holder.Name, FormulaReferences.Describe(broken[0]) + (broken.Count > 1 ? " " + (broken.Count - 1) + " more of its formulas do the same." : "")));
+                    }
+                    return ev;
+                }, gateOnly: true));
+
             // Model-level: Auto date/time is enabled (hidden PBI-generated local/template date tables). Applicable=1
             // only when the footprint exists (annotation OR a GUID-suffixed LocalDateTable_/DateTableTemplate_ name —
             // the GUID suffix is required so a user table named "DateTableTemplate" is safe); else dormant.
             rules.Add(new ModelRule("BP-AUTO-DATETIME", "Auto date/time is enabled", ReadinessCategory.BestPractice, Severity.Medium, RuleKind.Deterministic, FixKind.Proposal,
                 (m, rule) =>
                 {
-                    bool IsFootprint(Table t) =>
-                        t.GetAnnotation("__PBI_LocalDateTable") != null
-                        || t.GetAnnotation("__PBI_TemplateDateTable") != null
-                        || AutoDateTableName.IsMatch(t.Name ?? "");
-                    var footprint = m.Tables.Any(IsFootprint);
+                    var footprint = m.Tables.Any(IsAutoDateTable);
                     var ev = new RuleEvaluation { Applicable = footprint ? 1 : 0 };
                     if (footprint)
-                        ev.Violations.Add(rule.NewFinding(m, m.Name, "Auto date/time is enabled (hidden per-column local date tables detected); turn it off, delete the hidden local date tables, and use one marked date table so Copilot/Q&A and time-intelligence DAX have a single, clean date table."));
+                        ev.Violations.Add(rule.NewFinding(m, m.Name, "Auto date/time is enabled (hidden per-column local date tables detected); turn it off, delete the hidden local date tables, and use one marked date table so Copilot and time-intelligence DAX have a single, clean date table."));
                     return ev;
                 }));
 
@@ -2117,7 +2584,7 @@ namespace Semanticus.Analysis
                 }));
 
             // A linguistic (LSDL) entity binds to a model object by name. A rename or delete outside the linguistic
-            // writer leaves the binding pointing at nothing: the entity keeps consuming one of the 1,000 Q&A index
+            // writer leaves the binding pointing at nothing: the entity keeps consuming one of the 1,000 Copilot index
             // slots (LIMIT-QNA-INDEX) and its synonyms ground no field. Deterministic and self-checking - resolution
             // reuses the SAME binding shape the shipped synonym rules use, and matches against EVERY model object
             // (hidden and RowNumber included), so hiding a column can never read as deleting it. Dormant without a
@@ -2151,7 +2618,7 @@ namespace Semanticus.Analysis
                         var listed = string.Join(", ", orphans.Take(OrphanBindingsListed));
                         if (orphans.Count > OrphanBindingsListed) listed += $", and {orphans.Count - OrphanBindingsListed} more";
                         ev.Violations.Add(rule.NewFinding(culture, culture.Name,
-                            $"The Q&A linguistic schema for culture '{culture.Name}' still binds {orphans.Count} entit{(orphans.Count == 1 ? "y" : "ies")} to objects that no longer exist in this model: {listed}. Each dangling entry grounds nothing and still occupies a Q&A index slot; remove it or repoint it at the renamed object."));
+                            $"The linguistic schema for culture '{culture.Name}' still binds {orphans.Count} entit{(orphans.Count == 1 ? "y" : "ies")} to objects that no longer exist in this model: {listed}. Each dangling entry grounds nothing and still occupies a slot in Copilot's index; remove it or repoint it at the renamed object."));
                     }
                     return ev;
                 }));
@@ -2182,10 +2649,10 @@ namespace Semanticus.Analysis
             // (NAME-HIERARCHY) and their drill shape (REL-HIERARCHY-SINGLE-LEVEL), but never their description, so a
             // visible "Calendar" or "Geography" drill path reached Copilot with no stated meaning. Same shape as
             // DESC-TABLE / DESC-COLUMN: population = visible hierarchies on visible business tables, dormant on a
-            // model that defines none. FixKind.Proposal, NOT AiContent: the shipped description writer accepts
-            // measures/tables/columns/perspectives only, so promising an agent-applyable content fix here would be a
-            // fix affordance the engine cannot honour. Detection is the honest half; the writer is separate work.
-            rules.Add(new ModelRule("DESC-HIERARCHY", "Visible hierarchy has no description", ReadinessCategory.Descriptions, Severity.Medium, RuleKind.LlmGenerate, FixKind.Proposal,
+            // model that defines none. FixKind.AiContent: set_description writes a hierarchy's description (it refused
+            // hierarchies until 27 Sep, when this rule was Proposal because the fix could not be applied), so the finding
+            // queues for the assistant like DESC-TABLE and DESC-COLUMN.
+            rules.Add(new ModelRule("DESC-HIERARCHY", "Visible hierarchy has no description", ReadinessCategory.Descriptions, Severity.Medium, RuleKind.LlmGenerate, FixKind.AiContent,
                 (m, rule) =>
                 {
                     var ev = new RuleEvaluation();
@@ -2195,60 +2662,32 @@ namespace Semanticus.Analysis
                             ev.Applicable++;
                             if (string.IsNullOrWhiteSpace(h.Description))
                                 ev.Violations.Add(rule.NewFinding(h, h.Name,
-                                    $"Hierarchy '{t.Name}'[{h.Name}] has no description; Copilot and Q&A ground drill paths on the description, so say what the levels mean and when to use them."));
+                                    $"Hierarchy '{t.Name}'[{h.Name}] has no description; Copilot grounds drill paths on the description, so say what the levels mean and when to use them."));
                         }
                     return ev;
                 }));
 
-            // MS naming conventions: the column that identifies a dimension row should carry the table's own name
-            // ("Product" in table Product), so "list the products" resolves to one field instead of guessing between
-            // the table and a "Product Name" column. Tight population: a table that is ONLY ever the one side of a
-            // MANY-TO-ONE relationship (the same deterministic graph slice REL-SNOWFLAKE uses, so no fact/dimension
-            // guesswork) AND that exposes a visible text column literally named "<Table> Name" / "<Table>Name".
-            //
-            // The cardinality test is what makes "dimension" mean anything here, and it was missing: without it ANY
-            // relationship's To-side table qualified, so a one-to-one pairing (two halves of one entity, neither a
-            // dimension of the other) and a many-to-many bridge each moved the Naming score through a rule whose whole
-            // premise is the fact-to-dimension star. REL-SNOWFLAKE always filtered on Many->One; this now reads the
-            // identical slice, as its own comment already claimed.
-            //
-            // Info severity, AiContent - the rename is the assistant's to author, and rename safety stays with the
-            // rename path. The finding therefore targets the LABEL COLUMN, not the table: the fix renames that column,
-            // MapAiContent carries the finding's own ObjectRef into the rename plan item, and a finding pointing at the
-            // table aimed the advertised fix at an object the fix never touches.
-            rules.Add(new ModelRule("DIM-PRIMARY-NAME", "Dimension label column does not carry the table name", ReadinessCategory.Naming, Severity.Info, RuleKind.Deterministic, FixKind.AiContent,
+            // Microsoft's row label: "for a table called 'Customer', the row label is usually 'Display Name' ... instead of
+            // treating 'customer' as a table, it can instead use 'Display Name'" (Learn, "Intro to Q&A tooling"). A
+            // dimension whose label column is marked as its row label (Column.IsDefaultLabel) answers "list the
+            // customers" with names. This rule used to advise renaming the label column to the table's own name
+            // (Microsoft's naming conventions); that rename was the collision the linguistic-schema rule then flagged,
+            // so the rule went quiet on every Power BI model. The row label collides with nothing and runs everywhere
+            // (Kane's ruling, 27 Sep). Tight population: a table that is ONLY ever the one side of a MANY-TO-ONE
+            // relationship (the graph slice REL-SNOWFLAKE uses, so no fact/dimension guesswork) AND that exposes a
+            // visible text label column (named after the table, or "<Table> Name" and the other label shapes). Clean when
+            // any visible column of the table is its row label. Info, SafeFix: one column, one property, undoable, and
+            // the finding sits on the column the fix marks (see DimensionRowLabels, shared with the fixes).
+            rules.Add(new ModelRule("DIM-PRIMARY-NAME", "Dimension has no row label", ReadinessCategory.Naming, Severity.Info, RuleKind.Deterministic, FixKind.SafeFix,
                 (m, rule) =>
                 {
-                    var manyToOne = m.Relationships.OfType<SingleColumnRelationship>()
-                        .Where(r => r.FromCardinality == RelationshipEndCardinality.Many
-                            && r.ToCardinality == RelationshipEndCardinality.One
-                            && r.FromTable != null && r.ToTable != null).ToList();
-                    var asFact = manyToOne.Select(r => r.FromTable).ToHashSet();
-                    var dimensions = manyToOne.Select(r => r.ToTable).Distinct()
-                        .Where(t => t != null && !t.IsHidden && !(t is CalculationGroupTable) && !asFact.Contains(t));
-
                     var ev = new RuleEvaluation();
-                    foreach (var t in dimensions)
+                    foreach (var (t, label, clean) in DimensionRowLabels(m))
                     {
-                        // The population is the dimensions that actually carry a label column named after the table
-                        // ("Product", "Product Name", "Product Description"). A dimension whose text columns are all
-                        // attributes (Color, Size) is not evaluated at all, so this can never pass a table it did not
-                        // look at, and a clean dimension is one whose label IS the bare table name.
-                        var candidates = t.Columns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber
-                            && c.DataType == DataType.String
-                            && (string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase) || IsTableLabelName(t.Name, c.Name)))
-                            .ToList();
-                        if (candidates.Count == 0) continue;
                         ev.Applicable++;
-                        if (candidates.Any(c => string.Equals(c.Name, t.Name, StringComparison.OrdinalIgnoreCase))) continue;
-                        // ONE deterministic rename target: the strongest label shape, ordinal name as the tie-break, so
-                        // the finding - and the plan item built from its ObjectRef - never depends on column order.
-                        var label = candidates
-                            .OrderBy(c => TableLabelRank(t.Name, c.Name))
-                            .ThenBy(c => c.Name, StringComparer.Ordinal)
-                            .First();
+                        if (clean) continue;
                         ev.Violations.Add(rule.NewFinding(label, label.Name,
-                            $"Dimension '{t.Name}' identifies its rows with '{label.Name}' and has no field named '{t.Name}'; natural-language questions like \"list the {t.Name}\" then have to guess between the table and the column. Rename the label column to '{t.Name}'."));
+                            $"Dimension '{t.Name}' has no row label. Set '{label.Name}' as its row label, the column that names each row, so a question like \"list the {t.Name}\" answers with names instead of guessing between the table and its columns."));
                     }
                     return ev;
                 }));
@@ -2258,11 +2697,11 @@ namespace Semanticus.Analysis
 
         /// <summary>Dmv-kind rules that need live per-column cardinality (COLUMNSTATISTICS). Evaluated ONLY by the
         /// analyzer's Analyze(model, liveStats) overload — so on an offline scan they don't run at all and the
-        /// scorecard is unchanged. They land in CopilotLimits (the Q&A index 5M-unique-value ceiling).</summary>
+        /// scorecard is unchanged. They land in CopilotLimits (Copilot's 5M-unique-value index ceiling).</summary>
         public static IReadOnlyList<ReadinessRule> LiveRules(ReadinessLiveStats stats)
         {
-            // The Q&A value index covers only TEXT values (Microsoft: "Q&A indexes only text values under 100
-            // characters" — see docs/ai-readiness-catalog.json + ai-readiness-plan.md). So the indexed population is
+            // Copilot's value index covers only TEXT values (Microsoft, copilot-prepare-data-ai-faq: "Power BI only
+            // indexes text columns" and "doesn't index text values of 100+ characters" — see docs/ai-readiness-catalog.json + ai-readiness-plan.md). So the indexed population is
             // VISIBLE STRING columns (numeric/decimal/datetime cardinality is NOT in the 5M term index); real (not
             // RowNumber), not on a calc group, and with a cardinality reading. (Follow-up: also exclude text columns
             // whose values average >=100 chars, which COLUMNSTATISTICS could report.)
@@ -2275,18 +2714,18 @@ namespace Semanticus.Analysis
 
             return new ReadinessRule[]
             {
-                // Per-column: a single visible TEXT column whose cardinality dominates the Q&A index.
+                // Per-column: a single visible TEXT column whose cardinality dominates Copilot's value index.
                 new ObjectRule<Column>(
-                    "SCALE-HICARD-COLUMN", "Visible high-cardinality text column bloats the Q&A index",
+                    "SCALE-HICARD-COLUMN", "Visible high-cardinality text column bloats Copilot's value index",
                     ReadinessCategory.CopilotLimits, Severity.Medium, RuleKind.Dmv, FixKind.Proposal,
                     scope: Indexed,
                     applies: _ => true,
                     violates: c => Card(c) > ReadinessLiveStats.HighCardinalityColumn,
-                    message: c => $"{Card(c):N0} distinct text values; a single visible column this large dominates the {ReadinessLiveStats.QnaUniqueValueCeiling:N0}-value Q&A index. Hide it or exclude it from the AI data schema."),
+                    message: c => $"{Card(c):N0} distinct text values; a single visible column this large dominates the {ReadinessLiveStats.QnaUniqueValueCeiling:N0}-value Copilot index. Hide it or exclude it from the AI data schema."),
 
-                // Model-level: total indexed unique TEXT values vs the documented Q&A 5M ceiling.
+                // Model-level: total indexed unique TEXT values vs Copilot's documented 5M ceiling.
                 new ModelRule(
-                    "SCALE-QNA-INDEX", "Indexed unique text values exceed the Q&A 5M ceiling",
+                    "SCALE-QNA-INDEX", "Indexed unique text values exceed Copilot's 5M index ceiling",
                     ReadinessCategory.CopilotLimits, Severity.High, RuleKind.Dmv, FixKind.Proposal,
                     (m, rule) =>
                     {
@@ -2295,7 +2734,7 @@ namespace Semanticus.Analysis
                         long total = indexed.Sum(Card);
                         if (total > ReadinessLiveStats.QnaUniqueValueCeiling)
                             ev.Violations.Add(rule.NewFinding(m, m.Name,
-                                $"~{total:N0} indexed unique text values across visible columns exceed the Q&A index ceiling of {ReadinessLiveStats.QnaUniqueValueCeiling:N0}; Q&A/Copilot drop values and lose accuracy. Hide or exclude the high-cardinality text columns."));
+                                $"~{total:N0} indexed unique text values across visible columns exceed Copilot's value index ceiling of {ReadinessLiveStats.QnaUniqueValueCeiling:N0}; Copilot drops values and loses accuracy. Hide or exclude the high-cardinality text columns."));
                         return ev;
                     }),
             };

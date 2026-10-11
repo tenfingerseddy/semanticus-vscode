@@ -74,7 +74,7 @@ namespace Semanticus.Engine
         public string Kind { get; set; }        // measure | column | calcColumn
         public string Table { get; set; }
         public bool IsHidden { get; set; }
-        public string Verdict { get; set; }     // safe | usedByUnusedOnly | caution
+        public string Verdict { get; set; }     // safe | usedByUnusedOnly | caution | visibleAttribute (never swept; a reviewed removal still removes it)
         public int RefCount { get; set; }        // direct model-side referencers
         public string[] BlockedBy { get; set; } = Array.Empty<string>();   // the (dead) referencers, for usedByUnusedOnly
         public string Reason { get; set; }
@@ -87,6 +87,9 @@ namespace Semanticus.Engine
         public int SafeCount { get; set; }
         public int UsedByUnusedOnlyCount { get; set; }
         public int CautionCount { get; set; }
+        /// <summary>Visible columns of a dimension table that nothing in the model references. Never counted as safe
+        /// and never removed by remove_safe_objects: they are what people query by.</summary>
+        public int VisibleAttributeCount { get; set; }
         public string Caveat { get; set; }
     }
 
@@ -139,6 +142,11 @@ namespace Semanticus.Engine
     {
         public string Path { get; set; }
         public string Name { get; set; }
+        /// <summary>The stable choice id this reading belongs to ("published:&lt;workspaceId&gt;/&lt;reportId&gt;" or
+        /// "local:&lt;path&gt;"), when the reading came from a model's report scope. Null for a bare path analysis.
+        /// Two chosen reports in different workspaces can share a display name, so the name is not an identity and
+        /// anything joining a reading back to a chosen report joins on this.</summary>
+        public string ChoiceId { get; set; }
         public bool Read { get; set; }                                  // false = not a PBIR definition / unreadable
         public int FieldCount { get; set; }                            // distinct model field references resolved
         public int Unresolved { get; set; }                            // references that couldn't be attributed (⇒ caution)

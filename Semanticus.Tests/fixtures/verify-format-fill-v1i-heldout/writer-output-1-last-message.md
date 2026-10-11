@@ -1,0 +1,3 @@
+Created [five TMDL models](/home/tenfingers/.cache/v1i-heldout/sol-work/models) with 144 labeled measures and columns, plus [10 staged model changes](/home/tenfingers/.cache/v1i-heldout/sol-work/changes.json). The [labels](/home/tenfingers/.cache/v1i-heldout/sol-work/labels.json), [judge](/home/tenfingers/.cache/v1i-heldout/sol-work/judge.py), and [README](/home/tenfingers/.cache/v1i-heldout/sol-work/README.md) are ready.
+
+The judge’s self-test passed all 1,500 format examples, and a structural check matched every TMDL measure and column to one label. I did not run Microsoft’s serializer: doing so would require accessing files outside the folder you restricted me to, so deserialization remains unverified.

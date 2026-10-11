@@ -202,6 +202,7 @@ verify:
             RowCount = 1,
         };
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_rejects_a_bare_corrected_anchor_with_no_machine_receipt()
         {
@@ -224,6 +225,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -249,6 +251,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_accepts_a_live_receipted_revision_enforces_it_and_audits_the_delta()
         {
@@ -287,6 +290,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_accepts_a_receipted_flat_to_shaped_anchor_form_repair()
         {
@@ -317,6 +321,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_refuses_a_shaped_to_flat_anchor_form_revision()
         {
@@ -341,6 +346,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_refuses_an_axis_change_after_an_anchor_is_shaped()
         {
@@ -386,6 +392,7 @@ verify:
             finally { sessions.Dispose(); if (ws != null) Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Runner_retry_with_omitted_revision_input_inherits_the_current_accepted_revision()
         {
@@ -1467,6 +1474,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Active_wedged_query_still_retires_the_connection()
         {
@@ -1498,6 +1506,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Queued_verify_times_out_without_retiring_the_healthy_lane_owner()
         {
@@ -1531,6 +1540,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_success_landing_during_the_post_cancel_grace_is_still_timed_out_and_never_retires()
         {
@@ -1564,6 +1574,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_per_query_token_is_bounded_by_the_remaining_budget_not_the_full_ceiling()
         {
@@ -1692,6 +1703,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Start_vs_abandon_race_exactly_one_side_wins()
         {
@@ -1742,6 +1754,7 @@ verify:
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_clean_result_finishing_after_a_sub_second_budget_is_refused()
         {
@@ -1773,6 +1786,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_delayed_phase2_continuation_does_not_shift_the_deadline()
         {
@@ -1811,6 +1825,7 @@ verify:
             finally { sessions.Dispose(); Directory.Delete(ws, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_parked_lane_continuation_after_an_on_time_completion_is_still_accepted()
         {
@@ -1862,6 +1877,7 @@ verify:
             Assert.Equal(2, commandTimeout);                       // the integer server bound rounds up
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Lane_wait_exhaustion_message_never_blames_the_anchor()
         {

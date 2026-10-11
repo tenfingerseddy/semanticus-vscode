@@ -1,0 +1,9 @@
+{
+ "point": "compose.draft",
+ "committed": "2026-09-25",
+ "committedBeforeFirstRun": true,
+ "rule": "Jev drafts for Pro (JevDraftBuilder.JevDrafts = true) only when BOTH hold on the labelled set: describe, the share of steps whose Jev ops are right is at least describeMin AND at least the word match's share on the same steps; compose, the share of descriptions whose kept steps are exactly right is at least composeMin. A step is right when its ops include every labelled op and nothing outside the label and alsoOk. A step Jev left to the word match counts as Jev's miss.",
+ "describeMin": 0.8,
+ "composeMin": 0.8,
+ "notBelowWordMatch": true
+}

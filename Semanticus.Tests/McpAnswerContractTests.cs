@@ -59,7 +59,7 @@ namespace Semanticus.Tests
                 var table = (await engine.ListMeasuresAsync()).First().Table;
                 await engine.CreateMeasureAsync("table:" + table, "SaveProbe", "1", "human");
 
-                var saved = await engine.SaveAsync(null, "TMDL");
+                var saved = await engine.SaveAsync(null, "TMDL", false, "human");
                 Assert.True(File.Exists(model), "The .bim source must still be a file, not replaced by a TMDL folder.");
                 Assert.False(Directory.Exists(model));
                 Assert.Equal(Path.GetFullPath(model), saved.Path);
@@ -125,6 +125,7 @@ namespace Semanticus.Tests
         }
 
         // D-139: a restore that put the files back must report restored true even if the follow-up commit fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Restore_reports_true_when_files_went_back_even_if_the_commit_fails()
         {
@@ -146,7 +147,7 @@ namespace Semanticus.Tests
                 var first = await engine.CreateHistoryCheckpointAsync("Known good", commit: true, "human");
                 Assert.True(first.Committed);
                 await engine.SetDaxAsync(measure, "2", "human");
-                await engine.SaveAsync(null, null);
+                await engine.SaveAsync(null, null, false, "human");
 
                 engine.FailCheckpointCommitMatchingForTest = "Restored to";
                 var restored = await engine.RestoreHistoryCheckpointAsync(first.Checkpoint.Hash, restore: true, "human");
@@ -196,10 +197,10 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-down-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(Path.Combine(ws, ".semanticus"));
-            var orig = Environment.GetEnvironmentVariable("USERPROFILE");
+            var orig = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(ws, "home");
             Directory.CreateDirectory(home);
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
             try
             {
                 using var engine = new LocalEngine(new SessionManager(), new Fake(true), ws);
@@ -215,7 +216,7 @@ namespace Semanticus.Tests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", orig);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, orig);
                 DeleteTree(ws);
             }
         }
@@ -241,7 +242,8 @@ namespace Semanticus.Tests
 
                 var texts = result.Content.OfType<TextContentBlock>().Select(b => b.Text).ToArray();
                 Assert.Contains(texts, t => t.Contains("measure:", StringComparison.Ordinal));
-                Assert.Contains(texts, t => t.IndexOf("Verified measure", StringComparison.OrdinalIgnoreCase) >= 0);
+                Assert.Contains(texts, t => t.IndexOf("'verified-measure'", StringComparison.Ordinal) >= 0
+                    && t.IndexOf("start_workflow", StringComparison.Ordinal) >= 0);
                 Assert.Contains(texts, t => t.IndexOf("warn", StringComparison.OrdinalIgnoreCase) >= 0
                     && t.IndexOf("continue", StringComparison.OrdinalIgnoreCase) >= 0);
             }

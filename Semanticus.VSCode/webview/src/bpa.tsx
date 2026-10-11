@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { rpc, onDidChange } from './bridge';
 import { useFixState } from './hooks';
-import { GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
+import { GiveTheRest, GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
 import { CustomRulesPanel } from './rulesauthor';
+import { GiveToAssistant, findingBuilder } from './sendtask';
+import { RagBars } from './ragbars';
+import { gradeBand } from './readinessband.mjs';
 
-interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; }
-interface BpaScorecard { ruleCount: number; violationCount: number; autoFixable: number; waivedCount: number; violations: BpaViolation[]; ruleErrors: string[]; }
+interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; noLongerFires?: boolean; waivedAsTwin?: boolean; coveredBy?: string; coveredReason?: string; wholeRuleRow?: boolean; }
+interface BpaScorecard { ruleCount: number; violationCount: number; autoFixable: number; waivedCount: number; violations: BpaViolation[]; ruleErrors: string[]; bestPractice?: string | null; bestPracticeWhy?: string | null; bestPracticeScore?: number; categories?: BpaCategory[]; }
+// One category's score from the engine (0 to 100, the same bands as AI readiness) and the objects its rules checked.
+interface BpaCategory { category: string; errors: number; warnings: number; objectsChecked: number; score: number; }
 // What one press of "Fix all" could NOT clear. The engine verifies the result against a fresh scan, so this is
 // the press's honest remainder rather than a guess: the fix ran (or was skipped) and the finding is still here.
 interface BpaUnfixed { ruleId: string; ruleName: string; objectRef: string; objectName: string; reason: string; }
@@ -16,7 +21,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   const [err, setErr] = useState<string | null>(null);
   const [leftOver, setLeftOver] = useState<BpaUnfixed[]>([]);  // what the last press could not clear
   const [waivedOpen, setWaivedOpen] = useState(false);
-  const { state: work, keyOf, fix, ask } = useFixState('bpaFix', 'bpaGetFixPrompt');
+  const { state: work, keyOf, fix } = useFixState('bpaFix', 'bpaGetFixPrompt');
   const timer = useRef<number | undefined>(undefined);
 
   async function scan() {
@@ -29,7 +34,6 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
     return () => { off(); window.clearTimeout(timer.current); };
   }, []);
   const fixOne = (v: BpaViolation) => fix(v.ruleId, v.objectRef, () => void scan());
-  const askClaude = (v: BpaViolation) => ask(v.ruleId, v.objectRef);
   async function fixAll() {
     // Clear both messages BEFORE the attempt: an old refusal (or an old error) must not survive a press that
     // works. Only ever set them from what this press actually saw.
@@ -45,21 +49,29 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
     finally { setBusy(false); }
   }
 
-  if (!card) return <div className="sem-evidence-page sem-centered-page text-[12px]" style={{ color: 'var(--sem-muted)' }}>{err ?? 'Checking the model…'}</div>;
+  if (!card) return <div className="sem-page"><div className="sem-text-meta">{err ?? 'Checking the model…'}</div></div>;
 
   const byRef = new Map(card.violations.map((v) => [v.objectRef + '|' + v.ruleId, v]));
   const toRow = (v: BpaViolation): FindingRow => ({
     // Provenance in the rule header: a violation from a model-embedded (user/org) rule says so.
     ruleId: v.ruleId, ruleName: v.ruleName + (v.custom ? ' (custom rule)' : ''), category: v.category, severity: v.severity,
     objectRef: v.objectRef, objectName: v.objectName, message: v.message,
-    waived: v.waived, waiverReason: v.waiverReason, waiverRuleLevel: v.waiverRuleLevel,
+    waived: v.waived && !v.waivedAsTwin, waiverReason: v.waiverReason, waiverRuleLevel: v.waiverRuleLevel, noLongerFires: v.noLongerFires, waivedAsTwin: v.waivedAsTwin, coveredBy: v.coveredBy, coveredReason: v.coveredReason, wholeRuleRow: v.wholeRuleRow,
   });
-  const active = card.violations.filter((v) => !v.waived).map(toRow);
-  const waivedRows = card.violations.filter((v) => v.waived).map(toRow);
+  // A finding another acceptance covers is left alone but is not accepted: it stays in the open list, with its own words.
+  const accepted = (v: BpaViolation) => !!v.waived && !v.waivedAsTwin;
+  const active = card.violations.filter((v) => !accepted(v)).map(toRow);
+  const waivedRows = card.violations.filter(accepted).map(toRow);
   const fail = (e: unknown) => setErr(String((e as Error).message ?? e));
 
-  const waive = (r: FindingRow, reason: string) => void rpc('waiveFinding', 'bpa', r.ruleId, r.objectRef, reason).then(scan).catch(fail);
-  const waiveRule = (ruleId: string, reason: string) => void rpc('waiveFinding', 'bpa', ruleId, '*', reason).then(scan).catch(fail);
+  // true only when the engine took the acceptance: the box keeps the person's reason on anything else (R-B).
+  const waiveWrite = async (ruleId: string, objectRef: string, reason: string): Promise<boolean> => {
+    try { await rpc('waiveFinding', 'bpa', ruleId, objectRef, reason); } catch (e) { fail(e); return false; }
+    void scan();
+    return true;
+  };
+  const waive = (r: FindingRow, reason: string) => waiveWrite(r.ruleId, r.objectRef, reason);
+  const waiveRule = (ruleId: string, reason: string) => waiveWrite(ruleId, '*', reason);
   // un-waive routes to the rule-level waiver ('*') when the finding was waived model-wide, else the single instance.
   const unwaive = (r: FindingRow) => void rpc('unwaiveFinding', 'bpa', r.ruleId, r.waiverRuleLevel ? '*' : r.objectRef).then(scan).catch(fail);
 
@@ -68,54 +80,71 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
     const k = keyOf(v.ruleId, v.objectRef); const st = work[k];
     const fixBtn = v.canAutoFix
       ? (st === 'done'
-        ? <span className="text-[10px]" style={{ color: 'var(--sem-good)' }}>fixed ✓</span>
+        ? <span className="sem-text-meta">Fixed</span>
         : <MiniButton disabled={st === 'fixing'} onClick={() => fixOne(v)}>{st === 'fixing' ? '…' : 'Fix'}</MiniButton>)
-      : <MiniButton onClick={() => askClaude(v)}>{st === 'copied' ? 'Copied ✓' : 'Ask AI'}</MiniButton>;
+      : <GiveToAssistant sendKey={`bpa|${v.ruleId}|${v.objectRef}`} build={findingBuilder('bpa', v)} />;
     return <span className="flex items-center gap-1">{fixBtn}<WaiveControl onWaive={(reason) => waive(r, reason)} onUnwaive={() => unwaive(r)} /></span>;
   };
   // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Accept for the whole model" made from the
   // same spot it was made (it was a dead no-op before the 2026-07-07 hook-fix batch).
-  const ruleActions = (ruleId: string) => <WaiveControl subtle label="Accept for the whole model" title="Accept every instance of this rule across the model (Pro)" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => void rpc('unwaiveFinding', 'bpa', ruleId, '*').then(scan).catch(fail)} />;
+  const ruleActions = (ruleId: string) => <WaiveControl subtle label="Accept for the whole model" title="Accept every instance of this rule across the model" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => void rpc('unwaiveFinding', 'bpa', ruleId, '*').then(scan).catch(fail)} />;
+
+  // One bar per rule category, scored by the engine. The detail is the open findings in that category beside the objects its rules checked.
+  const openIn = (name: string) => card.violations.filter((v) => !accepted(v) && v.category === name).length;
+  const bars = (card.categories ?? []).map((c) => ({ name: c.category, score: c.score, detail: `${openIn(c.category)} of ${c.objectsChecked}` }));
 
   return (
-    <div className="sem-evidence-page sem-centered-page flex flex-col gap-4">
+    <div className="sem-page">
       <Panel>
-        <div className="flex items-center gap-5">
-          <div className="flex flex-col items-center justify-center w-20 h-20 rounded-2xl" style={{ background: 'var(--sem-surface-2)', boxShadow: `inset 0 0 0 2px ${card.violationCount === 0 ? 'var(--sem-good)' : 'var(--sem-warn)'}` }}>
-            <div className="text-3xl font-bold tnum" style={{ color: card.violationCount === 0 ? 'var(--sem-good)' : 'var(--sem-fg)' }}>{card.violationCount}</div>
-            <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>issues</div>
+        {/* The header wraps: the letter and the issue count stay together, and the words and the buttons drop below them when the page is narrow (a window of 1440 with the
+            side bars open leaves under 900 px, and the words were squeezed to one or two words a line; plan statement check 3, defect 5). */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3" data-testid="bpa-head">
+          {/* The grade is the AI readiness grade: one big letter and the score beside it, in the band colour (readinessband.mjs). */}
+          {card.bestPractice && <div className={`flex items-baseline gap-2 shrink-0 sem-rag-${gradeBand(card.bestPractice) ?? 'warn'}`} data-testid="bpa-grade" title={card.bestPracticeWhy ?? undefined}>
+            <span className="sem-rag-grade">{card.bestPractice}</span>
+            {card.bestPracticeScore != null && <><span className="sem-num sem-rag-score">{card.bestPracticeScore}</span><span className="sem-text-meta">of 100</span></>}
+          </div>}
+          <div className="flex items-baseline gap-2 shrink-0">
+            <span className="sem-num text-(length:--sem-text-page) leading-(--sem-lh-page) font-semibold">{card.violationCount}</span>
+            <span className="sem-text-meta">{card.violationCount === 1 ? 'issue' : 'issues'}</span>
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[15px] font-semibold">Model quality</div>
-            <div className="text-[12px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>
-              {card.ruleCount} checks run · this app can fix {card.autoFixable} on its own · your assistant can fix the rest
-              {card.waivedCount > 0 && <span> · <button type="button" onClick={() => { setWaivedOpen(true); document.getElementById('waived-findings')?.scrollIntoView({ block: 'nearest' }); }} title="Show the accepted findings" className="underline-offset-2 hover:underline" style={{ color: 'var(--sem-warn)' }}>{card.waivedCount} accepted</button></span>}
-            </div>
-            {card.ruleErrors.length > 0 && <div className="text-[11px] mt-1" style={{ color: 'var(--sem-bad)' }}>{card.ruleErrors.length} rule error(s)</div>}
+          <div className="flex-1 min-w-[120px]">
+            {/* One short line. The grade's reasons are the letter's tooltip and Help; the accepted count is on the Accepted row below. */}
+            {card.bestPractice && <h2 className="sem-card-title">Best practice</h2>}
+            <div className="sem-text-meta">{card.ruleCount} checks</div>
+            {card.ruleErrors.length > 0 && <div className="sem-chip sem-chip-bad mt-1">{card.ruleErrors.length} rule error(s)</div>}
           </div>
           <div className="flex items-center gap-2 flex-wrap shrink-0">
-            <Button primary disabled={busy || card.autoFixable === 0} onClick={fixAll}
-              title="Apply every auto-fixable violation in one undoable step.">
-              {busy ? 'Fixing…' : `Fix the ${card.autoFixable} this app can fix`}
-            </Button>
-            {onReviewAsPlan && card.violationCount > 0 && <Button onClick={onReviewAsPlan} title="Review these fixes as one change plan, then apply in bulk">Review as a plan →</Button>}
-            <Button onClick={scan}>Re-scan</Button>
+            {(busy || card.autoFixable > 0) && <Button primary disabled={busy} onClick={fixAll}
+              title="Fixes every finding this app can fix, in one undoable step.">
+              {busy ? 'Fixing…' : `Fix ${card.autoFixable}`}
+            </Button>}
+            {/* What the app cannot fix goes to the assistant in one press (D4). */}
+            <GiveTheRest system="bpa" items={active.filter((r) => !byRef.get(r.objectRef + '|' + r.ruleId)?.canAutoFix)} />
+            {onReviewAsPlan && card.violationCount > 0 && <button type="button" className="sem-btn sem-btn-quiet" onClick={onReviewAsPlan} title="Send these fixes to Pending changes, look at each one, then apply them together.">Review all fixes →</button>}
           </div>
         </div>
       </Panel>
 
-      {err && <Banner color="var(--sem-bad)">{err}</Banner>}
+      {bars.length > 0 && (
+        <Panel>
+          <h2 className="sem-card-title">Categories</h2>
+          <RagBars testId="bpa-categories" rows={bars} />
+        </Panel>
+      )}
+
+      {err && <Banner>{err}</Banner>}
       {leftOver.length > 0 && (
         <Panel>
-          <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-warn)' }}>
+          <h2 className="sem-card-title flex items-center gap-2"><span className="sem-chip sem-chip-warn" aria-hidden="true" />
             {leftOver.length === 1 ? 'One finding could not be fixed' : `${leftOver.length} findings could not be fixed`}
-          </div>
-          <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
+          </h2>
+          <div className="sem-text-meta mt-1">
             Fix all cleared the rest. These are still on the model, and each one says why it stayed. Fix them one at a time, or ask your assistant.
           </div>
-          <ul className="mt-2 flex flex-col gap-1.5">
+          <ul className="mt-2 flex flex-col gap-2">
             {leftOver.map((u) => (
-              <li key={u.ruleId + '|' + u.objectRef} className="text-[12px]">
+              <li key={u.ruleId + '|' + u.objectRef} className="text-(length:--sem-text-meta)">
                 <span className="font-medium">{u.objectName}</span>
                 <span style={{ color: 'var(--sem-muted)' }}> · {u.ruleName} · </span>
                 <span>{u.reason}</span>
@@ -124,10 +153,13 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
           </ul>
         </Panel>
       )}
-      {card.violationCount === 0 && <Panel><div className="text-[13px]" style={{ color: 'var(--sem-good)' }}>Nothing to fix. ✓{card.waivedCount > 0 ? ` (${card.waivedCount} accepted)` : ''}</div></Panel>}
-
-      {card.violationCount > 0 && <Panel><GroupedFindings rows={active} renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} /></Panel>}
-      <WaivedList rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
+      <Panel>
+        {card.violationCount === 0
+          ? <div className="sem-text-body">Nothing to fix.</div>
+          : <GroupedFindings rows={active} holdAs="bpa" renderActions={actions} renderRuleActions={(ruleId) => ruleActions(ruleId)} />}
+        {/* Accepted findings are the last fold row of this card, not a card of their own. */}
+        <WaivedList embedded rows={waivedRows} onUnwaive={unwaive} open={waivedOpen} onOpenChange={setWaivedOpen} />
+      </Panel>
       <CustomRulesPanel kind="bpa" onChanged={() => void scan()} />
     </div>
   );
@@ -135,7 +167,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
 
 // ---- local primitives -----------------------------------------------------------------------
 function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-xl border p-4" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
+  return <section className="sem-card">{children}</section>;
 }
 function Button({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
   return (
@@ -153,6 +185,7 @@ function MiniButton({ children, onClick, disabled }: { children: React.ReactNode
     </button>
   );
 }
-function Banner({ children, color }: { children: React.ReactNode; color: string }) {
-  return <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,' + color + ' 14%, transparent)', color }}>{children}</div>;
+// A problem is a sentence with a red dot in front of it, not red text on a red wash (Instrument: state is a dot).
+function Banner({ children }: { children: React.ReactNode }) {
+  return <div role="alert" className="sem-card flex items-start gap-2 sem-text-body"><span className="sem-chip sem-chip-bad shrink-0" aria-hidden="true" />{children}</div>;
 }

@@ -28,6 +28,7 @@ namespace Semanticus.Tests
             return table;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Invalid_rls_dax_with_unknown_column_and_dangling_operator_is_refused()
         {
@@ -136,6 +137,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rls_filter_ending_in_a_dangling_operator_is_still_refused()
         {
@@ -158,6 +160,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Valid_rls_dax_still_saves_and_empty_clears()
         {

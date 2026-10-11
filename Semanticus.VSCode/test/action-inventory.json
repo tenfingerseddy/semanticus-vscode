@@ -1,0 +1,265 @@
+{
+ "about": "Sol join 12 (A8), the class (join 13 added J-I1 and J-I2-1 to J-I2-5 from the j12ui check): a person action ends its words only when the engine accepted exactly those words. noWords: sends followed by a clear in the same run that hold no typed words (a menu, a pick, a local-only edit). fixed: each action the three-way audit of webview/src found losing words on a refusal, with the guard that now stands. notLosing: found by the audit, judged not to lose words on a refusal, named so a join can pick them up. test/action-clears-after-ok.test.mjs reads this file.",
+ "noWords": {
+  "App.tsx::onConnections()::setOpen(false)": {
+   "why": "a menu item: it opens Connections, no typed words"
+  },
+  "App.tsx::onGroup(group.id)::setOpen(false)": {
+   "why": "a menu item: it picks a group of pages, no typed words"
+  },
+  "App.tsx::onTab(extra.tool, extra.target)::setOpen(false)": {
+   "why": "a menu item: it opens a page, no typed words"
+  },
+  "App.tsx::onTab(next, target)::setOpen(false)": {
+   "why": "a menu item: it opens a page, no typed words"
+  },
+  "App.tsx::onTab(tool.id)::setOpen(false)": {
+   "why": "a menu item: it opens a page, no typed words"
+  },
+  "pqtransforms.tsx::apply(r.m, r.step ?? 'Step')::setMenu(null)": {
+   "why": "closes a step menu after a local edit of the query text held by the page; no engine write"
+  },
+  "pqtransforms.tsx::onChange(r.m)::setEditing(null)": {
+   "why": "a local edit of the query text held by the page (saved by its own Save); no engine write"
+  },
+  "querywells.tsx::onConfig({ ...config, filters: next })::setEditFilter(null)": {
+   "why": "onConfig sets the page's own query config (local state, nothing is written to the engine); the filter editor holds no typed words"
+  },
+  "search.tsx::saveState('searchFind', v)::setPreview(null)": {
+   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
+  },
+  "search.tsx::saveState('searchPower', v)::setPreview(null)": {
+   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
+  },
+  "search.tsx::saveState('searchReplace', v)::setPreview(null)": {
+   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
+  },
+  "search.tsx::saveState(scopeKey, value)::setPreview(null)": {
+   "why": "saveState keeps the page's own settings; the preview is derived, no words are lost"
+  },
+  "tests-authoring.tsx::onPick(shape)::setOpen(false)": {
+   "why": "a menu of authoring shapes: a pick, no typed words"
+  },
+  "tests-authoring.tsx::onAddSqlSource()::setOpen(false)": {
+   "why": "a menu item: it opens the add-a-SQL-source flow, no typed words"
+  }
+ },
+ "fixed": [
+  {
+   "id": "A8-1",
+   "file": "documentation.tsx",
+   "trigger": "Keep mine on it moves a kept paragraph onto a section whose editor is already open and empty",
+   "guards": [
+    "onMoved=\\{\\(to\\) => setMoved"
+   ],
+   "never": []
+  },
+  {
+   "id": "A8-3",
+   "file": "optimize.tsx",
+   "trigger": "a new plan reuses an engine id for another line while the old line's words are kept",
+   "guards": [
+    "drafts\\[lineAt\\(it\\)\\]"
+   ],
+   "never": [
+    "drafts\\[it\\.id\\]"
+   ]
+  },
+  {
+   "id": "A8-4",
+   "file": "optimize.tsx",
+   "trigger": "more text is typed while a pending-change Save is on its way, then the first reply arrives",
+   "guards": [
+    "dropDraftIfSent\\(lineAt\\(it\\), v\\)"
+   ],
+   "never": [
+    "dropDraft\\(it\\.id\\)"
+   ]
+  },
+  {
+   "id": "A8-5",
+   "file": "findings.tsx",
+   "trigger": "the engine refuses Accept finding (the model fence: another model is open)",
+   "guards": [
+    "await onWaive\\(t\\)",
+    "clearIfSubmitted\\(m, at, '', t\\)"
+   ],
+   "never": [
+    "onWaive\\(t\\); setEditing\\(false\\)"
+   ]
+  },
+  {
+   "id": "A8-5b",
+   "file": "bpa.tsx",
+   "trigger": "the acceptance write is refused and the callback used to drop the answer",
+   "guards": [
+    "Promise<boolean>[^\\n]*\\n[^\\n]*waiveFinding"
+   ],
+   "never": [
+    "\\.then\\(scan\\)\\.catch\\(fail\\);\\s*\\n\\s*const waiveRule"
+   ]
+  },
+  {
+   "id": "A8-5c",
+   "file": "App.tsx",
+   "trigger": "the AI readiness acceptance write is refused and the callback returned nothing",
+   "guards": [
+    "waiveWrite = async"
+   ],
+   "never": [
+    "waive = \\(r: FindingRow, reason: string\\) => run\\("
+   ]
+  },
+  {
+   "id": "A8-6",
+   "file": "plan-repeat.tsx",
+   "trigger": "the repeat was deleted from another window, so the engine refuses the changed schedule",
+   "guards": [
+    "const send = async",
+    "sameCadence\\(held, cadence\\)"
+   ],
+   "never": [
+    "onChange\\(saved\\.id, \\{ cadence \\}\\); setEditing\\(false\\)",
+    "onAdd\\(\\{ \\.\\.\\.req, cadence \\}\\); setEditing\\(false\\)"
+   ]
+  },
+  {
+   "id": "A8-6b",
+   "file": "plan.tsx",
+   "trigger": "the repeat write answered a refusal and the Plan returned nothing to the form",
+   "guards": [
+    "change: \\(id, r\\) => controlOk\\("
+   ],
+   "never": [
+    "change: \\(id, r\\) => void control"
+   ]
+  },
+  {
+   "id": "A8-6c",
+   "file": "workflowdesign.tsx",
+   "trigger": "the Plan repeat write on a workflow is refused and the form never saw the answer",
+   "guards": [
+    "const repeatWrite = async"
+   ],
+   "never": [
+    "onChange=\\{\\(id: string, r: RepeatRequest\\) => void rpc"
+   ]
+  },
+  {
+   "id": "U4-1",
+   "file": "dataagent.tsx",
+   "trigger": "the engine returns a report whose status is error (a policy refusal, bad input, a failed REST call) instead of throwing, on create, publish, update of rows",
+   "guards": [
+    "commit && r\\?\\.status !== 'error'"
+   ],
+   "never": [
+    "if \\(commit\\) onCommitted\\?\\.\\(r\\)"
+   ]
+  },
+  {
+   "id": "U4-2",
+   "file": "lineage.tsx",
+   "trigger": "the engine refuses the report scope write (setReportScope) and save() swallowed the error",
+   "guards": [
+    "return null;\\s*}\\s*//",
+    "if \\(!saved\\) return;"
+   ],
+   "never": [
+    "setFolderPath\\(''\\);\\s*\\n\\s*\\}\\s*\\n\\s*async function removeOne"
+   ]
+  },
+  {
+   "id": "U4-3",
+   "file": "workflow-v3fields.tsx",
+   "trigger": "a workflow edit is refused because its target is gone after a file reload (applyWorkflowOperation throws)",
+   "guards": [
+    "onChange\\(text\\) === false",
+    "onAdd\\(name\\.trim\\(\\), value\\) === false"
+   ],
+   "never": [
+    "onAdd\\(name\\.trim\\(\\), value\\); setName"
+   ]
+  },
+  {
+   "id": "U4-4",
+   "file": "workflowforms.tsx",
+   "trigger": "a workflow map-entry edit is refused because its target is gone after a file reload",
+   "guards": [
+    "expect: null, value \\}\\) === false\\) return"
+   ],
+   "never": []
+  },
+  {
+   "id": "U4-5",
+   "file": "workflowdesign.tsx",
+   "trigger": "mutate swallowed the refusal and answered nothing",
+   "guards": [
+    "const mutate = \\(operation: WorkflowEditOperation, structural = false\\): boolean"
+   ],
+   "never": []
+  },
+  {
+   "id": "U4-6",
+   "file": "advmodels.tsx",
+   "trigger": "the calendar column tag is refused and the pick was closed in the same run",
+   "guards": [
+    "void tag\\(c, category, assoc, false\\)\\.then\\(\\(ok\\)"
+   ],
+   "never": [
+    "tag\\(c, category, assoc, false\\);\\s*\\n\\s*setCol"
+   ]
+  },
+  {
+   "id": "J-I2-1",
+   "file": "advmodels.tsx",
+   "trigger": "the role name is typed again after Add is pressed and before the engine's OK arrives",
+   "guards": [
+    "newNameNow\\.current\\.trim\\(\\) === n"
+   ],
+   "never": [
+    "createRole', n, 'Read'\\)\\.then\\(\\(\\) => \\{ setNewName"
+   ]
+  },
+  {
+   "id": "J-I2-2",
+   "file": "connectionshub.tsx",
+   "trigger": "the new model name is typed again after Create is pressed and before the engine's OK arrives",
+   "guards": [
+    "createNameNow\\.current\\.trim\\(\\) === name"
+   ],
+   "never": [
+    "setCreateOpen\\(false\\); setCreateName\\(''\\); setCreateConfirm\\(false\\);\\s*onClose\\(\\)"
+   ]
+  },
+  {
+   "id": "J-I2-3",
+   "file": "plan-history.tsx",
+   "trigger": "the version name is typed again after Save is pressed and before the engine's OK arrives",
+   "guards": [
+    "savingNow\\.current === sent"
+   ],
+   "never": [
+    "else \\{ setSaving\\(null\\); setMsg\\('Saved\\.'\\); \\}"
+   ]
+  },
+  {
+   "id": "J-I2-5",
+   "file": "workflows.tsx",
+   "trigger": "the Describe words are typed again after Write the steps is pressed and before the engine's OK arrives",
+   "guards": [
+    "stillHolds\\(\\)"
+   ],
+   "never": [
+    "describeWorkflowSteps', words\\);\\s*setNewOpen\\(false\\)"
+   ]
+  }
+ ],
+ "notLosing": [
+  "dataagent.tsx:491 and :404 hold a schema tick and a generated config, not typed words; they now follow the same error-report rule as :277/:793/:750",
+  "spec.tsx:209-222, :181, :208, :226, :258: clear only after the engine answered; they do not compare words typed during the two awaits (OK-SUCCESS-ONLY, a join item)",
+  "workflow-ui.tsx:353-357 ReasonButton keeps the reason on a refusal but nothing shows the person a message (a join item)",
+  "tests-authoring.tsx:954 removeMapping ignores a false answer; it holds no typed words (a join item)",
+  "rulesauthor.tsx:135 Cancel passes the click event as modelKey, so the held draft is not ended; the words are kept, nothing is lost (a join item)",
+  "connectionshub.tsx:853-859 swallows a refused environment-label write; the label is a select choice, not typed words (a join item)"
+ ]
+}

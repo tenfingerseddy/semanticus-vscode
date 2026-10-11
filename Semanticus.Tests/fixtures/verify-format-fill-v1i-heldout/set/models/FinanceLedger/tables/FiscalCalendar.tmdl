@@ -1,0 +1,32 @@
+table FiscalCalendar
+	/// YYYYMMDD date join key
+	column 'Date Key'
+		dataType: int64
+		sourceColumn: DateKey
+		summarizeBy: none
+
+	/// posting calendar date
+	column Date
+		dataType: dateTime
+		sourceColumn: Date
+		summarizeBy: none
+
+	/// fiscal year stored as integer
+	column 'Fiscal Year'
+		dataType: int64
+		sourceColumn: FiscalYear
+		summarizeBy: none
+
+	/// fiscal quarter number 1 through 4
+	column 'Fiscal Quarter'
+		dataType: int64
+		sourceColumn: FiscalQuarter
+		summarizeBy: none
+
+	partition FiscalCalendar = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [DateKey = Int64.Type, Date = type date, FiscalYear = Int64.Type, FiscalQuarter = Int64.Type], {})
+			in
+				Source

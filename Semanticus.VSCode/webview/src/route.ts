@@ -1,8 +1,17 @@
-export type Area = 'model' | 'calc' | 'checks' | 'changes' | 'workflows';
+// The areas Kane picked on 22 September 2026 (docs/redesign/ui-hierarchy.md). They name where a journey
+// STARTS, not everything reachable once you are there: Explore starts at "what is in this model", Edit starts
+// at "change something", Review starts at "is it any good". Analyse was renamed Review in the same decision.
+// There were seven until the Plan became the heart (slice 11, lane R1): the Overview retired and the Plan is
+// the first area and the start page. Every older area word still resolves, in AREA_ALIASES below, so a saved
+// route, an old deep link or an old keybinding lands somewhere sensible instead of nowhere.
+export type Area = 'plan' | 'explore' | 'edit' | 'review' | 'publish' | 'workflows';
 export type Destination = Area | 'utility';
 export type ToolId =
-  | 'modelhome' | 'diagram' | 'lineage' | 'search' | 'data' | 'stats' | 'spec' | 'advmodels' | 'mcode' | 'docs' | 'knowledge'
-  | 'daxlab' | 'tests' | 'bpa' | 'readiness' | 'evidence' | 'optimize' | 'history' | 'deploy' | 'compare' | 'dataagent' | 'permissions' | 'workflows';
+  | 'plan' | 'optimize' | 'spec'
+  | 'data' | 'askdata' | 'diagram' | 'lineage' | 'stats'
+  | 'search' | 'daxlab' | 'knowledge' | 'instructions' | 'advmodels' | 'mcode'
+  | 'bpa' | 'readiness' | 'tests' | 'docs' | 'evidence'
+  | 'deploy' | 'compare' | 'dataagent' | 'permissions' | 'workflows' | 'pro';
 
 export type ObjectRef =
   | { kind: 'model' }
@@ -14,25 +23,89 @@ export type ObjectRef =
 // A seed records an explicit hand-off, not ambient selection. Views acknowledge one-use seeds after adopting them so
 // returning through area memory or Back cannot replay an old request over work the person has since changed.
 export type Seed = {
-  kind: 'query' | 'test' | 'search' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced';
+  kind: 'query' | 'test' | 'search' | 'publish' | 'rescan' | 'addTables' | 'approval' | 'workflow' | 'workflowRuns' | 'advanced'
+    // A composer draft handed to Author (Edit in Workflows, Make it reusable; lanes U5 and W2): the value is its dr- id.
+    | 'draft'
+    // Open in Queries from Ask your data (26 Sep): the value is the DAX text the engine built, adopted once.
+    | 'daxText'
+    // Open Ask your data from the Plan's field: the value is what the person typed, adopted once into the
+    // question box so the page opens on their words instead of empty (fix-askdata-r6).
+    | 'askWords'
+    // The new model wizard's SQL step, asked for by SQL_DRAFT_TARGET below. One use: the draft panel says when it took it.
+    | 'specStart';
   value: string | string[];
 };
+
+/**
+ * THE ONE ENTRY POINT to starting a model from a SQL source: route tool 'spec' with this target. The Plan page opens
+ * its draft panel on the wizard's SQL step, which offers the SQL endpoints saved on Connections first. Connections'
+ * "From a SQL source", Find a tool and the host command `semanticus.draftFromSqlSource` all use it, and so should any
+ * Plan row that offers it (the empty model's offer, lane m11/plan-rows): `onGo('spec', SQL_DRAFT_TARGET)` from a
+ * page, `navigateInStudio('spec', SQL_DRAFT_TARGET)` from anywhere else in the webview.
+ */
+export const SQL_DRAFT_TARGET = 'start:sql';
 export interface Route { sessionId: string; destination: Destination; tool: ToolId; object?: ObjectRef; seed?: Seed; nonce: number; }
 
 export const DESTINATION_OF_TOOL: Record<ToolId, Destination> = {
-  modelhome: 'model', diagram: 'model', lineage: 'model', search: 'model', data: 'model', stats: 'model', spec: 'model', advmodels: 'model', mcode: 'model', docs: 'model', knowledge: 'model',
-  daxlab: 'calc', tests: 'checks', bpa: 'checks', readiness: 'checks', evidence: 'checks',
-  optimize: 'changes', history: 'changes', deploy: 'changes', compare: 'changes', dataagent: 'changes',
-  permissions: 'utility', workflows: 'workflows',
+  // Model Spec and Pending changes are not pages of their own any more: they are the two other ways of
+  // looking at the one living plan, so they sit in its area (Kane, 22 September 2026).
+  plan: 'plan', optimize: 'plan', spec: 'plan',
+  data: 'explore', askdata: 'explore', diagram: 'explore', lineage: 'explore', stats: 'explore',
+  search: 'edit', daxlab: 'edit', knowledge: 'edit', instructions: 'edit', advmodels: 'edit', mcode: 'edit',
+  // `evidence` keeps its id so old links and saved state still resolve, but it is no longer a place of its
+  // own: it opens Validation on its Reports tab. Its area is therefore Validation's area.
+  bpa: 'review', readiness: 'review', tests: 'review', docs: 'review', evidence: 'review',
+  deploy: 'publish', compare: 'publish', dataagent: 'publish',
+  // The Semanticus Pro page is a detour like Assistant permissions: no area of its own, and Done returns you.
+  permissions: 'utility', pro: 'utility', workflows: 'workflows',
 };
 
-export const AREA_HOME: Record<Area, ToolId> = { model: 'modelhome', calc: 'daxlab', checks: 'tests', changes: 'history', workflows: 'workflows' };
+export const AREA_HOME: Record<Area, ToolId> = {
+  plan: 'plan', explore: 'data', edit: 'search',
+  review: 'bpa', publish: 'deploy', workflows: 'workflows',
+};
 
-// Where an area button lands. Four areas have one fixed home; Changes does not, because its home is whichever
-// of its tabs holds the work in front of you. With a change plan open that is Proposed; with none it is History.
-// The area strip reads Proposed / History / Published, so always landing on the middle tab read as a bug.
-export function areaHomeTool(area: Area, hasPlan = false): ToolId {
-  if (area === 'changes') return hasPlan ? 'optimize' : AREA_HOME[area];
+// Every area word this shell has ever used, pointing at the area that holds that work today. Saved state and old
+// deep links outlive a rename, and an unknown word makes the area button do nothing at all, which is how a person
+// ends up pressing a button that never responds. The five retired on 22 September 2026 (model, calc, checks,
+// changes, workflows) and the five retired before them (understand, change, improve, prove, ship) all land
+// somewhere sensible: `changes` goes to Publish because two of its three tools did. `overview` and `model` go to
+// the Plan: the Overview retired in slice 11 and the Plan is the start page now (contract 15).
+export const AREA_ALIASES: Record<string, Area> = {
+  plan: 'plan', explore: 'explore', edit: 'edit', review: 'review', publish: 'publish', workflows: 'workflows',
+  overview: 'plan', model: 'plan', calc: 'edit', checks: 'review', changes: 'publish',
+  understand: 'explore', change: 'edit', improve: 'review', prove: 'review', ship: 'publish',
+};
+
+/** Where a tool id lands: the tool that renders, and for a retired page the view inside it. */
+export interface Landing { tool: ToolId; view?: 'history' }
+
+// Tool ids that are not tools any more but still arrive: from a saved link, an older host, an engine one release
+// behind, a plan jump or the keyboard. The Overview's jobs moved to the Plan and Edit History became the Plan's
+// History view (Plan-heart contract 11 and 15, lanes R1 and R2), so both land there rather than nowhere. Compare
+// has been an alias for Published since it folded into that page.
+const RETIRED_TOOLS: Record<string, Landing> = {
+  modelhome: { tool: 'plan' },
+  overview: { tool: 'plan' },
+  history: { tool: 'plan', view: 'history' },
+  compare: { tool: 'deploy' },
+};
+
+/** The one table every navigation goes through. Null only for an id Studio never answered to, which the shell
+ *  refuses rather than guessing at (test/retired-routes.test.mjs walks every id that was ever sent). */
+export function landingOf(raw: string): Landing | null {
+  if (Object.prototype.hasOwnProperty.call(RETIRED_TOOLS, raw)) return RETIRED_TOOLS[raw];
+  return Object.prototype.hasOwnProperty.call(DESTINATION_OF_TOOL, raw) ? { tool: raw as ToolId } : null;
+}
+
+// Where an area button lands: the first tool in that area's row, every time.
+//
+// There used to be an exception. Changes read Pending changes / History / Published, its home was History,
+// and always landing on the MIDDLE segment read as a bug, so the button landed on Pending changes whenever a
+// change set existed. The seven-area rows have no middle-tab home left: Plan opens on Plan, Publish opens on
+// Published, and both are the first segment in their own row. So the exception is gone rather than moved, and
+// with it the plan read the shell used to make on every session just to place one button.
+export function areaHomeTool(area: Area): ToolId {
   return AREA_HOME[area];
 }
 

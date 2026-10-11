@@ -1,0 +1,11 @@
+relationship 36c3b235-9218-58b5-9c1b-358574607076
+	fromColumn: Sales.'Order Date Key'
+	toColumn: Calendar.'Date Key'
+
+relationship 35d0e1fa-f5e3-55cc-a3e2-3c3e84b7e562
+	fromColumn: Sales.'Product Key'
+	toColumn: Product.'Product Key'
+
+relationship bf7223cf-de6c-55b7-98c9-197194e148eb
+	fromColumn: Sales.'Customer Key'
+	toColumn: Customer.'Customer Key'

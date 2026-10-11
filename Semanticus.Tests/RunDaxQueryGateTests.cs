@@ -275,7 +275,7 @@ namespace Semanticus.Tests
     /// agent-authored (add_interview_question), so the origin the executed DAX is gated under is the ENTRY DOOR's,
     /// always — an MCP replay of a saved row-returning oracle is gated exactly like an inline one, while the
     /// engine-initiated replays (the deploy-gate advisory) and the human door run as before. Workspace-anchored
-    /// project store in a temp dir; USERPROFILE redirected so the global-scope fallback never touches the real home.
+    /// project store in a temp dir; SEMANTICUS_HOME redirected so the global-scope fallback never touches the real home.
     /// </summary>
     [Collection("restore-root")]   // mutates the static AgentPolicyStore/ApprovalLedger roots — serialize with the family
     public sealed class InterviewReplayOriginTests : IDisposable
@@ -295,14 +295,14 @@ namespace Semanticus.Tests
             ConnectionRegistry.RootOverride = _root;
             _ws = Path.Combine(Path.GetTempPath(), "sem-replay-ws-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(Path.Combine(_ws, ".semanticus"));
-            _origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            _origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(_ws, "home");
             Directory.CreateDirectory(home);
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
         }
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable("USERPROFILE", _origHome);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, _origHome);
             AgentPolicyStore.RootOverride = _safeRoot; ApprovalLedger.RootOverride = _safeRoot; ConnectionRegistry.RootOverride = _safeRoot;
             try { Directory.Delete(_root, true); } catch { }
             try { Directory.Delete(_ws, true); } catch { }

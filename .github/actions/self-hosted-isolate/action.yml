@@ -1,0 +1,42 @@
+name: Isolate a self-hosted job
+description: >
+  Give this job its own HOME and TMPDIR. A self-hosted runner is a real machine that keeps state between
+  runs, and the tests write under ~/.semanticus, ~/.npm and the temp directory. HOME lives under RUNNER_TEMP,
+  which the runner wipes at the start and end of every job; TMPDIR is a short per-runner directory in /tmp that
+  this step wipes (the step's comment says why it cannot live under RUNNER_TEMP). So nothing a job writes
+  outlives the next job, and the machine's own ~/.semanticus (live connections on the owner's desktop) is never read or
+  written. It does NOT set SEMANTICUS_HOME: on a hosted runner every smoke picks its own fresh scratch home,
+  and setting one home for the whole job would make them share it. A no-op on a GitHub-hosted runner.
+runs:
+  using: composite
+  steps:
+    - name: Point HOME and TMPDIR at this job's own directory
+      if: runner.environment == 'self-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        iso="$RUNNER_TEMP/iso"
+        rm -rf "$iso"
+        mkdir -p "$iso/home"
+        # TMPDIR IS A SHORT REAL DIRECTORY IN /tmp, NOT UNDER RUNNER_TEMP. .NET puts a named pipe on Linux at
+        # $TMPDIR/CoreFxPipe_<name>, a Unix socket whose whole path must fit in 108 bytes. One pipe suffix the
+        # tests use, /CoreFxPipe_semanticus-public-call-<32 hex>, is 67 characters, and $RUNNER_TEMP/iso/tmp is
+        # 51 on these hosts, so the path would be 118; the dry run (one directory deeper) failed 20 RPC tests
+        # with "invalid length for use with domain sockets". A short SYMLINK to RUNNER_TEMP was tried next and
+        # failed 12 git-history tests instead, because git reports the resolved path and the tests compare it
+        # with the one they created. So it is a real directory, at most 21 characters here (88 with the pipe).
+        # The name is fixed per runner, which is safe because a runner takes one job at a time; it is wiped
+        # here at the start of every job, and build-and-smoke removes it again when it ends.
+        tmp="/tmp/sci-$RUNNER_NAME"
+        rm -rf "$tmp"
+        mkdir -p "$tmp"
+        {
+          echo "HOME=$iso/home"
+          echo "TMPDIR=$tmp"
+          echo "XDG_CACHE_HOME=$iso/home/.cache"
+          echo "XDG_CONFIG_HOME=$iso/home/.config"
+          echo "XDG_DATA_HOME=$iso/home/.local/share"
+          echo "DOTNET_CLI_HOME=$iso/home"
+          echo "SEMANTICUS_CI_JOB=$iso"
+        } >> "$GITHUB_ENV"
+        echo "This job's HOME is $iso/home and its TMPDIR is $tmp."

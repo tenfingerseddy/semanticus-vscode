@@ -41,6 +41,7 @@ namespace Semanticus.Tests
 
         // ---- the 17 hard gates ---------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 1
         public async Task Free_may_apply_a_plan_with_more_than_one_item()
         {
@@ -57,6 +58,7 @@ namespace Semanticus.Tests
             Assert.NotNull(report);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 2
         public async Task Free_may_bpa_fix_all()
         {
@@ -64,6 +66,7 @@ namespace Semanticus.Tests
             Assert.NotNull(await e.BpaFixAllAsync("human"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 3
         public async Task Free_may_apply_safe_fixes()
         {
@@ -71,6 +74,7 @@ namespace Semanticus.Tests
             Assert.NotNull(await e.ApplySafeFixesAsync("human"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 4
         public async Task Free_may_make_the_model_ai_ready()
         {
@@ -86,6 +90,7 @@ namespace Semanticus.Tests
             Assert.True(report.Count > 1, "the fixture must offer more than one verified-safe object to sweep");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 6 and 7
         public async Task Free_may_apply_a_multi_object_model_diff()
         {
@@ -112,6 +117,7 @@ namespace Semanticus.Tests
             finally { try { File.Delete(copy); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 8
         public async Task Free_may_cherry_pick_more_than_one_object()
         {
@@ -143,6 +149,7 @@ namespace Semanticus.Tests
             Assert.NotNull(result);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] // 11
         public async Task Free_may_waive_a_whole_rule()
         {
@@ -202,15 +209,27 @@ namespace Semanticus.Tests
         public async Task Free_may_push_more_than_one_object_to_a_published_model()
         {
             using var e = await FreeWithModelAsync();
+            // A stand-in for the published model: the open model less two of its measures, so the push has two objects
+            // to carry. It never needs a token, so it never reaches the person's own sign-in (verifier, targeted round,
+            // F1: with no stand-in it asked the Azure CLI for a Power BI token and connected to api.powerbi.com).
+            var live = Microsoft.AnalysisServices.Tabular.JsonSerializer.DeserializeDatabase(File.ReadAllText(TestModels.FindBim()));
+            var two = live.Model.Tables.SelectMany(t => t.Measures.Select(m => (t, m))).Take(2).ToList();
+            Assert.Equal(2, two.Count);
+            var refs = two.Select(x => $"measure:{x.t.Name}/{x.m.Name}").ToArray();
+            foreach (var (t, m) in two) t.Measures.Remove(m);
+            var liveJson = Microsoft.AnalysisServices.Tabular.JsonSerializer.SerializeDatabase(live);
+            e.WorkspaceSnapshotHook = () => Task.FromResult(Microsoft.AnalysisServices.Tabular.JsonSerializer.DeserializeDatabase(liveJson));
+            var pushes = 0;
+            e.WorkspacePushHook = (_, __) => { pushes++; return new DeployReport { Committed = true, TotalChanges = refs.Length, SyncedRefs = refs }; };
             var right = new ModelRef { Kind = "workspace", Endpoint = "powerbi://api.powerbi.com/v1.0/myorg/Contoso", Database = "Contoso" };
-            // Stated as its own assertion (the hygiene gate in Semanticus.Dax.Tests requires one per test), not only
-            // through the helper: the push has no live destination here, so any refusal other than the entitlement
-            // gate is expected and out of scope.
             var refusedByEntitlement = false;
-            try { await e.ApplyDiffAsync(new ModelRef { Kind = "session" }, right, new[] { "measure:Sales/A", "measure:Sales/B" }, true, "human"); }
+            ApplyDiffResult r = null;
+            try { r = await e.ApplyDiffAsync(new ModelRef { Kind = "session" }, right, refs, true, "human"); }
             catch (EntitlementException) { refusedByEntitlement = true; }
-            catch { /* no live destination: out of scope for the gate removal */ }
             Assert.False(refusedByEntitlement, "selective push with 2 refs is still Pro-gated on free");
+            Assert.True(r.Applied, "the push to the stand-in did not apply: " + (r.Error ?? r.Note));
+            Assert.Equal(1, pushes);
+            Assert.Equal(refs.OrderBy(x => x, StringComparer.Ordinal), r.AppliedRefs.OrderBy(x => x, StringComparer.Ordinal));
         }
 
         // ---- the 10 soft gates ---------------------------------------------------------------------------------
@@ -329,7 +348,25 @@ namespace Semanticus.Tests
                          && !x.line.Contains("_entitlement.Info")                 // get_entitlement reads its own answer
                          && !x.line.Contains("_entitlement?.Info")                // the workflow 'tier' fact, not a gate
                          && !x.line.Contains("FeatureGrants.Stamp(_entitlement.Info, _entitlement)")
-                         && !x.line.Contains("FeatureGrants.Grants(_entitlement"))
+                         && !x.line.Contains("FeatureGrants.Grants(_entitlement")
+                         // The tier read for a registered decision point. It is the SAME single computation
+                         // (FeatureGrants.For) this guard's summary sanctions, reached through a named helper so
+                         // the call site says what it means, and it soft-skips a suggestion rather than refusing
+                         // an operation. Added for Jev M0a; it stays narrow on purpose.
+                         && !x.line.Contains("FeatureGrants.IsProTier(_entitlement)")
+                         // The CREDENTIAL read for the hosted decision relay, added for Jev M0b (F-194). It is
+                         // not a tier read and it is not a gate: it asks whether this session holds a token it
+                         // could present to a paid service, and the answer decides which oracle is built, never
+                         // what a person may do. The cast and the policy live with the entitlement
+                         // (LicenseEntitlement.CloudCredentialOf), so there is one sanctioned way to ask and a
+                         // test double, a free tier and the dev escape all read as no credential.
+                         && !x.line.Contains("LicenseEntitlement.CloudCredentialOf(_entitlement)")
+                         // The licence swap (F-242): the field is volatile so a licence applied in the app takes
+                         // effect without a restart. Swapping it and reading it once to answer get_entitlement are
+                         // not gates; the swap lives in one file and the read is the same single Stamp as before.
+                         && !x.line.Contains("private volatile Entitlement.IEntitlement _entitlement;")
+                         && !(x.file == "LocalEngine.License.cs" && (x.line.Contains("var current = _entitlement;") || x.line.Contains("_entitlement = candidate;")))
+                         && !x.line.Contains("var e = _entitlement;   // one read: a licence swap"))
                 .Select(x => x.file + ":" + x.no + " " + x.line.Trim())
                 .ToArray();
             Assert.True(strays.Length == 0, "The tier is consulted outside the feature gate:\n" + string.Join("\n", strays));

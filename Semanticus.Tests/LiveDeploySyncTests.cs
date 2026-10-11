@@ -326,14 +326,14 @@ namespace Semanticus.Tests
         [Fact]
         public void Unsupported_column_metadata_is_named_and_the_ref_is_withheld()   // #135
         {
-            var src = NewModel(); src.Tables["Sales"].Columns["Amount"].IsKey = true;
+            var src = NewModel(); src.Tables["Sales"].Columns["Amount"].IsDefaultImage = true;   // the key and label marks now go (LiveDeployStructureTests)
             var live = NewModel();
 
             var rep = LiveDeploy.SyncModels(src, live, apply: true);
 
             Assert.Contains(rep.Unmatched, x => x.StartsWith("column:Sales/Amount") && x.Contains("column metadata"));
             Assert.DoesNotContain("column:Sales/Amount", rep.SyncedRefs);
-            Assert.False(live.Tables["Sales"].Columns["Amount"].IsKey);
+            Assert.False(live.Tables["Sales"].Columns["Amount"].IsDefaultImage);
         }
 
         [Fact]

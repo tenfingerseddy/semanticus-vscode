@@ -4,7 +4,7 @@
 import { StreamLanguage, LanguageSupport } from '@codemirror/language';
 import type { CompletionContext, CompletionResult, Completion } from '@codemirror/autocomplete';
 
-export interface DaxModel { tables: string[]; measures: { name: string; table: string }[]; columns: { table: string; name: string }[]; functions: string[]; }
+export interface DaxModel { tables: string[]; measures: { name: string; table: string; formatString?: string }[]; columns: { table: string; name: string; sortByColumn?: string }[]; functions: string[]; }
 export const EMPTY_MODEL: DaxModel = { tables: [], measures: [], columns: [], functions: [] };
 
 export const DAX_KEYWORDS = ['VAR', 'RETURN', 'NOT', 'IN', 'DEFINE', 'EVALUATE', 'MEASURE', 'ORDER BY', 'START AT', 'ASC', 'DESC'];

@@ -34,6 +34,15 @@ assert.match(shortcuts, /semanticus\.save/,
   'D-149: Ctrl+S must forward to semanticus.save');
 assert.match(shortcuts, /semanticus\.undo/,
   'D-149: Ctrl+Z (when not typing) must forward to semanticus.undo');
+// Verifier on m11/sol-fixes-1, D7: Studio's Ctrl+Z runs semanticus.undo through the relay, which drops the command's
+// promise, so an Undo the engine refused (a Primer edited in another editor) said nothing. The command says the
+// refusal itself, and Ctrl+Alt+Z uses the same command instead of an rpc whose error it swallowed.
+assert.match(ext, /registerPersonCommand\('semanticus\.undo', \(\) => undoRedoCmd\('undo'\)\)/, 'D7: Undo runs the command that shows a refusal');
+assert.match(ext, /registerPersonCommand\('semanticus\.redo', \(\) => undoRedoCmd\('redo'\)\)/, 'D7: Redo runs the command that shows a refusal');
+assert.match(ext, /async function undoRedoCmd\(kind: 'undo' \| 'redo'\): Promise<void> \{\s*try \{ await conn\?\.sendRequest\(kind\); \}\s*catch \(e: any\) \{ void vscode\.window\.showWarningMessage\(String\(e\?\.message \?\? e\)\); \}/,
+  'D7: a refused Undo or Redo is shown in plain words, never dropped');
+assert.doesNotMatch(app, /rpc\(e\.shiftKey \? 'redo' : 'undo'\)\.catch\(\(\) => undefined\)/, 'D7: Ctrl+Alt+Z no longer swallows a refusal');
+assert.match(app, /runHostCommand\(e\.shiftKey \? 'semanticus\.redo' : 'semanticus\.undo'\)/, 'D7: Ctrl+Alt+Z runs the same command as Ctrl+Z');
 assert.match(bridge, /export function runHostCommand\(/,
   'D-149: the Studio bridge must post a host command rather than hoping the iframe bubbles the key');
 assert.match(bridge, /type: 'runCommand'/,
@@ -66,6 +75,11 @@ assert.match(propJs, /Shift\+Enter|shiftKey/,
   'D-160: Shift+Enter must still be able to add a line');
 assert.match(propJs, /Enter applies/,
   'D-160: the box must say how to commit (nothing on screen said so)');
+// r1 min4 (R1, R2): the hint shows only while its box has focus, and Metadata starts folded (a filter match still opens it).
+assert.match(propJs, /class="hint enter-hint">Enter applies\. Shift\+Enter adds a line\./, 'the hint is its own class, so CSS can hide it while the box is not focused');
+assert.match(read('media/propgrid/propgrid.css'), /\.enter-hint \{ display: none; \}\s*\n\.rowx:focus-within > \.enter-hint \{ display: block; \}/, 'shown only while the row has focus');
+assert.match(propJs, /const collapsed = new Set\(\['Metadata'\]\);/, 'Metadata starts folded');
+assert.match(propJs, /collapsed\.has\(cat\) && !\(f !== '' && cat === 'Metadata'\)/, 'a filter that matches a Metadata row opens it');
 assert.doesNotMatch(propJs, /data-commit-enter[\s\S]{0,200}Expression|Expression[\s\S]{0,200}data-commit-enter/,
   'D-160: DAX Expression textareas must keep Enter as a newline');
 
@@ -104,8 +118,9 @@ assert.match(styles, /studio-chrome/,
 // room for them. A measured fold owns the narrow header now, and it must still never be overflow-x.
 assert.doesNotMatch(styles, /@container studio-chrome/,
   'D-164: no fixed-width container query decides the fold any more');
-assert.match(styles, /\.studio-chrome\[data-fold="measure"\]/,
-  'D-164: the measuring pass has a state in which every header part is visible');
+// Journey m11 F1: the measuring pass tries each real level, so the old everything-visible "measure" state is gone.
+assert.doesNotMatch(styles, /\.studio-chrome\[data-fold="measure"\]/,
+  'D-164: the fold is found by trying the real levels, not by an everything-visible estimate');
 assert.match(styles, /\[data-fold="4"\][^}]*\.studio-groups \{ display: none/,
   'D-164: the five areas are the LAST thing to fold, at the deepest level');
 assert.match(app, /new ResizeObserver/,
@@ -131,28 +146,8 @@ assert.ok(itemCtx.some((m) => m.command === 'semanticus.newTable' && /emptyModel
 assert.match(ext, /emptyModel[\s\S]{0,400}semanticus\.newTable|command: 'semanticus\.newTable'[\s\S]{0,200}emptyModel/,
   'D-153: clicking the empty-tree row runs New Table');
 
-// --- the Model row's Create dropdown is reachable from the keyboard alone ----------------------------
-const createSegment = (app.match(/function CreateTab\(\{[\s\S]*?\n\/\/ Primary area button\./) || [''])[0];
-assert.ok(createSegment, 'the Create dropdown segment must exist in the Studio shell');
-assert.match(createSegment, /aria-haspopup="menu"/, 'the segment announces that it opens a menu');
-assert.match(createSegment, /aria-expanded=\{open\}/, 'the segment announces whether the menu is open');
-assert.match(createSegment, /role="menu"/, 'the list is a menu, and its children are menu items');
-assert.match(createSegment, /e\.key === 'Enter' \|\| e\.key === ' ' \|\| e\.key === 'ArrowDown'/,
-  'Enter, Space and the arrows all open the menu from the segment');
-assert.match(createSegment, /key === 'ArrowDown'[\s\S]{0,160}key === 'ArrowUp'/,
-  'arrow keys move the highlight inside the menu');
-assert.match(createSegment, /key === 'Escape'[\s\S]{0,120}closeAndReturnFocus/,
-  'Escape closes the menu and hands focus back to the segment');
-assert.match(createSegment, /closeAndReturnFocus = \(\) => \{ setOpen\(false\); buttonRef\.current\?\.focus\(\); \}/,
-  'closing always returns focus to the segment button, never to the document');
-// This used to pin a bare focus(). preventScroll joined it on 2026-09-14: the menu used to live inside
-// .area-tabs, which is overflow-x: auto, and focusing the highlighted item made the browser scroll the segment
-// strip to reveal it, leaving the row showing one scrolled segment. The menu is portalled out of the strip now,
-// but the argument stays, because a focus() a browser decides to "reveal" can scroll any ancestor that scrolls.
-assert.match(createSegment, /itemRefs\.current\[highlight\]\?\.focus\(\{ preventScroll: true \}\)/,
-  'the highlighted item actually holds focus, and taking it never scrolls a container underneath');
-assert.match(styles, /\.area-tabs-create-menu button\.is-highlighted/,
-  'the highlighted item is visibly marked, not only focused');
+// The Edit row's Advanced modelling dropdown left on 8 October 2026: Advanced modelling is a plain tab, so its
+// keyboard contract is the tab's own (a button in a row). The menus below are the two that remain.
 
 // --- the Your assistant chip and Help open menus on the same keyboard contract -----------------------
 // Both grew from a plain button when the gear left the header, so they must follow the contract the Create
@@ -193,7 +188,7 @@ assert.match(activity, /key === 'Tab'\) \{ e\.preventDefault\(\); closeAndReturn
 
 
 // --- Astra spot review 3 (2026-09-14): a popover may not survive losing the keyboard ----------------
-// Open the page notes with Space, press Tab once, press Escape: focus moved into the tool behind the notes,
+// Open the page notes (retired 8 October 2026) with Space, press Tab once, press Escape: focus moved into the tool behind the notes,
 // so Escape belonged to that tool and the notes stayed over the canvas with no keyboard way out. Reproduced on
 // Overview, Diagram and Lineage. The same shape on Live activity: Tab out of the feed and Escape did nothing
 // while the chip still read aria-expanded="true". Two rules close it: a small dialog keeps Tab inside itself,
@@ -202,18 +197,7 @@ assert.match(activity, /key === 'Tab'\) \{ e\.preventDefault\(\); closeAndReturn
 const helpSrc = read('webview/src/help.tsx');
 const activitySrc = read('webview/src/activity.tsx');
 
-assert.match(helpSrc, /function PageNotesButton[\s\S]{0,3000}onBlur=\{/,
-  'the page notes must close when focus leaves them, not only on Escape');
-assert.match(helpSrc, /document\.hasFocus\(\)/,
-  'but a window losing focus is not a person leaving the notes, so that case is excluded');
-assert.match(helpSrc, /relatedTarget/,
-  'the decision is where focus actually went, not merely that it left an element');
-assert.match(helpSrc, /if \(e\.key !== 'Tab'\) return;/,
-  'Tab is handled by the notes dialog itself');
-assert.match(helpSrc, /stops\[stops\.length - 1\]/,
-  'and Shift+Tab from the dialog wraps to the last stop inside it, never to the page behind');
-assert.match(helpSrc, /studio-page-notes-close/,
-  'the dialog has a close affordance, so trapping Tab always has somewhere to put the ring');
+assert.doesNotMatch(helpSrc, /PageNotesButton/, 'the page notes popover left the row on 8 October 2026, so its Tab trap and blur rules left with it');
 
 assert.match(activitySrc, /onBlur=\{/,
   'the assistant chip popovers close when focus leaves the surface');

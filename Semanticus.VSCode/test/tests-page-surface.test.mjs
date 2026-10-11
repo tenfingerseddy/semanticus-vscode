@@ -11,7 +11,6 @@ const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const tests = read('webview/src/tests.tsx');
 const authoring = read('webview/src/tests-authoring.tsx');
 const app = read('webview/src/App.tsx');
-const interview = read('webview/src/interview.tsx');
 
 // ---------------------------------------------------------------------------------------------------
 // 8. What leaves the page.
@@ -23,22 +22,22 @@ assert.doesNotMatch(tests, /<InterviewCard/, 'the Model interview block must lea
 assert.doesNotMatch(tests, /SuiteInterviewEvidence|run\?\.interview|interviewNote/, 'a Tests run no longer carries interview evidence');
 assert.doesNotMatch(authoring, /'interview'/, 'New check must not offer an Interview question');
 assert.doesNotMatch(authoring, /addInterviewQuestion|runInterview/, 'the interview drawer leaves the Tests authoring file');
-assert.doesNotMatch(interview, /View in Tests/, 'the AI understanding page must not link into Tests any more');
 assert.doesNotMatch(tests, /Run \+ record/, 'the separate Run + record button is replaced by Record it');
-assert.match(interview, /export function InterviewCard/, 'the interview component itself stays for the AI understanding page');
 
 // ---------------------------------------------------------------------------------------------------
 // 1. One 40px tool row.
 // ---------------------------------------------------------------------------------------------------
 assert.match(tests, /sem-tests-toolrow/, 'the page must have one named tool row');
-assert.match(tests, /Run all enabled checks/, 'Run says exactly what it runs');
+assert.match(tests, /Run checks/, 'Run is one button: Run checks, or Run N ticked while boxes are ticked');
+assert.match(tests, /Run \$\{tickedCount\.toLocaleString\(\)\} ticked/, 'ticked boxes put the count on the same button, so the menu has no ticked item');
+assert.doesNotMatch(tests, /Only what I ticked|Run everything and record this run|includes<\/Eyebrow>/, 'the run menu lists only the families');
 assert.match(tests, /New check/, 'the authoring entry is New check');
-assert.match(tests, />Report/, 'Report is its own menu');
-assert.match(tests, /Latest/, 'Report offers the latest run');
-assert.match(tests, /Saved reports/, 'Report offers the saved library');
-assert.match(tests, /Runs on /, 'the tool row names the test model it runs on');
-assert.match(tests, /SQL sources: /, 'the tool row counts the saved SQL sources');
-assert.match(tests, /Add SQL source/, 'the tool row offers to add one');
+assert.match(tests, /function ReportButton\(/, 'Report is one button for the latest run');
+assert.match(tests, /Run the checks first\./, 'and says why it is off before a run');
+assert.doesNotMatch(tests, /function ReportMenu\(/, 'the kept reports are the Reports tab, not a second door on this row');
+assert.doesNotMatch(tests, /Runs on |SQL sources: /, 'the footer names the test model and Connections counts the sources, so the tool row says neither');
+assert.match(authoring, /Add a SQL source/, 'Add a SQL source is the last item of New check');
+assert.match(tests, /onAddSqlSource=\{addSqlSource\}/, 'and New check is handed the same helper');
 assert.match(tests, /openSqlSources\(openConnections\)/, 'Add SQL source uses the Connections lane own helper');
 assert.doesNotMatch(tests, /'sqlsources'/, 'and never restates the section id this page does not own');
 assert.match(tests, /listSqlSources\(\)/, 'the count comes from the engine, through the one shared reader');
@@ -133,7 +132,7 @@ assert.match(authoring, /tableRowCount/, 'the drawer knows the table row count k
 assert.match(tests, /rpc<TestRunDetailW>\('getTestRun'/, 'History opens a recorded run through get_test_run');
 assert.match(tests, /scored the old way, before access rules left this page/,
   'a run recorded before the change is labelled rather than shown as comparable');
-assert.match(tests, /Saved reports \{|Saved reports/, 'the History card links to Saved reports');
+assert.doesNotMatch(tests, /onOpenSavedReports\?\.\(\)/, 'the History card no longer links to Reports; the Reports tab is beside Checks');
 assert.doesNotMatch(tests, /function HistoryChart\(/, 'the unopenable trend chart is replaced by a dated list');
 
 // 10c + Astra point 2. Record keeps the run ON SCREEN. Recording by re-running would store numbers
@@ -154,9 +153,11 @@ assert.match(tests, /rpc<UnmatchedRowsW>\('getUnmatchedRows', rel\.name, 200\)/,
 assert.match(tests, /This reads the data as it is now/, 'and discloses that it is reading current data');
 assert.match(tests, /All but \$\{count\.toLocaleString\(\)\} match/, 'the Rows that match column must state the matching state, not the opposite one');
 
-// The segment strip renames Results to Saved reports.
-assert.match(app, /id: 'evidence', label: 'Saved reports'/, 'the Checks strip names the library Saved reports');
-assert.doesNotMatch(app, /id: 'evidence', label: 'Results'/, 'Results was the name Astra found misleading');
+// Reports, not Results. Astra found "Results" misleading; Kane then moved the whole thing off the strip
+// on 22 September 2026 and made it Validation's second tab, so the word is now pinned where it is drawn.
+assert.doesNotMatch(app, /id: 'evidence', label:/, 'Reports is not a tab in the area strip any more');
+assert.match(tests, /data-page-tab="reports"[\s\S]{0,160}>Reports</, 'Validation names its second tab Reports');
+assert.doesNotMatch(tests, />Results</, 'Results was the name Astra found misleading');
 
 // ---------------------------------------------------------------------------------------------------
 // 9. The states.

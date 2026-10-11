@@ -27,6 +27,16 @@ namespace Semanticus.Tests
             return (new LocalEngine(sessions, new Pro(), ws), sessions, ws);
         }
 
+        // The edit ledger writes .semanticus/history.json in the background after each edit. Deleting the folder
+        // while that write is in flight failed with "Directory not empty" on a CI runner (pull request 395), or let
+        // the write land after the delete. Disposing flushes the write first, so the folder is quiet when it goes.
+        private static void Cleanup(LocalEngine engine, SessionManager sessions, string ws)
+        {
+            engine.Dispose();
+            sessions?.Dispose();
+            Directory.Delete(ws, true);
+        }
+
         private static async Task OpenNamedModelAsync(LocalEngine engine, SessionManager sessions, string ws, string name)
         {
             await engine.CreateModelAsync(name, 1604);
@@ -56,7 +66,7 @@ namespace Semanticus.Tests
                 var listed = await engine.ListTestDefinitionsAsync();
                 Assert.Equal(stored.Id, Assert.Single(listed.Definitions).Id);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // D-087: Try it now must not write a saved test.
@@ -80,7 +90,7 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrEmpty(outcome.Verdict.ToString()));
                 Assert.Empty((await engine.ListTestDefinitionsAsync()).Definitions);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // D-087: both doors replace a question in one step.
@@ -103,7 +113,7 @@ namespace Semanticus.Tests
                 var pack = await engine.ListInterviewQuestionsAsync("project");
                 Assert.Equal(first.Id, Assert.Single(pack.Questions).Id);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // D-094: a subset run is Partial, never recorded, and a full run still grades.
@@ -143,7 +153,7 @@ namespace Semanticus.Tests
                 Assert.Contains(full.Reconciles, o => o.DefId == a.Id);
                 Assert.Contains(full.Reconciles, o => o.DefId == b.Id);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // D-152 / D-102: engine refusals are structured; the person line has no JSON and does not ask the user.
@@ -279,7 +289,7 @@ inputs:
                     && f.Message.Contains("gate off", StringComparison.Ordinal)
                     && !f.Message.Contains("Ask the user", StringComparison.Ordinal));
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, null, ws); }
         }
 
         // D-088: after a gate-off child finishes, the frame says why nothing came back.
@@ -385,7 +395,7 @@ inputs:
                 Assert.DoesNotContain("{\"declined\"", ex.Message, StringComparison.Ordinal);
                 Assert.Contains("still needs an answer", ex.Message, StringComparison.OrdinalIgnoreCase);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // UX11 (1): a check saved from a FILTERED visual keeps the filter lines, and the runner narrows the DAX
@@ -432,7 +442,7 @@ inputs:
                     new ReconcileRequest { MeasureRef = "measure:Sales/Revenue" }, "Revenue", new[] { "'Date'[Year]" });
                 Assert.DoesNotContain("CALCULATETABLE", unfiltered, StringComparison.Ordinal);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // UX11 (2): an EDITED formula can be saved as its own check. The definition holds the expression and the
@@ -479,7 +489,7 @@ inputs:
                 Assert.Equal("EVALUATE CALCULATETABLE(ROW(\"x\", 1), 'Date'[Year] = 2026)",
                     LocalEngine.BuildMeasureValueDax("Revenue", "EVALUATE ROW(\"x\", 1)", "'Date'[Year] = 2026", out _));
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // UX11 (3): the Tests-and-queries connection a check was AUTHORED against persists and is reported on the
@@ -516,7 +526,7 @@ inputs:
                 // Nothing is connected in this test, so the run reports no target rather than echoing the record.
                 Assert.Null(outcome.RanAgainstLabel);
             }
-            finally { Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // A trusted-answer check asks ONE number, so a result that is not a single cell has no verdict to give.
@@ -559,7 +569,7 @@ inputs:
                 // a checked answer in the saved-tests list even with the verdict withheld.
                 Assert.True(outcome.Rows == null || outcome.Rows.Length == 0);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // More rows is the same defect wearing a different hat, and the shape gate must not swallow the honest
@@ -605,7 +615,7 @@ inputs:
                 Assert.Equal(Verdict.NotVerifiable, many.Verdict);
                 Assert.Contains("3 rows by 1 column", many.Message);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
 
@@ -661,7 +671,7 @@ inputs:
                     LocalEngine.BuildMeasureValueDax("Total Sales", "EVALUATE ROW(\"v\", [Total Sales] + 1)", "'Date'[Year] = 2024", out var refusal));
                 Assert.Null(refusal);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // Some queries cannot be scoped from outside: a DEFINE block, a second EVALUATE, a trailing ORDER BY or
@@ -740,7 +750,7 @@ inputs:
                     LocalEngine.BuildMeasureValueDax("Total Sales", "EVALUATE ROW(\"EVALUATE\", [Total Sales])", "'Date'[Year] = 2024", out var literal));
                 Assert.Null(literal);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         // The scalar and saved-measure paths are what the filter always worked on. The scoping fix must not
@@ -800,7 +810,7 @@ inputs:
                 Assert.Equal("EVALUATE ROW(\"v\", CALCULATE([Total Sales], 'Date'[Year] = \"2024\"))", asked);
                 Assert.Equal(Verdict.Pass, saved.Verdict);
             }
-            finally { sessions.Dispose(); Directory.Delete(ws, true); }
+            finally { Cleanup(engine, sessions, ws); }
         }
 
         private static string FindRepoFile(string relative)

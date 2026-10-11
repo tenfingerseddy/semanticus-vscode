@@ -1,0 +1,17 @@
+{
+ "point": "ai.schema",
+ "version": 3,
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": false,
+ "setAfterRun": 2,
+ "note": "Version 3 is Kane's switch-on bar of 26 September, set AFTER run 2 by Kane's decision, for every Jev decision. It is recorded as set after the run, not as a bar committed before one. Version 2 (commit dee8af77, committed before run 2) asked for a 5-point accuracy gain and read run 2 as MORE DATA; version 1 (commit 65e331f4) scored run 1. Both are kept in git history and in docs/redesign/jev-ai-schema-replay.md.",
+ "scored": "Rows labelled include or exclude (either is not scored). The decision scored is what the Plan applies when a person approves each row as it arrives, after the schema's own checks. An object Jev did not answer gets no line, so it counts as its current state (include).",
+ "proPath": "Jev when sure, else the rule: a pick at or above the point's confidence bar (0.85) is Jev's; anything less sure is replaced by today's rules for that object (AiSchemaFamily.ProPick).",
+ "rule": "Today's readiness rules (ReadinessRuleSet.AiSchemaRuleExcludes: VIS-FK, VIS-KEY, VIS-TECH-COLUMN, VIS-HELPER, field parameter tables) through the same checks.",
+ "harmful": "A wrong exclusion: a field people ask about, taken away from Copilot (a false positive with exclude as the positive class).",
+ "verdict": "SHIP (AiSchemaFamily.JevDecides = true) when ALL hold: at least minScoredRows scored rows and minExcludeLabels exclude labels; the Pro path's accuracy is above the rule's (the size of the win does not matter); an exact two-sided McNemar test on the rows where exactly one of them is right gives p below maxMcNemarP; and the Pro path makes no more harmful mistakes than the rule, plus maxHarmfulVersusRule. RULE when the Pro path's accuracy is not above the rule's, or it makes more harmful mistakes than that. MORE DATA otherwise (a win that could be luck, or too few rows).",
+ "minScoredRows": 150,
+ "minExcludeLabels": 20,
+ "maxMcNemarP": 0.05,
+ "maxHarmfulVersusRule": 0
+}

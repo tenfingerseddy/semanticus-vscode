@@ -10,9 +10,10 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    /// <summary>Coverage of EVERY classified entry point, not a sample. For all 142 Pro operations the free tier is
-    /// refused with the one feature sentence, on all three paths a call can take: the MCP tool, the RPC entry, and
-    /// the IEngine method both doors share. Pro reaches the implementation on all three.
+    /// <summary>Coverage of EVERY classified entry point, not a sample. For every Pro operation (31 of them since
+    /// 22 September 2026) the free tier is refused with the one feature sentence, on all three paths a call can
+    /// take: the MCP tool, the RPC entry, and the IEngine method both doors share. Pro reaches the implementation
+    /// on all three. The walk is by reflection off FeatureMap, so the count shrinking does not weaken it.
     ///
     /// A map-membership test plus one operation per feature proves the map exists, not that it is enforced, so this
     /// walks the whole surface by reflection: a new Pro operation with no gate fails here by name.</summary>
@@ -192,7 +193,7 @@ namespace Semanticus.Tests
         // ---- the refusal happens BEFORE any protected work ------------------------------------------------------
 
         /// <summary>Refusing late is the bug Astra found: run_tests reached its gate after evaluating the suite and
-        /// apply_model_diff after preview and fence work. A whole free sweep of all 142 operations must leave no
+        /// apply_model_diff after preview and fence work. A whole free sweep of every Pro operation must leave no
         /// session open and write nothing at all into the workspace, so nothing was computed, connected or saved.</summary>
         [Fact]
         public async Task A_whole_free_sweep_opens_no_session_and_writes_no_file()
@@ -234,13 +235,13 @@ namespace Semanticus.Tests
             Assert.False(ex is EntitlementException, "Pro was still refused after activation: " + ex?.Message);
         }
 
-        /// <summary>The grace window and the dev escape carry all four features, so neither drops a paying or a
+        /// <summary>The grace window and the dev escape carry every feature, so neither drops a paying or a
         /// building user onto the free gate.</summary>
         [Fact]
-        public void Grace_and_dev_Pro_carry_all_four_features()
+        public void Grace_and_dev_Pro_carry_every_feature()
         {
             var dev = LicenseEntitlement.DevPro();
-            Assert.Equal(4, FeatureGrants.For(dev).Count);
+            Assert.Equal(ProFeatures.All.Length, FeatureGrants.For(dev).Count);
             foreach (var f in ProFeatures.All) Assert.True(FeatureGrants.Grants(dev, f), f.ToString());
         }
 

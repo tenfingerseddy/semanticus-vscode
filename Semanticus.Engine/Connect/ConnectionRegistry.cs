@@ -35,6 +35,10 @@ namespace Semanticus.Engine
         public string Label { get; set; }           // dev | uat | prod | local. NULL = unlabelled = treated as prod.
         public string WorkingFolder { get; set; }   // durable local copy for the query-live / edit-local pattern; null = transient snapshot
         public string PublishConnectionId { get; set; } // optional XMLA destination for this source's working folder
+        // True once the person let go of the publish destination for this source's local copy (contract 19.2). It
+        // exists because an XMLA source's copy publishes back to the source BY DEFAULT, so nulling the id alone
+        // cannot say "nowhere". Null (omitted on disk) otherwise; choosing a destination again resets it.
+        public bool? PublishCleared { get; set; }
         public string LastUsedUtc { get; set; }
         public int UseCount { get; set; }
         // The user identity (UPN) that LAST signed in to this target, captured from the MSAL AuthenticationRecord on a
@@ -42,6 +46,12 @@ namespace Semanticus.Engine
         // account a connect will use — never an identity lock (the live token, per-tenant, still decides). Null for
         // azcli/serviceprincipal/token (no MSAL record) and for a target no one has interactively signed in to yet.
         public string LastAccount { get; set; }
+        // Worked out on every read by list_connections (ConnectionJobs), never stored: why this model cannot answer
+        // tests and queries, and why it cannot be a publish destination. Null when it can, and omitted from disk.
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string TestsRefusal { get; set; }
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string PublishRefusal { get; set; }
     }
 
     /// <summary>
@@ -92,6 +102,7 @@ namespace Semanticus.Engine
         };
 
         private static string FilePath() => Path.Combine(ConnectionRegistry.Root(), FileName);
+        internal static string StatePath() => FilePath();
 
         /// <summary>Newest first, so a picker reads sensibly. Read-only; a parse failure just yields an empty list.</summary>
         public static IReadOnlyList<SqlSourceRecord> List()
@@ -107,7 +118,7 @@ namespace Semanticus.Engine
         /// token helper without a second thought: the mode is one of four NAMES, and neither address field may carry a
         /// connection string, which is the only shape a pasted password arrives in.
         /// </summary>
-        public static SqlSourceRecord Save(string id, string name, string server, string database, string authMode, string tenantId)
+        public static SqlSourceRecord Save(string id, string name, string server, string database, string authMode, string tenantId, Action<SqlSourceRecord> guard = null)
         {
             name = (name ?? "").Trim();
             server = (server ?? "").Trim();
@@ -136,6 +147,7 @@ namespace Semanticus.Engine
                     : all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase));
                 if (!string.IsNullOrWhiteSpace(id) && existing == null)
                     throw new InvalidOperationException("No SQL source with that id. Open Connections to see the saved sources.");
+                if (existing != null) guard?.Invoke(existing);   // the editor's starting point against the record as it stands inside this write
 
                 // One name, one source: the picker shows names, so two rows called the same thing would make the
                 // person's choice a guess.
@@ -201,6 +213,7 @@ namespace Semanticus.Engine
             lock (Gate)
             using (AcquireCrossProcessLock())
             {
+                RegistryWriteGuard.Check(FilePath());
                 var all = ReadForWrite();
                 var result = mutator(all);
                 Save(all);
@@ -263,9 +276,319 @@ namespace Semanticus.Engine
         }
     }
 
+    /// <summary>
+    /// One model's SQL endpoint: the saved SQL source its checks read from unless a check says otherwise (Kane,
+    /// 24 September 2026: "yes as recommended for sql end points"). Keyed by the model's DURABLE identity (the same
+    /// "live:" or "disk:" key its saved checks and table mappings carry), never by a connection id, because the
+    /// checks that resolve through it are keyed that way too.
+    ///
+    /// It names the source by id only. The source record itself stays one record in <c>sql-sources.json</c> even when
+    /// several models share it, so re-pointing a source re-points every model that uses it.
+    /// </summary>
+    public sealed class ModelSqlEndpointLink
+    {
+        public string ModelIdentity { get; set; }
+        public string SqlSourceId { get; set; }
+        /// <summary>A readable name for the model, captured when the link was made. Display only.</summary>
+        public string ModelName { get; set; }
+        /// <summary>The saved connection this model was reached through, when one is known. Display only.</summary>
+        public string ConnectionId { get; set; }
+        /// <summary>human | agent | migration | workingCopy: who or what made the link.</summary>
+        public string SetBy { get; set; }
+        public string SetWhenUtc { get; set; }
+    }
+
+    /// <summary>
+    /// The model-to-endpoint links, in their own <c>model-sql-endpoints.json</c> beside <c>connections.json</c>, with
+    /// the same write discipline as the two registries above it: one writer at a time across processes, an
+    /// unreadable file moved aside rather than overwritten, a scrub of every string before the bytes land, and an
+    /// atomic temp-then-move.
+    ///
+    /// It also remembers which models have had the one-time upgrade pass (<see cref="MigrateOnce"/>), so a link the
+    /// person cleared is never quietly put back by a later read.
+    /// </summary>
+    public static class ModelSqlEndpointRegistry
+    {
+        public const string FileName = "model-sql-endpoints.json";
+
+        private sealed class Store
+        {
+            public int Version { get; set; } = 1;
+            public List<ModelSqlEndpointLink> Links { get; set; } = new List<ModelSqlEndpointLink>();
+            /// <summary>Model identities the upgrade pass has already looked at, linked or not.</summary>
+            public List<string> Migrated { get; set; } = new List<string>();
+            /// <summary>Per model identity, the saved checks that existed at the upgrade with no source and no address
+            /// of their own. They read the model's partitions before the upgrade and keep doing so (Kane's rule: no
+            /// check changes where it points). Checks saved after the upgrade are never added here.</summary>
+            public Dictionary<string, List<string>> PinnedToPartitions { get; set; } = new Dictionary<string, List<string>>();
+            /// <summary>Model identities whose link a person set or cleared, from the open model or from a row. The
+            /// upgrade never links one of these on its own. Kept apart from <see cref="Migrated"/> because a choice
+            /// made from a row has not read that model's checks, so it cannot count as the upgrade's look.</summary>
+            public List<string> Decided { get; set; } = new List<string>();
+            /// <summary>Per model identity, the unmapped tables whose row counts read the model's own partitions when
+            /// the UPGRADE chose the endpoint. They keep reading them (Kane's rule). A person choosing the endpoint on
+            /// purpose, or clearing it, lets them go.</summary>
+            public Dictionary<string, List<string>> TablesOnPartitions { get; set; } = new Dictionary<string, List<string>>();
+        }
+
+        private static readonly object Gate = new object();
+        private static readonly JsonSerializerOptions JsonOpts = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = true,
+            WriteIndented = true,
+            DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        };
+
+        private static string FilePath() => Path.Combine(ConnectionRegistry.Root(), FileName);
+        internal static string StatePath() => FilePath();
+
+        /// <summary>Every link, newest first. Read-only; an unreadable file reads as no links.</summary>
+        public static IReadOnlyList<ModelSqlEndpointLink> List()
+        {
+            lock (Gate) return ReadForDisplay().Links;
+        }
+
+        public static ModelSqlEndpointLink Find(string modelIdentity) =>
+            string.IsNullOrWhiteSpace(modelIdentity) ? null
+                : List().FirstOrDefault(l => string.Equals(l.ModelIdentity, modelIdentity, StringComparison.Ordinal));
+
+        public static bool IsMigrated(string modelIdentity)
+        {
+            if (string.IsNullOrWhiteSpace(modelIdentity)) return false;
+            lock (Gate) return ReadForDisplay().Migrated.Contains(modelIdentity, StringComparer.Ordinal);
+        }
+
+        /// <summary>The saved check ids of one model that the upgrade pinned to the model's own partitions.</summary>
+        public static HashSet<string> PinnedToPartitions(string modelIdentity)
+        {
+            var set = new HashSet<string>(StringComparer.Ordinal);
+            if (string.IsNullOrWhiteSpace(modelIdentity)) return set;
+            lock (Gate)
+                if (ReadForDisplay().PinnedToPartitions.TryGetValue(modelIdentity, out var ids) && ids != null)
+                    set.UnionWith(ids.Where(i => !string.IsNullOrWhiteSpace(i)));
+            return set;
+        }
+
+        /// <summary>The unmapped tables of one model whose row counts stay on the model's own partitions because the
+        /// upgrade, not a person, chose its endpoint.</summary>
+        public static HashSet<string> TablesOnPartitions(string modelIdentity)
+        {
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(modelIdentity)) return set;
+            lock (Gate)
+                if (ReadForDisplay().TablesOnPartitions.TryGetValue(modelIdentity, out var tables) && tables != null)
+                    set.UnionWith(tables.Where(t => !string.IsNullOrWhiteSpace(t)));
+            return set;
+        }
+
+        /// <summary>The links that point at one saved source.</summary>
+        public static ModelSqlEndpointLink[] LinksTo(string sqlSourceId) =>
+            string.IsNullOrWhiteSpace(sqlSourceId) ? Array.Empty<ModelSqlEndpointLink>()
+                : List().Where(l => string.Equals(l.SqlSourceId, sqlSourceId, StringComparison.OrdinalIgnoreCase)).ToArray();
+
+        /// <summary>Link one model to one saved source, replacing any link it had. The caller checks the source
+        /// exists; this file only records the choice.</summary>
+        public static ModelSqlEndpointLink Set(string modelIdentity, string sqlSourceId, string modelName, string connectionId, string setBy,
+            bool markLookedAt = true)
+        {
+            if (string.IsNullOrWhiteSpace(modelIdentity)) throw new ArgumentException("A SQL endpoint belongs to a saved model.", nameof(modelIdentity));
+            if (string.IsNullOrWhiteSpace(sqlSourceId)) throw new ArgumentException("Name the saved SQL source to use.", nameof(sqlSourceId));
+            return Mutate(store =>
+            {
+                store.Links.RemoveAll(l => string.Equals(l.ModelIdentity, modelIdentity, StringComparison.Ordinal));
+                var link = new ModelSqlEndpointLink
+                {
+                    ModelIdentity = modelIdentity, SqlSourceId = sqlSourceId.Trim(), ModelName = modelName,
+                    ConnectionId = connectionId, SetBy = setBy, SetWhenUtc = DateTimeOffset.UtcNow.ToString("O"),
+                };
+                store.Links.Insert(0, link);
+                // A person chose this endpoint, so the tables the upgrade kept on the partitions follow it now.
+                store.TablesOnPartitions.Remove(modelIdentity);
+                MarkDecided(store, modelIdentity);
+                // A link set from a row, with the model not open, has not seen that model's checks: leave it unlooked
+                // so its first open still pins the checks that named no place.
+                if (markLookedAt) MarkMigrated(store, modelIdentity);
+                return link;
+            });
+        }
+
+        /// <summary>Remove a model's link. False when it had none. The model is marked as decided, so the upgrade
+        /// pass never puts a cleared link back. It is marked as looked at only when the caller has run the upgrade's
+        /// look first (<paramref name="markLookedAt"/>, the open model): a clear from a row has not read that model's
+        /// checks, so its first open still pins the ones that named no place (Sol 6, slice C).</summary>
+        public static bool Clear(string modelIdentity, bool markLookedAt = true)
+        {
+            if (string.IsNullOrWhiteSpace(modelIdentity)) return false;
+            return Mutate(store =>
+            {
+                var removed = store.Links.RemoveAll(l => string.Equals(l.ModelIdentity, modelIdentity, StringComparison.Ordinal)) > 0;
+                store.TablesOnPartitions.Remove(modelIdentity);
+                MarkDecided(store, modelIdentity);
+                if (markLookedAt) MarkMigrated(store, modelIdentity);
+                return removed;
+            });
+        }
+
+        /// <summary>
+        /// The one-time upgrade pass for one model, atomic under the file lock: when the model has no link and has
+        /// never been looked at, link it to <paramref name="pickedSourceId"/> (when there is one) and mark it looked
+        /// at either way. A model that already has a link, or was already looked at, is left exactly as it is, so
+        /// two processes racing here cannot both decide.
+        /// </summary>
+        public static ModelSqlEndpointLink MigrateOnce(string modelIdentity, string pickedSourceId, string modelName, string connectionId,
+            IEnumerable<string> sourcelessCheckIds = null, IEnumerable<string> unmappedTables = null)
+        {
+            if (string.IsNullOrWhiteSpace(modelIdentity)) return null;
+            return Mutate(store =>
+            {
+                var existing = store.Links.FirstOrDefault(l => string.Equals(l.ModelIdentity, modelIdentity, StringComparison.Ordinal));
+                var looked = store.Migrated.Contains(modelIdentity, StringComparer.Ordinal);
+                MarkMigrated(store, modelIdentity);
+                // Pin only on the FIRST look: that is the moment these checks stop being "checks that named nothing"
+                // and become "checks that read the partitions". A link set from a row before that look is kept.
+                if (!looked)
+                {
+                    var pins = (sourcelessCheckIds ?? Enumerable.Empty<string>()).Where(i => !string.IsNullOrWhiteSpace(i)).Distinct(StringComparer.Ordinal).ToList();
+                    if (pins.Count > 0) store.PinnedToPartitions[modelIdentity] = pins;
+                }
+                var decided = store.Decided.Contains(modelIdentity, StringComparer.Ordinal);
+                if (existing != null || looked || decided || string.IsNullOrWhiteSpace(pickedSourceId)) return existing;
+                var link = new ModelSqlEndpointLink
+                {
+                    ModelIdentity = modelIdentity, SqlSourceId = pickedSourceId, ModelName = modelName,
+                    ConnectionId = connectionId, SetBy = "migration", SetWhenUtc = DateTimeOffset.UtcNow.ToString("O"),
+                };
+                store.Links.Insert(0, link);
+                // The upgrade chose this endpoint, possibly from ONE table's mapping. Every unmapped table that read its
+                // own partitions until now keeps doing so; only a table added later reads the endpoint (Sol 6, slice C).
+                var tables = (unmappedTables ?? Enumerable.Empty<string>()).Where(t => !string.IsNullOrWhiteSpace(t))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+                if (tables.Count > 0) store.TablesOnPartitions[modelIdentity] = tables;
+                return link;
+            });
+        }
+
+        /// <summary>Give <paramref name="toIdentity"/> the same endpoint as <paramref name="fromIdentity"/>, unless it
+        /// already has one of its own or has made its own choice. A working copy uses the endpoint of the model it
+        /// came from only until a person sets or clears the copy's endpoint: a cleared copy has no link but is in
+        /// <see cref="Store.Decided"/>, and copying the source's link back on every reopen would undo the clear
+        /// (Codex on pull request 394, F-264).</summary>
+        public static ModelSqlEndpointLink CopyIfAbsent(string fromIdentity, string toIdentity, string modelName, string connectionId)
+        {
+            if (string.IsNullOrWhiteSpace(fromIdentity) || string.IsNullOrWhiteSpace(toIdentity)
+                || string.Equals(fromIdentity, toIdentity, StringComparison.Ordinal)) return null;
+            if (Find(fromIdentity) == null) return null;
+            return Mutate(store =>
+            {
+                var from = store.Links.FirstOrDefault(l => string.Equals(l.ModelIdentity, fromIdentity, StringComparison.Ordinal));
+                var existing = store.Links.FirstOrDefault(l => string.Equals(l.ModelIdentity, toIdentity, StringComparison.Ordinal));
+                if (existing != null || from == null || store.Decided.Contains(toIdentity, StringComparer.Ordinal)) return existing;
+                var link = new ModelSqlEndpointLink
+                {
+                    ModelIdentity = toIdentity, SqlSourceId = from.SqlSourceId, ModelName = modelName,
+                    ConnectionId = connectionId, SetBy = "workingCopy", SetWhenUtc = DateTimeOffset.UtcNow.ToString("O"),
+                };
+                // Not marked as looked at: the copy's own checks have not been read here. Its first look still pins
+                // the ones that named no place, and keeps this link because it already exists (Sol 6, slice C).
+                store.Links.Insert(0, link);
+                return link;
+            });
+        }
+
+        private static void MarkMigrated(Store store, string modelIdentity)
+        {
+            if (!store.Migrated.Contains(modelIdentity, StringComparer.Ordinal)) store.Migrated.Add(modelIdentity);
+        }
+
+        private static void MarkDecided(Store store, string modelIdentity)
+        {
+            if (!store.Decided.Contains(modelIdentity, StringComparer.Ordinal)) store.Decided.Add(modelIdentity);
+        }
+
+        // ---- persistence (the ConnectionRegistry discipline, its own file) --------------------------------------
+
+        private static T Mutate<T>(Func<Store, T> mutator)
+        {
+            lock (Gate)
+            using (AcquireCrossProcessLock())
+            {
+                RegistryWriteGuard.Check(FilePath());
+                var store = ReadForWrite();
+                var result = mutator(store);
+                Save(store);
+                return result;
+            }
+        }
+
+        private static IDisposable AcquireCrossProcessLock()
+        {
+            Directory.CreateDirectory(ConnectionRegistry.Root());
+            var lockPath = FilePath() + ".lock";
+            for (var i = 0; i < 200; i++)
+            {
+                try { return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
+                catch (IOException) { System.Threading.Thread.Sleep(15); }
+            }
+            throw new IOException("Could not acquire the SQL endpoint lock within 3 seconds. Another Semanticus process is holding it. Try again.");
+        }
+
+        private static Store Normalize(Store s)
+        {
+            s ??= new Store();
+            s.Links = (s.Links ?? new List<ModelSqlEndpointLink>()).Where(l => l != null && !string.IsNullOrWhiteSpace(l.ModelIdentity)).ToList();
+            s.Migrated ??= new List<string>();
+            s.PinnedToPartitions ??= new Dictionary<string, List<string>>();
+            s.Decided ??= new List<string>();
+            s.TablesOnPartitions ??= new Dictionary<string, List<string>>();
+            return s;
+        }
+
+        private static Store ReadForDisplay()
+        {
+            try
+            {
+                var p = FilePath();
+                if (!File.Exists(p)) return new Store();
+                return Normalize(JsonSerializer.Deserialize<Store>(File.ReadAllText(p), JsonOpts));
+            }
+            catch { return new Store(); }
+        }
+
+        // Never Save over a file we could not read: move it aside first, so a transient read error cannot destroy
+        // every link.
+        private static Store ReadForWrite()
+        {
+            var p = FilePath();
+            if (!File.Exists(p)) return new Store();
+            try
+            {
+                return Normalize(JsonSerializer.Deserialize<Store>(File.ReadAllText(p), JsonOpts));
+            }
+            catch
+            {
+                var aside = p + ".corrupt-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                try { File.Move(p, aside); }
+                catch (Exception ex) { throw new IOException($"Refusing to overwrite an unreadable SQL endpoint file at {p} (could not preserve it: {ex.Message}).", ex); }
+                return new Store();
+            }
+        }
+
+        private static void Save(Store store)
+        {
+            foreach (var l in store.Links) XmlaAuthHint.ScrubStringProperties(l);
+            Directory.CreateDirectory(ConnectionRegistry.Root());
+            var tmp = FilePath() + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(store, JsonOpts));
+            File.Move(tmp, FilePath(), overwrite: true);
+        }
+    }
+
     public static class ConnectionRegistry
     {
         public const int MaxRecords = 40;
+        /// <summary>How many of the newest incidental local rows survive even when kept rows alone fill MaxRecords.</summary>
+        public const int MinRecentLocal = 10;
         private const string FileName = "connections.json";
 
         /// <summary>The labels a user may declare. Anything else — including a value hand-edited into the file — is not
@@ -284,10 +607,10 @@ namespace Semanticus.Engine
         /// <summary>Test seam: point the registry at a scratch dir so tests never touch the real home.</summary>
         public static string RootOverride { get; set; }
 
-        public static string Root() => RootOverride
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".semanticus");
+        public static string Root() => RootOverride ?? SemanticusHome.Root();
 
         private static string FilePath() => Path.Combine(Root(), FileName);
+        internal static string StatePath() => FilePath();
 
         // Fail CLOSED on the origin: only an explicit "human" may perform a governance mutation. An unrecognised or
         // omitted origin is NOT trusted — a forgotten argument must never grant human rights. (The MCP door passes
@@ -471,10 +794,25 @@ namespace Semanticus.Engine
                     publish = all.FirstOrDefault(r => string.Equals(r.Id, publishConnectionId, StringComparison.OrdinalIgnoreCase))
                         ?? throw new InvalidOperationException("No publish connection with that id.");
                     if (!string.Equals(publish.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
-                        throw new InvalidOperationException("The final publish destination must be an XMLA connection.");
+                        throw new InvalidOperationException(ConnectionJobs.PublishNotWorkspace);
                 }
                 rec.WorkingFolder = string.IsNullOrWhiteSpace(folder) ? null : Path.GetFullPath(folder);
                 rec.PublishConnectionId = publish?.Id;
+                if (publish != null) rec.PublishCleared = null;   // a chosen destination is the answer again
+                return rec;
+            });
+        }
+
+        /// <summary>Let go of this source's publish destination: no explicit link, and no default back to the source
+        /// either. The working folder stays linked. Returns the record, or throws when the id is not known.</summary>
+        public static ModelConnectionRecord ClearPublish(string id)
+        {
+            return Mutate(all =>
+            {
+                var rec = all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException("No source connection with that id.");
+                rec.PublishConnectionId = null;
+                rec.PublishCleared = true;
                 return rec;
             });
         }
@@ -508,9 +846,10 @@ namespace Semanticus.Engine
             lock (Gate)
             using (AcquireCrossProcessLock())
             {
-                var all = ReadForWrite();
+                RegistryWriteGuard.Check(FilePath());
+                var all = ReadForWrite(out var unreadable);
                 var result = mutator(all);
-                Save(all);
+                Save(all, unreadable);
                 return result;
             }
         }
@@ -532,23 +871,59 @@ namespace Semanticus.Engine
         }
 
         // Read for a read-only caller: any failure degrades to "no history" (the pre-registry behaviour). Never writes.
+        // An unreadable file shows the previous good copy (.bak) instead, the same rows the next write will recover.
         private static List<ModelConnectionRecord> ReadForDisplay()
         {
+            var p = FilePath();
             try
             {
-                var p = FilePath();
                 if (!File.Exists(p)) return new List<ModelConnectionRecord>();
                 return JsonSerializer.Deserialize<List<ModelConnectionRecord>>(File.ReadAllText(p), JsonOpts) ?? new List<ModelConnectionRecord>();
             }
-            catch { return new List<ModelConnectionRecord>(); }
+            catch { return ReadBackup(p) ?? new List<ModelConnectionRecord>(); }
+        }
+
+        // The previous good copy, or null when there is none or it does not parse either. Every row in it comes back
+        // labelled prod (RaiseRecoveredLabels), because .bak is one write behind the file it backs up.
+        private static List<ModelConnectionRecord> ReadBackup(string p)
+        {
+            try
+            {
+                var bak = p + ".bak";
+                return File.Exists(bak) ? RaiseRecoveredLabels(JsonSerializer.Deserialize<List<ModelConnectionRecord>>(File.ReadAllText(bak), JsonOpts)) : null;
+            }
+            catch { return null; }
+        }
+
+        // .bak holds the list as it was BEFORE the last write, and that write may have been the person tightening a
+        // label (dev, then prod), or labelling a row for the first time. Handing .bak's label back, or its missing label,
+        // would loosen the declaration the agent policy gates on, and the next write would make it permanent (found by
+        // Sol, 27 Sep). So EVERY recovered row comes back labelled prod: the strictest label, which the person can loosen
+        // again by hand. A label, not unlabelled, so an agent cannot forget the target either: an unlabelled row may be
+        // forgotten by an agent (Forget), and the row .bak holds unlabelled may be one the person had just labelled prod
+        // (found by Sol, 28 Sep, round 4). An unlabelled loopback row would also read as "local" to the gate
+        // (LocalEngine.ResolveTargetLabel).
+        private static List<ModelConnectionRecord> RaiseRecoveredLabels(List<ModelConnectionRecord> rows)
+        {
+            if (rows == null) return null;
+            foreach (var r in rows)
+                if (r != null) r.Label = "prod";
+            return rows;
         }
 
         // Read on the WRITE path. Distinct from the display read because a write follows: if the file exists but cannot
         // be read or parsed, we must NOT return empty and then Save over it — that would destroy the user's labels on a
-        // transient read error or a denied ACL. Move the unreadable file ASIDE first (preserving it for recovery), so
-        // the subsequent Save writes a fresh file and nothing is silently lost.
-        private static List<ModelConnectionRecord> ReadForWrite()
+        // transient read error or a denied ACL. The rows start from the previous good copy (.bak) when there is one: a
+        // torn write (a power cut after the rename, before the bytes reached the disk) leaves exactly that state, and
+        // starting from empty lost every saved row two writes later, once .bak had been rotated too.
+        // <paramref name="unreadable"/> tells Save to set the unreadable file ASIDE (never over .bak) in the same step that
+        // puts the new list in place. Nothing is moved here: a write that is refused or fails after this read (an agent
+        // forgetting a labelled target, a full disk) used to leave no file at all, so the list showed nothing and the
+        // next two writes rotated the good .bak away (27 Sep, round 3). Untouched, the torn file keeps the display read
+        // and the next write on .bak.
+        private static List<ModelConnectionRecord> ReadForWrite(out bool unreadable)
         {
+            unreadable = false;
             var p = FilePath();
             if (!File.Exists(p)) return new List<ModelConnectionRecord>();
             try
@@ -557,55 +932,40 @@ namespace Semanticus.Engine
             }
             catch
             {
-                // Preserve the unreadable bytes BEFORE any write can replace them. If even the move fails, ABORT —
-                // the old comment claimed "Save below will surface its own IO error", which was false: Save's atomic
-                // temp+move succeeds regardless of whether the original parsed, so a swallowed failure here silently
-                // destroyed the user's labels. Same rule as HomeFile: never overwrite a file we could not read.
-                var aside = p + ".corrupt-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-                try { File.Move(p, aside); }
-                catch (Exception ex) { throw new IOException($"Refusing to overwrite an unreadable connection registry at {p} (could not preserve it: {ex.Message}).", ex); }
-                return new List<ModelConnectionRecord>();
+                unreadable = true;
+                return ReadBackup(p) ?? new List<ModelConnectionRecord>();
             }
         }
 
-        private static void Save(List<ModelConnectionRecord> all)
+        private static void Save(List<ModelConnectionRecord> all, bool setAsideUnreadable = false)
         {
-            // Retention evicts the least-recently-used — but NEVER a record the user has invested in by labelling it or
-            // giving it a working folder. Silently dropping a `prod` label would turn a declaration back into an
+            // Retention trims ONLY incidental local rows: a .bim/.pbip/TMDL folder that was opened, or a Power BI
+            // Desktop instance the discoverer saw. Everything else is kept whatever the count: a cloud (XMLA)
+            // connection, which the person connected to or remembered on purpose (remember_xmla_connection), and any
+            // row the person invested in by labelling it, giving it a working folder, or naming it as a publish
+            // destination. Before 27 Sep a flood of local opens (an agent or test grading copies under /tmp) could push
+            // cloud rows out once there were more of them than the budget left, with no copy kept (D-173 only ordered
+            // them ahead of local rows). Silently dropping a `prod` label would also turn a declaration back into an
             // inference, which is the one thing this file exists to prevent.
+            var linkedPublishIds = all.Where(r => !string.IsNullOrWhiteSpace(r.PublishConnectionId))
+                .Select(r => r.PublishConnectionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            bool IsIncidentalLocal(ModelConnectionRecord r) =>
+                string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(r.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase);
+
+            bool IsEvictable(ModelConnectionRecord r) =>
+                IsIncidentalLocal(r) && IsUnlabelled(r) && string.IsNullOrEmpty(r.WorkingFolder) && !linkedPublishIds.Contains(r.Id);
+
             if (all.Count > MaxRecords)
             {
-                var linkedPublishIds = all.Where(r => !string.IsNullOrWhiteSpace(r.PublishConnectionId))
-                    .Select(r => r.PublishConnectionId).ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                bool IsProtected(ModelConnectionRecord r) =>
-                    !IsUnlabelled(r) || !string.IsNullOrEmpty(r.WorkingFolder) || linkedPublishIds.Contains(r.Id);
-
-                // Incidental local history (a .bim/.pbip the user opened, a Power BI Desktop instance the discoverer
-                // saw) is the cheapest to re-derive, so retire it before a real published model (D-173): opening 40
-                // local files must never evict a remembered published model (V2/Contoso). A real remote source (xmla)
-                // still loses to another remote only by recency, which keeps
-                // Retention_evicts_the_least_recently_used_unlabelled_target true.
-                bool IsIncidentalLocal(ModelConnectionRecord r) =>
-                    string.Equals(r.Kind, "file", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(r.Kind, "localDesktop", StringComparison.OrdinalIgnoreCase);
-
-                // Split protected (always kept) from the rest, then fill the remaining budget with real remote models
-                // ahead of incidental local rows, newest-first within each class. Protected records can exceed
-                // MaxRecords — never evict a labelled target just because the user labelled many of them.
-                var indexed = all.Select((r, i) => (Record: r, Index: i)).ToList();
-                var protectedRecords = indexed.Where(t => IsProtected(t.Record)).ToList();
-                var budget = MaxRecords - protectedRecords.Count;
-                var keptRest = budget > 0
-                    ? indexed.Where(t => !IsProtected(t.Record))
-                             .OrderBy(t => IsIncidentalLocal(t.Record) ? 2 : 1)
-                             .ThenBy(t => t.Index)
-                             .Take(budget)
-                             .ToList()
-                    : new List<(ModelConnectionRecord Record, int Index)>();
-
-                // Keep the surviving list in recency order (newest first) so List() still reads sensibly.
-                all = protectedRecords.Concat(keptRest).OrderBy(t => t.Index).Select(t => t.Record).ToList();
+                // The kept rows can exceed MaxRecords on their own; the newest MinRecentLocal local rows still survive
+                // then, so the model just opened can always be found again by its id.
+                var kept = all.Count(r => !IsEvictable(r));
+                var localBudget = Math.Max(MaxRecords - kept, MinRecentLocal);
+                var evictableSeen = 0;
+                // `all` is newest first, so the oldest evictable rows are the ones past the budget.
+                all = all.Where(r => !IsEvictable(r) || evictableSeen++ < localBudget).ToList();
             }
 
             // Serialization-boundary scrub (CRITICAL 1): redact any secret material from EVERY string field of every
@@ -616,8 +976,47 @@ namespace Semanticus.Engine
 
             Directory.CreateDirectory(Root());
             var tmp = FilePath() + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(all, JsonOpts));
-            File.Move(tmp, FilePath(), overwrite: true);   // a crash mid-write leaves the old file intact + a .tmp, never a truncated registry
+            WriteFlushed(tmp, JsonSerializer.Serialize(all, JsonOpts));
+            if (setAsideUnreadable)
+            {
+                // Preserve the unreadable bytes as the new list takes their place. If that fails, ABORT: never overwrite
+                // a file we could not read (same rule as HomeFile), and never rotate it into .bak, which holds the good copy.
+                try { ReplaceSettingAside(tmp, FilePath()); }
+                catch (Exception ex) { throw new IOException($"Refusing to overwrite an unreadable connection registry at {FilePath()} (could not preserve it: {ex.Message}).", ex); }
+            }
+            else ReplaceKeepingBackup(tmp, FilePath());   // a crash mid-write leaves the old file intact + a .tmp, never a truncated registry
+        }
+
+        /// <summary>Write <paramref name="text"/> and flush it to the disk before the caller renames it into place. A
+        /// rename is journalled while file data often is not (NTFS, ext4 data=writeback), so without the flush a power
+        /// cut can leave the renamed file holding zeros: the torn list ReadForWrite recovers from.</summary>
+        internal static void WriteFlushed(string path, string text)
+        {
+            using var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+            var bytes = new System.Text.UTF8Encoding(false).GetBytes(text);
+            fs.Write(bytes, 0, bytes.Length);
+            fs.Flush(flushToDisk: true);
+        }
+
+        /// <summary>Put <paramref name="tmp"/> in place of <paramref name="path"/>, keeping the file it replaces as
+        /// <c>&lt;path&gt;.bak</c>: ONE previous copy, so a bad write (a wrong eviction, a buggy caller) can be undone by
+        /// hand. Both per-user lists are capped and rolled entries used to be gone for good. The swap is still atomic:
+        /// File.Replace renames, and the first write (nothing to keep yet) is a plain move.</summary>
+        internal static void ReplaceKeepingBackup(string tmp, string path)
+        {
+            if (File.Exists(path)) File.Replace(tmp, path, path + ".bak", ignoreMetadataErrors: true);
+            else File.Move(tmp, path);
+        }
+
+        /// <summary>Put <paramref name="tmp"/> in place of an UNREADABLE <paramref name="path"/>, keeping the unreadable
+        /// bytes as <c>&lt;path&gt;.corrupt-&lt;id&gt;</c> for a curious person and leaving <c>.bak</c>, the good copy the new
+        /// list was built from, alone. One File.Replace, so there is no moment with no file at <paramref name="path"/>:
+        /// the torn file stays until the new one is in place (Unix links the backup, then renames over the path).</summary>
+        internal static void ReplaceSettingAside(string tmp, string path)
+        {
+            var aside = path + ".corrupt-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            if (File.Exists(path)) File.Replace(tmp, path, aside, ignoreMetadataErrors: true);
+            else File.Move(tmp, path);
         }
     }
 }

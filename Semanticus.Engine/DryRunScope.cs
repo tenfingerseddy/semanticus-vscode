@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 
@@ -13,9 +14,22 @@ namespace Semanticus.Engine
         public static DryRunCollector Current { get => _current.Value; set => _current.Value = value; }
     }
 
+    /// <summary>What a session's commit sink asks of the engine for an assistant's tracked edit. <see cref="Asks"/> is the cheap policy read
+    /// (no side effects): does this origin have to wait for the person? <see cref="Refuse"/> is the sink's refusal when no ticket covers
+    /// the commit: it registers a request for the person to see and returns the sentence the assistant is refused with.</summary>
+    internal sealed class AgentWriteGate
+    {
+        public AgentWriteGate(Func<string, bool> asks, Func<string, string, string> refuse) { Asks = asks; Refuse = refuse; }
+        public Func<string, bool> Asks { get; }
+        public Func<string, string, string> Refuse { get; }
+    }
+
     internal sealed class DryRunCollector
     {
         public List<ChangeDelta> Deltas { get; } = new();
         public List<string> MutationLabels { get; } = new();
+        /// <summary>True for a rehearsal the dry_run tool started for an assistant's call, where the gate runs every write the tool makes
+        /// and refuses the ones that land outside the model. The engine's own rehearsals (the Plan's, a draft's) leave it false.</summary>
+        public bool FromTool { get; init; }
     }
 }

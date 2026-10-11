@@ -1,0 +1,165 @@
+{
+  "Server": "s13-sql.example.invalid",
+  "Database": "DepotSnapshots",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_reporting_date",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "FULL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_depot",
+      "KeyColumns": [
+        "DEPOT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEPOT_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_sku",
+      "KeyColumns": [
+        "SKU_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SKU_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SKU_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_inventory_snapshot",
+      "KeyColumns": [
+        "SNAPSHOT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SNAPSHOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SKU_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SNAPSHOT_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "ON_HAND",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "INVENTORY_VALUE",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_transfer",
+      "KeyColumns": [
+        "TRANSFER_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "TRANSFER_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "FROM_DEPOT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SKU_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "TRANSFER_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "MOVED_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "TRANSFER_COST",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_inventory_snapshot",
+      "FromColumn": "DEPOT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_depot",
+      "ToColumn": "DEPOT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_inventory_snapshot",
+      "FromColumn": "SKU_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sku",
+      "ToColumn": "SKU_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_transfer",
+      "FromColumn": "FROM_DEPOT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_depot",
+      "ToColumn": "DEPOT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_transfer",
+      "FromColumn": "SKU_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_sku",
+      "ToColumn": "SKU_ID"
+    }
+  ]
+}

@@ -89,6 +89,92 @@ namespace Semanticus.Engine
         public bool TwoModelsInPlay { get; set; }
         public bool PublishDestinationSeparateFromQuerying { get; set; }
         public string Summary { get; set; }
+        /// <summary>The open model's SQL endpoint (contract 19.3), or null when it has none.</summary>
+        public SqlEndpointInfo SqlEndpoint { get; set; }
+        /// <summary>When the open model has no endpoint: the SQL endpoint its own sources read from, offered first
+        /// by the add form ("Found in this model's sources"). Null when there is an endpoint or nothing to offer.</summary>
+        public SqlEndpointSuggestion SqlEndpointSuggestion { get; set; }
+        /// <summary>A plain sentence about the call that returned this context, when it has something to say (for
+        /// example that clearing changed nothing because nothing was set). Null otherwise.</summary>
+        public string Note { get; set; }
+    }
+
+    /// <summary>A model's SQL endpoint as both doors read it: the saved source it links to, named.</summary>
+    public sealed class SqlEndpointInfo
+    {
+        public string SourceId { get; set; }
+        public string Name { get; set; }
+        public string Server { get; set; }
+        public string Database { get; set; }
+        /// <summary>The source's last connection test, or null when it has never been tested. Never rounded into ok.</summary>
+        public SqlEndpointLastTest LastTest { get; set; }
+        /// <summary>True when the link names a source that is no longer saved. Checks that would read through it say
+        /// so rather than quietly reading somewhere else.</summary>
+        public bool Missing { get; set; }
+        /// <summary>human | agent | migration | workingCopy.</summary>
+        public string SetBy { get; set; }
+        public string SetWhenUtc { get; set; }
+    }
+
+    public sealed class SqlEndpointLastTest
+    {
+        public string TestedUtc { get; set; }
+        public bool Ok { get; set; }
+    }
+
+    /// <summary>The endpoint a model's own partitions read from, and the saved source that already points there.</summary>
+    public sealed class SqlEndpointSuggestion
+    {
+        public string Server { get; set; }
+        public string Database { get; set; }
+        public string MatchingSourceId { get; set; }
+        public string MatchingSourceName { get; set; }
+    }
+
+    /// <summary>What set_model_sql_endpoint did.</summary>
+    public sealed class ModelSqlEndpointResult
+    {
+        public string ModelName { get; set; }
+        /// <summary>The saved connection the model was named by, when it was named that way or is one.</summary>
+        public string ConnectionId { get; set; }
+        /// <summary>The endpoint now in force, or null when it was cleared.</summary>
+        public SqlEndpointInfo SqlEndpoint { get; set; }
+        /// <summary>False when the call changed nothing (for example clearing a model that had no endpoint).</summary>
+        public bool Changed { get; set; }
+        public string Note { get; set; }
+    }
+
+    /// <summary>One model's endpoint, for the Connections list.</summary>
+    public sealed class ModelSqlEndpointRow
+    {
+        public string ModelName { get; set; }
+        public string ConnectionId { get; set; }
+        public SqlEndpointInfo SqlEndpoint { get; set; }
+    }
+
+    /// <summary>A saved SQL source that no model uses as its endpoint, with what the open model still points at it.</summary>
+    public sealed class UnlinkedSqlSource
+    {
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Server { get; set; }
+        public string Database { get; set; }
+        public int ChecksUsing { get; set; }
+        public int TableMappingsUsing { get; set; }
+        /// <summary>What the two counts cover. "savedModels" means every saved model's checks and table mappings were
+        /// read, open or not; a surface offers Remove only on a zero with this scope. Any other value, or none, is a
+        /// count that does not prove the source is unused.</summary>
+        public string UsageScope { get; set; }
+        /// <summary>The saved models whose checks or table mappings use this source, by name, sorted.</summary>
+        public string[] UsingModels { get; set; } = Array.Empty<string>();
+    }
+
+    public sealed class ModelSqlEndpointList
+    {
+        public ModelSqlEndpointRow[] Rows { get; set; } = Array.Empty<ModelSqlEndpointRow>();
+        /// <summary>Listed once each: "Not linked to a model".</summary>
+        public UnlinkedSqlSource[] NotLinked { get; set; } = Array.Empty<UnlinkedSqlSource>();
+        public string Note { get; set; }
     }
 
     internal static class ConnectionContextBuilder
@@ -174,6 +260,11 @@ namespace Semanticus.Engine
             if (session.LiveOrigin != null && !LiveDeploy.IsLocalEndpoint(session.LiveOrigin.Endpoint))
                 publish = ConnectionRegistry.FindByEndpoint(session.LiveOrigin.Endpoint, session.LiveOrigin.Database);
             publish = ConnectionRegistry.Find(editingRecord?.PublishConnectionId) ?? publish;
+            // The person let go of the destination for this local copy (contract 19.2): that beats the default back
+            // to an XMLA source below. A model open live is not a local copy, so the flag never applies to it: saving
+            // goes straight back to the live model there, and clearing is refused for that case instead.
+            if (session.LiveOrigin == null && editingRecord?.PublishCleared == true)
+                return new ConnectionContextModel { Available = false };
             if (publish == null && string.Equals(editingRecord?.Kind, "xmla", StringComparison.OrdinalIgnoreCase))
                 publish = editingRecord;
             // The origin guard at :174 keeps a loopback EDITING origin out, but both later routes can still SELECT a
@@ -274,6 +365,12 @@ namespace Semanticus.Engine
             catch { return false; }
         }
 
+        private static string ReadStart(string file)
+        {
+            try { using var r = new StreamReader(file); var buf = new char[16]; var n = r.Read(buf, 0, buf.Length); return new string(buf, 0, n); }
+            catch { return ""; }
+        }
+
         private static string FindRepositoryRoot(string path)
         {
             if (string.IsNullOrWhiteSpace(path)) return null;
@@ -282,8 +379,12 @@ namespace Semanticus.Engine
                 var dir = File.Exists(path) ? new DirectoryInfo(Path.GetDirectoryName(path)) : new DirectoryInfo(path);
                 while (dir != null)
                 {
+                    // A repository, not just a folder called ".git": a git directory has a HEAD file, and a worktree
+                    // or submodule keeps a ".git" FILE that names its git directory. An empty ".git" folder in a home
+                    // directory made every model below it "in source control" with the home folder as its root (drop 14).
                     var marker = Path.Combine(dir.FullName, ".git");
-                    if (Directory.Exists(marker) || File.Exists(marker)) return dir.FullName;
+                    if (File.Exists(Path.Combine(marker, "HEAD"))) return dir.FullName;
+                    if (File.Exists(marker) && ReadStart(marker).StartsWith("gitdir:", StringComparison.Ordinal)) return dir.FullName;
                     dir = dir.Parent;
                 }
             }

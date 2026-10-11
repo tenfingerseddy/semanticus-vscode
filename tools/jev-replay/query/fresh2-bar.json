@@ -1,0 +1,15 @@
+{
+ "point": "query.summarize",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "version": 4,
+ "labels": "fresh2-labels.json",
+ "supersedes": "version 3 (fresh-bar.json), whose 80-item set was used up by one run (NOT LIVE: 60 vs 53 right, 0 vs 26 harmful, McNemar p = 0.265). Kane's rule is unchanged; only the held-out set is new: 160 questions, none repeating the old 62 or the 80. Scored at c4bce91a, which includes the 'by year' twin fix made after the version 3 run. Committed before any run on fresh2-labels.json.",
+ "rule": "Jev reads data questions for Pro only when ALL hold on fresh2-labels.json, run once: (1) Jev beats the best non-Jev baseline: more items Jev gets right and that baseline gets wrong than the other way round, with an exact two-sided McNemar test on those discordant items at p < mcnemarAlpha; (2) Jev makes no more harmful mistakes than that baseline, a harmful mistake being a reading settled with confidence that is wrong and would run, so it returns a plausible number (wrongRan). The best baseline is the one with the most right items on this set, ties broken by fewer harmful mistakes. A reading Jev is not sure of must say so and run nothing; it counts as not right and is never harmful. A decline item is right when nothing is settled, and harmful when a reading runs.",
+ "baselines": {
+  "words": "the word match (JevQueryWordArm.Read): closest measures and columns by name, exact value matches, top N from the words",
+  "shortlist": "the word match with every split replaced by the engine's own split shortlist, top pick first (JevQueryWordArm.ReadShortlist): the redesign's shortlist with no Jev"
+ },
+ "mcnemarAlpha": 0.05,
+ "harmfulNotAboveBaseline": true
+}

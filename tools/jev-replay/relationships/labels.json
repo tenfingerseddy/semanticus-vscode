@@ -1,0 +1,1652 @@
+{
+ "version": 1,
+ "point": "relationship.join",
+ "note": "Labelled models for the relationship.join replay (M4 point 2). Each model is replayed with every relationship removed; its labels are the relationships a careful author gives it. adventureworks is the vendored Tabular Editor sample, read at run time from its .bim, and its labels are that file's own relationships (the replay checks they still match). northstar and contoso-mini are the UAT fixtures, transcribed as names and types, and their labels are the fixtures' own relationships. The five placeholder models are reviewer-written, in the naming styles real models use; their labels were written with the models, before any run. No real tenant, workspace, report, model or person names.",
+ "models": [
+  {
+   "id": "adventureworks",
+   "source": "repo",
+   "bim": "external/TabularEditor/TOMWrapperTest/TestData/AdventureWorks.bim",
+   "labels": [
+    {
+     "from": "Customer/GeographyKey",
+     "to": "Geography/GeographyKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Employee/SalesTerritoryKey",
+     "to": "Sales Territory/SalesTerritoryKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Geography/SalesTerritoryKey",
+     "to": "Sales Territory/SalesTerritoryKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Product/ProductSubcategoryKey",
+     "to": "Product Subcategory/ProductSubcategoryKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Product Subcategory/ProductCategoryKey",
+     "to": "Product Category/ProductCategoryKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller/GeographyKey",
+     "to": "Geography/GeographyKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/CurrencyKey",
+     "to": "Currency/CurrencyKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/CustomerKey",
+     "to": "Customer/CustomerKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/OrderDateKey",
+     "to": "Date/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/DueDateKey",
+     "to": "Date/DateKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/ShipDateKey",
+     "to": "Date/DateKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/PromotionKey",
+     "to": "Promotion/PromotionKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Internet Sales/SalesTerritoryKey",
+     "to": "Sales Territory/SalesTerritoryKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Product Inventory/DateKey",
+     "to": "Date/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Product Inventory/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/CurrencyKey",
+     "to": "Currency/CurrencyKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/OrderDateKey",
+     "to": "Date/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/DueDateKey",
+     "to": "Date/DateKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/ShipDateKey",
+     "to": "Date/DateKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/EmployeeKey",
+     "to": "Employee/EmployeeKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/PromotionKey",
+     "to": "Promotion/PromotionKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/ResellerKey",
+     "to": "Reseller/ResellerKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Reseller Sales/SalesTerritoryKey",
+     "to": "Sales Territory/SalesTerritoryKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales Quota/DateKey",
+     "to": "Date/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales Quota/EmployeeKey",
+     "to": "Employee/EmployeeKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "northstar",
+   "source": "uat-fixture",
+   "tables": [
+    {
+     "name": "Customer",
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustomerCode",
+       "dataType": "String"
+      },
+      {
+       "name": "CustomerName",
+       "dataType": "String"
+      },
+      {
+       "name": "Segment",
+       "dataType": "String"
+      },
+      {
+       "name": "City",
+       "dataType": "String"
+      },
+      {
+       "name": "Region",
+       "dataType": "String"
+      },
+      {
+       "name": "JoinDate",
+       "dataType": "DateTime"
+      }
+     ]
+    },
+    {
+     "name": "Date",
+     "columns": [
+      {
+       "name": "DateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Date",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Quarter",
+       "dataType": "String"
+      },
+      {
+       "name": "MonthNumber",
+       "dataType": "Int64"
+      },
+      {
+       "name": "MonthName",
+       "dataType": "String"
+      },
+      {
+       "name": "YearMonth",
+       "dataType": "String"
+      },
+      {
+       "name": "MonthStart",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "DayOfWeek",
+       "dataType": "String"
+      },
+      {
+       "name": "DayOfWeekNumber",
+       "dataType": "Int64"
+      },
+      {
+       "name": "IsWeekend",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Product",
+     "columns": [
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "SKU",
+       "dataType": "String"
+      },
+      {
+       "name": "ProductName",
+       "dataType": "String"
+      },
+      {
+       "name": "Subcategory",
+       "dataType": "String"
+      },
+      {
+       "name": "Category",
+       "dataType": "String"
+      },
+      {
+       "name": "CategorySortOrder",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Brand",
+       "dataType": "String"
+      },
+      {
+       "name": "ListPrice",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "UnitCost",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Sales",
+     "columns": [
+      {
+       "name": "SalesLineKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OrderNumber",
+       "dataType": "String"
+      },
+      {
+       "name": "OrderLine",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OrderDateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "StoreKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Quantity",
+       "dataType": "Int64"
+      },
+      {
+       "name": "UnitPrice",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "DiscountAmount",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "NetSalesAmount",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "CostAmount",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "IsReturn",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ReturnOfSalesLineKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "AuditNote",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Store",
+     "columns": [
+      {
+       "name": "StoreKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "StoreCode",
+       "dataType": "String"
+      },
+      {
+       "name": "StoreName",
+       "dataType": "String"
+      },
+      {
+       "name": "City",
+       "dataType": "String"
+      },
+      {
+       "name": "Region",
+       "dataType": "String"
+      },
+      {
+       "name": "Channel",
+       "dataType": "String"
+      },
+      {
+       "name": "OpenDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "CloseDate",
+       "dataType": "DateTime"
+      }
+     ]
+    }
+   ],
+   "labels": [
+    {
+     "from": "Sales/OrderDateKey",
+     "to": "Date/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales/CustomerKey",
+     "to": "Customer/CustomerKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales/StoreKey",
+     "to": "Store/StoreKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ],
+   "note": "Transcribed from the UAT fixture. Its field parameter (Metric Selector) and calculation group (Time Intelligence) are left out: neither takes part in a relationship, and a calculation group is not a plain table."
+  },
+  {
+   "id": "contoso-mini",
+   "source": "uat-fixture",
+   "tables": [
+    {
+     "name": "Customer",
+     "columns": [
+      {
+       "name": "Customer",
+       "dataType": "String"
+      },
+      {
+       "name": "Region",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Date",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "MonthNumber",
+       "dataType": "Int64"
+      },
+      {
+       "name": "MonthName",
+       "dataType": "String"
+      },
+      {
+       "name": "YearMonth",
+       "dataType": "String"
+      },
+      {
+       "name": "Quarter",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ISOYear",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ISOWeek",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    },
+    {
+     "name": "Measures",
+     "columns": [
+      {
+       "name": "Value",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Product",
+     "columns": [
+      {
+       "name": "Product",
+       "dataType": "String"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      },
+      {
+       "name": "Category",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Sales",
+     "columns": [
+      {
+       "name": "Order",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Date",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Product",
+       "dataType": "String"
+      },
+      {
+       "name": "Customer",
+       "dataType": "String"
+      },
+      {
+       "name": "Quantity",
+       "dataType": "Int64"
+      },
+      {
+       "name": "UnitPrice",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "UnitCost",
+       "dataType": "Decimal"
+      }
+     ]
+    }
+   ],
+   "labels": [
+    {
+     "from": "Sales/Product",
+     "to": "Product/Product",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales/Customer",
+     "to": "Customer/Customer",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Sales/Date",
+     "to": "Date/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "fabrikam-retail",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "DimDate",
+     "columns": [
+      {
+       "name": "DateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "MonthName",
+       "dataType": "String"
+      }
+     ],
+     "dataCategory": "Time"
+    },
+    {
+     "name": "DimProduct",
+     "columns": [
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductName",
+       "dataType": "String"
+      },
+      {
+       "name": "CategoryKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Brand",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "DimCategory",
+     "columns": [
+      {
+       "name": "CategoryKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CategoryName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "DimStore",
+     "columns": [
+      {
+       "name": "StoreKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "StoreName",
+       "dataType": "String"
+      },
+      {
+       "name": "RegionKey",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "DimRegion",
+     "columns": [
+      {
+       "name": "RegionKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "RegionName",
+       "dataType": "String"
+      },
+      {
+       "name": "Country",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "DimCustomer",
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustomerName",
+       "dataType": "String"
+      },
+      {
+       "name": "Segment",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "FactSales",
+     "columns": [
+      {
+       "name": "OrderDateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ShipDateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "StoreKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Quantity",
+       "dataType": "Int64"
+      },
+      {
+       "name": "SalesAmount",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "FactInventory",
+     "columns": [
+      {
+       "name": "DateKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "StoreKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OnHand",
+       "dataType": "Int64"
+      }
+     ]
+    }
+   ],
+   "labels": [
+    {
+     "from": "FactSales/OrderDateKey",
+     "to": "DimDate/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactSales/ShipDateKey",
+     "to": "DimDate/DateKey",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactSales/ProductKey",
+     "to": "DimProduct/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactSales/StoreKey",
+     "to": "DimStore/StoreKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactSales/CustomerKey",
+     "to": "DimCustomer/CustomerKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactInventory/DateKey",
+     "to": "DimDate/DateKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactInventory/ProductKey",
+     "to": "DimProduct/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "FactInventory/StoreKey",
+     "to": "DimStore/StoreKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "DimProduct/CategoryKey",
+     "to": "DimCategory/CategoryKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "DimStore/RegionKey",
+     "to": "DimRegion/RegionKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "tailspin-orders",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Customers",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      },
+      {
+       "name": "City",
+       "dataType": "String"
+      },
+      {
+       "name": "CountryId",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Countries",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Orders",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustomerId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "EmployeeId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ShipperId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OrderDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "RequiredDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "ShippedDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Freight",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "OrderLines",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OrderId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Quantity",
+       "dataType": "Int64"
+      },
+      {
+       "name": "UnitPrice",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Products",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      },
+      {
+       "name": "SupplierId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CategoryId",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Suppliers",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      },
+      {
+       "name": "CountryId",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Categories",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Employees",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "FirstName",
+       "dataType": "String"
+      },
+      {
+       "name": "ReportsTo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "HireDate",
+       "dataType": "DateTime"
+      }
+     ]
+    },
+    {
+     "name": "Shippers",
+     "columns": [
+      {
+       "name": "Id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Calendar",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Month",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "Orders/CustomerId",
+     "to": "Customers/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Orders/EmployeeId",
+     "to": "Employees/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Orders/ShipperId",
+     "to": "Shippers/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Orders/OrderDate",
+     "to": "Calendar/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Orders/RequiredDate",
+     "to": "Calendar/Date",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Orders/ShippedDate",
+     "to": "Calendar/Date",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "OrderLines/OrderId",
+     "to": "Orders/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "OrderLines/ProductId",
+     "to": "Products/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Products/SupplierId",
+     "to": "Suppliers/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Products/CategoryId",
+     "to": "Categories/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Customers/CountryId",
+     "to": "Countries/Id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Suppliers/CountryId",
+     "to": "Countries/Id",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "wingtip-tickets",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Venues",
+     "columns": [
+      {
+       "name": "VenueCode",
+       "dataType": "String"
+      },
+      {
+       "name": "VenueName",
+       "dataType": "String"
+      },
+      {
+       "name": "City",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Events",
+     "columns": [
+      {
+       "name": "EventNo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "EventTitle",
+       "dataType": "String"
+      },
+      {
+       "name": "VenueCode",
+       "dataType": "String"
+      },
+      {
+       "name": "EventDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "PromoterRef",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Promoters",
+     "columns": [
+      {
+       "name": "PromoterID",
+       "dataType": "Int64"
+      },
+      {
+       "name": "PromoterName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Customers",
+     "columns": [
+      {
+       "name": "CustNo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "FullName",
+       "dataType": "String"
+      },
+      {
+       "name": "PostalCode",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Tickets",
+     "columns": [
+      {
+       "name": "TicketNo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "EventNo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "CustNo",
+       "dataType": "Int64"
+      },
+      {
+       "name": "SoldOn",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Price",
+       "dataType": "Decimal"
+      },
+      {
+       "name": "Channel",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Dates",
+     "columns": [
+      {
+       "name": "Day",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Month",
+       "dataType": "String"
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "Tickets/EventNo",
+     "to": "Events/EventNo",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/CustNo",
+     "to": "Customers/CustNo",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/SoldOn",
+     "to": "Dates/Day",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Events/VenueCode",
+     "to": "Venues/VenueCode",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Events/PromoterRef",
+     "to": "Promoters/PromoterID",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Events/EventDate",
+     "to": "Dates/Day",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "adatum-banking",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Customer",
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Account",
+     "columns": [
+      {
+       "name": "AccountKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "AccountType",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "CustomerAccount",
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "AccountKey",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Transactions",
+     "columns": [
+      {
+       "name": "AccountKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "BranchKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "TransactionDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Amount",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Branch",
+     "columns": [
+      {
+       "name": "BranchKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "BranchName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Date",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "CustomerAccount/CustomerKey",
+     "to": "Customer/CustomerKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "CustomerAccount/AccountKey",
+     "to": "Account/AccountKey",
+     "active": true,
+     "direction": "both_ways",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Transactions/AccountKey",
+     "to": "Account/AccountKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Transactions/BranchKey",
+     "to": "Branch/BranchKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Transactions/TransactionDate",
+     "to": "Date/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "litware-hr",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "employee",
+     "columns": [
+      {
+       "name": "employee_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "full_name",
+       "dataType": "String"
+      },
+      {
+       "name": "department_code",
+       "dataType": "String"
+      },
+      {
+       "name": "manager_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "location_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "hire_date",
+       "dataType": "DateTime"
+      }
+     ]
+    },
+    {
+     "name": "department",
+     "columns": [
+      {
+       "name": "department_code",
+       "dataType": "String"
+      },
+      {
+       "name": "department_name",
+       "dataType": "String"
+      },
+      {
+       "name": "division_id",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "division",
+     "columns": [
+      {
+       "name": "division_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "division_name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "location",
+     "columns": [
+      {
+       "name": "location_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "city",
+       "dataType": "String"
+      },
+      {
+       "name": "country_code",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "country",
+     "columns": [
+      {
+       "name": "country_code",
+       "dataType": "String"
+      },
+      {
+       "name": "country_name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "absence",
+     "columns": [
+      {
+       "name": "absence_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "employee_id",
+       "dataType": "Int64"
+      },
+      {
+       "name": "absence_type_code",
+       "dataType": "String"
+      },
+      {
+       "name": "start_date",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "end_date",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "days",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "absence_type",
+     "columns": [
+      {
+       "name": "absence_type_code",
+       "dataType": "String"
+      },
+      {
+       "name": "description",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "calendar",
+     "columns": [
+      {
+       "name": "calendar_date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "month",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "employee/department_code",
+     "to": "department/department_code",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "department/division_id",
+     "to": "division/division_id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "employee/location_id",
+     "to": "location/location_id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "location/country_code",
+     "to": "country/country_code",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "absence/employee_id",
+     "to": "employee/employee_id",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "absence/absence_type_code",
+     "to": "absence_type/absence_type_code",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "absence/start_date",
+     "to": "calendar/calendar_date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "absence/end_date",
+     "to": "calendar/calendar_date",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  }
+ ]
+}

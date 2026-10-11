@@ -6,7 +6,7 @@ touched), so the corpus is plain public GitHub repos.
 
 ```
 node scan.mjs fetch     shallow-clone the corpus, pin commits -> models.pinned.json
-node scan.mjs scan      per model: fresh engine, open offline, ai_readiness_summary -> results/scans.json
+node scan.mjs scan      per model: fresh engine, open offline, ai_readiness_scan (detail summary) -> results/scans.json
 node scan.mjs report    distribution + median -> results/corpus-report.md
 ```
 

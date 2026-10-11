@@ -76,8 +76,10 @@ namespace Semanticus.Tests
                 .Where(row => !coveredForCounts.Contains(row.GetProperty("title").GetString()!)
                     && !rejectedForCounts.Contains(row.GetProperty("title").GetString()!))
                 .ToArray();
-            Assert.Equal(207, counts.GetProperty("reconciliationRows").GetInt32());
-            Assert.Equal(67, counts.GetProperty("covered").GetInt32());
+            // 2026-09-23: 207 -> 206 and 67 -> 66 when MODE-DIRECTLAKE-QNA was retired with Q&A and its one
+            // covered row ("Direct Lake / Lakehouse models not supported by Q&A live connect") moved to rejected.
+            Assert.Equal(206, counts.GetProperty("reconciliationRows").GetInt32());
+            Assert.Equal(66, counts.GetProperty("covered").GetInt32());
             Assert.Equal(48, counts.GetProperty("partial").GetInt32());
             Assert.Equal(92, counts.GetProperty("missing").GetInt32());
             Assert.Equal(138, counts.GetProperty("residualNonGoals").GetInt32());
@@ -169,7 +171,7 @@ namespace Semanticus.Tests
             {
                 ["Add missing relationships so tables can be joined"] = "REL-DISCONNECTED",
                 ["Q&A index hard limit: 5 million unique values"] = "SCALE-QNA-INDEX",
-                ["Q&A setup (linguistic teaching) only for Import and DirectQuery"] = "MODE-DIRECTLAKE-QNA, CFG-PREP-MODE",
+                ["Q&A setup (linguistic teaching) only for Import and DirectQuery"] = "CFG-PREP-MODE",
                 ["Implicit measures and wrong default summarization degrade results"] = "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
                 ["Use explicit measures and correct default summarization, not implicit measures"] = "DAC-IMPLICIT-MEASURE, FMT-SUMMARIZE, SUMMARIZE-DIMENSION",
             };
@@ -246,6 +248,19 @@ namespace Semanticus.Tests
                 Assert.Equal(expected.Value, gapRulesByTitle[expected.Key]);
                 Assert.Contains(expected.Value, builtIns);
             }
+        }
+
+        [Fact]
+        public void No_built_in_rule_is_framed_around_QnA()
+        {
+            // Microsoft retires Q&A in February 2027 (learn.microsoft.com/power-bi/natural-language/q-and-a-intro).
+            // What Copilot and data agents still read (the linguistic schema, synonyms, the value index and its
+            // limits) stays, framed as Copilot. A rule title that names Q&A is the old framing coming back.
+            var rules = ReadinessRuleSet.Default().Concat(ReadinessRuleSet.LiveRules(new ReadinessLiveStats())).ToArray();
+            var framed = rules.Where(r => r.Title.Contains("Q&A", StringComparison.OrdinalIgnoreCase)
+                                          || r.Title.Contains("QnA", StringComparison.OrdinalIgnoreCase))
+                              .Select(r => r.Id + ": " + r.Title).ToArray();
+            Assert.Empty(framed);
         }
 
         [Fact]

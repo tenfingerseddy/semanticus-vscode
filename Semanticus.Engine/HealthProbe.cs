@@ -49,6 +49,14 @@ namespace Semanticus.Engine
         };
 
         internal const int MaxRuleIds = 12;   // the agent block stays terse; Findings carries the true count (shared with the mailbox merge)
+        /// <summary>SYN-FIELD and SYN-TABLE on a model with no linguistic schema are STANDING work, counted from the start (m11/rule-clashes,
+        /// so that creating the schema opens nothing new): every field already has no synonyms, and the model's one SYN-SCHEMA finding
+        /// stands for it. A field a commit adds is not a fault the commit introduced, so it never reads as a net-new finding here
+        /// (Kane 26 Sep: approving a row of good practice never reads worse). Once a schema exists they are ordinary findings.</summary>
+        private static bool StandingSynonymWork(TabularEditor.TOMWrapper.Model model, string ruleId) =>
+            (string.Equals(ruleId, "SYN-FIELD", StringComparison.Ordinal) || string.Equals(ruleId, "SYN-TABLE", StringComparison.Ordinal))
+            && !model.Cultures.Any(c => c.ContentType == TabularEditor.TOMWrapper.ContentType.Json && !string.IsNullOrEmpty(c.Content));
+
         private const char Sep = '␟';         // RuleId␟StableId key separator (same glyph Bpa.cs dedup uses)
 
         private readonly Func<Model, IReadOnlyList<BpaRule>> _bpaRules;   // the session's EFFECTIVE rules (standard + model-embedded)
@@ -184,6 +192,7 @@ namespace Semanticus.Engine
                     // (via the post-commit model — the finding carries the NEW name) to the same tag key its
                     // "before" was stored under, so it can never look net-new.
                     if (f.Waived || !touched.Contains(f.ObjectRef) || HasStableKey(beforeKeys, f.RuleId, f.ObjectRef, model, memo)) continue;
+                    if (StandingSynonymWork(model, f.RuleId)) continue;
                     // Rename guard, the TAG-LESS fallback — applied ONLY when the finding's own object was renamed
                     // THIS commit: a rename moves a name-path key (measure:T/Old → measure:T/New) without adding
                     // one, and a flat model-wide count for the rule confirms it merely moved. Gating on the rename

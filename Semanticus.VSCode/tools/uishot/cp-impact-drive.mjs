@@ -83,7 +83,10 @@ const JOBS = [
   { slug: '10-drawer-partly', q: 'scope=partly', pick: 'Total Sales', press: ['impact-choose-reports'], desc: 'a report that could not be fully checked' },
   { slug: '11-drawer-stale', q: 'scope=stale', pick: 'Total Sales', press: ['impact-choose-reports'], desc: 'a reading the model has moved past' },
   { slug: '12-escape-closed-drawer', q: 'scope=one', pick: 'Total Sales', press: ['impact-choose-reports'], escape: true, desc: 'Escape closes only the drawer' },
-  { slug: '13-after-a-check', q: 'scope=one', pick: 'Total Sales', press: ['impact-choose-reports', 'choose-reports-check'], settleAfter: 900, escape: true, desc: 'the card after the reports were read' },
+  // The permission box is pressed because the ENGINE refuses a published check without it. Before the hotfix
+  // the mock ignored consent, so this job read a reading that could not have happened on a real workspace.
+  { slug: '13-after-a-check', q: 'scope=one', pick: 'Total Sales', press: ['impact-choose-reports'], consent: true,
+    after: ['choose-reports-check'], settleAfter: 900, escape: true, desc: 'the card after the reports were read' },
   { slug: '14-propose-blocked', q: 'scope=one', pick: 'Total Sales', desc: 'Propose removal blocked, with the reason' },
   { slug: '15-propose-allowed', q: 'scope=one', press: ['impact-cleanup-toggle'], pickCleanup: '_Base Rate', desc: 'a candidate nothing uses: removal is offered, with the list still beside it' },
   // A fully READ scope, because with an unread report chosen the candidate is demoted and a removal must not
@@ -128,6 +131,148 @@ const JOBS = [
   { slug: '24-rename-journey', q: 'scope=one', pick: 'Total Sales', then: ['impact-rename'],
     desc: 'Rename carries the field to where its name is edited',
     expect: ['Total Sales'] },
+
+  // ---- Round three. The hotfix, driven on a fixture shaped like a REAL Fabric answer. ------------------
+  // Kane found all three of these on the Yoga against a live workspace, and none of the twenty-four jobs
+  // above could see them, because every id in the old fixtures was a short slug.
+  { slug: '25-fabric-listed', q: 'scope=empty', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'],
+    desc: 'three reports found in a workspace whose ids are GUIDs, nothing chosen yet',
+    expect: ['Sales Overview', 'Regional Demo 2', 'Can be read'],
+    expectUnticked: ['Sales Overview', 'Regional Demo 2'],
+    expectOnScreen: ['done', 'check'] },
+
+  { slug: '26-fabric-tick-agrees', q: 'scope=empty', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'], tickReport: 'Sales Overview',
+    desc: 'ticking a GUID report shows the box ticked and the chosen list agrees about the same report',
+    expect: ['Sales Overview', 'Not checked'],
+    expectTicked: ['Sales Overview'], expectUnticked: ['Regional Demo 2'],
+    absent: ['Nothing chosen yet.'] },
+
+  // Kane's exact screen: two of the three discovered reports are ALREADY on the model's list. Their boxes
+  // were empty while the list below showed them ticked, which is the disagreement he reported.
+  { slug: '27-fabric-already-chosen', q: 'scope=fabric', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'],
+    desc: 'two reports already chosen: the discovered boxes and the chosen list say the same thing',
+    expectTicked: ['Sales Overview', 'Regional Demo 2'],
+    expectUnticked: ['sm_expense_claims demo'] },
+
+  // The refusal, in the drawer, while the person is reading the bottom of a long list. This is the press
+  // that Kane says did nothing: the engine refused and the refusal was rendered above his fold.
+  { slug: '28-fabric-check-refused', q: 'scope=fabric', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'], scrollDrawer: true, after: ['choose-reports-check'],
+    desc: 'Check without the permission box says so, where the person pressed the button',
+    expect: ['Say yes to the sign-in permission first'],
+    expectOnScreen: ['error', 'done', 'check'] },
+
+  { slug: '29-fabric-check-done', q: 'scope=fabric', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'], consent: true, scrollDrawer: true, after: ['choose-reports-check'],
+    settleAfter: 900,
+    desc: 'the permission given, the check runs and the drawer says what came back',
+    expect: ['Checked 9:41 AM', 'Read 2 reports'],
+    expectOnScreen: ['done', 'result'] },
+
+  { slug: '30-fabric-done-returns', q: 'scope=fabric', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'], consent: true, scrollDrawer: true,
+    after: ['choose-reports-check', 'choose-reports-done'], settleAfter: 900,
+    desc: 'Done closes the drawer and puts the person back on the field they came from',
+    expect: ['Total Sales'], expectDrawerClosed: true },
+
+  // ---- Round four. IN REPORTS opens. -------------------------------------------------------------------
+  // Kane, 16 September, on his own workspace: "there is no way to view which reports are impacted and by
+  // what. The IN REPORTS still shows choose reports and there's no expand to view." The old expansion only
+  // existed when a report actually used the field, so his screen - where nothing was found and two reports
+  // could not be read - had nothing to press. These run on a Fabric-shaped list carrying every state at once.
+  { slug: '31-reports-list-open', q: 'scope=fabricread', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'],
+    desc: 'the whole report list open: who was read, when, what was found, and why one could not be',
+    expect: [
+      'Sales Overview', 'Regional Demo 2', 'Executive Summary', 'Quarterly Pack', 'Margin Workbook',
+      'Contoso Fabric Demo', 'Checked at 9:41 AM', 'Could not be fully checked', 'Not checked',
+      'No use of Total Sales found in this report.',
+      'Part of this report could not be read',
+      'Check it to find out whether it uses this field',
+      'Choose reports',
+    ],
+    expectReportRows: ['Sales Overview', 'Regional Demo 2', 'Executive Summary', 'Quarterly Pack', 'Margin Workbook'],
+    absent: ['barChart', 'tableEx'] },
+
+  { slug: '32-reports-list-filtered', q: 'scope=fabricread', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'], type: { 'impact-reports-filter': 'Margin' },
+    desc: 'the report list with a filter typed',
+    expect: ['Margin Workbook'],
+    expectReportRows: ['Margin Workbook'] },
+
+  { slug: '33-reports-list-hit-pages', q: 'scope=fabricread', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'], type: { 'impact-reports-filter': 'Sales Overview' },
+    desc: 'one hit on its own, down to its pages and visuals, including use through a measure',
+    expect: ['Margin by month', 'Bar chart', 'Margin headline', 'Regions', 'Table', 'through a measure that uses it'],
+    expectReportRows: ['Sales Overview'] },
+
+  // Every visual stays reachable: the per-report list pages rather than stopping at a number nobody can open.
+  { slug: '34-reports-list-more-visuals', q: 'scope=fabricread', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'], type: { 'impact-reports-filter': 'Margin Workbook' },
+    then: ['impact-report-show-more'], scrollReports: true,
+    desc: 'the fourteenth visual of a busy report, reached by pressing Show more',
+    expect: ['Margin tile 14'],
+    expectReportRows: ['Margin Workbook'],
+    absent: ['Show 4 more'] },
+
+  // ---- Round five. The reviewer's four findings on the reports list, each on its own screen. -----------
+  // Every one of them is a thing the thirty-four jobs above could not have disproved, because no fixture
+  // made two reports share a name, use a field with nothing on a page, or carry more matches than one
+  // answer may send.
+
+  // A chosen published report is only findable again by its workspace and its report id. Taking one of
+  // three off the list rebuilds the save from the rows the engine sent, and a save that drops those two
+  // fields leaves two reports the next check asks for under an empty workspace by display name.
+  { slug: '35-untick-keeps-coordinates', q: 'scope=fabricthree', pick: 'Total Sales',
+    press: ['impact-choose-reports', 'choose-reports-load-workspaces'],
+    select: { 'choose-reports-workspace': '7c1e4f26-9a3b-4d55-8f10-2b6d4e9a1c88' },
+    then: ['choose-reports-load-reports'], untickReport: 'sm_expense_claims demo',
+    consent: true, scrollDrawer: true, after: ['choose-reports-check'], settleAfter: 900,
+    desc: 'one chosen report taken off the list: the other two are still findable and both read',
+    expect: ['Read 2 reports'],
+    expectTicked: ['Sales Overview', 'Regional Demo 2'], expectUnticked: ['sm_expense_claims demo'],
+    absent: ['This report could not be read.'] },
+
+  // Two chosen reports share a display name, in two different workspaces, and only the second uses the
+  // field. Joined by name the first row took the use and the second was told nothing was found in it.
+  { slug: '36-same-name-two-workspaces', q: 'scope=twins', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'],
+    desc: 'two chosen reports share a name: the use is shown against the one it came from',
+    expect: ['Workspace A', 'Workspace B', 'Margin by month', 'No use of Total Sales found in this report.'],
+    expectReportRows: ['Monthly report', 'Monthly report'],
+    expectRowVisuals: [0, 1] },
+
+  // A use that lives in a bookmark has no page and no visual to show for it. The row read as "no use
+  // found", directly under a summary that said the report uses the field.
+  { slug: '37-report-level-use', q: 'scope=reportlevel', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'],
+    desc: 'a report that uses the field in a bookmark, with nothing on any page to show',
+    expect: ['is used in this report, but not on any page', 'bookmark'],
+    expectReportRows: ['Bookmark only'],
+    absent: ['No use of Total Sales found in this report.'] },
+
+  // More matches than one answer may carry: 201, of which 200 are listed. Paging to the end of what was
+  // sent stopped there in silence, so the report read as having exactly the cap.
+  { slug: '38-capped-matches', q: 'scope=capped', pick: 'Total Sales', settleAfter: 900,
+    press: ['impact-reports-show-all'], pressUntilGone: 'impact-report-show-more', scrollReports: true,
+    desc: 'a report with more matches than one answer can carry says how many are not listed',
+    expect: ['and 1 more match is not listed', 'Tile 200'],
+    expectReportRows: ['Busy workbook'] },
 ];
 
 // One job at a time when a scene is being worked on: JOBFILTER=21 runs only the jobs whose slug contains 21.
@@ -144,7 +289,10 @@ for (const job of (only ? JOBS.filter((j) => j.slug.includes(only)) : JOBS)) {
     await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?${job.q}`, { waitUntil: 'networkidle0', timeout: 30000 });
     await page.waitForSelector('[data-sem-tab]', { timeout: 15000 }).catch(() => {});
     await wait(700);
-    // Model > Lineage, then the Impact sub-tab.
+    // Explore > Lineage, then the Impact sub-tab. Studio opens on the Plan (the Overview retired in slice 11), and
+    // Lineage is a segment of the Explore area, so the area goes first.
+    await page.evaluate(clickText, ['nav[aria-label="Studio areas"] button', 'Explore']);
+    await wait(500);
     const okTab = await page.evaluate(clickText, ['button', 'Lineage']);
     if (!okTab) note += 'Lineage tab not found; ';
     await wait(600);
@@ -200,26 +348,78 @@ for (const job of (only ? JOBS.filter((j) => j.slug.includes(only)) : JOBS)) {
       await page.keyboard.type(value, { delay: 10 });
       await wait(400);
     }
-    if (job.settleAfter) await wait(job.settleAfter);
-    if (job.escape) {
-      await page.keyboard.press('Escape');
-      await wait(600);
-    }
     for (const spec of job.then ?? []) {
       const ok = await page.evaluate(clickTestid, spec);
       if (!ok) note += `then "${JSON.stringify(spec)}" not found; `;
       await wait(800);
     }
-    if (job.tickReport) {
-      const ok = await page.evaluate((name) => {
+    // One toggle, two directions. Which one a job means is named by which key it used, so a shot can never
+    // claim a tick it did not make: the box's state is read back at the end and checked against the claim.
+    for (const [name, wanted] of [[job.tickReport, true], [job.untickReport, false]]) {
+      if (!name) continue;
+      const ok = await page.evaluate(([n, want]) => {
         const rows = [...document.querySelectorAll('[data-testid="choose-reports-report"]')];
-        const row = rows.find((r) => (r.textContent || '').includes(name));
+        const row = rows.find((r) => (r.textContent || '').includes(n));
         const box = row && row.querySelector('input[type="checkbox"]');
-        if (box) box.click();
-        return !!box;
-      }, job.tickReport);
-      if (!ok) note += `discovered report "${job.tickReport}" not found; `;
+        if (!box) return 'missing';
+        if (box.checked === want) return 'already';
+        box.click();
+        return 'clicked';
+      }, [name, wanted]);
+      if (ok === 'missing') note += `discovered report "${name}" not found; `;
+      else if (ok === 'already') note += `"${name}" was already ${wanted ? 'ticked' : 'unticked'}, so nothing was pressed; `;
       await wait(1100);
+    }
+    // Saying yes to the sign-in permission. The engine REFUSES a published check without it, so a scene that
+    // ends in a real reading has to press this, and a scene that proves the refusal has to leave it alone.
+    if (job.consent) {
+      const ok = await page.evaluate(clickTestid, 'choose-reports-consent');
+      if (!ok) note += 'the permission box was not found; ';
+      await wait(400);
+    }
+    // Page all the way to the end of a long list by pressing the control until it is no longer offered.
+    // A claim about what comes AFTER the last page can only be proved by actually reaching the last page.
+    if (job.pressUntilGone) {
+      let pressed = 0;
+      for (; pressed < 60; pressed++) {
+        const more = await page.evaluate(clickTestid, job.pressUntilGone);
+        if (!more) break;
+        await wait(60);
+      }
+      if (pressed === 0) note += `"${job.pressUntilGone}" was never offered; `;
+      if (pressed >= 60) note += `"${job.pressUntilGone}" never went away; `;
+      await wait(400);
+    }
+    // The report list is a bounded, scrolling box, so a row further down it is on the page and not in the
+    // shot. A scene that claims a row has to bring that row into the picture.
+    if (job.scrollReports) {
+      await page.evaluate(() => {
+        const box = document.querySelector('[data-testid="impact-reports-list"]');
+        if (box) box.scrollTop = box.scrollHeight;
+      });
+      await wait(400);
+    }
+    // Scroll the drawer itself to the bottom, which is where Kane was reading when he pressed Check and saw
+    // nothing happen. A control that leaves the screen when the list is long has not been proved reachable.
+    if (job.scrollDrawer) {
+      await page.evaluate(() => {
+        const d = document.querySelector('[data-testid="choose-reports-drawer"]');
+        const scroller = d && [d, ...d.querySelectorAll('*')].find((e) => e.scrollHeight - e.clientHeight > 8);
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+      });
+      await wait(400);
+    }
+    for (const spec of job.after ?? []) {
+      const ok = await page.evaluate(clickTestid, spec);
+      if (!ok) note += `after "${JSON.stringify(spec)}" not found; `;
+      await wait(1300);
+    }
+    // Settle and Escape come LAST, so a job that has to press a control inside the drawer still has the
+    // drawer open when it presses it. They used to run before `then`, which shut the drawer first.
+    if (job.settleAfter) await wait(job.settleAfter);
+    if (job.escape) {
+      await page.keyboard.press('Escape');
+      await wait(600);
     }
     if (job.afterPropose) {
       // The basis moves under the proposal: the person changes the selection before applying it.
@@ -235,8 +435,9 @@ for (const job of (only ? JOBS.filter((j) => j.slug.includes(only)) : JOBS)) {
       await wait(1100);
     }
     if (job.goPlan) {
-      const ok = await page.evaluate(clickText, ['button', 'Changes']);
-      if (!ok) note += 'Changes tab not found; ';
+      // Pending changes is a panel on the Plan since 23 September; the card's own link opens it.
+      const ok = await page.evaluate(clickTestid, 'impact-open-plan');
+      if (!ok) note += 'Open Changes not found; ';
       await wait(1100);
       // Bring the proposal itself into the shot, not just the count that went up.
       const scrolled = await page.evaluate(() => {
@@ -277,9 +478,41 @@ for (const job of (only ? JOBS.filter((j) => j.slug.includes(only)) : JOBS)) {
         drawerOpen: !!document.querySelector('[data-testid="choose-reports-drawer"]'),
         reportsShowAll: !!document.querySelector('[data-testid="impact-reports-show-all"]'),
         reportVisuals: document.querySelectorAll('[data-testid="impact-report-visual"]').length,
+        // The report list's own rows. Text on the page cannot carry this: the headline's detail line names
+        // every report too, so a filter that hid a row would still leave its name on screen.
+        reportRows: [...document.querySelectorAll('[data-testid="impact-report-row"]')]
+          .map((r) => (r.querySelector('span.font-medium')?.textContent || '').trim()),
+        // How many visuals EACH row shows. Text on the page cannot carry this either: with two rows named
+        // the same, "the visual is on screen" is true whichever of them wrongly received it.
+        reportRowVisuals: [...document.querySelectorAll('[data-testid="impact-report-row"]')]
+          .map((r) => r.querySelectorAll('[data-testid="impact-report-visual"]').length),
         drawerStates: all('[data-testid="choose-reports-state"]'),
         permission: txt('[data-testid="choose-reports-permission"]'),
         escapeNote: txt('[data-testid="choose-reports-escape-note"]'),
+        drawerError: txt('[data-testid="choose-reports-error"]'),
+        drawerResult: txt('[data-testid="choose-reports-result"]'),
+        // The two lists, each row with the state its own checkbox is actually in. The hotfix is exactly
+        // about those two agreeing, so a shot that cannot read a tick cannot prove the repair.
+        discovered: [...document.querySelectorAll('[data-testid="choose-reports-report"]')].map((r) => ({
+          name: ((r.querySelector('[data-testid="choose-reports-report-name"]') || r.querySelector('span'))?.textContent || '').trim(),
+          ticked: !!r.querySelector('input[type="checkbox"]')?.checked,
+        })),
+        chosenRows: [...document.querySelectorAll('[data-testid="choose-reports-chosen"]')].map((r) => ({
+          name: (r.querySelector('div.truncate')?.textContent || '').trim(),
+          ticked: !!r.querySelector('input[type="checkbox"]')?.checked,
+        })),
+        // Whether the two controls that move a person on are on screen without scrolling the drawer.
+        // Kane could not find a way off this screen, and both of them were above the fold he was reading.
+        onScreen: (() => {
+          const vis = (t) => {
+            const b = document.querySelector(`[data-testid="${t}"]`);
+            if (!b) return null;
+            const r = b.getBoundingClientRect();
+            return r.width > 0 && r.top >= 0 && r.bottom <= window.innerHeight;
+          };
+          return { done: vis('choose-reports-done'), check: vis('choose-reports-check'),
+            error: vis('choose-reports-error'), result: vis('choose-reports-result') };
+        })(),
         // The banned vocabulary, checked against what the page actually renders.
         banned: ['Broken', 'Check blast radius', 'Create probes', 'Stage removal', 'Interview', 'Coverage gaps',
           'reportPaths', 'PBIR', 'Report-aware', 'Model-only', 'azcli', 'barChart', 'Safe to remove']
@@ -296,7 +529,37 @@ for (const job of (only ? JOBS.filter((j) => j.slug.includes(only)) : JOBS)) {
     const body = await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' '));
     const expectFailed = (job.expect ?? []).filter((t) => !body.includes(t));
     const absentFailed = (job.absent ?? []).filter((t) => body.includes(t)).map((t) => 'still on screen: ' + t);
-    results.push({ slug: job.slug, desc: job.desc, png, note: note.trim(), errors, seen, expectFailed: [...expectFailed, ...absentFailed] });
+    // The checkbox claims. Text on the page cannot carry these: a tick is a property of an input, and the
+    // whole bug was a box that read empty while the list underneath said the same report was chosen.
+    const tickFailed = [];
+    for (const n of job.expectTicked ?? []) {
+      const row = (seen.discovered ?? []).find((d) => d.name.includes(n));
+      if (!row) tickFailed.push(`discovered row missing: ${n}`);
+      else if (!row.ticked) tickFailed.push(`discovered box NOT ticked: ${n}`);
+      if (!(seen.chosenRows ?? []).some((d) => d.name.includes(n))) tickFailed.push(`chosen list does not carry: ${n}`);
+    }
+    for (const n of job.expectUnticked ?? []) {
+      const row = (seen.discovered ?? []).find((d) => d.name.includes(n));
+      if (!row) tickFailed.push(`discovered row missing: ${n}`);
+      else if (row.ticked) tickFailed.push(`discovered box ticked when nothing chose it: ${n}`);
+    }
+    for (const k of job.expectOnScreen ?? []) {
+      if (seen.onScreen?.[k] !== true) tickFailed.push(`not reachable without scrolling: ${k}`);
+    }
+    if (job.expectDrawerClosed && seen.drawerOpen) tickFailed.push('the drawer is still open after Done');
+    // Exactly these rows in the report list, in this order. A filter is only proved by what it took away.
+    if (job.expectReportRows) {
+      const got = (seen.reportRows ?? []).join(' | ');
+      if (got !== job.expectReportRows.join(' | '))
+        tickFailed.push(`report rows are [${got}], expected [${job.expectReportRows.join(' | ')}]`);
+    }
+    // Which row got the use, not just whether the use is somewhere on the page.
+    if (job.expectRowVisuals) {
+      const got = (seen.reportRowVisuals ?? []).join(',');
+      if (got !== job.expectRowVisuals.join(','))
+        tickFailed.push(`visuals per report row are [${got}], expected [${job.expectRowVisuals.join(',')}]`);
+    }
+    results.push({ slug: job.slug, desc: job.desc, png, note: note.trim(), errors, seen, expectFailed: [...expectFailed, ...absentFailed, ...tickFailed] });
   } catch (e) {
     results.push({ slug: job.slug, desc: job.desc, note: (note + 'FAILED: ' + (e?.message ?? e)).trim(), errors, seen: null });
   } finally {

@@ -86,9 +86,10 @@ namespace Semanticus.Engine
 
         /// <summary>Upsert one definition by Id (a null/empty Id gets a fresh one) and rewrite the suite.
         /// Returns the stored definition (with its assigned Id) or null on failure — never throws.</summary>
-        public static TestDefinition Upsert(string dir, TestDefinition def, Func<string> newId)
+        public static TestDefinition Upsert(string dir, TestDefinition def, Func<string> newId, Action<TestDefinition> guard = null)
         {
             if (string.IsNullOrEmpty(dir) || def == null) return null;
+            Exception refused = null;
             try
             {
                 lock (Gate)
@@ -96,15 +97,24 @@ namespace Semanticus.Engine
                     var (defs, _) = LoadSuiteUnlocked(dir);
                     if (string.IsNullOrEmpty(def.Id)) def.Id = newId();
                     var i = defs.FindIndex(d => string.Equals(d.Id, def.Id, StringComparison.Ordinal));
-                    if (i >= 0) defs[i] = def; else defs.Add(def);
-                    WriteSuiteUnlocked(dir, defs);
+                    // The editor's starting point against the check as it stands inside this write. A refusal is not a failure to write: it is carried out, never swallowed.
+                    try { guard?.Invoke(i >= 0 ? defs[i] : null); }
+                    catch (InvalidOperationException e) { refused = e; }
+                    if (refused == null)
+                    {
+                        if (i >= 0) defs[i] = def; else defs.Add(def);
+                        WriteSuiteUnlocked(dir, defs);
+                    }
                 }
-                return def;
             }
             catch { return null; }
+            if (refused != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(refused).Throw();
+            return def;
         }
 
-        public static bool Remove(string dir, string id)
+        /// <summary>Remove one definition by Id. <paramref name="beforeRemove"/> sees the stored definition under the store's lock and may throw a
+        /// <see cref="StaleApprovalException"/> to refuse; every other failure still reads as false.</summary>
+        public static bool Remove(string dir, string id, Action<TestDefinition> beforeRemove = null)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(id)) return false;
             try
@@ -112,12 +122,14 @@ namespace Semanticus.Engine
                 lock (Gate)
                 {
                     var (defs, _) = LoadSuiteUnlocked(dir);
+                    var stored = defs.FirstOrDefault(d => string.Equals(d.Id, id, StringComparison.Ordinal));
+                    if (stored != null) beforeRemove?.Invoke(stored);
                     if (defs.RemoveAll(d => string.Equals(d.Id, id, StringComparison.Ordinal)) == 0) return false;
                     WriteSuiteUnlocked(dir, defs);
                     return true;
                 }
             }
-            catch { return false; }
+            catch (Exception ex) when (ex is not StaleApprovalException) { return false; }
         }
 
         // ---- run history (append-only, retention) ---------------------------------------------------

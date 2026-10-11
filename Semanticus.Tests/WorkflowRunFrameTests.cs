@@ -2182,14 +2182,17 @@ namespace Semanticus.Tests
         {
             var submit = typeof(IEngine).GetMethod(nameof(IEngine.SubmitWorkflowStepAsync));
             Assert.NotNull(submit);
-            // The fifth parameter is the optional callGate added by 4c16b391; it stays optional on the interface.
-            Assert.Equal(new[] { typeof(string), typeof(string), typeof(string), typeof(string), typeof(string) },
+            // The fifth parameter is the optional callGate added by 4c16b391; it stays optional on the interface. The
+            // sixth is lane L4's optional writes (a format-3 direct step's writes as one change, composer contract 3.4).
+            Assert.Equal(new[] { typeof(string), typeof(string), typeof(string), typeof(string), typeof(string), typeof(string) },
                 submit.GetParameters().Select(p => p.ParameterType));
             Assert.True(submit.GetParameters()[4].IsOptional, "callGate must stay optional so existing callers compile");
+            Assert.True(submit.GetParameters()[5].IsOptional, "writes must stay optional so existing callers compile");
 
             // HandOff is the ninth member, added by 4c16b391 so a parent row can carry its callee's warning.
-            // The count is asserted so a tenth member cannot arrive unnamed.
-            var names = new[] { "EffectiveStrictness", "HandOff", "Instructions", "Ops", "ProvidedAnswers", "Questions", "StepId", "Title", "VerifyKinds" };
+            // AssistantFills is the tenth (F12): the questions Semanticus reads as data, null-omitted when none.
+            // The count is asserted so an eleventh member cannot arrive unnamed.
+            var names = new[] { "AssistantFills", "EffectiveStrictness", "HandOff", "Instructions", "Ops", "ProvidedAnswers", "Questions", "StepId", "Title", "VerifyKinds" };
             Assert.Equal(names.Length, typeof(CurrentStepView).GetMembers().OfType<PropertyInfo>().Count());
             foreach (var name in names)
                 Assert.NotNull(typeof(CurrentStepView).GetProperty(name));
@@ -2224,7 +2227,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Submit_workflow_step_tool_description_teaches_ordinary_verify_self_source_inline_and_deferred()
         {
-            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStep));
+            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStepWire));   // the text agents see is on the wire tool
             Assert.NotNull(method);
             var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
             Assert.False(string.IsNullOrWhiteSpace(description));
@@ -2285,7 +2288,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Submit_workflow_step_description_teaches_the_earlier_source_setup_call()
         {
-            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStep));
+            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStepWire));   // the text agents see is on the wire tool
             var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
             Assert.Contains("earlier step", description, StringComparison.Ordinal);
             Assert.Contains("no answers", description, StringComparison.Ordinal);
@@ -2295,7 +2298,7 @@ namespace Semanticus.Tests
         [Fact]
         public void Submit_workflow_step_description_promises_first_applicable_iteration_not_index_zero()
         {
-            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStep));
+            var method = typeof(McpTools).GetMethod(nameof(McpTools.SubmitWorkflowStepWire));   // the text agents see is on the wire tool
             var description = method.GetCustomAttribute<DescriptionAttribute>()?.Description;
             Assert.Contains("first applicable iteration", description, StringComparison.Ordinal);
             Assert.DoesNotContain("#0 will return", description, StringComparison.Ordinal);

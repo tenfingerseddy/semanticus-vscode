@@ -257,23 +257,16 @@ assert.equal(model.unknownCellText(undefined), null, 'a row with no outcome is n
 assert.equal(model.unknownCellText({ actual: '1,204,112' }), null, 'a row with a number shows the number');
 
 // ===================================================================================================
-// 13. The run menu never offers a choice nobody can make. (Kane, live on the Yoga, 2026-09-15.)
+// 13. The run button never offers a choice nobody can make. (Kane, live on the Yoga, 2026-09-15; folded 8 Oct.)
 //
-// Tick boxes live only on saved-check rows, so on a model with no saved checks "Only what I ticked" was a
-// dead option and "Tick to run a subset" described a control that was not on the page.
+// Tick boxes live only on saved-check rows. The one Run button reads "Run N ticked" only while something is ticked,
+// so there is no "Only what I ticked" menu item to leave dead on a model with no saved checks, and no header line
+// that describes a control the page does not have.
 // ===================================================================================================
-assert.equal(model.tickingIsPossible(0), false, 'with no saved checks there is nothing to tick');
-assert.equal(model.tickingIsPossible(2), true);
-assert.equal(model.savedChecksHint(0), 'Save a check to run checks one at a time.',
-  'the header line must describe something the page actually has');
-assert.equal(model.savedChecksHint(1), 'Tick to run a subset.');
-assert.equal(model.tickedMenuNote(0, 3), 'Tick at least one check first. Nothing is ticked, so there is nothing to run.');
-assert.equal(model.tickedMenuNote(1, 3), '1 check ticked.', 'the menu item states the count');
-assert.equal(model.tickedMenuNote(2, 3), '2 checks ticked.');
+assert.doesNotMatch(page, /canTick|tickingIsPossible|savedChecksHint|tickedMenuNote/, 'the ticked menu item and the tick hint are gone with their helpers');
+assert.match(page, /ticked \? onRunTicked : onRunAll/, 'the one button runs the ticked checks when any are ticked, and everything otherwise');
 
-// The wiring: the option is conditional, the tick box is a labelled control, and a key pressed inside the
-// row's own controls does not reach the row.
-assert.match(page, /\{canTick && <button type="button" role="menuitem"/, 'the ticked option is offered only when ticking is possible');
+// The wiring: the tick box is a labelled control, and a key pressed inside the row's own controls does not reach the row.
 assert.match(page, /aria-label=\{`Tick \$\{def\.title\} to run on its own`\}/, 'every tick box is labelled by the check it ticks');
 assert.match(page, /if \(event\.target !== event\.currentTarget\) return;/,
   'Space on the tick box must tick it, not expand the row and cancel the tick');

@@ -26,6 +26,12 @@ Console.WriteLine($"endpoint = {endpoint}");
 Console.WriteLine($"database = {database ?? "(first/only dataset)"}");
 Console.WriteLine($"auth     = {authMode}   tenant = {tenantId ?? "(default)"}");
 
+// A probe is a throwaway run: its open_live must not be saved into the person's real ~/.semanticus (27 Sep), and
+// nothing it does, the sign-in included, may open a browser or reach the desktop session (28 Sep, round 4). So it
+// isolates FIRST: the sign-in below then uses a scratch sign-in store. A person runs it by hand against an endpoint
+// they name, to sign in as themselves, so unlike a test run it keeps their Azure CLI and device code (KeepPersons).
+SemanticusHome.IsolateForTestRun("liveprobe", CloudSignIn.KeepPersons);
+
 // 1) Acquire the token once (devicecode prints a URL+code to stderr; complete it in a browser).
 string token;
 try
@@ -133,7 +139,7 @@ try
     var cl = liveCard.Categories.FirstOrDefault(c => c.Category == "CopilotLimits");
     var offlineCl = card.Categories.FirstOrDefault(c => c.Category == "CopilotLimits");
     var scaleF = liveCard.Findings.Where(f => f.RuleId.StartsWith("SCALE-")).ToList();
-    Console.WriteLine($"      ai_readiness_scan_live: grade {liveCard.Grade} ({liveCard.Overall}); CopilotLimits score {cl?.Score:F1} appl {cl?.Applicable} viol {cl?.Violations}");
+    Console.WriteLine($"      ai_readiness_scan live=true: grade {liveCard.Grade} ({liveCard.Overall}); CopilotLimits score {cl?.Score:F1} appl {cl?.Applicable} viol {cl?.Violations}");
     // Assert the live path actually evaluated the dmv rules (CopilotLimits applicable grows beyond the offline scan).
     var dmvRan = cl != null && offlineCl != null && cl.Applicable > offlineCl.Applicable;
     Console.WriteLine($"      [{(dmvRan ? "PASS" : "FAIL")}] dmv rules ran live: CopilotLimits applicable {offlineCl?.Applicable} -> {cl?.Applicable}; SCALE-* findings {scaleF.Count}");

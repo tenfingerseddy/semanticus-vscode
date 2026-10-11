@@ -72,7 +72,7 @@ namespace Semanticus.Engine
         /// indicator / duration / bps DYNAMIC templates work on a plain measure, not just calculation items. Empty
         /// clears it (the measure falls back to its static format / model format). A non-blank expression AUTO-CLEARS
         /// any static FormatString (Analysis Services forbids both at once). Needs compatibility level 1601+. Undoable.</summary>
-        public async Task<SetResult> SetMeasureFormatExpressionAsync(string objRef, string formatExpression, string origin)
+        public async Task<SetResult> SetMeasureFormatExpressionAsync(string objRef, string formatExpression, string origin, string expectedFormatExpression = null, string expectedIdentity = null)
         {
             var s = _sessions.Require();
             var expr = string.IsNullOrWhiteSpace(formatExpression) ? null : formatExpression.Trim();
@@ -82,6 +82,7 @@ namespace Semanticus.Engine
             {
                 rev = await s.MutateAsync(origin, "set measure format expression", m =>
                 {
+                    FenceModelIdentity(s, expectedIdentity);
                     if (!(ObjectRefs.Resolve(m, objRef) is Measure me))
                         throw new InvalidOperationException($"{objRef} is not a measure: pass a 'measure:Table/Name' ref; run list_measures to see the model's measures. (This sets a DYNAMIC format string; for a static literal use set_measure_format.)");
                     // A measure dynamic format string (FormatStringDefinition) needs CL 1601+ (verified vs the MS TMDL docs:
@@ -95,6 +96,7 @@ namespace Semanticus.Engine
                         RefuseDaxForWrite(v, expr, "this format expression");
                     }
                     var before = me.FormatStringExpression;
+                    GuardExpectedValue("format expression", expectedFormatExpression, before, expr);   // the grid's starting point against what is live NOW, in this turn
                     if (!string.Equals(before ?? string.Empty, expr ?? string.Empty, StringComparison.Ordinal))
                     {
                         me.FormatStringExpression = expr;   // wrapper auto-clears the static FormatString when non-blank

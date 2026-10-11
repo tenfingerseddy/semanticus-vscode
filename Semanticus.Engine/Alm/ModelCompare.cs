@@ -675,9 +675,30 @@ namespace Semanticus.Engine
             var existing = ResolveChild(children(rt), it.TargetTag, childHasIdentity ? null : (it.TargetName ?? it.Name));
             if (existing == null && childHasIdentity)
                 throw new InvalidOperationException($"the object this change targeted (lineage '{it.TargetTag}') no longer exists on the target: re-diff against the current model");
+            // A relationship holds the COLUMN OBJECT, not its name. Removing the old column leaves each relationship that used
+            // it pointing at a removed object, and the model then serializes that end as "from" / "to" (not fromTable and
+            // fromColumn), which the next read of the file refuses: "Unrecognized JSON property: from". So take the ends
+            // before the removal and point them at the clone after it.
+            var ends = existing is TOM.Column oldColumn ? RelationshipEndsOn(right, oldColumn) : null;
             if (existing != null) remove(rt, existing.Name);
-            add(rt, CloneNamed(lo, children(rt)));   // children(rt) is post-removal — the collision check sees the current state
+            var added = CloneNamed(lo, children(rt));   // children(rt) is post-removal — the collision check sees the current state
+            add(rt, added);
+            if (ends != null && added is TOM.Column newColumn)
+                foreach (var (relationship, isFromEnd) in ends)
+                    if (isFromEnd) relationship.FromColumn = newColumn; else relationship.ToColumn = newColumn;
             return true;
+        }
+
+        // The relationships of a model that use a column, and which end (true = the from end).
+        private static List<(TOM.SingleColumnRelationship relationship, bool isFromEnd)> RelationshipEndsOn(TOM.Model model, TOM.Column column)
+        {
+            var ends = new List<(TOM.SingleColumnRelationship, bool)>();
+            foreach (var relationship in model.Relationships.OfType<TOM.SingleColumnRelationship>())
+            {
+                if (ReferenceEquals(relationship.FromColumn, column)) ends.Add((relationship, true));
+                if (ReferenceEquals(relationship.ToColumn, column)) ends.Add((relationship, false));
+            }
+            return ends;
         }
 
         private static bool ApplyTopLevel(IEnumerable<TOM.NamedMetadataObject> leftColl, IEnumerable<TOM.NamedMetadataObject> rightColl, ModelDiffItem it,
@@ -1002,11 +1023,15 @@ namespace Semanticus.Engine
             return ("{}", root.ToString(Newtonsoft.Json.Formatting.None));
         }
 
-        internal static (string Supplement, string Residual) LiveColumnState(TOM.Column column)
+        internal static (string Supplement, string Residual) LiveColumnState(TOM.Column column, bool marksCarried = false)
         {
             var root = ParseObject(Ser(column));
+            // marksCarried: the caller sets the key mark and the default-label mark itself (a matched column on a live push).
+            if (marksCarried) Remove(root, "isKey", "isDefaultLabel");
             Remove(root, "type", "name", "description", "isHidden", "dataCategory", "formatString",
                 "displayFolder", "summarizeBy", "expression", "lineageTag", "changedProperties", "annotations",
+                // isAvailableInMdx is carried like isHidden (LiveDeploy sets it on a matched column and on a new one).
+                "isAvailableInMdx",
                 // sortByColumn is CARRIED by the deploy's dedicated sort-by pass (bound to the LIVE column by identity),
                 // so it is not an uncarried residual — a new column with a sort-by must not be refused, and a matched
                 // column's sort-by drift is reported by the sort-by pass, not double-reported as "cannot sync".

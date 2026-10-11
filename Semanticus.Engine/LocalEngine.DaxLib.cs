@@ -10,9 +10,9 @@ namespace Semanticus.Engine
     /// <summary>
     /// The DaxLib UDF package-manager ops (Studio v2 Advanced Modelling, 6th area) — dual-drive (RPC + MCP), the same
     /// as every other capability. Browse/versions/info are anonymous READ-ONLY network calls (no session, no model
-    /// needed); install/uninstall/list operate on the open model. All six belong to Advanced Modelling, which is a
-    /// Pro feature as a whole, reads included (Kane 2026-09-15). install authors many UDFs as one atomic, undoable
-    /// transaction.
+    /// needed); install/uninstall/list operate on the open model. All six belong to Advanced modelling, which is
+    /// FREE on every tier since 22 September 2026 (Kane: free is the tool, Pro is the tool that works for you).
+    /// install authors many UDFs as one atomic, undoable transaction.
     /// All network I/O happens BEFORE the model lock — <see cref="ModelSession.MutateAsync"/> only ever runs synchronous
     /// TOM mutation. Once installed, the functions are ordinary TOM UDFs with no runtime DaxLib dependency.
     /// </summary>
@@ -22,19 +22,16 @@ namespace Semanticus.Engine
 
         public Task<DaxLibPackage[]> DaxLibSearchAsync(string text, int skip, int take)
         {
-            RequireProFeature();
             return DaxLibRest.SearchAsync(text, skip, take, DaxLibCt);
         }
 
         public Task<string[]> DaxLibVersionsAsync(string id)
         {
-            RequireProFeature();
             return DaxLibRest.VersionsAsync(id, DaxLibCt);
         }
 
         public async Task<DaxLibPackageDetail> DaxLibPackageInfoAsync(string id, string version)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
             var ver = await ResolveVersionAsync(id, version, DaxLibCt).ConfigureAwait(false);
             DaxLibMetadata meta = null;
@@ -63,7 +60,6 @@ namespace Semanticus.Engine
 
         public async Task<DaxLibInstallResult> DaxLibInstallAsync(string id, string version, bool replaceExisting, string origin)
         {
-            RequireProFeature();
             // One atomic, undoable batch.
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_search finds packages and returns the id to pass here.");
 
@@ -72,11 +68,45 @@ namespace Semanticus.Engine
 
             // Resolve the whole dependency graph (deps-first) + fetch/parse all content OFF the model lock.
             var plan = await BuildInstallPlanAsync(id, ver, DaxLibCt).ConfigureAwait(false);
+            // the package as the registry served it when the person was asked: install what THIS fetch holds only if it is that
+            RequireApprovedBasis(nameof(DaxLibInstallAsync), DaxLibPlanBasis(plan.Packages), "package");
 
             var installedRefs = new List<string>();
             var skipped = new List<string>();
             var depsInstalled = new List<string>();
             var warnings = plan.Warnings;
+
+            // Everything already here and nothing to replace: there is nothing to write. Going ahead anyway made a
+            // new revision for an empty change and re-stamped who installed the package (UAT-S05b-1-005), so a
+            // no-op returns before any write, on the current revision.
+            if (!replaceExisting)
+            {
+                var noop = await s.ReadAsync(m =>
+                {
+                    if (m.Database == null || m.Database.CompatibilityLevel < 1702) return null;
+                    var prov = DaxLibStore.Load(m);
+                    var names = new List<string>();
+                    foreach (var pkg in plan.Packages)
+                    {
+                        if (DaxLibStore.Find(prov, pkg.PackageId) == null) return null;
+                        foreach (var fn in pkg.Functions)
+                        {
+                            if (!m.Functions.Any(x => string.Equals(x.Name, fn.Name, StringComparison.OrdinalIgnoreCase))) return null;
+                            names.Add(fn.Name);
+                        }
+                    }
+                    return names;
+                }).ConfigureAwait(false);
+                if (noop != null)
+                    return new DaxLibInstallResult
+                    {
+                        Revision = s.Revision,
+                        Functions = Array.Empty<string>(),
+                        Skipped = noop.ToArray(),
+                        DependenciesInstalled = Array.Empty<string>(),
+                        Warning = warnings.Count > 0 ? string.Join("; ", warnings) : null,
+                    };
+            }
 
             var rev = await s.MutateAsync(origin, $"Install DaxLib package {id} {ver}", m =>
             {
@@ -96,6 +126,7 @@ namespace Semanticus.Engine
                 foreach (var pkg in plan.Packages)
                 {
                     var fnNames = new List<string>();
+                    var added = 0;
                     foreach (var fn in pkg.Functions)
                     {
                         var existing = m.Functions.FirstOrDefault(x => string.Equals(x.Name, fn.Name, StringComparison.OrdinalIgnoreCase));
@@ -113,7 +144,11 @@ namespace Semanticus.Engine
                         f.SetAnnotation("DAXLIB_PackageVersion", pkg.Version);
                         installedRefs.Add(ObjectRefs.For(f));
                         fnNames.Add(fn.Name);
+                        added++;
                     }
+                    // A package this install added nothing to keeps the record of whoever really installed it and
+                    // when: re-stamping it would say this caller installed functions it only skipped.
+                    if (added == 0 && DaxLibStore.Find(prov, pkg.PackageId) != null) continue;
                     DaxLibStore.Add(prov, new DaxLibInstalledRecord
                     {
                         PackageId = pkg.PackageId,
@@ -141,7 +176,6 @@ namespace Semanticus.Engine
 
         public Task<DaxLibInstalledRecord[]> DaxLibListInstalledAsync()
         {
-            RequireProFeature();
             var s = _sessions.Require();
             return s.ReadAsync(m => DaxLibStore.Load(m).ToArray());
         }
@@ -150,7 +184,6 @@ namespace Semanticus.Engine
         // free; trapping installed UDFs behind a paywall would be hostile, like un-waiving a finding is never gated).
         public async Task<SetResult> DaxLibUninstallAsync(string id, string origin)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("A package id is required: daxlib_list_installed shows the packages recorded in this model and their ids.");
             var s = _sessions.Require();
             var changed = false;

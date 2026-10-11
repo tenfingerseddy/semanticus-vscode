@@ -1,0 +1,16 @@
+{
+ "point": "date.table",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "rule": "Jev decides the date table for Pro (DateTableFamily.JevDecides = true) only when ALL of these hold on the ANSWERABLE labelled models (a model is answerable when its labelled table is one of the options the engine offered, or the label is generate or none): (1) Jev's decision is right on at least jevMin of them; (2) Jev is right on strictly more of them than the shipped rule; (3) Jev is right on at least as many as the name rule; (4) at most harmfulMax of Jev's KEPT lines (sure or likely) mark an existing table that is not the labelled one. A decision is right when the chosen option is the label (or in alsoOk) and, for a table or generate, the mark answer is the labelled one. An ask that came back undecided counts as Jev's miss. Unanswerable models are reported apart and count for nobody.",
+ "jevMin": 0.85,
+ "beatShippedRule": true,
+ "notBelowNameRule": true,
+ "harmfulMax": 1,
+ "confidenceBar": 0.85,
+ "shippedRule": "What the Plan does today (LocalEngine.Plan.cs, DateTableItem): the date table is needed only when DATE-MARK fires (the model's DAX uses time intelligence and no table is marked). Then PlanDateMark names the one table and date column the DAX reads on a table that is not the many side of a relationship, and marks it. Needed with no such table leaves the choice to the person, which counts as no decision. Not needed is 'none'.",
+ "nameRule": "The pilot's two-word rule over the engine's own options (docs/redesign/jev-pilot-verdict.md): pick the offered table whose name contains 'date' or 'calendar' (ignoring case; an exact 'Date' or 'Calendar' first, then the shortest name, then alphabetical) and mark it. With no such table: 'generate' when the model's DAX uses time intelligence, or a table on the many side of a relationship, or a table with no relationships, has a date column; otherwise 'none'.",
+ "split": "heldout",
+ "labels": "heldout-labels.json",
+ "note": "Round 2, the gate. Round 1 (labels.json with bar.json) failed its bar: every table choice was right, and every miss was the mark answer on 'generate' (Jev read 'the chosen date table should be marked' as not applying to a table that does not exist yet). The mark question was reworded to cover a new table too, then this held-out set and this bar (the same thresholds as round 1) were committed before any round 2 answer. Round 1 is development evidence and can never be the gate."
+}

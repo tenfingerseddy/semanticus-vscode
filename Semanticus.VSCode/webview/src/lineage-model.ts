@@ -61,6 +61,40 @@ function sharedSource(scope: ReportScope): string | null {
 const latestCheck = (scope: ReportScope) =>
   scope.reports.map((r) => r.checkedWhenUtc).filter(Boolean).sort().reverse()[0] ?? scope.checkedWhenUtc;
 
+/**
+ * The ONE place a published report's choice key is spelled, and it must stay the only one. The engine builds
+ * the same string (LocalEngine.ReportScope.cs, the "published:" + workspaceId + "/" + reportId line) and both
+ * lists in the Choose reports drawer are keyed by it.
+ *
+ * Kane's 1.2.0 bug lived here. The discovered list rendered its tick from the RAW Fabric report id while the
+ * chosen list and the selection used this key, so on a real workspace (GUID ids) a ticked report showed an
+ * empty box in one list and a ticked box in the other, about the same report. The slug fixtures could not
+ * show it because nothing there made the two strings differ in a way anybody noticed.
+ */
+export function publishedChoiceId(workspaceId: string | undefined, reportId: string): string {
+  return `published:${(workspaceId ?? '').trim()}/${reportId}`;
+}
+
+/**
+ * What the drawer says the moment a check comes back. A press that changes nothing a person can see is the
+ * same as a press that did nothing, which is exactly what Kane reported: the reading happened and the drawer
+ * never said so. An engine note wins, because the engine knows things the page does not.
+ */
+export function checkOutcomeSentence(scope: ReportScope, askedIds: string[], _opts?: TimeOpts): string {
+  if (scope.note) return scope.note;
+  const asked = new Set(askedIds);
+  const rows = scope.reports.filter((r) => asked.has(r.id));
+  if (rows.length === 0) return `Nothing was read. None of those reports are on this model's list any more.`;
+  const read = rows.filter((r) => r.state === 'checked');
+  const partly = rows.filter((r) => r.state === 'couldNotBeFullyChecked');
+  const unread = rows.filter((r) => r.state === 'notChecked' || r.state === 'needsChecking');
+  const parts: string[] = [];
+  if (read.length > 0) parts.push(`Read ${plural(read.length, 'report')}.`);
+  if (partly.length > 0) parts.push(`${names(partly.map((r) => r.name))} could not be fully read.`);
+  if (unread.length > 0) parts.push(`${names(unread.map((r) => r.name))} ${unread.length === 1 ? 'was' : 'were'} not read.`);
+  return parts.length > 0 ? parts.join(' ') : 'Nothing was read.';
+}
+
 // ---- 1. the reports row ----------------------------------------------------------------------------
 /**
  * The five states Astra's table requires, as a headline plus the detail under it. The headline is the
@@ -154,6 +188,187 @@ export function noUseSentence(name: string, scope: ReportScope, hits: string[] |
   return `${name} or something that depends on it appears in `
     + `${hitCount === 1 ? '1 checked report' : `${hitCount} checked reports`}`
     + (hitNames.length ? ` (${names(hitNames)})` : '') + '.' + otherSentence + suffix;
+}
+
+// ---- 1b. the reports row, opened up --------------------------------------------------------------
+//
+// Kane, on his own workspace, 16 September: "there is no way to view which reports are impacted and by
+// what. The IN REPORTS still shows choose reports and there's no expand to view." The headline answered
+// the question and then stopped. Everything the engine already knew about each report - which workspace
+// it came from, whether it was read, why it could not be, which pages and visuals it shows the field on -
+// reached the page and was never drawn. These functions turn that into one row per report.
+//
+// The headline stays the answer. This is the evidence under it, and it obeys the same honesty rules:
+// a report that could not be fully read is NEVER given a "no use found" line, because nobody established
+// that; a hit about a report the list does not name is kept rather than dropped.
+
+export interface ReportVisualHit {
+  page: string; visual?: string | null; visualKind?: string; visualKindId?: string;
+  usedRefs?: string[]; viaDependent?: boolean;
+}
+export interface ReportHit {
+  path: string; name: string;
+  /** The stable choice id of the report this hit came from. The engine sends it on both doors; it is the
+   * ONLY thing a hit may be joined back to a chosen report by. Two chosen reports in different workspaces
+   * can share a display name, and joining by name then hands one report's hit to the other. */
+  choiceId?: string;
+  visuals: number; usedRefs?: string[]; details?: ReportVisualHit[];
+  /** How many matching visuals the engine counted but did not list. The detail list is capped. */
+  detailsOmitted?: number;
+}
+
+export interface ReportRow {
+  id: string; name: string; source: string; state: ReportState;
+  /** "Checked at 9:41 AM", "Could not be fully checked", "Needs checking again", "Not checked". */
+  stateWords: string;
+  /** Why this is not a clean check, in the ENGINE's own words. Null when nothing went wrong. */
+  cause: string | null;
+  /** The one thing a person can do about it. Null when there is nothing to do. */
+  next: string | null;
+  /** What the reading established about THIS field. Only ever set for a report that was fully read. */
+  finding: string | null;
+  /** The pages and visuals this report shows the field through. */
+  details: ReportVisualHit[];
+  /** How many more matching visuals exist than this row lists. Zero when the list is the whole of it. */
+  detailsOmitted: number;
+}
+
+/** The page never invents a cause. When the engine did not record one, the row says that instead. */
+export const CAUSE_NOT_RECORDED = 'This report could not be fully read, and the reason was not recorded.';
+export const STALE_CAUSE = 'The model changed after this report was read.';
+
+/** A long visual list stays bounded like the model list does, and every visual is still reachable. */
+export const VISUAL_PAGE_SIZE = 10;
+
+/** What a report says about a field it uses with no visual behind it. A reference in a bookmark, a report
+ * filter or a page-level setting is a real use, and it has no page and no visual to show for it. The row
+ * used to fall through to "no use found", which contradicted the summary sitting right above it. */
+export const usedAtReportLevel = (fieldName: string) =>
+  `${fieldName} is used in this report, but not on any page. It is in a bookmark, a filter, or a report setting.`;
+
+/** The line after the last listed visual when the engine had more matches than it could send. Null when
+ * every match is listed, so the page never prints a nothing. */
+export function omittedLine(omitted: number): string | null {
+  if (!omitted || omitted < 1) return null;
+  return omitted === 1 ? 'and 1 more match is not listed' : `and ${omitted} more matches are not listed`;
+}
+
+/** A published choice id read back apart: "published:<workspaceId>/<reportId>". The workspace id never
+ * contains a slash, so the FIRST slash after the prefix is the split. Null for anything else. */
+export function publishedCoordinates(id: string | undefined): { workspaceId: string; reportId: string } | null {
+  const raw = (id ?? '').trim();
+  if (!raw.startsWith('published:')) return null;
+  const rest = raw.slice('published:'.length);
+  const cut = rest.indexOf('/');
+  if (cut < 1 || cut === rest.length - 1) return null;
+  return { workspaceId: rest.slice(0, cut), reportId: rest.slice(cut + 1) };
+}
+
+/**
+ * One chosen report as set_report_scope takes it. EVERY path that writes the list back goes through here:
+ * untick, exclude, add, folder.
+ *
+ * A published report is only findable again by its workspace and its report id, and the page rebuilds each
+ * save from rows the engine sent. When those rows did not carry the coordinates, taking one of several
+ * chosen reports off the list saved the survivors without them, and the next check looked for each of them
+ * under an empty workspace with its display name where the report id belongs. The engine sends them now;
+ * the fallback reads them back out of the row's own id so one missing field can never lose a report again.
+ */
+/** The list of reports a save sends. The controls build `next` from the list the page drew (`shown`); the person's change is
+ *  the difference between the two, and it is applied to the list as it stands now (`live`), so a report the assistant added
+ *  or took off since the page drew is not undone by an older copy (UAT stale-copy class). */
+export function scopeChange(shown: ScopeReport[], live: ScopeReport[], next: ScopeReport[]): ScopeReport[] {
+  const had = new Set(shown.map((r) => r.id));
+  const want = new Set(next.map((r) => r.id));
+  const kept = live.filter((r) => !(had.has(r.id) && !want.has(r.id)));
+  const keptIds = new Set(kept.map((r) => r.id));
+  return [...kept, ...next.filter((r) => !had.has(r.id) && !keptIds.has(r.id))];
+}
+
+export function scopeChoice(r: ScopeReport): Record<string, string | undefined> {
+  if (r.kind !== 'published') return { id: r.id, kind: 'local', name: r.name, path: r.source };
+  const parsed = publishedCoordinates(r.id);
+  return {
+    id: r.id, kind: 'published', name: r.name,
+    workspaceId: r.workspaceId ?? parsed?.workspaceId,
+    workspaceName: r.source,
+    reportId: r.reportId ?? parsed?.reportId,
+  };
+}
+
+export function showAllReportsLabel(scope: ReportScope): string {
+  return `Show all ${plural(scope?.listed ?? 0, 'report')}`;
+}
+
+function reportRow(r: Partial<ScopeReport> & { state: ReportState }, hit: ReportHit | null,
+  fieldName: string, opts: TimeOpts): ReportRow {
+  const when = r.checkedWhenUtc;
+  const note = (r.note ?? '').trim();
+  const stateWords =
+    r.state === 'checked' ? (when ? `Checked at ${opts.time(when)}` : 'Checked')
+      : r.state === 'couldNotBeFullyChecked' ? 'Could not be fully checked'
+      : r.state === 'needsChecking' ? 'Needs checking again'
+      : 'Not checked';
+  const cause =
+    r.state === 'couldNotBeFullyChecked' ? (note || CAUSE_NOT_RECORDED)
+      : r.state === 'needsChecking' ? (note || STALE_CAUSE)
+      : null;
+  const next =
+    r.state === 'couldNotBeFullyChecked'
+      ? 'Check it again. If it keeps coming back this way, take it off the list so the answer does not rest on it.'
+      : r.state === 'needsChecking' ? 'Check it again.'
+      : r.state === 'notChecked' ? 'Check it to find out whether it uses this field.'
+      : null;
+  const details = hit?.details ?? [];
+  // "No use found" is a claim about the ABSENCE of a hit, and nothing else. A hit with no visual behind it
+  // is a report-level use - a bookmark, a filter, a page-level setting - and reading it as "nothing found"
+  // contradicted the summary directly above it, which said the report uses the field. Only a clean reading
+  // may say no use found at all: a report read as far as it could be read established nothing about the
+  // part nobody could see.
+  const finding = hit
+    ? (details.length > 0 || (hit.visuals ?? 0) > 0 ? null : usedAtReportLevel(fieldName))
+    : r.state === 'checked' ? `No use of ${fieldName} found in this report.`
+      : null;
+  return {
+    id: r.id ?? r.name ?? '', name: r.name ?? '', source: r.source ?? '',
+    state: r.state, stateWords, cause, next, finding, details,
+    detailsOmitted: hit?.detailsOmitted ?? 0,
+  };
+}
+
+/**
+ * One row per chosen report, with the hits the assessment found joined onto it.
+ *
+ * The join is BY CHOICE ID, and never by name. Two chosen reports in different workspaces can share a
+ * display name: the name join put both under one key, lost one hit, and gave the survivor to whichever
+ * same-named row came first, so two rows were then wrong about two different reports. Both doors hold both
+ * arrays: impact_assessment returns `checked.reports` and `reportImpact` side by side, each hit carrying
+ * the choice id of the row it belongs to, so the assistant makes exactly this join and sees these facts.
+ */
+export function reportRows(scope: ReportScope, hits: ReportHit[], fieldName: string, opts: TimeOpts): ReportRow[] {
+  const byId = new Map<string, ReportHit>();
+  for (const h of hits ?? []) {
+    const key = (h?.choiceId ?? '').trim();
+    if (key) byId.set(key, h);
+  }
+  const rows = (scope?.reports ?? []).map((r) => {
+    const key = (r.id ?? '').trim();
+    const hit = (key && byId.get(key)) || null;
+    if (hit) byId.delete(key);
+    return reportRow(r, hit, fieldName, opts);
+  });
+  // A hit about a report this list does not carry is still a hit, and so is one that arrived with no choice
+  // id at all. Dropping either to keep the join tidy is the one thing this expansion exists to stop.
+  const orphans = [...byId.values(), ...(hits ?? []).filter((h) => h && !(h.choiceId ?? '').trim())];
+  for (const h of orphans)
+    rows.push(reportRow({ id: h.choiceId || h.path || h.name, name: h.name, source: '', state: 'checked' }, h, fieldName, opts));
+  return rows;
+}
+
+export function filterReportRows(rows: ReportRow[], filter: string): ReportRow[] {
+  const needle = (filter ?? '').trim().toLowerCase();
+  if (!needle) return rows ?? [];
+  return (rows ?? []).filter((r) => `${r.name} ${r.source} ${r.stateWords}`.toLowerCase().includes(needle));
 }
 
 // ---- 2. the strip ----------------------------------------------------------------------------------
@@ -277,16 +492,24 @@ export function removalBlock(impact: ImpactShape): string | null {
     : `These ${noun} need ${it}. Update or remove them before deleting it.`;
 }
 
-export const PROPOSE_NOTE = 'This adds a proposal to Changes > Proposed. The field stays until you apply the proposal.';
+export const PROPOSE_NOTE = 'This adds a change to Changes > Pending changes. The field stays until you apply it.';
 
 // ---- 5. cleanup ------------------------------------------------------------------------------------
-/** The three groups. The engine's verdict tokens never reach the screen; the label says what was
- * established, and none of them says "safe". */
+/** The four groups. The engine's verdict tokens never reach the screen; the label says what was
+ * established, and none of them says "safe". A visible column of a dimension table that nothing in the
+ * model uses gets its own group: people filter and group by it, so a sweep never takes it. */
 export const CLEANUP_GROUPS: { id: string; verdict: string; label: string }[] = [
   { id: 'noUse', verdict: 'safe', label: 'No use found in these checks' },
   { id: 'used', verdict: 'usedByUnusedOnly', label: 'Still used' },
   { id: 'check', verdict: 'caution', label: 'Needs checking' },
+  { id: 'attribute', verdict: 'visibleAttribute', label: 'Visible attribute, no model reference' },
 ];
+
+/** A candidate this list never sweeps, so it cannot be ticked here. It is NOT a refusal: open the field and
+ * Propose removal still removes it, which is why the row must never say removal is not offered. */
+export function cleanupTickable(item: CleanupItem): boolean {
+  return item?.verdict !== 'visibleAttribute';
+}
 
 export function cleanupGroups(items: CleanupItem[]): { id: string; label: string; items: CleanupItem[] }[] {
   return CLEANUP_GROUPS
@@ -307,6 +530,8 @@ export function cleanupHeadline(items: CleanupItem[], scope: ReportScope): strin
     `${list.filter((i) => i.verdict === 'usedByUnusedOnly').length} still used`,
     `${list.filter((i) => i.verdict === 'caution').length} needing review`,
   ];
+  const attributes = list.filter((i) => i.verdict === 'visibleAttribute').length;
+  if (attributes > 0) parts.push(`${attributes} visible ${attributes === 1 ? 'attribute' : 'attributes'} kept`);
   return `${plural(list.length, 'candidate')}: ${parts.join(', ')} · ${basis}`;
 }
 
@@ -315,7 +540,7 @@ export function proposeSelectedLabel(n: number): string {
 }
 
 export const CLEANUP_CAVEAT =
-  'A report that was not checked could still use one of these. The proposal is rechecked against the same reports when you apply it.';
+  'A report that was not checked could still use one of these. The change is rechecked against the same reports when you apply it.';
 
 // ---- 6. add a check --------------------------------------------------------------------------------
 export type AddCheckPlan =

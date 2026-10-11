@@ -84,6 +84,9 @@ namespace Semanticus.Engine
         {
             public Dictionary<string, ResolvedWorkflowFile> Files = new Dictionary<string, ResolvedWorkflowFile>(StringComparer.Ordinal);
             public Dictionary<string, string> RequiredStockRevisions = new Dictionary<string, string>(StringComparer.Ordinal);
+            /// <summary>Required stock workflows whose saved definition this install no longer ships, with the reason.
+            /// Only that name is unavailable: every other workflow still reads, lists and runs (UAT-S02-j3-004).</summary>
+            public Dictionary<string, string> Unavailable = new Dictionary<string, string>(StringComparer.Ordinal);
         }
 
         private static string WorkflowSettingsFileFor(string userDir) =>
@@ -159,9 +162,20 @@ namespace Semanticus.Engine
             WorkflowRevisionFallback fallback,
             Dictionary<string, string> users,
             Dictionary<string, string> current,
-            Dictionary<string, string[]> compatible)
+            Dictionary<string, string[]> compatible,
+            Dictionary<string, string> unavailable = null)
         {
             var selected = new Dictionary<string, ResolvedWorkflowFile>(StringComparer.Ordinal);
+
+            // A pin that no longer resolves throws for the callers that WRITE pins (they must not persist a guess).
+            // A library read passes `unavailable` instead: the name is recorded with its reason and left out, never
+            // replaced by today's file, so one stale pin cannot take every other workflow down with it.
+            string Unavailable(string name, string message)
+            {
+                if (unavailable == null) throw new InvalidOperationException(message);
+                unavailable[name] = message;
+                return null;
+            }
             var visited = new HashSet<string>(StringComparer.Ordinal);
             var visiting = new HashSet<string>(StringComparer.Ordinal);
 
@@ -172,7 +186,7 @@ namespace Semanticus.Engine
                 if (compatible.TryGetValue(name, out var paths))
                     foreach (var path in paths)
                         if (string.Equals(WorkflowRevision(path), revision, StringComparison.Ordinal)) return path;
-                throw new InvalidOperationException($"Required workflow '{name}' is pinned to stock revision '{revision}', but that revision is unavailable. Restore the shipped workflow compatibility files or select the binding/profile again.");
+                return Unavailable(name, $"Required workflow '{name}' is pinned to stock revision '{revision}', but that revision is unavailable. Restore the shipped workflow compatibility files or select the binding/profile again.");
             }
 
             void Visit(string name)
@@ -182,7 +196,7 @@ namespace Semanticus.Engine
                 {
                     string path;
                     string source;
-                    if (users.TryGetValue(name, out path)) source = "user";  // a project copy still wins outright
+                    if (users.TryGetValue(name, out path)) source = "user";  // an EXISTING project copy still wins outright; creating one is refused (WouldShadowRequiredWorkflow)
                     else
                     {
                         source = "stock";
@@ -195,12 +209,15 @@ namespace Semanticus.Engine
                             // Shipped today but missing from the compatibility set means the install was stripped,
                             // and silently handing back the NEW definition is the exact swap this exists to prevent.
                             if (path == null && current.ContainsKey(name))
-                                throw new InvalidOperationException($"Required workflow '{name}' comes from a saved pre-redesign binding, but its v1.1.3 compatibility definition is unavailable. Restore the shipped compatibility files before running it.");
+                                path = Unavailable(name, $"Required workflow '{name}' comes from a saved pre-redesign binding, but its v1.1.3 compatibility definition is unavailable. Restore the shipped compatibility files before running it.");
                         }
                         // Current. A settings file that already carries a revision map got one written for every
                         // required STOCK name, so a name missing from it was user-shadowed at that moment and never
-                        // chose a pre-redesign definition. Today's file is the honest answer.
-                        else current.TryGetValue(name, out path);
+                        // chose a pre-redesign definition. Today's file is the honest answer. For a PARKED starter
+                        // (contract 21.2) today's file is its park freeze: the last bytes that shipped as stock.
+                        else if (!current.TryGetValue(name, out path)) path = ParkedFreeze(name, compatible);
+
+                        if (unavailable != null && unavailable.ContainsKey(name)) return;
 
                         // No file anywhere: a dangling binding entry (a deleted project workflow, or a settings
                         // file edited by hand). It resolved to nothing before pinning existed and still does --
@@ -230,10 +247,10 @@ namespace Semanticus.Engine
             var settings = ReadWorkflowResolutionSettings(WorkflowSettingsFileFor(userDir));
             var roots = RequiredWorkflowNames(settings);
             var hasPins = ReadRequiredWorkflowRevisions(settings, out var pins);
+            var result = new ResolvedWorkflowLibrary();
             var required = ResolveRequiredStockFiles(roots, pins,
                 hasPins ? WorkflowRevisionFallback.Current : WorkflowRevisionFallback.Baseline,
-                users, current, compatible);
-            var result = new ResolvedWorkflowLibrary();
+                users, current, compatible, result.Unavailable);
             foreach (var item in current)
                 result.Files[item.Key] = new ResolvedWorkflowFile { Path = item.Value, Source = "stock", Revision = WorkflowRevision(item.Value) };
             foreach (var item in required)
@@ -241,9 +258,130 @@ namespace Semanticus.Engine
                 result.Files[item.Key] = item.Value;
                 result.RequiredStockRevisions[item.Key] = item.Value.Revision;
             }
+            // An unavailable required definition is never stood in for by today's stock file of that name.
+            foreach (var name in result.Unavailable.Keys) result.Files.Remove(name);
             foreach (var item in users)
                 result.Files[item.Key] = new ResolvedWorkflowFile { Path = item.Value, Source = "user" };
+            foreach (var name in users.Keys) result.Unavailable.Remove(name);   // an existing project copy wins outright
             return result;
+        }
+
+        /// <summary>Contract 21.2 (lane W3): the seven starters parked when the composer shipped. Each was frozen into
+        /// workflows-compat/<see cref="ParkedWorkflowRelease"/> before it left the stock shelf, so a binding pinned to
+        /// it keeps resolving (and a team rule that requires it, such as Consulting delivery's add-relationship, keeps
+        /// its definition). An UNPINNED call by name gets the replacement's sentence instead of "not found".</summary>
+        private const string ParkedWorkflowRelease = "v1.2.2";
+
+        private const string ParkedStillRuns = " A team rule that already requires it keeps running its saved version.";
+        private const string ParkedForThePlan = "the Plan does this now. Ask your assistant to plan it (propose_plan), or add it to the Plan yourself.";
+        // Since cf1b8539 the steps New in Workflows describes carry their templates' checks (DescribedStep.Checks, the
+        // checks the parked starters ran), so both places are said to carry them (C7).
+        private const string ParkedForDescribeIt = "Describe the task in words instead. On the Plan, or through compose_task from your assistant, it becomes a draft that runs its own checks. In Workflows, New turns the words into steps in Author, and each step Semanticus knows carries its checks.";
+
+        private static readonly Dictionary<string, string> ParkedWorkflowReplacements = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["model-hygiene-pass"] = ParkedForThePlan,
+            ["make-ai-ready"] = ParkedForThePlan,
+            ["new-measure"] = ParkedForDescribeIt,
+            ["import-table"] = ParkedForDescribeIt,
+            ["add-relationship"] = ParkedForDescribeIt,
+            ["calendar-setup"] = "the calendar generator does this now: Advanced modelling, Calendars, or define_calendar_from_template from your assistant.",
+            ["time-intelligence-variants"] = "the time intelligence generator does this now: generate_time_intelligence makes the comparisons for one measure.",
+        };
+
+        /// <summary>The park freeze of <paramref name="name"/>, or null when it is not a parked starter.</summary>
+        private static string ParkedFreeze(string name, Dictionary<string, string[]> compatible)
+        {
+            if (name == null || !ParkedWorkflowReplacements.ContainsKey(name) || !compatible.TryGetValue(name, out var paths)) return null;
+            return paths.FirstOrDefault(p => string.Equals(Path.GetFileName(Path.GetDirectoryName(p)), ParkedWorkflowRelease, StringComparison.Ordinal));
+        }
+
+        /// <summary>The teaching sentence for a parked starter's name, or null for any other name. Callers use it only
+        /// once the name failed to resolve, so a project copy or a pinned binding of that name always wins.</summary>
+        private static string ParkedWorkflowSentence(string name)
+        {
+            var key = name?.Trim();
+            if (string.IsNullOrEmpty(key) || !ParkedWorkflowReplacements.TryGetValue(key, out var replacement)) return null;
+            return $"'{key}' is no longer a starter workflow: {replacement}{ParkedStillRuns}";
+        }
+
+        /// <summary>"Not found" for a workflow name, unless the name is a parked starter, which teaches its replacement.</summary>
+        private static InvalidOperationException WorkflowNotFound(string name, string notFound) =>
+            new InvalidOperationException(ParkedWorkflowSentence(name) ?? notFound);
+
+        /// <summary>Hand-off findings that name a parked starter as an unknown callee, reworded to teach its
+        /// replacement. Every other finding passes through unchanged.</summary>
+        internal static List<CheckFinding> TeachParkedCallees(IEnumerable<CheckFinding> findings) =>
+            (findings ?? Enumerable.Empty<CheckFinding>()).Select(f =>
+            {
+                var m = f?.Message == null ? null : UnknownCallee.Match(f.Message);
+                var sentence = m != null && m.Success ? ParkedWorkflowSentence(m.Groups[2].Value) : null;
+                return sentence == null ? f : new CheckFinding { Severity = f.Severity, Message = m.Groups[1].Value + sentence };
+            }).ToList();
+
+        // WorkflowParser's unknown-callee finding: "<step> call workflow '<name>' is not a workflow this library holds. ..."
+        private static readonly System.Text.RegularExpressions.Regex UnknownCallee = new System.Text.RegularExpressions.Regex(
+            @"^(.*? call workflow '([^']+)' )is not a workflow this library holds\.", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>The library a hand-off resolves against: <paramref name="defs"/> plus the park freeze of every
+        /// parked starter it does not already hold. A person's workflow whose `call:` names a parked starter keeps
+        /// running the definition that last shipped, as a required binding does (lane W3, gap 4). Used only for call
+        /// resolution, so a parked starter never comes back onto the list.</summary>
+        private static List<WorkflowDef> WithParkedCallees(IEnumerable<WorkflowDef> defs)
+        {
+            var library = defs.ToList();
+            var held = library.Select(d => d.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var compatible = CompatibleWorkflowFiles();
+            foreach (var name in ParkedWorkflowReplacements.Keys.Where(n => !held.Contains(n)))
+            {
+                var frozen = ParkedFreeze(name, compatible);
+                if (frozen != null) library.Add(WorkflowParser.ParseFile(frozen, "stock"));
+            }
+            return library;
+        }
+
+        /// <summary>Run once (Plan-heart contract 21.5; lane author-gaps, B6): a workflow's unsaved text, parsed as the file
+        /// would be. Its name must be the one it is opened as. A workflow a team rule requires runs only as saved: a
+        /// required workflow is the shipped or saved definition the rule points at, and unsaved words are neither.</summary>
+        internal WorkflowDef UnsavedWorkflow(string name, string document)
+        {
+            var text = document.Length > 0 && document[0] == (char)0xfeff ? document.Substring(1) : document;
+            var def = WorkflowParser.Parse(text);
+            if (def.Error != null)
+                throw new InvalidOperationException("This workflow does not run as it stands: " + def.Error + " Fix it in Source, then Run once again.");
+            if (!string.IsNullOrWhiteSpace(name) && !string.Equals(def.Name, name.Trim(), StringComparison.Ordinal))
+                throw new ArgumentException($"The text is the workflow '{def.Name}', not '{name}'. Run once runs the workflow that is open.", nameof(name));
+            if (string.Equals(def.Kind, "template", StringComparison.Ordinal))
+                throw new InvalidOperationException($"'{def.Name}' is a template (a recipe with blanks). Fill it in first: instantiate_workflow_template creates a runnable workflow from it.");
+            var (userDir, stockDir) = WorkflowDirs(_sessions.CurrentContext);
+            if (RequiredWorkflowSet(userDir, stockDir).Contains(def.Name))
+                throw new InvalidOperationException($"A team rule requires '{def.Name}', so it runs only as saved. Save it first, then Run.");
+            def.Source = "unsaved";
+            return def;
+        }
+
+        /// <summary>Contract 21.2: the sentence every door returns when a create would shadow a required workflow.</summary>
+        private const string RequiredShadowRefusal = "A team rule requires the shipped version of this workflow, so a copy would quietly replace it. Use it as it is, or ask whoever set the rule.";
+
+        /// <summary>Every workflow name a team rule requires: each binding's require list (flat and conditional, so a
+        /// rule that is dormant today still counts), plus the stock hand-off closure the resolver pins for them.</summary>
+        private HashSet<string> RequiredWorkflowSet(string userDir, string stockDir)
+        {
+            var required = RequiredWorkflowNames(ReadWorkflowResolutionSettings(WorkflowSettingsFileFor(userDir)));
+            try { required.UnionWith(ResolveWorkflowLibrary(userDir, stockDir).RequiredStockRevisions.Keys); }
+            catch (InvalidOperationException) { }   // an unavailable pin is reported where the workflow is read or run
+            return required;
+        }
+
+        /// <summary>True when a new project file named <paramref name="name"/> would shadow a shipped workflow a team
+        /// rule requires. A project copy wins resolution outright (ResolveRequiredStockFiles), so creating one would
+        /// quietly replace the required definition. Only a CREATE is refused: an existing shadow keeps resolving,
+        /// is flagged on list_workflows, and is never rewritten by the engine.</summary>
+        private bool WouldShadowRequiredWorkflow(string name, string userDir, string stockDir)
+        {
+            if (userDir != null && File.Exists(Path.Combine(userDir, name + ".md"))) return false;
+            var shipped = WorkflowFiles(stockDir).ContainsKey(name) || CompatibleWorkflowFiles().ContainsKey(name);
+            return shipped && RequiredWorkflowSet(userDir, stockDir).Contains(name);
         }
 
         private Dictionary<string, string> CurrentRequiredWorkflowRevisions(JsonObject root, string userDir, string stockDir)
@@ -920,13 +1058,24 @@ namespace Semanticus.Engine
             var facts = await GatherFactsForAsync(rules.Where(r => r.Valid).Select(r => r.When)
                 .Concat(arrayBindings.SelectMany(ab => ab.Rules.Select(r => r.When))));
             var enforced = ComputeEnforcedBindings(facts, arrayBindings);
+            var (userDir, stockDir) = WorkflowDirs();
+            var required = RequiredWorkflowSet(userDir, stockDir);
+            var shelf = WorkflowFiles(stockDir).Keys.ToHashSet(StringComparer.Ordinal);
+            var shipped = shelf.Concat(CompatibleWorkflowFiles().Keys).ToHashSet(StringComparer.Ordinal);
 
             return defs.Select(d =>
             {
                 var enabled = SettingsEnabledFor(d.Name);
                 var (active, reason) = ResolveActivation(d, facts, rules, enabled, enforced);
-                return WorkflowRunner.BuildInfo(d, SettingsStrictnessFor(d.Name), global, enabled, active, reason,
+                var info = WorkflowRunner.BuildInfo(d, SettingsStrictnessFor(d.Name), global, enabled, active, reason,
                     ClosureIsGated(d, defs, templates, global));
+                var mine = string.Equals(d.Source, "user", StringComparison.Ordinal);
+                // A starter is on today's stock shelf. A parked starter a team rule still requires is listed (it is
+                // required) but is not offered as a starter (contract 21.2, lane W3).
+                info.Starter = !mine && shelf.Contains(d.Name);
+                info.Required = required.Contains(d.Name);
+                info.ReplacesRequired = info.Required && mine && shipped.Contains(d.Name);
+                return info;
             }).OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
@@ -935,7 +1084,7 @@ namespace Semanticus.Engine
         private bool ClosureIsGated(WorkflowDef d, IReadOnlyList<WorkflowDef> defs, IReadOnlyList<WorkflowDef> templates, string global)
         {
             if (d?.Error != null) return false;
-            var closure = WorkflowParser.ReachableClosure(d, defs, templates, out _);
+            var closure = WorkflowParser.ReachableClosure(d, WithParkedCallees(defs), templates, out _);
             return closure.Any(x => x.Error == null && x.HasEnforcedGate(SettingsStrictnessFor(x.Name), global));
         }
 
@@ -952,7 +1101,10 @@ namespace Semanticus.Engine
         /// project mandate (pinned by WorkflowBindingTests.Strictness_off_does_not_void_a_hard_binding); and the
         /// DryRunScope exemption — a rehearsal is not a landing (replay_check_workflow dry-runs bound ops from
         /// exemplars; a hard binding must not break admission replays).</summary>
-        private async Task EnforceBindingAsync(string op, string origin)
+        /// <param name="workflowGateHeld">True only when the caller already holds this context's workflow gate (a
+        /// direct step's writes commit under it, so the step cannot move between its checks and its commit). The gate
+        /// is not re-entrant, so the run scan below then reads the runs without taking it again.</param>
+        private async Task EnforceBindingAsync(string op, string origin, bool workflowGateHeld = false)
         {
             var context = _sessions.CurrentContext;
             // DryRunScope is AsyncLocal, set on the caller's thread before the op is invoked; read it synchronously
@@ -982,7 +1134,7 @@ namespace Semanticus.Engine
 
             // (A) STEP-scoped exemption: some active run of a required workflow must be AT a step performing THIS op.
             bool atPerformingStep = false;
-            await context.WorkflowGate.WaitAsync();
+            if (!workflowGateHeld) await context.WorkflowGate.WaitAsync();
             try
             {
                 EnsureContextCurrent(context, "Workflow policy");
@@ -1003,10 +1155,10 @@ namespace Semanticus.Engine
                     var owner = run.RequireCoherentRow(row);
                     if (!binding.Require.Contains(owner.Name, StringComparer.Ordinal)) continue;
                     var step = row.Step;
-                    if (step?.Ops != null && step.Ops.Contains(op, StringComparer.Ordinal)) { atPerformingStep = true; break; }
+                    if (OpAliases.Contains(step?.Ops, op)) { atPerformingStep = true; break; }
                 }
             }
-            finally { context.WorkflowGate.Release(); }
+            finally { if (!workflowGateHeld) context.WorkflowGate.Release(); }
             if (atPerformingStep) return;
 
             var required = string.Join(", ", binding.Require.Select(n => $"'{n}'"));
@@ -1058,12 +1210,12 @@ namespace Semanticus.Engine
                 Mode = mode,
                 Enforced = mode != "off",
                 Note = mode == null
-                    ? "No global override. Each playbook's own checks apply. Actions that must go through a playbook still do."
+                    ? "No global override. Each workflow's own checks apply. Actions a team rule requires still go through their workflow."
                     : mode == "off"
-                        ? "Playbook checks are skipped model-wide and runs record no verified evidence. Actions that must go through a playbook still do."
+                        ? "Workflow checks are skipped model-wide and runs keep no verified record. Actions a team rule requires still go through their workflow."
                         : mode == "warn"
-                            ? "Playbook checks now warn instead of blocking. Actions that must go through a playbook still do."
-                            : "Playbook checks now block, even if a playbook asked for a warning. Actions that must go through a playbook still do.",
+                            ? "Workflow checks now warn instead of blocking. Actions a team rule requires still go through their workflow."
+                            : "Workflow checks now block, even if a workflow asked for a warning. Actions a team rule requires still go through their workflow.",
             });
         }
 
@@ -1072,6 +1224,7 @@ namespace Semanticus.Engine
         /// so both doors see cards flip live. mode: "hard" | "warn" | "off" | "default"/null (clear).</summary>
         public async Task<WorkflowEnforcement> SetWorkflowEnforcementAsync(string mode, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             mode = string.IsNullOrWhiteSpace(mode) || mode.Trim().ToLowerInvariant() == "default" ? null : mode.Trim().ToLowerInvariant();
             if (mode != null && mode != "hard" && mode != "warn" && mode != "off")
@@ -1087,7 +1240,10 @@ namespace Semanticus.Engine
                 if (mode == null) root.Remove("strictness"); else root["strictness"] = mode;
             });
 
-            await PublishWorkflowLibraryAsync();   // Gated flags just changed — both doors re-list live
+            // Gated flags just changed, so both doors re-list live. The setting is already saved at this point, so a
+            // library that cannot be rebuilt must not turn this call into an error: the caller would be told it
+            // failed while the file holds the new mode (UAT-S11-3-003). The library read reports its own fault.
+            await SafeRebroadcastWorkflowLibraryAsync();
             _sessions.Bus.PublishActivity(new ActivityEvent
             {
                 Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin, Kind = "set_workflow_enforcement", Ok = true,
@@ -1103,6 +1259,10 @@ namespace Semanticus.Engine
             var defs = resolved.Files.Values
                 .Select(file => WorkflowParser.ParseFile(file.Path, file.Source))
                 .ToList();
+            // Listed with its reason as its error, so the list, Team rules and the checks switch keep working and the
+            // person sees which required workflow needs repair. Reading or running it still refuses (GetWorkflowAsync).
+            foreach (var item in resolved.Unavailable)
+                defs.Add(new WorkflowDef { Name = item.Key, Title = UnavailableTitle(item.Key, stockDir), Source = "stock", Error = item.Value, PinUnavailable = true });
             // §10.3 placement guard: a `kind: template` file in the workflows dir is a misplaced RECIPE, not a
             // runnable workflow — surface it as an error (never silently skip), so list_workflows/start_workflow
             // teach the fix instead of trying to run blanks.
@@ -1122,8 +1282,17 @@ namespace Semanticus.Engine
         {
             RequireProFeature();
             var def = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
-                ?? throw new InvalidOperationException($"Workflow '{name}' not found (list_workflows shows the library).");
+                ?? throw WorkflowNotFound(name, $"Workflow '{name}' not found (list_workflows shows the library).");
+            if (def.PinUnavailable) throw new InvalidOperationException(def.Error);   // never run a guess at it
             return Task.FromResult(def);
+        }
+
+        /// <summary>The title a person knows an unavailable required workflow by: today's file's, when one ships.</summary>
+        private static string UnavailableTitle(string name, string stockDir)
+        {
+            var today = WorkflowFiles(stockDir).TryGetValue(name, out var path) ? path : null;
+            try { return today == null ? name : WorkflowParser.ParseFile(today, "stock").Title ?? name; }
+            catch { return name; }
         }
 
         // ---- admission dry-run (Learning Loop L4 — docs/learning-loop-plan.md §3.3) --------------
@@ -1149,7 +1318,7 @@ namespace Semanticus.Engine
             var tmpl = LoadTemplateDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
             if (tmpl != null) return await CheckTemplateAsync(tmpl);
 
-            throw new InvalidOperationException($"'{name}' not found (list_workflows shows the workflow library; list_workflow_templates shows the template shelf).");
+            throw WorkflowNotFound(name, $"'{name}' not found (list_workflows shows the workflow library; list_workflow_templates shows the starters).");
         }
 
         /// <summary>The admission dry-run over an already-loaded def (extracted so the §10 template
@@ -1170,13 +1339,17 @@ namespace Semanticus.Engine
             // than the file — does a hand-off resolve, is the chain acyclic and inside the depth limit, is a
             // `when:` term one this version can read. Kept in WorkflowParser so the format's rules live in
             // one place; a parse-level refusal never reaches here, having returned above as ParseError.
-            var library = candidateLibrary ?? LoadWorkflowDefs();
-            findings.AddRange(WorkflowParser.V2Findings(def, library, LoadTemplateDefs()));
+            var library = WithParkedCallees(candidateLibrary ?? LoadWorkflowDefs());
+            findings.AddRange(TeachParkedCallees(WorkflowParser.V2Findings(def, library, LoadTemplateDefs())));
+            // Format v3 (composer contract 1.5-1.6, 2.4): placement, the blanks the engine requires, and ops
+            // that leave the model kept out of the change group. They need the op table, so they are findings
+            // here rather than parse refusals; see WorkflowParser.V3.cs for the split.
+            findings.AddRange(WorkflowParser.V3Findings(def));
 
             var catalog = (await GetOpCatalogAsync()).Select(o => o.Name).ToHashSet(StringComparer.Ordinal);
 
             foreach (var t in def.Triggers ?? Array.Empty<string>())
-                if (!catalog.Contains(t))
+                if (!catalog.Contains(OpAliases.Canonical(t)))
                     findings.Add(new CheckFinding { Severity = "warn", Message = $"trigger '{t}' is not a known op (get_op_catalog lists the real surface)." });
 
             // Run-wide gate inputs: a later step's verify can reference an input a *previous* step collected.
@@ -1209,7 +1382,7 @@ namespace Semanticus.Engine
                     .Any(i => string.Equals(i.Type, "objectRef", StringComparison.Ordinal));
 
                 foreach (var op in step.Ops ?? Array.Empty<string>())
-                    if (!catalog.Contains(op))
+                    if (!catalog.Contains(OpAliases.Canonical(op)))   // a retired id in a saved file still resolves
                         findings.Add(new CheckFinding { Severity = "warn", Message = $"{step.Id} op '{op}' is not a known op." });
 
                 foreach (var v in step.Gate?.Verify ?? Array.Empty<VerifySpec>())
@@ -1274,10 +1447,11 @@ namespace Semanticus.Engine
         /// back verbatim). Saving a stock name creates the user shadow (copy-to-customise).</summary>
         public async Task<WorkflowInfo[]> SaveWorkflowAsync(string name, string markdown, string origin, bool createOnly = false, string sessionId = null)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
-            var (userDir, _) = WorkflowDirs(context);
+            var (userDir, stockDir) = WorkflowDirs(context);
             await context.WorkflowGate.WaitAsync().ConfigureAwait(false);
             try
             {
@@ -1295,6 +1469,10 @@ namespace Semanticus.Engine
                     var file = Path.Combine(userDir, name + ".md");
                     if (createOnly && File.Exists(file))
                         throw new InvalidOperationException($"A project copy of '{name}' already exists. Nothing was written. Read get_workflow_document to edit that copy.");
+                    if (WouldShadowRequiredWorkflow(name, userDir, stockDir))
+                        throw new InvalidOperationException($"{RequiredShadowRefusal} Nothing was written.");
+                    // the file this save replaces, as it was when the person was asked (words a person wrote since are theirs)
+                    RequireApprovedBasis(nameof(SaveWorkflowAsync), GateFileState(file), "workflow");
                     Directory.CreateDirectory(userDir);
                     var temp = WriteWorkflowDocumentTemp(file, bytes);
                     try { File.Move(temp, file, !createOnly); }
@@ -1309,6 +1487,7 @@ namespace Semanticus.Engine
         /// name without a user shadow is refused instructively (customised shadows revert to stock).</summary>
         public async Task<WorkflowInfo[]> DeleteWorkflowAsync(string name, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;
@@ -1325,6 +1504,8 @@ namespace Semanticus.Engine
                             File.Exists(Path.Combine(stockDir, name + ".md"))
                                 ? $"'{name}' is a stock workflow (read-only, shipped with the engine) and has no user copy to delete. Customised copies live in .semanticus/workflows."
                                 : $"User workflow '{name}' not found: list_workflows shows the library, and only your own copies (under .semanticus/workflows) are deletable.");
+                    // the file this delete removes, as it was when the person was asked (words a person wrote since are theirs)
+                    RequireApprovedBasis(nameof(DeleteWorkflowAsync), GateFileState(file), "workflow");
                     File.Delete(file);
                 }
             }
@@ -1339,6 +1520,7 @@ namespace Semanticus.Engine
         /// disable only narrows the caller's own menu (mirrors set_workflow_enforcement's file discipline).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowEnabledAsync(string name, bool enabled, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required.");
             var def = LoadWorkflowDefs().FirstOrDefault(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
@@ -1398,13 +1580,28 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(
                     $"The requirement on {op} is locked by committed team policy; change it in workflow-settings.json via review.");
 
+            // A binding is a requirement the person put on the assistant. An assistant may make one stricter (a new requirement, a
+            // stronger mode, fewer ways to satisfy it) and never take one off or loosen it; a stricter one is an ordinary write to the
+            // settings file, asked about under Locked like any other. The assistant's door refuses the same loosening before it gets here.
+            if (IsAssistantOrigin(origin) && !GateSeams.Off("workflow-binding"))
+            {
+                if (GateLoosensBinding(op, requireNames, mode))
+                    throw new InvalidOperationException(
+                        $"The requirement on {op} was put there by the person, so the assistant cannot take it off or loosen it. It may only make it stricter. Ask the person to change it in Semanticus.");
+                var heldBinding = HoldAtSink(AgentCapability.DeployFile, origin, "workflow-binding",
+                    "Your assistant wants to require " + (clearing ? "no workflow" : "the workflow " + string.Join(" or ", require)) + " for " + op + " (mode " + mode + ").",
+                    op + "|" + mode + "|" + string.Join(",", require));
+                if (heldBinding != null) throw new InvalidOperationException(heldBinding);
+            }
+
             if (!clearing)
             {
                 // Every required name must exist — a binding to a phantom workflow would be an unstartable trap.
                 var lib = LoadWorkflowDefs().Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
                 var unknown = require.Where(n => !lib.Contains(n)).ToArray();
                 if (unknown.Length > 0)
-                    throw new InvalidOperationException($"Unknown workflow(s): {string.Join(", ", unknown)}. list_workflows shows the library. A binding can only require workflows that exist.");
+                    throw WorkflowNotFound(unknown.FirstOrDefault(n => ParkedWorkflowSentence(n) != null),
+                        $"Unknown workflow(s): {string.Join(", ", unknown)}. list_workflows shows the library. A binding can only require workflows that exist.");
             }
 
             MutateWorkflowSettings(file, root =>
@@ -1447,6 +1644,7 @@ namespace Semanticus.Engine
         /// are hand-edited in v1 (this op takes a name).</summary>
         public async Task<WorkflowInfo[]> SetWorkflowActivationAsync(string workflow, string when, string set, string origin)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             if (string.IsNullOrWhiteSpace(workflow)) throw new ArgumentException("workflow is required: the workflow to show or hide with a rule.");
             workflow = workflow.Trim();
@@ -1747,22 +1945,24 @@ namespace Semanticus.Engine
             return aux;
         }
 
-        public async Task<WorkflowRunView> StartWorkflowAsync(string name, string origin)
+        public async Task<WorkflowRunView> StartWorkflowAsync(string name, string origin, string document = null)
         {
             RequireProFeature();
             var context = _sessions.CurrentContext;
             // §10.2/§10.12: a template is a recipe with blanks, not runnable — teach the instantiate path before
             // the generic not-found, but only when no workflow of this name exists (a real workflow always wins).
-            if (!LoadWorkflowDefs().Any(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
+            if (document == null && !LoadWorkflowDefs().Any(d => string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase))
                 && LoadTemplateDefs().Any(t => t.Error == null && string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase)))
                 throw new InvalidOperationException(
                     $"'{name}' is a template (a recipe with blanks). Fill it in first: instantiate_workflow_template creates a runnable workflow from it.");
-            var def = await GetWorkflowAsync(name);
+            // Run once (Plan-heart contract 21.5): the text as it stands in Author, not the saved file.
+            var def = document != null ? UnsavedWorkflow(name, document) : await GetWorkflowAsync(name);
 
             // ---- PHASE A: resolve, validate, freeze and entitle before anything expensive happens. [T220]
             // Validate the entire call graph before snapshots or registration: a missing or disabled callee
             // cannot leave behind a partly started run.
-            var closureDefs = WorkflowParser.ReachableClosure(def, LoadWorkflowDefs(), LoadTemplateDefs(), out var handoffProblems);
+            var closureDefs = WorkflowParser.ReachableClosure(def, WithParkedCallees(LoadWorkflowDefs()), LoadTemplateDefs(), out var rawHandoffProblems);
+            var handoffProblems = TeachParkedCallees(rawHandoffProblems);
             if (handoffProblems.Count > 0)
             {
                 var more = handoffProblems.Count > 1 ? $" ({handoffProblems.Count} in total: {string.Join(" ", handoffProblems.Skip(1).Select(f => f.Message))})" : "";
@@ -1795,6 +1995,33 @@ namespace Semanticus.Engine
                     throw new InvalidOperationException(
                         $"Workflow '{def.Name}' hands off to '{reachable.Name}', which is turned off for this project, so the run can't start. Turn it back on in the Workflows tab, or call set_workflow_enabled(\"{reachable.Name}\", true).");
 
+            // Keep admission tied to the parser's supported control fields. Calls are planned below from
+            // this same frozen closure; their input values remain a submission-time question.
+            // A step Semanticus runs is run by a draft, never by this guided runner (lane L4).
+            if (WorkflowParser.IsComposed(def))
+                throw new InvalidOperationException(
+                    $"Workflow '{def.Name}' runs as a draft (it has steps Semanticus runs, or fields only a draft runs): call compose_task with workflow '{def.Name}' and its inputs. The draft asks its questions first, and nothing changes until it runs.");
+            var unexecutable = WorkflowParser.UnexecutableControlFields(def);
+            if (unexecutable.Count > 0)
+            {
+                var first = unexecutable[0];
+                var more = unexecutable.Count > 1 ? $" ({unexecutable.Count} in total: {string.Join(", ", unexecutable.Select(u => $"'{u.Field}' on {u.StepId}"))})" : "";
+                // Step number 0 is the frontmatter (a v3 'inputs:' or 'assistantNotes:'), which is no step.
+                var where = first.StepNumber == 0 ? "its frontmatter" : $"Step {first.StepNumber} ({first.StepId})";
+                throw new InvalidOperationException(
+                    $"Workflow '{def.Name}' can't be started by this version: {where} uses '{first.Field}:', and this engine reads that field but does not run it yet{more}. Starting it anyway would run the workflow as if the '{first.Field}:' were not there, which is not what the file says. You can still open the workflow and review it.");
+            }
+
+            return (await BeginWorkflowRunAsync(def, closureDefs, origin, active, forceActive, activeReason)).View;
+        }
+
+        /// <summary>PHASE B of a start, shared by start_workflow and a draft's guided sub-run (lane l9-finish): freeze the
+        /// closure over its settings, take the start-of-run snapshots, and register the run. The caller has already
+        /// resolved and validated the closure.</summary>
+        private async Task<(WorkflowRunState Run, WorkflowRunView View)> BeginWorkflowRunAsync(WorkflowDef def, IReadOnlyList<WorkflowDef> closureDefs,
+            string origin, bool active, bool forceActive, string activeReason, string draftId = null)
+        {
+            var context = _sessions.CurrentContext;
             // One settings read per DISTINCT reachable name, plus one global read, and then the whole closure
             // is frozen over exactly those values. Nothing loads or freezes a callee later in the run.
             var global = GlobalStrictness();
@@ -1802,17 +2029,6 @@ namespace Semanticus.Engine
                 .Select(d => (Def: WorkflowFreeze.Freeze(d), Settings: SettingsStrictnessFor(d.Name)))
                 .ToArray());
             var settings = closure.SettingsStrictness(closure.Root);
-
-            // Keep admission tied to the parser's supported control fields. Calls are planned below from
-            // this same frozen closure; their input values remain a submission-time question.
-            var unexecutable = WorkflowParser.UnexecutableControlFields(def);
-            if (unexecutable.Count > 0)
-            {
-                var first = unexecutable[0];
-                var more = unexecutable.Count > 1 ? $" ({unexecutable.Count} in total: {string.Join(", ", unexecutable.Select(u => $"'{u.Field}' on {u.StepId}"))})" : "";
-                throw new InvalidOperationException(
-                    $"Workflow '{def.Name}' can't be started by this version: Step {first.StepNumber} ({first.StepId}) uses '{first.Field}:', and this engine reads that field but does not run it yet{more}. Starting it anyway would run the step as if the '{first.Field}:' were not there, which is not what the file says. You can still open the workflow and review it.");
-            }
 
             // ---- PHASE B: the normal start preparation, over the whole frozen closure.
             // [D4] Started though a rule currently hides it (activation curates the menu, it isn't a lock): record a
@@ -1844,6 +2060,7 @@ namespace Semanticus.Engine
                 run = context.WorkflowRuns.Start(closure, global, initialize: candidate =>
                 {
                     candidate.Origin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
+                    candidate.DraftId = draftId;
                     candidate.ModelIdentity = PaneIdentity(session, live);
                     candidate.ModelName = modelName;
                     candidate.ModelFingerprint = session == null ? null : VitalsFingerprintFor(session);
@@ -1853,7 +2070,8 @@ namespace Semanticus.Engine
                     WorkflowRunner.AdvancePastInapplicableSteps(candidate);
                 });
                 context.WorkflowAux[run.RunId] = aux;
-                return PublishWorkflowRun(context, run);
+                NoteRunOnStep(context, run.RunId);   // contract 8.4: this reader's edits now file under the run
+                return (run, PublishWorkflowRun(context, run));
             }
             finally { context.WorkflowGate.Release(); }
         }
@@ -1873,16 +2091,32 @@ namespace Semanticus.Engine
         /// <summary>Submit the run's current step. <paramref name="answersJson"/> is a JSON object:
         /// a value per gate-input name, or the explicit decline sentinel
         /// {"declined": true, "reason": "..."}. The gate evaluator's rejection text steers the agent.</summary>
-        public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin, string callGate = null)
+        public async Task<WorkflowRunView> SubmitWorkflowStepAsync(string runId, string stepId, string answersJson, string origin, string callGate = null, string writesJson = null)
         {
             RequireProFeature();
+            // A draft's guided sub-run (lane l9-finish): the draft decides which step may be submitted now, and moves on
+            // once the gate has passed (Composer/DraftGuided.cs).
+            if (DraftOfGuidedRun(runId) is string draftId)
+                return await SubmitDraftGuidedStepAsync(draftId, runId.Trim(), stepId, answersJson, origin, callGate, writesJson);
+            return await SubmitWorkflowStepCoreAsync(runId, stepId, answersJson, origin, callGate, writesJson);
+        }
+
+        private async Task<WorkflowRunView> SubmitWorkflowStepCoreAsync(string runId, string stepId, string answersJson, string origin, string callGate, string writesJson)
+        {
             var context = _sessions.CurrentContext;
             var answers = ParseAnswers(answersJson);
+            // A format-3 direct step's writes (composer contract 3.4, Composer/DirectStep.cs): screened here, and
+            // committed as ONE change only once the submission has passed every check that does not need them.
+            var writes = string.IsNullOrWhiteSpace(writesJson) ? null : DirectStepWrites(writesJson);
             await context.WorkflowGate.WaitAsync();
             try
             {
                 EnsureContextCurrent(context, "Workflow step");
                 var run = context.WorkflowRuns.Require(runId);
+                NoteRunOnStep(context, run.RunId);
+                // Contract 8.4: anything this step's submission writes is filed under the run (By = workflow): a
+                // direct step's writes below, and a take back of them.
+                using var cause = ChangeCause.Begin(ChangeCauseKinds.WorkflowRun, run.Def?.Name, null, run.RunId);
                 if (!string.IsNullOrWhiteSpace(callGate) && run.CurrentStep?.Call != null && !string.IsNullOrWhiteSpace(run.CurrentStep.Call.Workflow))
                 {
                     var on = string.Equals(callGate.Trim(), "on", StringComparison.OrdinalIgnoreCase);
@@ -1894,51 +2128,75 @@ namespace Semanticus.Engine
                 // expansion refusals are NOT in that list: they ride the expansion-only route below, which never
                 // enters the scope at all.
                 var submittingStep = WorkflowRunner.ValidateSubmission(run, stepId, answers);
-                // An expansion-only current row (self-sourced preparation, inline expansion, or a deferred loop
-                // reached unexpanded) only splices the plan: no verify runs, so there is no evidence to frame
-                // and no witness to lock.
-                // Classified after parsing and the address/coherence refusals above, and deliberately OUTSIDE the
-                // scope below — installing receipt bookkeeping for a transition that records none would let a
-                // setup call stamp a lock the first real iteration submission is supposed to own.
-                if (WorkflowRunner.IsExpansionOnlySubmission(run))
+                if (!string.IsNullOrEmpty(submittingStep)) run.SubmittedBy[submittingStep] = ChangeBy.For(null, origin);
+                // The direct step's writes commit here, under the gate: after the step's own checks passed on a
+                // rehearsal, and before its verify, which reads the model the writes leave. A refusal after this
+                // point takes them back (below), so a refused submission leaves the model as it was.
+                var direct = writes == null ? null : new DirectStepAudit();
+                var committed = writes == null ? 0L : await CommitDirectStepWritesAsync(context, run, stepId, answers, writes, origin, direct);
+                WorkflowRunView accepted;
+                try
                 {
-                    await WorkflowRunner.SubmitStepAsync(run, stepId, answers, null);
-                    EnsureContextCurrent(context, "Workflow step");
-                    return PublishWorkflowRun(context, run, origin);
+                    // An expansion-only current row (self-sourced preparation, inline expansion, or a deferred loop
+                    // reached unexpanded) only splices the plan: no verify runs, so there is no evidence to frame
+                    // and no witness to lock.
+                    // Classified after parsing and the address/coherence refusals above, and deliberately OUTSIDE the
+                    // scope below: installing receipt bookkeeping for a transition that records none would let a
+                    // setup call stamp a lock the first real iteration submission is supposed to own.
+                    if (WorkflowRunner.IsExpansionOnlySubmission(run))
+                    {
+                        await WorkflowRunner.SubmitStepAsync(run, stepId, answers, null);
+                        EnsureContextCurrent(context, "Workflow step");
+                        accepted = PublishWorkflowRun(context, run, origin);
+                    }
+                    else
+                    {
+                        using (run.CaptureSubmissionFrame())
+                        {
+                            // The step being submitted (for a witness-revision receipt's stepId) is captured before the
+                            // runner can advance. The proof frame is captured at the same boundary and remains selected
+                            // through receipt bookkeeping, even after StepIndex changes or the runner throws.
+                            run.SubmissionOrigin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
+                            var needsDaxInventory = run.CurrentStep?.Gate?.Inputs
+                                .Any(i => i.DaxPurity == "no-bare-measures") == true;
+                            (string[] Measures, (string Table, string Name, bool IsCalculated)[] Columns, string[] Functions,
+                                (string Name, bool IsCalculated)[] Tables)? modelDaxInventory =
+                                !needsDaxInventory || context.Session == null ? null
+                                : await context.Session.ReadAsync(m => (
+                                    m.Tables.SelectMany(t => t.Measures).Select(mm => mm.Name).ToArray(),
+                                    m.Tables.SelectMany(t => t.Columns.Select(c =>
+                                        (t.Name, c.Name, c is CalculatedColumn || c is CalculatedTableColumn || t is CalculatedTable))).ToArray(),
+                                    m.Functions.Select(f => f.Name).ToArray(),
+                                    m.Tables.Select(t => (t.Name, t is CalculatedTable)).ToArray()));
+                            try
+                            {
+                                await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync,
+                                    modelDaxInventory?.Measures, modelDaxInventory?.Columns, modelDaxInventory?.Functions,
+                                    modelDaxInventory?.Tables);
+                            }
+                            finally
+                            {
+                                // E3(a): lock the witness on FIRST submission of any input that feeds a dax_equivalence probe,
+                                // and record a revision receipt on a later change. The captured proof frame is still active here.
+                                RecordWitnessLocks(run, submittingStep);
+                                run.SubmissionOrigin = null;
+                            }
+                        }
+                        EnsureContextCurrent(context, "Workflow step");
+                        accepted = PublishWorkflowRun(context, run, origin);
+                    }
                 }
-                using (run.CaptureSubmissionFrame())
+                catch (Exception refused) when (committed > 0)
                 {
-                    // The step being submitted (for a witness-revision receipt's stepId) is captured before the
-                    // runner can advance. The proof frame is captured at the same boundary and remains selected
-                    // through receipt bookkeeping, even after StepIndex changes or the runner throws.
-                    run.SubmissionOrigin = string.IsNullOrWhiteSpace(origin) ? "human" : origin;
-                    var needsDaxInventory = run.CurrentStep?.Gate?.Inputs
-                        .Any(i => i.DaxPurity == "no-bare-measures") == true;
-                    (string[] Measures, (string Table, string Name, bool IsCalculated)[] Columns, string[] Functions,
-                        (string Name, bool IsCalculated)[] Tables)? modelDaxInventory =
-                        !needsDaxInventory || context.Session == null ? null
-                        : await context.Session.ReadAsync(m => (
-                            m.Tables.SelectMany(t => t.Measures).Select(mm => mm.Name).ToArray(),
-                            m.Tables.SelectMany(t => t.Columns.Select(c =>
-                                (t.Name, c.Name, c is CalculatedColumn || c is CalculatedTableColumn || t is CalculatedTable))).ToArray(),
-                            m.Functions.Select(f => f.Name).ToArray(),
-                            m.Tables.Select(t => (t.Name, t is CalculatedTable)).ToArray()));
-                    try
-                    {
-                        await WorkflowRunner.SubmitStepAsync(run, stepId, answers, ExecuteWorkflowVerifyAsync,
-                            modelDaxInventory?.Measures, modelDaxInventory?.Columns, modelDaxInventory?.Functions,
-                            modelDaxInventory?.Tables);
-                    }
-                    finally
-                    {
-                        // E3(a) — lock the witness on FIRST submission of any input that feeds a dax_equivalence probe,
-                        // and record a revision receipt on a later change. The captured proof frame is still active here.
-                        RecordWitnessLocks(run, submittingStep);
-                        run.SubmissionOrigin = null;
-                    }
+                    var kept = await TakeBackDirectStepAsync(committed, origin);
+                    if (kept == null) { direct?.PutBack(); throw; }
+                    // The writes stayed in the model, so what they record stands with them.
+                    if (direct != null) await direct.RecordAsync();
+                    throw DirectStepKept(refused, kept);
                 }
-                EnsureContextCurrent(context, "Workflow step");
-                return PublishWorkflowRun(context, run, origin);
+                // Accepted: only now do the step's writes go on the append-only trail.
+                if (direct != null) await direct.RecordAsync();
+                return accepted;
             }
             catch (InvalidOperationException ex) when (!string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) && GateCopy.TryRead(ex, out _, out _))
             {
@@ -1951,13 +2209,23 @@ namespace Semanticus.Engine
         public async Task<WorkflowRunView> SkipWorkflowStepAsync(string runId, string stepId, string reason, string origin)
         {
             RequireProFeature();
+            // Past a draft's gated step only the person goes, with Continue (lane l9-finish), as past any step of a draft.
+            if (DraftOfGuidedRun(runId) is string draftId)
+                return await SkipDraftGuidedStepAsync(draftId, runId.Trim(), stepId, reason, origin);
+            return await SkipWorkflowStepCoreAsync(runId, stepId, reason, origin);
+        }
+
+        private async Task<WorkflowRunView> SkipWorkflowStepCoreAsync(string runId, string stepId, string reason, string origin)
+        {
             var context = _sessions.CurrentContext;
             await context.WorkflowGate.WaitAsync();
             try
             {
                 EnsureContextCurrent(context, "Workflow step");
                 var run = context.WorkflowRuns.Require(runId);
+                var skipping = run.CurrentStep == null ? null : run.Plan[run.StepIndex].InstanceId;
                 WorkflowRunner.SkipStep(run, stepId, reason);
+                if (!string.IsNullOrEmpty(skipping)) run.SubmittedBy[skipping] = ChangeBy.For(null, origin);
                 var view = PublishWorkflowRun(context, run, origin);
                 var skipped = view.Steps[view.StepIndex - 1];
                 var certificateConsequence = skipped.Note != null
@@ -1981,6 +2249,14 @@ namespace Semanticus.Engine
         public async Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin)
         {
             RequireProFeature();
+            // Stopping a draft's guided sub-run stops the draft with it (lane l9-finish): nothing after it runs.
+            if (DraftOfGuidedRun(runId) is string draftId)
+                return await AbortDraftGuidedRunAsync(draftId, runId.Trim(), reason, origin);
+            return await AbortWorkflowCoreAsync(runId, reason, origin);
+        }
+
+        private async Task<WorkflowRunView> AbortWorkflowCoreAsync(string runId, string reason, string origin)
+        {
             var context = _sessions.CurrentContext;
             await context.WorkflowGate.WaitAsync();
             try
@@ -2028,9 +2304,11 @@ namespace Semanticus.Engine
         private WorkflowRunView PublishWorkflowRun(SessionContext context, WorkflowRunState run, string origin = null)
         {
             var view = WorkflowRunner.BuildView(run);
+            NoteRunForPlan(context, view);
             if (ReferenceEquals(_sessions.CurrentContext, context)) _sessions.Bus.PublishWorkflow(view);
             if (run.Status != "active")
             {
+                RecordRunReport(context, run, view);
                 context.WorkflowAux.Remove(run.RunId);
                 _ = PublishActivityAsync(new ActivityEvent
                 {
@@ -2042,6 +2320,10 @@ namespace Semanticus.Engine
                     Result = WorkflowRunner.BuildRunRecord(run),
                 });
             }
+            // A run's move changes its Plan row (RunRows.cs: its word, its step, and whether it is there at all), and
+            // the page re-reads the Plan only on plan/didChange. Without this the row of a finished run kept saying
+            // Needs you until something else moved the Plan (F14). After the report is recorded, so History has it.
+            if (ReferenceEquals(_sessions.CurrentContext, context)) PublishPlan(context.Plans.Current, context.Session?.Revision ?? 0);
             return view;
         }
 
@@ -2152,7 +2434,8 @@ namespace Semanticus.Engine
         /// step-scoped rule EnforceBindingAsync uses, expansion-only setup rows excluded alike). A later change
         /// while NO declaring step is current leaves the recorded hash stale ⇒ the equivalence
         /// verify sees drift. Fully defensive: never throws into the measure-write path.</summary>
-        private async Task RecordWorkflowAuthoredMeasureAsync(string op, string measureRef, string expression)
+        private async Task RecordWorkflowAuthoredMeasureAsync(string op, string measureRef, string expression, bool workflowGateHeld = false,
+            List<(Dictionary<string, string> Hashes, string Measure, string Before)> replaced = null)
         {
             try
             {
@@ -2161,7 +2444,7 @@ namespace Semanticus.Engine
                 var canon = await context.Session.ReadAsync(m => ObjectRefs.Resolve(m, measureRef) is Measure mm ? ObjectRefs.For(mm) : null);
                 if (canon == null) return;   // not a measure — drift only tracks measures (the equivalence target)
                 var h = NormalizeDaxHash(expression);
-                await context.WorkflowGate.WaitAsync();
+                if (!workflowGateHeld) await context.WorkflowGate.WaitAsync();
                 try
                 {
                     foreach (var run in context.WorkflowRuns.ActiveRuns())
@@ -2172,12 +2455,15 @@ namespace Semanticus.Engine
                         // no drift and prove a witness against an unattested candidate.
                         if (WorkflowRunner.IsExpansionOnlySubmission(run)) continue;
                         var step = run.CurrentStep;
-                        if (step?.Ops == null || !step.Ops.Contains(op, StringComparer.Ordinal)) continue;
+                        if (!OpAliases.Contains(step?.Ops, op)) continue;
                         if (!context.WorkflowAux.TryGetValue(run.RunId, out var aux)) continue;
-                        (aux.AuthoredMeasureHashes ??= new Dictionary<string, string>(StringComparer.Ordinal))[canon] = h;
+                        var hashes = aux.AuthoredMeasureHashes ??= new Dictionary<string, string>(StringComparer.Ordinal);
+                        // A direct step keeps what this replaced, so a take back of its writes can put it back.
+                        replaced?.Add((hashes, canon, hashes.TryGetValue(canon, out var before) ? before : null));
+                        hashes[canon] = h;
                     }
                 }
-                finally { context.WorkflowGate.Release(); }
+                finally { if (!workflowGateHeld) context.WorkflowGate.Release(); }
             }
             catch { /* drift bookkeeping must never break a measure write */ }
         }
@@ -3901,7 +4187,7 @@ namespace Semanticus.Engine
 
         /// <summary>Prove the rewrite did not REGRESS on speed: time the target measure's grand-total query
         /// NOW and compare its warm median against a recorded BASELINE. The `probe:` input carries the
-        /// pre-rewrite warm median in ms (run benchmark_dax_coldwarm BEFORE the rewrite, answer with the warm
+        /// pre-rewrite warm median in ms (run benchmark_dax with mode='coldWarm' BEFORE the rewrite, answer with the warm
         /// median). PASSED iff nowMedian &lt;= baseline * tolerance (an OPTIONAL answered `benchmarkTolerance`
         /// multiplier; default 1.10). Recorded-evidence pattern, exactly like dax_equivalence's original —
         /// offline can't measure, so it SKIPS honestly (a skip must never block a hard gate on a fabricated pass).</summary>
@@ -3914,9 +4200,9 @@ namespace Semanticus.Engine
             // keeps these branches observable offline — the live timing itself can't be), so fail-fast on them,
             // then skip honestly when there's simply no connection to time against.
             if (string.IsNullOrWhiteSpace(spec.Probe) || !answers.TryGetValue(spec.Probe, out var baseAns) || !baseAns.Answered)
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' has no answered BASELINE (the pre-rewrite warm median in ms). Run benchmark_dax_coldwarm BEFORE the rewrite and answer the input with the warm median." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the probe input '{spec.Probe}' has no answered BASELINE (the pre-rewrite warm median in ms). Run benchmark_dax with mode='coldWarm' BEFORE the rewrite and answer the input with the warm median." };
             if (!double.TryParse(baseAns.Value, System.Globalization.NumberStyles.Any, inv, out var baselineMs))
-                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the baseline '{baseAns.Value}' is not a number of milliseconds. Record it with benchmark_dax_coldwarm (use the warm median) and answer the input with just the number." };
+                return new VerifyResult { Kind = kind, Status = "failed", Detail = $"the baseline '{baseAns.Value}' is not a number of milliseconds. Record it with benchmark_dax, mode='coldWarm' (use the warm median) and answer the input with just the number." };
 
             var target = LatestObjectRefAnswer(run, answers);
             if (target == null)

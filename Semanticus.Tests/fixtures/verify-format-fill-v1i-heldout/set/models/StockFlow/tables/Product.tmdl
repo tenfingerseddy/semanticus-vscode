@@ -1,0 +1,35 @@
+table Product
+	/// product join key
+	column 'Product Key'
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	column 'SKU Numeric'
+		dataType: int64
+		sourceColumn: SKUNumeric
+		summarizeBy: none
+
+	column 'Product Label'
+		dataType: string
+		sourceColumn: ProductLabel
+		summarizeBy: none
+
+	/// unit cost in dollars. Cents must remain visible.
+	column 'Unit Cost'
+		dataType: double
+		sourceColumn: UnitCost
+		summarizeBy: none
+
+	column 'Lead Time Days'
+		dataType: double
+		sourceColumn: LeadTimeDays
+		summarizeBy: none
+
+	partition Product = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [ProductKey = Int64.Type, SKUNumeric = Int64.Type, ProductLabel = type text, UnitCost = type number, LeadTimeDays = type number], {})
+			in
+				Source

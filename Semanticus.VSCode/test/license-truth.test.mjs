@@ -103,8 +103,10 @@ assert.doesNotMatch(compare, /isEntitlementError/,
 
 // D-168: Pro options shows the licence. It does not open the marketing page while Pro is active.
 assert.match(bridge, /export function showLicense\(\)/, 'Studio must be able to open the licence view without a browser');
-assert.match(pro, /isPro \? showLicense : manageLicense/,
-  'the header button must show the licence when Pro is active and only open plans when it is not');
+// Superseded on 23 September 2026 by the in-app Pro design: the header chip opens the Semanticus Pro page for
+// both tiers, and that page shows the licence to a subscriber (plan, licensed to, renewal) rather than plans.
+assert.match(pro, /export function upgradeToPro\(\)[\s\S]{0,120}navigateInStudio\('pro'\)/,
+  'the header chip, Help and every Unlock Pro open the Pro page, which shows the licence when Pro is active');
 assert.doesNotMatch(extension, /'Pro options'[\s\S]{0,80}manageLicenseCmd/,
   'Show License must not send an active Pro subscriber to the marketing page');
 assert.match(extension, /msg\?\.type === 'showLicense'[\s\S]*semanticus\.showLicense/,

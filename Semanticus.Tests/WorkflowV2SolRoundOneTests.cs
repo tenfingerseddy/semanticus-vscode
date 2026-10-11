@@ -214,7 +214,7 @@ namespace Semanticus.Tests
             // shared classifier, so the one-evaluator invariant survives.
             var (e, _) = Make(new Pro());
             var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
-                e.SetWorkflowActivationAsync("new-measure", "inputs.approval.answered", "on", "human"));
+                e.SetWorkflowActivationAsync("optimize-dax", "inputs.approval.answered", "on", "human"));
             Assert.Contains("inputs.approval.answered", ex.Message);
         }
 
@@ -224,7 +224,7 @@ namespace Semanticus.Tests
             // the control: the refusal must be about the step-scope roots, not about conditions in general
             var (e, _) = Make(new Pro());
             var ex = await Record.ExceptionAsync(() =>
-                e.SetWorkflowActivationAsync("new-measure", "connection.kind == 'local'", "on", "human"));
+                e.SetWorkflowActivationAsync("optimize-dax", "connection.kind == 'local'", "on", "human"));
             Assert.True(ex == null, "an ordinary activation condition was refused: " + ex?.Message);
         }
 

@@ -1,0 +1,600 @@
+{
+ "version": 1,
+ "point": "relationship.join",
+ "set": "fresh",
+ "note": "The FRESH held-out set for run 2, written after run 1 and after the key-list fix it found, and committed before run 2. Four placeholder models in styles run 1 did not contain (snake case with sk keys and a fct prefix, person references named by role, a recipe bridge that filters both ways, text plan codes). Labels were written with the models. No real names.",
+ "models": [
+  {
+   "id": "proseware-subscriptions",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Subscriber",
+     "columns": [
+      {
+       "name": "SubscriberId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Email",
+       "dataType": "String"
+      },
+      {
+       "name": "SignupDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "PlanCode",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Plan",
+     "columns": [
+      {
+       "name": "PlanCode",
+       "dataType": "String"
+      },
+      {
+       "name": "PlanName",
+       "dataType": "String"
+      },
+      {
+       "name": "MonthlyFee",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Invoice",
+     "columns": [
+      {
+       "name": "InvoiceId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "SubscriberId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "InvoiceDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "DueDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Amount",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Payment",
+     "columns": [
+      {
+       "name": "PaymentId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "InvoiceId",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Method",
+       "dataType": "String"
+      },
+      {
+       "name": "Amount",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Calendar",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Month",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "Subscriber/PlanCode",
+     "to": "Plan/PlanCode",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Invoice/SubscriberId",
+     "to": "Subscriber/SubscriberId",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Invoice/InvoiceDate",
+     "to": "Calendar/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Invoice/DueDate",
+     "to": "Calendar/Date",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Payment/InvoiceId",
+     "to": "Invoice/InvoiceId",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "coho-winery",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "dim_vineyard",
+     "columns": [
+      {
+       "name": "vineyard_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "vineyard_name",
+       "dataType": "String"
+      },
+      {
+       "name": "region_sk",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "dim_region",
+     "columns": [
+      {
+       "name": "region_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "region_name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "dim_wine",
+     "columns": [
+      {
+       "name": "wine_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "wine_name",
+       "dataType": "String"
+      },
+      {
+       "name": "vineyard_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "varietal",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "fct_shipments",
+     "columns": [
+      {
+       "name": "wine_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "customer_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "order_date_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ship_date_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "cases",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "dim_customer",
+     "columns": [
+      {
+       "name": "customer_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "customer_name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "dim_date",
+     "columns": [
+      {
+       "name": "date_sk",
+       "dataType": "Int64"
+      },
+      {
+       "name": "calendar_date",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "year",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "fct_shipments/wine_sk",
+     "to": "dim_wine/wine_sk",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "fct_shipments/customer_sk",
+     "to": "dim_customer/customer_sk",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "fct_shipments/order_date_sk",
+     "to": "dim_date/date_sk",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "fct_shipments/ship_date_sk",
+     "to": "dim_date/date_sk",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "dim_wine/vineyard_sk",
+     "to": "dim_vineyard/vineyard_sk",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "dim_vineyard/region_sk",
+     "to": "dim_region/region_sk",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "relecloud-support",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Tickets",
+     "columns": [
+      {
+       "name": "TicketID",
+       "dataType": "Int64"
+      },
+      {
+       "name": "OpenedBy",
+       "dataType": "Int64"
+      },
+      {
+       "name": "AssignedAgent",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductLine",
+       "dataType": "String"
+      },
+      {
+       "name": "Opened",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Closed",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "PriorityLevel",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Agents",
+     "columns": [
+      {
+       "name": "AgentID",
+       "dataType": "Int64"
+      },
+      {
+       "name": "AgentName",
+       "dataType": "String"
+      },
+      {
+       "name": "TeamID",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Teams",
+     "columns": [
+      {
+       "name": "TeamID",
+       "dataType": "Int64"
+      },
+      {
+       "name": "TeamName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Users",
+     "columns": [
+      {
+       "name": "UserID",
+       "dataType": "Int64"
+      },
+      {
+       "name": "UserName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "ProductLines",
+     "columns": [
+      {
+       "name": "ProductLine",
+       "dataType": "String"
+      },
+      {
+       "name": "Description",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Priorities",
+     "columns": [
+      {
+       "name": "PriorityLevel",
+       "dataType": "Int64"
+      },
+      {
+       "name": "PriorityName",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Dates",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "Tickets/AssignedAgent",
+     "to": "Agents/AgentID",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/OpenedBy",
+     "to": "Users/UserID",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/ProductLine",
+     "to": "ProductLines/ProductLine",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/PriorityLevel",
+     "to": "Priorities/PriorityLevel",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/Opened",
+     "to": "Dates/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Tickets/Closed",
+     "to": "Dates/Date",
+     "active": false,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Agents/TeamID",
+     "to": "Teams/TeamID",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  },
+  {
+   "id": "munson-pickles",
+   "source": "placeholder",
+   "tables": [
+    {
+     "name": "Product",
+     "columns": [
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Ingredient",
+     "columns": [
+      {
+       "name": "IngredientKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Name",
+       "dataType": "String"
+      }
+     ]
+    },
+    {
+     "name": "Recipe",
+     "columns": [
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "IngredientKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "Qty",
+       "dataType": "Decimal"
+      }
+     ]
+    },
+    {
+     "name": "Batch",
+     "columns": [
+      {
+       "name": "BatchKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "ProductKey",
+       "dataType": "Int64"
+      },
+      {
+       "name": "BatchDate",
+       "dataType": "DateTime"
+      },
+      {
+       "name": "Units",
+       "dataType": "Int64"
+      }
+     ]
+    },
+    {
+     "name": "Date",
+     "columns": [
+      {
+       "name": "Date",
+       "dataType": "DateTime",
+       "isKey": true
+      },
+      {
+       "name": "Year",
+       "dataType": "Int64"
+      }
+     ],
+     "dataCategory": "Time"
+    }
+   ],
+   "labels": [
+    {
+     "from": "Recipe/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "both_ways",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Recipe/IngredientKey",
+     "to": "Ingredient/IngredientKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Batch/ProductKey",
+     "to": "Product/ProductKey",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    },
+    {
+     "from": "Batch/BatchDate",
+     "to": "Date/Date",
+     "active": true,
+     "direction": "one_way",
+     "cardinality": "many_to_one"
+    }
+   ]
+  }
+ ]
+}

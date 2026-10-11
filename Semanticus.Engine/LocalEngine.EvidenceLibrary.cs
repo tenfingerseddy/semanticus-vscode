@@ -22,6 +22,9 @@ namespace Semanticus.Engine
         public int? Verified { get; set; }
         public int? Total { get; set; }
         public int? Unknowns { get; set; }
+        /// <summary>Results per verdict word (Verified, NeedsReview, Broken, Unknown, Overridden), as the report keeps
+        /// them. A library line built from Verified and Unknowns alone left a failed check out of both numbers.</summary>
+        public System.Collections.Generic.Dictionary<string, int> VerdictCounts { get; set; }
         public string ContentHash { get; set; }
         public bool Valid { get; set; }
         public string Note { get; set; }
@@ -75,7 +78,6 @@ namespace Semanticus.Engine
 
         public async Task<EvidenceLibrary> ListEvidenceAsync()
         {
-            RequireProFeature();
             var session = _sessions.Current;
             if (session == null) return new EvidenceLibrary { Note = "Open a model to browse its evidence." };
             var modelName = await session.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
@@ -118,7 +120,6 @@ namespace Semanticus.Engine
 
         public async Task<EvidenceArtifact> GetEvidenceAsync(string id)
         {
-            RequireProFeature();
             if (string.IsNullOrWhiteSpace(id)) return new EvidenceArtifact { Error = "Choose an evidence record from list_evidence." };
             var library = await ListEvidenceAsync();
             var item = library.Items.FirstOrDefault(x => string.Equals(x.Id, id, StringComparison.Ordinal));
@@ -153,18 +154,13 @@ namespace Semanticus.Engine
         /// terminal Workflow evidence stays free. Re-saving the same source id is an idempotent atomic overwrite.</summary>
         public async Task<EvidenceSaveResult> SaveEvidenceAsync(string source, string sourceId, string origin)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             source = (source ?? "").Trim().ToLowerInvariant();
-            EvidenceArtifact artifact;
-            if (source == "tests" || source == "test" || source == "test-suite")
-            {
-                var report = await ExportTestReportAsync();
-                artifact = new EvidenceArtifact { Json = report.Json, Html = report.Html, ContentHash = report.ContentHash, Note = report.Note, Error = report.Error };
-            }
-            else if (source == "workflow" || source == "workflow-run")
-                artifact = await ExportWorkflowEvidenceAsync(sourceId);
-            else
+            var artifact = await BuildEvidenceArtifactAsync(source, sourceId);
+            if (artifact == null)
                 return new EvidenceSaveResult { Error = "Source must be 'tests' or 'workflow'. Use tests for the latest current-model suite, or workflow with an optional terminal run id." };
+            // the artifact the person was asked about: the newest run is outside the model, so the report this save writes must be that report
+            RequireApprovedBasis(nameof(SaveEvidenceAsync), EvidenceBasis(source, artifact), "evidence");
 
             if (string.IsNullOrWhiteSpace(artifact.Json))
                 return new EvidenceSaveResult { Note = artifact.Note, Error = artifact.Error, Library = await ListEvidenceAsync() };
@@ -210,6 +206,18 @@ namespace Semanticus.Engine
             return result;
         }
 
+        /// <summary>The artifact a save of this source would write now, or null when the source is not one it knows. Shared by the save and by the witness the door binds.</summary>
+        private async Task<EvidenceArtifact> BuildEvidenceArtifactAsync(string source, string sourceId)
+        {
+            if (source == "tests" || source == "test" || source == "test-suite")
+            {
+                var report = await ExportTestReportAsync();
+                return new EvidenceArtifact { Json = report.Json, Html = report.Html, ContentHash = report.ContentHash, Note = report.Note, Error = report.Error };
+            }
+            if (source == "workflow" || source == "workflow-run") return await ExportWorkflowEvidenceAsync(sourceId);
+            return null;
+        }
+
         private static EvidenceItem ReadEvidenceItem(string jsonPath)
         {
             var updated = File.GetLastWriteTimeUtc(jsonPath).ToString("o");
@@ -233,6 +241,7 @@ namespace Semanticus.Engine
                     Verified = doc.Coverage?.Verified,
                     Total = doc.Coverage?.Total,
                     Unknowns = doc.Coverage?.Unknowns,
+                    VerdictCounts = doc.VerdictCounts == null ? null : new System.Collections.Generic.Dictionary<string, int>(doc.VerdictCounts),
                     ContentHash = doc.ContentHash,
                     Valid = true,
                     Note = reason,

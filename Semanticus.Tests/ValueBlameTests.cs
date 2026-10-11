@@ -275,6 +275,34 @@ namespace Semanticus.Tests
             Assert.Contains("NOT a causal claim", blame.Note);
         }
 
+        // UAT-S05b-1-003: a ref that names no measure, and never did, came back Status "ok" with a "no recorded
+        // history" verdict, which reads as a real measure that simply has not moved. It must be refused with a way
+        // to find a valid ref. A DELETED measure whose history was recorded stays answerable by its old ref, and a
+        // real measure with no history yet stays an honest "ok".
+        [Fact]
+        public async Task A_ref_that_names_no_measure_and_has_no_history_is_refused_by_both_ops()
+        {
+            var bim = TempCopyOfFixture();
+            var sm = new SessionManager();
+            using var e = new LocalEngine(sm, new Fake(true));
+            await e.OpenAsync(bim);
+            var gone = Meas("h1", "OLD", 10.0); gone.Ref = "measure:Date/Retired Measure";
+            VitalsStore.Append(VitalsFile(bim), Rec(1, "apply_plan", "2026-07-01T10:00:00Z", null, gone));
+
+            const string missing = "measure:Date/Does Not Exist";
+            var blame = await e.BlameValueAsync(missing, null, null, "agent");
+            Assert.Equal("error", blame.Status);
+            Assert.Contains("list_measures", blame.Note);
+            var history = await e.ListValueHistoryAsync(missing, null);
+            Assert.Equal("error", history.Status);
+            Assert.Contains("list_measures", history.Note);
+
+            Assert.Equal("ok", (await e.BlameValueAsync("measure:Date/Retired Measure", null, null, "agent")).Status);
+            Assert.Equal("ok", (await e.ListValueHistoryAsync("measure:Date/Retired Measure", null)).Status);
+            Assert.Equal("ok", (await e.BlameValueAsync(M, null, null, "agent")).Status);
+            Assert.Equal("ok", (await e.ListValueHistoryAsync(M, null)).Status);
+        }
+
         // ================================ verdict semantics end-to-end ================================
 
         [Fact]
@@ -377,7 +405,7 @@ namespace Semanticus.Tests
             Assert.Equal("10", hist.Points[0].Value);
             Assert.Null(hist.Points[1].Value);
 
-            await e.SaveAsync(null, "bim");                      // a checkpoint moment on the FREE tier...
+            await e.SaveAsync(null, "bim", false, "human");                      // a checkpoint moment on the FREE tier...
             var (recs, bad) = VitalsStore.Read(VitalsFile(bim), null);
             Assert.Equal(0, bad);
             Assert.Equal(3, recs.Count);                         // ...writes, exactly as it does on Pro
@@ -390,11 +418,11 @@ namespace Semanticus.Tests
             var sm = new SessionManager();
             using var e = new LocalEngine(sm, new Fake(true));   // NOT host-enabled
             await e.OpenAsync(bim);
-            await e.SaveAsync(null, "bim");
+            await e.SaveAsync(null, "bim", false, "human");
             Assert.False(File.Exists(VitalsFile(bim)), "without the host opt-in, ambient capture must stay off (the ExperienceTee precedent)");
 
             e.AmbientVitalsEnabled = true;                        // the owner host's switch
-            await e.SaveAsync(null, "bim");
+            await e.SaveAsync(null, "bim", false, "human");
             Assert.True(File.Exists(VitalsFile(bim)));
             var (recs, bad) = VitalsStore.Read(VitalsFile(bim), null);
             Assert.Equal(0, bad);
@@ -467,7 +495,7 @@ namespace Semanticus.Tests
 
         // The completeness gap the fix targets: an EPHEMERAL anchor (live/XMLA/unsaved) AND no workspace open. The
         // vitals store used to resolve to null and capture was silently DROPPED — exactly the live models Pro users
-        // connect to. It must now land in the durable GLOBAL %USERPROFILE%/.semanticus store — mirroring the SENSITIVE
+        // connect to. It must now land in the durable GLOBAL SEMANTICUS_HOME store, mirroring the SENSITIVE
         // half of PR #112 (the project-insight store): a PER-FINGERPRINT file, so it can't cross-prune or cross-read.
         private static string EphemeralBim()
         {
@@ -484,11 +512,11 @@ namespace Semanticus.Tests
             var bim = EphemeralBim();
             Assert.True(ExperienceStore.IsEphemeralAnchor(bim));   // classified live → no durable on-disk anchor
             var home = Path.Combine(Path.GetTempPath(), "smx-vb-home-" + Guid.NewGuid().ToString("N"));
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             try
             {
                 Directory.CreateDirectory(home);
-                Environment.SetEnvironmentVariable("USERPROFILE", home);   // redirect the global root before capture
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));   // redirect the global root before capture
 
                 var sm = new SessionManager();
                 using var e = new LocalEngine(sm, new Fake(true)) { AmbientVitalsEnabled = true };   // NO workspaceDir
@@ -515,7 +543,7 @@ namespace Semanticus.Tests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(Path.GetDirectoryName(bim), true); } catch { }
                 try { Directory.Delete(home, true); } catch { }
             }
@@ -558,11 +586,11 @@ namespace Semanticus.Tests
             var bim = EphemeralBim();
             Assert.True(ExperienceStore.IsEphemeralAnchor(bim));
             var home = Path.Combine(Path.GetTempPath(), "smx-vb-home-" + Guid.NewGuid().ToString("N"));
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             try
             {
                 Directory.CreateDirectory(home);
-                Environment.SetEnvironmentVariable("USERPROFILE", home);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
 
                 var sm = new SessionManager();
                 using var e = new LocalEngine(sm, new Fake(true)) { AmbientVitalsEnabled = true };   // NO workspaceDir
@@ -576,7 +604,7 @@ namespace Semanticus.Tests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(Path.GetDirectoryName(bim), true); } catch { }
                 try { Directory.Delete(home, true); } catch { }
             }

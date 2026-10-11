@@ -1,0 +1,486 @@
+{
+ "version": 1,
+ "fresh": true,
+ "note": "The FRESH labelled set for the compose.draft bar (Kane, 26 Sep): written after the tuning commit 261f2d41 was frozen, from ordinary modelling tasks, distinct from labels.json, with placeholder names only. Committed with bar-fresh.json before any run on it. Same shape as labels.json.",
+ "items": [
+  {
+   "id": "f-01",
+   "source": "fresh",
+   "words": "Load the Inventory table from the warehouse source, relate it to Product on ProductKey",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "f-02",
+   "source": "fresh",
+   "words": "add a Gross Margin % measure, show it as a percentage",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ]
+   ]
+  },
+  {
+   "id": "f-03",
+   "source": "fresh",
+   "words": "hide every surrogate key column in the fact tables",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "f-04",
+   "source": "fresh",
+   "words": "Rename the column cust_nm to Customer Name",
+   "clauses": [
+    [
+     "rename_object"
+    ]
+   ]
+  },
+  {
+   "id": "f-05",
+   "source": "fresh",
+   "words": "write descriptions for the Finance measures so Copilot can explain them",
+   "clauses": [
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "f-06",
+   "source": "fresh",
+   "words": "mark Calendar as the date table",
+   "clauses": [
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "f-07",
+   "source": "fresh",
+   "words": "sort Weekday Name by Weekday Number",
+   "clauses": [
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "f-08",
+   "source": "fresh",
+   "words": "Set the Postcode column's category to postal code",
+   "clauses": [
+    [
+     "set_data_category"
+    ]
+   ]
+  },
+  {
+   "id": "f-09",
+   "source": "fresh",
+   "words": "make OrderDate a date column instead of text",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "f-10",
+   "source": "fresh",
+   "words": "turn off the default sum on the Fiscal Year column",
+   "clauses": [
+    [
+     "set_summarize_by"
+    ]
+   ]
+  },
+  {
+   "id": "f-11",
+   "source": "fresh",
+   "words": "group the inventory measures into a Stock folder",
+   "clauses": [
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "f-12",
+   "source": "fresh",
+   "words": "teach Copilot that turnover means revenue",
+   "clauses": [
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "f-13",
+   "source": "fresh",
+   "words": "build a calculation group for currency conversion",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ]
+   ]
+  },
+  {
+   "id": "f-14",
+   "source": "fresh",
+   "words": "create a role so regional managers only see their region",
+   "clauses": [
+    [
+     "create_role"
+    ]
+   ]
+  },
+  {
+   "id": "f-15",
+   "source": "fresh",
+   "words": "rewrite the Net Sales formula to exclude returns",
+   "clauses": [
+    [
+     "update_measure"
+    ]
+   ]
+  },
+  {
+   "id": "f-16",
+   "source": "fresh",
+   "words": "add a column with the fiscal quarter to Calendar",
+   "clauses": [
+    [
+     "create_column"
+    ]
+   ]
+  },
+  {
+   "id": "f-17",
+   "source": "fresh",
+   "words": "reprocess the Inventory table",
+   "clauses": [
+    [
+     "refresh_partition"
+    ]
+   ]
+  },
+  {
+   "id": "f-18",
+   "source": "fresh",
+   "words": "run the saved tests",
+   "clauses": [
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "f-19",
+   "source": "fresh",
+   "words": "save everything",
+   "clauses": [
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "f-20",
+   "source": "fresh",
+   "words": "promote the model to production",
+   "clauses": [
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "f-21",
+   "source": "fresh",
+   "words": "how fast is the Stock Value measure",
+   "clauses": [
+    [
+     "benchmark_dax"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "profile_dax"
+    ]
+   ]
+  },
+  {
+   "id": "f-22",
+   "source": "fresh",
+   "words": "work out where the time goes in the Days of Cover measure",
+   "clauses": [
+    [
+     "profile_dax"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "benchmark_dax"
+    ]
+   ]
+  },
+  {
+   "id": "f-23",
+   "source": "fresh",
+   "words": "Create a Units Sold measure, format it with thousands separators, then put it in the Volume folder",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ],
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "f-24",
+   "source": "fresh",
+   "words": "Bring in the Targets sheet, link it to Calendar, then add a Target Attainment measure",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "create_relationship"
+    ],
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "f-25",
+   "source": "fresh",
+   "words": "refresh Inventory, run the tests, then deploy to the test workspace",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "f-26",
+   "source": "fresh",
+   "words": "hide the technical columns, describe the visible ones",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ],
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "f-27",
+   "source": "fresh",
+   "words": "Every Friday, reload the Orders table, save the model",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "f-28",
+   "source": "fresh",
+   "words": "fix the data types on the Shipments table, then relate Shipments to Orders",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ],
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "f-29",
+   "source": "fresh",
+   "words": "call the Qty column Quantity, stop it summing by default",
+   "clauses": [
+    [
+     "rename_object"
+    ],
+    [
+     "set_summarize_by"
+    ]
+   ]
+  },
+  {
+   "id": "f-30",
+   "source": "fresh",
+   "words": "add a Year over Year Growth measure, time it",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "benchmark_dax"
+    ]
+   ],
+   "alsoOk": [
+    [],
+    [
+     "profile_dax"
+    ]
+   ]
+  },
+  {
+   "id": "f-31",
+   "source": "fresh",
+   "words": "order the month names by month number, then set up the calendar as the date table",
+   "clauses": [
+    [
+     "set_sort_by_column"
+    ],
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "f-32",
+   "source": "fresh",
+   "words": "ring the warehouse manager about stock levels",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "f-33",
+   "source": "fresh",
+   "words": "update the report layout in Power BI",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "f-34",
+   "source": "fresh",
+   "words": "add a security role for auditors, publish to test",
+   "clauses": [
+    [
+     "create_role"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "f-35",
+   "source": "fresh",
+   "words": "add a metric for average basket size, check the numbers are right",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "f-36",
+   "source": "fresh",
+   "words": "upload the model, email the team",
+   "clauses": [
+    [
+     "deploy_stage"
+    ],
+    []
+   ]
+  },
+  {
+   "id": "f-37",
+   "source": "fresh",
+   "words": "mark the Store City column as a city, add alternative names for the Store table",
+   "clauses": [
+    [
+     "set_data_category"
+    ],
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "f-38",
+   "source": "fresh",
+   "words": "tidy the Customer measures into folders, then save",
+   "clauses": [
+    [
+     "set_display_folder"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "f-39",
+   "source": "fresh",
+   "words": "Every morning, process the model, validate the totals",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "f-40",
+   "source": "fresh",
+   "words": "creat a Profit measure, profle its speed",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "profile_dax"
+    ]
+   ],
+   "alsoOk": [
+    [],
+    [
+     "benchmark_dax"
+    ]
+   ]
+  }
+ ]
+}

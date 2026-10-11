@@ -1,0 +1,18 @@
+{
+ "point": "relationship.join",
+ "version": 2,
+ "committed": "2026-09-26",
+ "committedBeforeAnyJevAnswerOfItsRun": true,
+ "why": "Replaces bar.json for run 3 on the coordinator's rules of 26 September (from the column retest Kane asked for): the answer key is what is correct, hand-checked on a 10% sample; Jev gets the facts the rule uses; lumped decisions are split and scored one by one; the Pro path is Jev when sure, else the rule; SHIP needs at least 5 points over the rule with McNemar p < 0.05.",
+ "proPath": "Per question, Jev's answer when its confidence is at least the point's bar (0.85), otherwise the name rule's answer (RelationshipFamily.RuleTarget; one way; many to one; the date named like order is the main one). The engine's resolution of which relationships can be active runs after, on every arm.",
+ "decisions": {
+  "D0_tables_related": "per pair of tables that could be joined (a candidate pair or a labelled pair): is there a relationship between them",
+  "D1_join": "per candidate column, and per labelled column the engine did not ask about: which key it joins, or none",
+  "D2_direction": "per labelled relationship that BOTH the Pro path and the rule joined correctly: one way or both ways",
+  "D3_active": "per labelled relationship that BOTH joined correctly: active or inactive after the engine's resolution",
+  "D4_cardinality": "per labelled relationship that BOTH joined correctly: many to one or one to one"
+ },
+ "ship": "A decision SHIPS when the Pro path's accuracy is at least minPointsOverRule above the rule's on that decision's units AND the exact two-sided McNemar test on the paired units gives p below maxP. The family goes live only if D1_join ships; D0 is D1 seen per table pair and is reported with its own test. When D1 ships, D2 to D4 use Jev's answer only where that decision ships too, otherwise the rule's.",
+ "minPointsOverRule": 0.05,
+ "maxP": 0.05
+}

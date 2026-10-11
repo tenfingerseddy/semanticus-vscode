@@ -1,0 +1,149 @@
+{
+ "set": "fresh3-labels.json",
+ "written": "2026-09-28",
+ "writtenAfterTheRun": true,
+ "note": "Flagged, not removed. fresh3-labels.json stays exactly as it was committed before its one run (d4944cd2), so this list sits beside it. No question in the set repeats an earlier one word for word, but these ask for exactly the same labelled parts as an earlier question on the same model family and differ from it by at most two content words. A near repeat is held out in its words but not in spirit: the reader was changed after the earlier sets were scored, so it may have been shaped by the very question this one rewords. The rule is nearRepeats in score.mjs, and the self-test checks this list is exactly what that rule finds. score.mjs prints the numbers with these left out beside the whole-set numbers.",
+ "rule": "same labelled parts (measures, splits, filters with their values, top N; order ignored), same model family (contoso and contoso-ai are one family), and at most 2 content words different once these filler words are dropped: a an the by per for each across in of on what is are was our my me show give how much many overall total all",
+ "items": [
+  {
+   "id": "hns-002",
+   "words": "units for each product brand",
+   "earlierId": "fresh-labels.json:fns-02",
+   "earlierWords": "show me units for each brand",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hns-004",
+   "words": "average order value by store channel",
+   "earlierId": "fresh2-labels.json:gns-007",
+   "earlierWords": "average order value by channel",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hns-005",
+   "words": "total cost per product subcategory",
+   "earlierId": "labels.json:ns-11",
+   "earlierWords": "total cost by subcategory",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hns-015",
+   "words": "average order value per customer segment",
+   "earlierId": "labels.json:ns-08",
+   "earlierWords": "average order value by customer segment",
+   "wordsDifferent": 0
+  },
+  {
+   "id": "hns-016",
+   "words": "units by sku",
+   "earlierId": "fresh-labels.json:fns-41",
+   "earlierWords": "units per SKU",
+   "wordsDifferent": 0
+  },
+  {
+   "id": "hns-020",
+   "words": "return rate % for each product category",
+   "earlierId": "labels.json:ns-10",
+   "earlierWords": "return rate by category",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hns-073",
+   "words": "what were total net sales in 2025",
+   "earlierId": "fresh2-labels.json:gns-030",
+   "earlierWords": "total net sales for 2025",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hns-077",
+   "words": "what is the margin % overall",
+   "earlierId": "fresh2-labels.json:gns-032",
+   "earlierWords": "what is our overall margin %",
+   "wordsDifferent": 0
+  },
+  {
+   "id": "hns-080",
+   "words": "average order value across 2024",
+   "earlierId": "fresh2-labels.json:gns-033",
+   "earlierWords": "average order value in 2024",
+   "wordsDifferent": 0
+  },
+  {
+   "id": "hns-094",
+   "words": "what will net sales be next quarter",
+   "earlierId": "labels.json:ns-39",
+   "earlierWords": "what will net sales be next year",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-001",
+   "words": "turnover by country",
+   "earlierId": "labels.json:ct-01",
+   "earlierWords": "total revenue by country",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-002",
+   "words": "revenue for each product colour",
+   "earlierId": "fresh-labels.json:fct-11",
+   "earlierWords": "revenue by colour",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hct-003",
+   "words": "order quantity by brand",
+   "earlierId": "fresh-labels.json:fct-02",
+   "earlierWords": "quantity by brand",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hct-005",
+   "words": "revenue per unit for each nation",
+   "earlierId": "fresh-labels.json:fct-04",
+   "earlierWords": "revenue per unit by country",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-006",
+   "words": "sales by fiscal quarter",
+   "earlierId": "fresh2-labels.json:gct-007",
+   "earlierWords": "revenue per fiscal quarter",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-009",
+   "words": "revenue by offer",
+   "earlierId": "labels.json:ct-09",
+   "earlierWords": "revenue by promotion",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-041",
+   "words": "total revenue and order quantity by fiscal quarter",
+   "earlierId": "labels.json:ct-16",
+   "earlierWords": "revenue and quantity by fiscal quarter",
+   "wordsDifferent": 1
+  },
+  {
+   "id": "hct-051",
+   "words": "what is the revenue per unit for the helmet",
+   "earlierId": "fresh-labels.json:fct-25",
+   "earlierWords": "revenue per unit for the helmet",
+   "wordsDifferent": 0
+  },
+  {
+   "id": "hct-066",
+   "words": "returned units by town",
+   "earlierId": "fresh-labels.json:fct-14",
+   "earlierWords": "returned units by city",
+   "wordsDifferent": 2
+  },
+  {
+   "id": "hct-068",
+   "words": "returned units by calendar year",
+   "earlierId": "fresh-labels.json:fct-15",
+   "earlierWords": "returned units by year",
+   "wordsDifferent": 1
+  }
+ ]
+}

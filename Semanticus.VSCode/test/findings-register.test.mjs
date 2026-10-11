@@ -467,6 +467,23 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         // PR #324, the T193 decision: the remote positive control and the full IPv4 loopback range.
         3886673141: 'docs/notes/T193-localhost-open-live-decision.md',
         3886673144: 'docs/notes/T193-localhost-open-live-decision.md',
+        // PR #377, the 1.2.0 release records: the mirror-safe guard let the kept doc map go missing, and the
+        // progress summary declared the release while five register rows still said IN PROGRESS.
+        4015497404: 'Semanticus.VSCode/test/pro-feature-line.test.mjs',
+        4015497416: 'docs/redesign/progress-view.json',
+        // PR #378 and #379, the release close-out: a DONE marker the renderer did not read, and the new
+        // progress test reading private inputs the public mirror drops.
+        4015637271: 'TASKS.md',
+        4016218976: 'Semanticus.VSCode/test/progress-view.test.mjs',
+        4020400245: 'Semanticus.VSCode/webview/src/lineage.tsx',
+        4020400258: 'Semanticus.VSCode/package.json',
+        4021250935: 'Semanticus.VSCode/webview/src/lineage-model.ts',
+        4021250938: 'Semanticus.VSCode/webview/src/lineage-model.ts',
+        4021250943: 'Semanticus.VSCode/webview/src/lineage-impact.tsx',
+        4021880349: 'docs/redesign/progress-view.json',
+        4058060244: 'docs/redesign/jev-pilot-verdict.md',
+        4058060246: 'docs/redesign/jev-infusion.md',
+        4058060250: 'docs/redesign/jev-pilot-verdict.md',
         // PR #325: shipped finding tasks stayed in NEXT and T209 still named the shipped T197 obstacle.
         3886668056: 'TASKS.md',
         3886668059: 'TASKS.md',
@@ -560,6 +577,69 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4000562051: 'tools/render-redesign-progress.py',
         4000562055: 'tools/render-redesign-progress.py',
         4000562058: 'docs/redesign/task-briefs/UX16.md',
+        // PR #384, the Jev M0a foundation. Six comments, each left on the file it is about.
+        4058967631: 'Semanticus.Engine/EngineRpcTarget.cs',
+        4058967633: 'Semanticus.Engine/LocalEngine.Decisions.cs',
+        4058967635: 'Semanticus.Engine/Decisions/MeasureDefaultsPoint.cs',
+        4058967638: 'Semanticus.Engine/Jev/InMemoryChangeSetService.cs',
+        4058967640: 'Semanticus.Engine/Decisions/DecisionService.cs',
+        4058967642: 'Semanticus.Core/Decisions/DecisionAnswerReader.cs',
+        // PR #385, the second Jev slice. Seven comments, each left on the file it is about.
+        4059732944: 'Semanticus.Engine/LocalEngine.Plan.cs',
+        4059732951: 'tools/relay/templates.mjs',
+        4059732957: 'tools/relay/worker.mjs',
+        4059732959: 'tools/fulfillment/worker/stripe.mjs',
+        4059732965: 'Semanticus.Engine/LocalEngine.Plan.cs',
+        4059732970: 'Semanticus.Engine/LocalEngine.Plan.cs',
+        4059732974: 'Semanticus.Engine/LocalEngine.Plan.cs',
+        // PR #386, the second-slice follow-up. Three comments, each left on the file it is about.
+        4062720011: 'Semanticus.Engine/LocalEngine.Plan.cs',
+        4062720022: 'Semanticus.VSCode/src/extension.ts',
+        4062720029: 'Semanticus.Engine/Plan/AskRoutePoint.cs',
+        // PR #387, the Studio hierarchy slice. Three comments, each left on the file it is about.
+        4066759405: 'Semanticus.Engine/LocalEngine.Decisions.cs',
+        4066759408: 'Semanticus.VSCode/src/extension.ts',
+        4066759416: 'Semanticus.VSCode/src/extension.ts',
+        // PR #388, the hierarchy follow-up. One comment, on the Plan page.
+        4070396721: 'Semanticus.VSCode/webview/src/plan.tsx',
+        // PR #389, the Fix slice. Four comments, all on the engine's plan code.
+        4073808543: 'Semanticus.Engine/Plan/PlanApprovalGuard.cs',
+        4073808549: 'Semanticus.Engine/Plan/LocalEngine.PlanVerbs.cs',
+        4073808557: 'Semanticus.Engine/Plan/LocalEngine.PlanVerbs.cs',
+        4073808563: 'Semanticus.Engine/Plan/PlanTargets.cs',
+        // PR #390, the M4 groundwork. Three comments.
+        4079824405: 'Semanticus.VSCode/webview/src/plan.tsx',
+        4079824410: 'Semanticus.VSCode/src/extension.ts',
+        4079824415: 'Semanticus.Engine/Facts/LocalEngine.Facts.cs',
+        // PR #392, slice 6. One comment, on the engine's DAX write guard claim.
+        4088537979: 'Semanticus.Engine/LocalEngine.cs',
+        // PR #393, slice 7. Four comments, on the queue, History and the edit ledger.
+        4092453995: 'Semanticus.Engine/Jev/PlanTaskQueue.cs',
+        4092454002: 'Semanticus.Engine/LocalEngine.History.cs',
+        4092454007: 'Semanticus.Engine/EditLedger.cs',
+        4092454013: 'Semanticus.Engine/Plan/LocalEngine.PlanQueue.cs',
+        // PR #394, slice C. Three comments: the working copy's endpoint clear, Remove on open-model counts, and
+        // the query-only Now strip.
+        4094119915: 'Semanticus.Engine/Connect/ConnectionRegistry.cs',
+        4094119926: 'Semanticus.VSCode/webview/src/connectionshub-parts.tsx',
+        4094119936: 'Semanticus.VSCode/webview/src/connectionshub-model.ts',
+        // PR #395, slice 8. Eight comments on the composer: four fixed there, four deferred to slice 10.
+        4096199853: 'Semanticus.Engine/EngineRpcTarget.cs',
+        4096199863: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        4096199870: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        4096199877: 'Semanticus.Engine/Composer/ComposedChangeExecutor.cs',
+        4096199884: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        4096199892: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        4096199899: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        4096199911: 'Semanticus.Engine/Composer/DraftRunner.cs',
+        // PR #396, slice 9. Three comments: two fixed there, the tour card deferred to slice 11.
+        4098822877: 'Semanticus.VSCode/webview/src/sendtask.tsx',
+        4098822886: 'Semanticus.VSCode/webview/src/plan-history.tsx',
+        4098822893: 'Semanticus.VSCode/webview/src/plan-guide.tsx',
+        // PR #397, the M11 hand-over. One comment, the consent epoch in the decision service.
+        4203239586: 'Semanticus.Engine/Decisions/DecisionService.cs',
+        // PR #398, the 1.3.0 mirror fix. One comment, the README install table.
+        4239456154: 'README.md',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

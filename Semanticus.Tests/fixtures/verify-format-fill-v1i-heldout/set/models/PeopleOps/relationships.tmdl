@@ -1,0 +1,15 @@
+relationship ad93d1a7-2355-5778-aff9-f387922665eb
+	fromColumn: Employees.'Department Key'
+	toColumn: Department.'Department Key'
+
+relationship a770c7cb-0146-5dc9-afc8-ab3280dc15db
+	fromColumn: Employees.'Hire Date Key'
+	toColumn: Calendar.'Date Key'
+
+relationship d23dde40-54d1-55db-a639-7193c7831b59
+	fromColumn: Absence.'Employee Number'
+	toColumn: Employees.'Employee Number'
+
+relationship 7a6480af-a67b-53ef-abb3-49f5e32d16bc
+	fromColumn: Absence.'Date Key'
+	toColumn: Calendar.'Date Key'

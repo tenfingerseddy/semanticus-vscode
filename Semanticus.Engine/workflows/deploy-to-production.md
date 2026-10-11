@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: deploy-to-production
 title: Publish changes
 description: Choose the configured destination, preview the actual change, publish under its current permission gate, and record what happened.
-version: 1
+version: 2
 strictness: hard
 whenToUse: "Use when reviewed model changes are ready for a configured test or production destination. For a risky edit that still needs impact review, use Review a risky change; for a report-dependent rename, use Rename with impact review."
 triggers: [deploy_stage, deploy_live, preview_deploy]
 ---
 
 ## Step 1: Choose the destination and change set
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Call `model_diff` once and review the changed objects and the verified-edit trail. Name the actual target
 workspace, pipeline stage or live model. Do not invent a dev-to-test-to-prod route when this project has no
@@ -24,6 +29,10 @@ inputs:
 ```
 
 ## Step 2: Preview the relevant checks
+```yaml step
+performer: assistant
+id: step-2
+```
 
 Confirm the connection and run `preview_deploy` plus `deploy_gate` against the named target. Review parameter
 rebinding, creates, updates and any blocking findings. If the model has roles, call `list_roles` and perform
@@ -41,6 +50,11 @@ inputs:
 ```
 
 ## Step 3: Publish with the configured permission
+```yaml step
+performer: assistant
+id: step-3
+phase: after
+```
 
 Use the operation that matches the chosen destination: `deploy_stage` for a pipeline stage, `deploy_live`
 for XMLA metadata writeback, or `cicd_publish` for a configured full-definition publish. These operations
@@ -53,12 +67,29 @@ ops: [deploy_stage, deploy_live, cicd_publish]
 ```
 
 ## Step 4: Record the actual result
+```yaml step
+performer: assistant
+id: step-4
+phase: after
+```
 
-Read `deployment_history` when a pipeline was used and call `save_model` when the local recovery point should
-be captured. Record the target, operation, result, permission or human token used, and any required post-
-publish role or refresh check. Mention monitoring only when an actual monitoring result exists; do not imply
-that a history row proved refresh health.
+Read `deployment_history` when a pipeline was used. Record the target, operation, result, permission or
+human token used, and any required post-publish role or refresh check. Mention monitoring only when an
+actual monitoring result exists; do not imply that a history row proved refresh health. Semanticus saves
+the local recovery point in the next step.
 
 ```yaml gate
-ops: [deployment_history, save_model]
+ops: [deployment_history]
 ```
+
+## Step 5: Save a local recovery point
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_model
+```
+
+Semanticus saves the model, so the version that was published is the local recovery point. Nothing here
+runs if a step before it stopped the draft.

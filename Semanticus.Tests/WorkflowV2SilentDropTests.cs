@@ -283,7 +283,7 @@ namespace Semanticus.Tests
                 Assert.NotNull(await Record.ExceptionAsync(() => owner.GetWorkflowRunAsync(null)));
                 await owner.SaveWorkflowAsync("public-after-refusal", PlainCallTargetMd("public-after-refusal"), "human");
                 var accepted = await start("public-after-refusal");
-                Assert.Equal("wfr-1", accepted.RunId);
+                Assert.Matches("^wfr-[0-9a-f]{8}$", accepted.RunId);   // random since Plan-heart E4 (contract 1.3)
                 Assert.Null(accepted.Frames);
                 Assert.Null(accepted.TotalStepsProvisional);
             });
@@ -330,7 +330,7 @@ namespace Semanticus.Tests
                 IEngine engine = owner;
                 if (door == "rpc")
                 {
-                    var pipe = "semanticus-public-call-" + Guid.NewGuid().ToString("N");
+                    var pipe = TestPipe.Mint("semanticus-public-call-");
                     server = new RpcServer(sessions, owner, pipe);
                     serverTask = server.RunAsync(cts.Token);
                     remote = await RemoteEngine.ConnectAsync(pipe);
@@ -646,15 +646,9 @@ namespace Semanticus.Tests
             // Legacy pre-v7 terminal-record control. The coverage-backed v7 golden below is the real
             // acceptance-check-34 guard; this pin stays only so a reshape of the old shape is still visible.
 
-            var path = Path.Combine(AppContext.BaseDirectory, "workflows", "new-measure.md");
-            if (!File.Exists(path))
-            {
-                var dir = new DirectoryInfo(AppContext.BaseDirectory);
-                while (dir != null && !File.Exists(Path.Combine(dir.FullName, "Semanticus.sln"))) dir = dir.Parent;
-                Assert.True(dir != null, "could not find Semanticus.sln above " + AppContext.BaseDirectory);
-                path = Path.Combine(dir.FullName, "Semanticus.Engine", "workflows", "new-measure.md");
-            }
-            Assert.True(File.Exists(path), "stock workflow missing: " + path);
+            // new-measure parked (contract 21.2, lane W3): its last shipped bytes are the compat freeze.
+            var path = WorkflowSeedLibraryTests.ParkedFreeze("new-measure");
+            Assert.True(File.Exists(path), "frozen new-measure missing: " + path);
             var def = WorkflowParser.ParseFile(path, "stock");
             Assert.Null(def.Error);
             var run = new WorkflowRunState("wfr-seed-record", def, null)
@@ -1118,7 +1112,7 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "smx-drop-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            var pipe = "semanticus-drop-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipe = TestPipe.Mint("semanticus-drop-");
             var sessions = new SessionManager();
             var owner = new LocalEngine(sessions, new Pro(), ws);
             await owner.SaveWorkflowAsync(name, md, "human");

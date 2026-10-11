@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!-- Verifier's planted pages for space-check-misses-drive.mjs. Each breaks Kane's space rule in a way the space
+     check (screencheck.mjs checkSpace) should see, and today does not.
+     ?case=stretched  the card is stretched to the page bottom (as AI instructions now is), and the text scrolls in a
+                      200 px box at its top with Save inside that box: text hidden, Save cut off, the card empty below.
+     ?case=sidepanel  the Docs shape: a page that exactly fills the window and does not scroll, with a side panel
+                      that scrolls, and the panel's own Save and Copy hidden inside it (the ratified rule 2 is "less
+                      than 75% visible inside a scrolling ancestor, while the page root does not scroll").
+                      Its written text runs the full length of a real narrative, because a 30-row textarea alone
+                      fits the panel at 1440 x 900 (measured: the panel's content was 850 px in an 850 px box) and
+                      the page then plants nothing. A short fixture hiding the fault it is built to plant is the
+                      same fault the audit named in the scenes, in the page that is supposed to catch it.
+     ?case=docs       Review, Docs as it was built: three cards on the 12-column grid at the window's height, each
+                      scrolling on its own so the page never does, and the narrative column's own Save, Copy and
+                      Give to your assistant below its fold. Case 4 of the driver used to drive the real Docs page.
+                      The shape lives here instead, where it cannot be fixed away. Round 2 claimed that page was
+                      already fixed and "its actions sit outside the scroller"; that was true of the LEFT column
+                      only, and the narrative column went on hiding its own Save, Clear, Copy and Give to your
+                      assistant until round 3 made the page scroll instead of the column.
+     ?case=docs-nested  (verifier, round 2) the same Docs narrative column with the markup the real page renders:
+                      each section is its own wrapper (SectionEditor's div.pt-3 in documentation.tsx) holding its
+                      title, Give to your assistant and Copy, the writing box, and its Save and Clear. The case above
+                      lays every section's controls out flat as siblings, so its five Saves repeat side by side and
+                      are counted. In the real markup the thing that repeats is the WRAPPER that holds the Save, which
+                      the list-row exemption reads as "a saved connection's card with its Open" and exempts, so the
+                      real page's hidden narrative Saves are never counted. Round 3 made a control that carries the
+                      app's own button styling never a list row, whatever repeats around it, and this page is what
+                      holds that rule up. -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Space check misses</title>
+  <link rel="stylesheet" href="../../../media/studio/studio.css" />
+  <style>
+    main { height: 100vh; overflow: auto; }
+    .stretched .card { min-height: calc(100vh - 48px); }
+    .stretched .box { height: 200px; overflow-y: auto; }
+    .sidepanel .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; height: calc(100vh - 48px); }
+    .sidepanel .aside { overflow: auto; }
+    .docs .grid { display: grid; grid-template-columns: 3fr 6fr 3fr; gap: 12px; height: calc(100vh - 48px); }
+    .docs .grid > * { overflow: auto; min-height: 0; }
+    .docs-nested .grid { display: grid; grid-template-columns: 3fr 6fr 3fr; gap: 12px; height: calc(100vh - 48px); }
+    .docs-nested .grid > * { overflow: auto; min-height: 0; }
+  </style>
+</head>
+<body>
+  <main><div class="sem-page" id="page"></div></main>
+  <script>
+    const which = new URLSearchParams(location.search).get('case') || 'stretched';
+    document.body.className = which;
+    const lines = Array.from({ length: 30 }, (_, i) => `<p>Line ${i + 1}: revenue is recognised at ship date and returns are netted off in the month they are processed.</p>`).join('');
+    const save = '<button class="sem-btn sem-btn-primary" type="button">Save</button> <button class="sem-btn" type="button">Copy</button>';
+    const give = '<button class="sem-btn sem-btn-sm" type="button">Give to your assistant</button>';
+    // Five sections of ten rows: the real Docs narrative column carries one per object with its own Save, Copy and
+    // Give to your assistant, and at 1440 x 900 that runs past the column's fold. Three eight-row ones fitted (750 px
+    // in an 850 px column) and planted nothing, which is the short-fixture fault again.
+    const section = (t) => `<h3 class="sem-card-title">${t}</h3><textarea rows="10" class="sem-field" style="width:100%">Grain is one row per order line.</textarea>${save} ${give}`;
+    // The real SectionEditor: one wrapper per section, three sections (a model's overview, glossary, methodology).
+    const nested = (t) => `<div class="pt-3" style="border-top:1px solid var(--sem-rule)"><div class="flex items-center gap-2 mb-1"><span class="font-semibold">${t}</span></div><div class="mb-1">${give} <button class="sem-btn sem-btn-sm" type="button">Copy</button></div><textarea rows="14" class="sem-field w-full resize-y overflow-hidden">Grain is one row per order line.</textarea><div class="flex items-center gap-2 mt-1"><button class="sem-btn sem-btn-sm" type="button">Save</button><button class="sem-btn sem-btn-sm sem-btn-quiet" type="button">Clear</button></div></div>`;
+    document.getElementById('page').innerHTML = which === 'docs-nested'
+      ? `<div class="grid"><aside class="sem-card"><h2 class="sem-card-title">Include</h2>${lines}</aside><section class="sem-card"><h2 class="sem-card-title">Preview</h2>${lines}</section><aside class="sem-card flex flex-col gap-3"><div><h2 class="sem-card-title mb-2">Narrative: additional context</h2><div class="mb-2">Add business context that merges into the docs.</div><select class="sem-field sem-field-sm w-full"><option>Model</option></select></div>${nested('Overview')}${nested('Glossary')}${nested('Methodology')}</aside></div>`
+      : which === 'stretched'
+      ? `<section class="sem-card sem-stack card"><h2 class="sem-card-title">AI instructions</h2><div class="box">${lines}${save}</div></section>`
+      : which === 'docs'
+      ? `<div class="grid"><aside class="sem-card"><h2 class="sem-card-title">Include</h2>${lines}</aside><section class="sem-card"><h2 class="sem-card-title">Preview</h2>${lines}</section><aside class="sem-card"><h2 class="sem-card-title">Narrative</h2>${section('Overview')}${section('Glossary')}${section('Methodology')}${section('Grain')}${section('Owners')}</aside></div>`
+      : `<div class="grid"><section class="sem-card">Preview</section><aside class="sem-card aside"><h2 class="sem-card-title">Narrative</h2>${lines}<textarea rows="30" class="sem-field" style="width:100%">Overview</textarea>${save}</aside></div>`;
+  </script>
+</body>
+</html>

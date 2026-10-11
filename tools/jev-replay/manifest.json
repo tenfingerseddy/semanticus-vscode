@@ -1,0 +1,90 @@
+{
+  "manifestVersion": 1,
+  "committedUtc": "2026-09-21T00:00:00Z",
+  "manifestDigest": "08aacd2e479c60cdbfae11f669ce4e6812fa742100259b3588f45f51604b2e3c",
+  "status": "proposed",
+  "note": "Bars are numeric and committed before a run. These bars are PROPOSED by the Jev foundation lane and are not yet ratified by Kane, so a run against them is not a ratified gate. The harness refuses to score a point that has no bar here, which is the point of the file. Editing a bar changes manifestDigest, and loadManifest refuses a manifest whose recorded digest does not match its contents, so a bar cannot be moved after the fact and still read as committed.",
+  "splitPolicy": {
+    "heldOutModels": [
+      "northstar",
+      "mssec",
+      "smartsheets"
+    ],
+    "heldOutFamilies": [],
+    "note": "Held out by whole model and by ask family, never by row. These three models are reserved for the held-out gate and have not been run. Pilot one used aw_packt and contoso, which are therefore development evidence and can never be the gate."
+  },
+  "points": {
+    "pilot1.display_folder": {
+      "question": "Which display folder is this measure filed in?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.3,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.3,
+      "confidenceThreshold": 0.85,
+      "fallback": "offer the full folder list with nothing preselected"
+    },
+    "pilot1.format_family": {
+      "question": "How is the result of this measure displayed to a report reader?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.3,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.3,
+      "confidenceThreshold": 0.85,
+      "fallback": "leave the format string untouched and show the six families"
+    },
+    "pilot1.data_category": {
+      "question": "What kind of real-world thing do the values in this column hold?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.25,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.35,
+      "confidenceThreshold": 0.85,
+      "fallback": "leave the data category unset"
+    },
+    "pilot1.hidden": {
+      "question": "Should this column be hidden from people building reports?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.2,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.4,
+      "confidenceThreshold": 0.85,
+      "fallback": "leave the column visible and say nothing"
+    },
+    "pilot1.summarize_by": {
+      "question": "How are this column's values combined by default on a chart?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.3,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.3,
+      "confidenceThreshold": 0.85,
+      "fallback": "keep the tool default and say nothing"
+    },
+    "pilot1.sort_by_column": {
+      "question": "Which column decides the order this column's values appear in?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.25,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.35,
+      "confidenceThreshold": 0.85,
+      "fallback": "leave the sort-by column unset"
+    },
+    "pilot1.date_table": {
+      "question": "Is this table the model's calendar or date table?",
+      "precisionFloor": 0.9,
+      "coverageFloor": 0.2,
+      "falsePositiveCeiling": 0.05,
+      "falseRefusalCeiling": 0.4,
+      "confidenceThreshold": 0.85,
+      "fallback": "do not mark any table as the date table"
+    },
+    "pilot1.one_side": {
+      "question": "In this relationship, which side is the one side?",
+      "precisionFloor": 0.95,
+      "coverageFloor": 0.5,
+      "falsePositiveCeiling": 0.02,
+      "falseRefusalCeiling": 0.3,
+      "confidenceThreshold": 0.85,
+      "fallback": "leave the relationship as the source declared it"
+    }
+  }
+}

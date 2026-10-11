@@ -1,4 +1,4 @@
-// Browser-driven proof for the Checks > Tests redesign (cp/tests-page). It serves THIS worktree's built
+// Browser-driven proof for the Review > Validation page (built as the Checks > Tests redesign, cp/tests-page). It serves THIS worktree's built
 // bundle, drives the real page with real clicks, and MEASURES what landed at both review widths.
 //
 // It is a measuring instrument, not a screenshot tool: every scene writes the rendered text of the tool
@@ -122,7 +122,7 @@ const results = [];
 //   { key: 'Escape' }              press a key on the window, which is where both surfaces listen
 //   { type: 'label', text: '...' } type into the input whose label or placeholder starts with `label`
 //   { select: 'aria-label', option: 'visible text' }  choose an option in a <select>
-//   { tab: 'AI understanding' }    move to another Studio tab
+//   { tab: 'AI readiness' }        move to another Studio tab
 //   { wait: 1200 }                 give a reload time to land
 async function scene(name, { query = 'conn=1&live=1&tier=pro', overrides = [], steps = [], scroll = null, widths = [[1366, 768], [1440, 900]] }) {
   if (ONLY.length && !ONLY.includes(name)) return;
@@ -135,14 +135,29 @@ async function scene(name, { query = 'conn=1&live=1&tier=pro', overrides = [], s
   await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?${query}`, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 15000 });
   await wait(600);
-  // Every scene starts on Checks > Tests.
-  await page.evaluate(() => {
-    const vis = (el) => el.getClientRects().length > 0;
-    const area = [...document.querySelectorAll('nav[aria-label="Studio areas"] button')].filter(vis).find((b) => b.textContent.trim() === 'Checks');
-    if (area) area.click();
-  });
-  await wait(900);
+  // Every scene starts on Review > Validation (the area was called Checks, and its tab Tests, until the
+  // seven-area shell). A missing area or tab is a note and fails the run: a scene that never reached the page
+  // shoots the Overview and proves nothing.
   const notes = [];
+  const reached = await page.evaluate(() => {
+    const vis = (el) => el.getClientRects().length > 0;
+    const area = [...document.querySelectorAll('nav[aria-label="Studio areas"] button')].filter(vis).find((b) => b.textContent.trim() === 'Review');
+    if (!area) return 'area "Review" not found';
+    area.click();
+    return null;
+  });
+  if (reached) notes.push(reached);
+  await wait(900);
+  const tabMissing = await page.evaluate(() => {
+    const vis = (el) => el.getClientRects().length > 0;
+    const tab = [...document.querySelectorAll('button, [role="tab"]')].filter(vis).find((b) => b.textContent.trim() === 'Validation');
+    if (!tab) return 'tab "Validation" not found';
+    tab.click();
+    return null;
+  });
+  if (tabMissing) notes.push(tabMissing);
+  if (reached || tabMissing) process.exitCode = 1;
+  await wait(900);
   for (const step of steps) {
     if (typeof step === 'object' && step.wait) { await wait(step.wait); continue; }
     if (typeof step === 'object' && step.key) {
@@ -218,8 +233,10 @@ async function scene(name, { query = 'conn=1&live=1&tier=pro', overrides = [], s
     }
     const ok = await page.evaluate((label) => {
       const vis = (el) => el.getClientRects().length > 0;
+      // Never the area row: a step called "Edit" means the row menu's Edit, not the Edit area. Navigation is
+      // done once, at the top of the scene.
       const el = [...document.querySelectorAll('button, [role="button"], [role="menuitem"], [role="radio"], input[type="checkbox"]')]
-        .filter(vis).find((b) => (b.getAttribute('aria-label') || b.textContent || '').trim().startsWith(label));
+        .filter(vis).filter((b) => !b.closest('nav[aria-label="Studio areas"]')).find((b) => (b.getAttribute('aria-label') || b.textContent || '').trim().startsWith(label));
       if (el) { el.click(); return true; }
       // A native radio carries its words on the label around it, not on itself.
       const radio = [...document.querySelectorAll('input[type="radio"]')].filter(vis)
@@ -262,17 +279,17 @@ async function scene(name, { query = 'conn=1&live=1&tier=pro', overrides = [], s
 }
 
 // 1. The page at rest, after a full run.
-await scene('at-rest', { steps: ['Run all enabled checks'], scroll: 'Table row counts' });
+await scene('at-rest', { steps: ['Run checks'], scroll: 'Table row counts' });
 // 2. A row opened: the one sentence, the four facts, and the actions.
-await scene('row-open', { steps: ['Run all enabled checks', 'Net Revenue ties to finance extract'] });
+await scene('row-open', { steps: ['Run checks', 'Net Revenue ties to finance extract'] });
 // 2b. The trusted-answer row opened: no SQL column anywhere in it.
-await scene('row-open-trusted', { steps: ['Run all enabled checks', 'Total Sales 2024 totals 1,234'] });
+await scene('row-open-trusted', { steps: ['Run checks', 'Total Sales 2024 totals 1,234'] });
 // 3. The New check drawer, one scene per kind. The first click opens the MENU; the second picks a kind.
 await scene('drawer-trusted', { steps: ['New check', 'Trusted answer'] });
-await scene('drawer-compare', { steps: ['New check', 'Compare with source'] });
+await scene('drawer-compare', { steps: ['New check', 'Check against SQL'] });
 await scene('drawer-tablecount', { steps: ['New check', 'Table row count'] });
 // 2c. The relationship detail, with the values that do not match read from the engine.
-await scene('relationship-detail', { steps: ['Run all enabled checks', 'Show details', 'Show the values that do not match'], scroll: 'Relationships' });
+await scene('relationship-detail', { steps: ['Run checks', 'Show details', 'Show the values that do not match'], scroll: 'Relationships' });
 // 4. The scope menu, which has to list exactly what "all" includes.
 await scene('scope-menu', { steps: ['What to run'] });
 // 5. First visit with nothing saved.
@@ -280,7 +297,7 @@ await scene('empty', { overrides: [['listTests', { definitions: [], unreadableLi
 // 6. No live test model.
 await scene('disconnected', { query: 'tier=pro' });
 // 7. A part run: a real letter, what it covers, and what did not run.
-await scene('part-run', { overrides: [['runTests', PART_RUN]], steps: ['Run all enabled checks'] });
+await scene('part-run', { overrides: [['runTests', PART_RUN]], steps: ['Run checks'] });
 
 
 // ===================================================================================================
@@ -293,20 +310,20 @@ const W1 = { widths: [[1366, 768]] };
 // (a) A check saved before named sources existed keeps its own endpoint and says so.
 await scene('fix1-inline-source-kept', {
   query: 'conn=1&live=1&tier=pro&checksrc=inline',
-  steps: ['Run all enabled checks', 'More for Net Revenue ties to finance extract', 'Edit'], ...W1,
+  steps: ['Run checks', 'More for Net Revenue ties to finance extract', 'Edit'], ...W1,
 });
 // (b) A check whose named source has gone asks for a replacement instead of taking the one that is left.
 await scene('fix1-missing-source-refused', {
   query: 'conn=1&live=1&tier=pro&checksrc=missing',
-  steps: ['Run all enabled checks', 'More for Net Revenue ties to finance extract', 'Edit', 'Save check'], ...W1,
+  steps: ['Run checks', 'More for Net Revenue ties to finance extract', 'Edit', 'Save check'], ...W1,
 });
 
 // --- 2 (P1) + 12. The whole hub-save-return journey, click by click, with a shot at every step. -------
 const HUB_JOURNEY = [
-  'New check', 'Compare with source',                                    // the drawer, on the compare kind
+  'New check', 'Check against SQL',                                    // the drawer, on the compare kind
   { select: 'SQL source', option: 'Add a SQL source' },                  // the hub opens OVER it
 ];
-await scene('journey-1-drawer-open', { steps: ['New check', 'Compare with source'], ...W1 });
+await scene('journey-1-drawer-open', { steps: ['New check', 'Check against SQL'], ...W1 });
 await scene('journey-2-hub-over-drawer', { steps: HUB_JOURNEY, ...W1 });
 await scene('journey-3-escape-closes-only-the-hub', { steps: [...HUB_JOURNEY, { key: 'Escape' }], ...W1 });
 const HUB_SAVE = [
@@ -335,70 +352,70 @@ await scene('journey-8-reopened-keeps-the-source', {
 });
 
 // --- 3. "Only this" names the family it runs. --------------------------------------------------------
-await scene('fix3-scope-menu-names-each-family', { steps: ['Run all enabled checks', 'What to run'], ...W1 });
+await scene('fix3-scope-menu-names-each-family', { steps: ['Run checks', 'What to run'], ...W1 });
 await scene('fix3-table-counts-only', {
-  steps: ['Run all enabled checks', 'What to run', 'Run table row counts only'], scroll: 'Table row counts', ...W1,
+  steps: ['Run checks', 'What to run', 'Run table row counts only'], scroll: 'Table row counts', ...W1,
 });
 
 // --- 4. A partial run keeps the automatic families' last result and date. ----------------------------
 await scene('fix4-partial-keeps-relationships', {
-  steps: ['Run all enabled checks', 'What to run', 'Run enabled saved checks only'], scroll: 'Relationships', ...W1,
+  steps: ['Run checks', 'What to run', 'Run saved checks only'], scroll: 'Relationships', ...W1,
 });
 
 // --- 5 (P1 live). Unknown relationships are counted separately and cannot produce Pass. ---------------
-await scene('fix5-relationship-tally', { steps: ['Run all enabled checks'], scroll: 'Relationships', ...W1 });
+await scene('fix5-relationship-tally', { steps: ['Run checks'], scroll: 'Relationships', ...W1 });
 
 // --- 6. History opens the evidence the run kept. ------------------------------------------------------
 await scene('fix6-recorded-run-evidence', {
-  steps: ['Run all enabled checks', 'Open the run recorded on 7/11/2026',
+  steps: ['Run checks', 'Open the run recorded on 7/11/2026',
     'Open what Net Revenue ties to finance extract found'],
   scroll: 'bottom', ...W1,
 });
 // The opened run scored the old way, which Astra had no screenshot of.
 // r1 is the run recorded before access rules left Tests; only that one carries the old-grade flag.
 await scene('fix6-old-grade-label', {
-  steps: ['Run all enabled checks', 'Open the run recorded on 7/4/2026'], scroll: 'bottom', ...W1,
+  steps: ['Run checks', 'Open the run recorded on 7/4/2026'], scroll: 'bottom', ...W1,
 });
 
 // --- 7. Remove mapping, from the drawer. --------------------------------------------------------------
 await scene('fix7-remove-mapping', {
-  steps: ['Run all enabled checks', 'Change source'], scroll: 'Table row counts', ...W1,
+  steps: ['Run checks', 'Change source'], scroll: 'Table row counts', ...W1,
 });
 
 // --- 8 + 10. The could-not-check reason, and the tolerance sentence. ----------------------------------
-await scene('fix8-unknown-row-reason', { steps: ['Run all enabled checks'], ...W1 });
+await scene('fix8-unknown-row-reason', { steps: ['Run checks'], ...W1 });
 await scene('fix10-tolerance-sentence', {
-  steps: ['Run all enabled checks', 'Total Sales 2024 totals 1,234'], ...W1,
+  steps: ['Run checks', 'Total Sales 2024 totals 1,234'], ...W1,
 });
 
 // --- 9. The grade cap reads as a sentence. ------------------------------------------------------------
-await scene('fix9-grade-cap-sentence', { steps: ['Run all enabled checks'], ...W1 });
+await scene('fix9-grade-cap-sentence', { steps: ['Run checks'], ...W1 });
 
 // --- 11. Saved interview questions have a home again. ------------------------------------------------
-await scene('fix11-interview-under-ai-understanding', { steps: [{ tab: 'AI understanding' }, { wait: 1500 }], ...W1 });
+await scene('fix11-interview-under-ai-understanding', { steps: [{ tab: 'AI readiness' }, { wait: 1500 }], ...W1 });
 
 // --- 13. The run menu never offers a choice nobody can make. ------------------------------------------
 await scene('fix13-menu-with-no-saved-checks', {
   overrides: [['listTests', { definitions: [], unreadableLines: 0 }]], steps: ['What to run'], ...W1,
 });
 await scene('fix13-menu-with-one-ticked', {
-  steps: ['Run all enabled checks', 'Tick Total Sales ties to the GL', 'What to run'], ...W1,
+  steps: ['Run checks', 'Tick Total Sales ties to the GL', 'What to run'], ...W1,
 });
 
 // --- The states Astra listed as "no supplied screenshot". ---------------------------------------------
 await scene('state-turn-off-failed', {
   query: 'conn=1&live=1&tier=pro&testfail=turnoff',
-  steps: ['Run all enabled checks', 'More for Total Sales ties to the GL', 'Turn off'], ...W1,
+  steps: ['Run checks', 'More for Total Sales ties to the GL', 'Turn off'], ...W1,
 });
 await scene('state-delete-failed', {
   query: 'conn=1&live=1&tier=pro&testfail=delete',
-  steps: ['Run all enabled checks', 'More for Total Sales ties to the GL', 'Delete', 'Delete'], ...W1,
+  steps: ['Run checks', 'More for Total Sales ties to the GL', 'Delete', 'Delete'], ...W1,
 });
 await scene('state-history-after-record-it', {
-  steps: ['Run all enabled checks', 'Record it', { wait: 1200 }], scroll: 'History', ...W1,
+  steps: ['Run checks', 'Record it', { wait: 1200 }], scroll: 'History', ...W1,
 });
 await scene('state-filter-transition', {
-  steps: ['Run all enabled checks', 'Could not check'], ...W1,
+  steps: ['Run checks', 'Could not check'], ...W1,
 });
 await scene('state-connect-inside-an-expanded-row', {
   query: 'tier=pro', steps: ['Total Sales ties to the GL'], ...W1,
@@ -413,31 +430,31 @@ await scene('state-connect-inside-an-expanded-row', {
 // refusal and running on; the payload it sent carried the old inline address with the named source gone.
 await scene('r2-f1-try-refused-on-missing-source', {
   query: 'conn=1&live=1&tier=pro&checksrc=missing',
-  steps: ['Run all enabled checks', 'More for Net Revenue ties to finance extract', 'Edit',
+  steps: ['Run checks', 'More for Net Revenue ties to finance extract', 'Edit',
     'Save check', 'Try it now'], ...W1,
 });
 // And the same drawer once a replacement is picked: both buttons stop refusing.
 await scene('r2-f1-try-allowed-after-replacement', {
   query: 'conn=1&live=1&tier=pro&checksrc=missing',
-  steps: ['Run all enabled checks', 'More for Net Revenue ties to finance extract', 'Edit',
+  steps: ['Run checks', 'More for Net Revenue ties to finance extract', 'Edit',
     { select: 'SQL source', option: 'Contoso warehouse' }, 'Try it now'], ...W1,
 });
 
 // F2. Full run, then a saved-check-only run, then the menu: "Run relationships only" must still be there
 // with the count it last measured, and the drawer's table-count sentence must say when it runs.
 await scene('r2-f2-menu-before-partial', {
-  steps: ['Run all enabled checks', 'What to run'], ...W1,
+  steps: ['Run checks', 'What to run'], ...W1,
 });
 await scene('r2-f2-menu-after-saved-checks-only', {
-  steps: ['Run all enabled checks', 'What to run', 'Run enabled saved checks only', 'What to run'], ...W1,
+  steps: ['Run checks', 'What to run', 'Run saved checks only', 'What to run'], ...W1,
 });
 await scene('r2-f2-table-count-drawer-copy', {
-  steps: ['Run all enabled checks', 'Change source'], scroll: 'Table row counts', ...W1,
+  steps: ['Run checks', 'Change source'], scroll: 'Table row counts', ...W1,
 });
 
 // F3. The recorded tolerance, read back in History. The fixture's check is set to 0.000001234567.
 await scene('r2-f3-recorded-tolerance', {
-  steps: ['Run all enabled checks', 'Open the run recorded on 7/11/2026',
+  steps: ['Run checks', 'Open the run recorded on 7/11/2026',
     'Open what Net Revenue ties to finance extract found'],
   scroll: 'bottom', ...W1,
 });

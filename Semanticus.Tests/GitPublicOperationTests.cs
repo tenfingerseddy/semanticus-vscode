@@ -399,7 +399,7 @@ namespace Semanticus.Tests
                     release.TrySetResult(true);
                     await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
                     var switchedBytes = File.ReadAllBytes(repo.Model);
-                    var refusedSave = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "BIM"));
+                    var refusedSave = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "BIM", false, "human"));
                     Assert.Contains("cannot be saved", refusedSave.Message, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal(switchedBytes, File.ReadAllBytes(repo.Model));
                     Assert.Equal(revision, sessions.Current.Revision);
@@ -723,6 +723,54 @@ namespace Semanticus.Tests
             }
         }
 
+        // Verifier r3, A1: the Git panel and every checkpoint read GitCli.StatusAsync. A staged rename carries one more
+        // field (its score, such as R100) and a second path, and a name with a letter outside plain ASCII came back
+        // quoted with octal escapes. Each path must read as git names it from the folder the status runs in.
+        [Fact]
+        public async Task Status_reads_renames_and_non_ascii_names_relative_to_the_folder_it_runs_in()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "git-public-status-" + Guid.NewGuid().ToString("N"));
+            var sub = Path.Combine(root, "Ventes Caf\u00e9.SemanticModel", "definition", "tables");
+            Directory.CreateDirectory(sub);
+            try
+            {
+                File.WriteAllText(Path.Combine(sub, "Store.tmdl"), "table Store");
+                File.WriteAllText(Path.Combine(sub, "Caf\u00e9.tmdl"), "table Caf\u00e9");
+                File.WriteAllText(Path.Combine(root, "notes.txt"), "leave me alone");
+                Git(root, "init", "-q");
+                ConfigureIdentity(root);
+                Git(root, "add", "-A");
+                Git(root, "commit", "-q", "-m", "initial");
+                Git(sub, "mv", "Store.tmdl", "Stores.tmdl");
+                File.AppendAllText(Path.Combine(sub, "Caf\u00e9.tmdl"), "\n");
+                File.WriteAllText(Path.Combine(sub, "Cr\u00e8me.tmdl"), "new");
+                File.AppendAllText(Path.Combine(root, "notes.txt"), "\n");
+
+                var fromRoot = await GitCli.StatusAsync(root);
+                var tables = "Ventes Caf\u00e9.SemanticModel/definition/tables/";
+                var rename = Assert.Single(fromRoot.Files, f => f.Status == "R");
+                Assert.Equal(tables + "Stores.tmdl", rename.Path);
+                Assert.Equal(tables + "Store.tmdl", rename.OrigPath);
+                Assert.True(rename.Staged);
+                Assert.Contains(fromRoot.Files, f => f.Path == tables + "Caf\u00e9.tmdl" && f.Status == "M" && f.OrigPath == null);
+                Assert.Contains(fromRoot.Files, f => f.Path == tables + "Cr\u00e8me.tmdl" && f.Status == "??");
+                Assert.Contains(fromRoot.Files, f => f.Path == "notes.txt" && f.Status == "M");
+
+                // The panel runs in the model's folder: paths below it lose the prefix, paths outside it climb with "../",
+                // the same names git prints there without -z, so its diff and commit pathspecs still resolve.
+                var definition = Path.Combine(root, "Ventes Caf\u00e9.SemanticModel", "definition");
+                var fromModel = await GitCli.StatusAsync(definition);
+                var paths = fromModel.Files.Select(f => f.Path).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                Assert.Equal(new[] { "../../notes.txt", "tables/Caf\u00e9.tmdl", "tables/Cr\u00e8me.tmdl", "tables/Stores.tmdl" }, paths);
+                Assert.Equal("tables/Store.tmdl", Assert.Single(fromModel.Files, f => f.Status == "R").OrigPath);
+                var plain = Git(definition, "-c", "core.quotePath=false", "status", "--porcelain=v2", "--untracked-files=all")
+                    .Replace("\r\n", "\n").Split('\n').Select(line => line.Split('\t')[0].Split(' ').Last()).OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                Assert.Equal(plain, paths);
+                Assert.NotEqual("", Git(definition, "diff", "--name-only", "--", paths[0], paths[1]));
+            }
+            finally { Delete(root); }
+        }
+
         private static (string Root, string Dir, string Model) RepoWithModelChangeBranch(string prefix)
         {
             var root = Path.Combine(Path.GetTempPath(), prefix + Guid.NewGuid().ToString("N"));
@@ -776,6 +824,8 @@ namespace Semanticus.Tests
                 WorkingDirectory = dir,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
+                StandardOutputEncoding = System.Text.Encoding.UTF8,   // git prints UTF-8 (core.quotePath=false); the default is the console code page, which turns Caf\u00e9 into mojibake on Windows. GitCli reads it as UTF-8 too.
+                StandardErrorEncoding = System.Text.Encoding.UTF8,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };

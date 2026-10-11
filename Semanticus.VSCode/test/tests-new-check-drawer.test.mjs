@@ -54,7 +54,7 @@ assert.match(authoring, /sqlSourceId/, 'the check references its source by stabl
 assert.match(authoring, /A blank in the model means/, 'the blank meaning stays a visible choice with no default');
 assert.match(authoring, /Which groups to compare/, 'grouping is visible: without it a check can never do better than could not check');
 assert.match(authoring, /Your SQL must use the same filter as the check/, 'the one line that stops two different questions being compared');
-assert.match(authoring, /limitedEvidenceNote\(/, 'a total-only comparison is called limited evidence');
+assert.match(authoring, /limitedEvidenceNote\(/, 'a total-only comparison says it proves very little');
 assert.doesNotMatch(authoring, /Source SQL endpoint saved with this check/, 'endpoints are no longer typed per check');
 assert.doesNotMatch(authoring, /Use the detected endpoint/, 'the per-check endpoint override is replaced by a named source');
 assert.doesNotMatch(authoring, /reviewReconcileMapping/, 'the drawer no longer detects an endpoint it cannot save anywhere shared');

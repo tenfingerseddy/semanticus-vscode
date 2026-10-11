@@ -275,13 +275,32 @@ namespace Semanticus.Engine
                     var by = item.BlockedBy != null && item.BlockedBy.Length > 0 ? " (" + string.Join(", ", item.BlockedBy.Take(5)) + ")" : "";
                     return $"objects that are themselves unused still reference it{by}. Remove those first, or delete it individually with delete_object.";
                 }
+                // A visible attribute is a VERDICT, not a failed check. The sweep keeps one on purpose, so borrowing
+                // the "could not be fully verified" line blamed a check that never ran and told a person their removal
+                // was unsafe when the engine had simply chosen not to offer it (dogfood round 2, D3). The reason says
+                // what is true and names the door that does remove it, because a person may always have it removed.
+                // The verdict sentence ALREADY ends with "propose its removal and approve that change", so the tail
+                // names the calls that carry that out and never repeats the advice itself (round 3, V3): saying it
+                // twice in different words read as two different instructions.
+                if (item.Verdict == "visibleAttribute")
+                    return "a sweep never takes a visible attribute. " + item.Reason
+                         + " The calls that do it are add_plan_item with kind 'delete_if_unused' then apply_plan, or delete_object to take it out in one step.";
                 return "its safety could not be fully verified. " + item.Reason;
             }
-            if (ObjectRefs.Resolve(m, objRef) == null)
+            var resolved = ObjectRefs.Resolve(m, objRef);
+            if (resolved == null)
                 return "not found. It may already be deleted or renamed. Run unused_objects for a fresh scan.";
+            var onPurpose = Lineage.LineageGraph.AddedOnPurpose(resolved);
+            if (onPurpose != null)
+                return "Semanticus added it on purpose (" + onPurpose + "), so nothing uses it yet. It is kept; delete it yourself with delete_object if you do not want it.";
+            // Never a candidate, so it is not "used by something" either: say what it actually is.
+            if (resolved is Column cgc && cgc.Table is CalculationGroupTable)
+                return "it is a calculation group's own column, which is how people pick a calculation and how the "
+                     + "picks are sorted. Removing it leaves a calculation group nothing can filter by, so it is never "
+                     + "part of a cleanup. Remove the whole calculation group if you no longer want it.";
             return reportAware
-                ? "something in the model, or one of the analyzed reports, uses it, so it is not safe to remove. Run impact_of / analyze_reports to see the usage."
-                : "something in the model uses it, so it is not safe to remove. Run impact_of to see its dependents.";
+                ? "something in the model, or one of the analyzed reports, uses it, so it is not safe to remove. Run impact_assessment / analyze_reports to see the usage."
+                : "something in the model uses it, so it is not safe to remove. Run impact_assessment with scope='model' to see its dependents.";
         }
     }
 }

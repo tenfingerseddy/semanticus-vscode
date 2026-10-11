@@ -6,17 +6,22 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    public sealed class ReadinessStarShapeTests
+    public sealed class ReadinessStarShapeTests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public ReadinessStarShapeTests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro => true;
             public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "pro" };
         }
 
-        private static async Task<LocalEngine> ModelAsync(bool snowflake)
+        private Task<LocalEngine> ModelAsync(bool snowflake) =>
+            _copies.OpenAsync(snowflake ? "snowflake" : "star", e => BuildModelAsync(e, snowflake), new Fake(), new SessionManager());
+
+        private static async Task BuildModelAsync(LocalEngine engine, bool snowflake)
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake());
             await engine.CreateModelAsync("Star shape", 1604);
             var sales = await engine.CreateTableAsync("Sales", "human");
             var product = await engine.CreateTableAsync("Product", "human");
@@ -30,7 +35,6 @@ namespace Semanticus.Tests
             await engine.CreateRelationshipAsync(
                 snowflake ? "column:Product/Category Key" : "column:Sales/Category Key",
                 "column:Category/Category Key", null, true, "human");
-            return engine;
         }
 
         [Fact]

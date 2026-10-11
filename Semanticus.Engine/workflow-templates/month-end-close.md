@@ -1,10 +1,11 @@
 ---
+schemaVersion: 3
 kind: template
 name: month-end-close
-title: Month-end close for {{period_label}}
-description: Run your month-end close as a checklist the app enforces: confirm the close steps are current, check every total against the figure finance signed off, prove the headline number matches, then record who signed off and capture the certified figures so any later refresh or edit that moves them is caught. The close becomes evidence, not a spreadsheet someone remembers to run. This detects drift against what was certified; it cannot stop a refresh or an out-of-tool edit.
+title: "Month-end close for {{period_label}}"
+description: "Run your month-end close as a checklist the app enforces: confirm the close steps are current, check every total against the figure finance signed off, prove the headline number matches, then record who signed off and capture the certified figures so any later refresh or edit that moves them is caught. The close becomes evidence, not a spreadsheet someone remembers to run. This detects drift against what was certified; it cannot stop a refresh or an out-of-tool edit."
 whenToUse: "The regular end-of-period close on a reporting model, using your own checklist and totals. To certify a model that is no longer changing, use metric-certification instead."
-version: 1
+version: 2
 strictness: hard
 slots:
   - name: period_label
@@ -36,6 +37,10 @@ slots:
 ---
 
 ## Step 1: Confirm the close checklist is current
+```yaml step
+id: step-1
+performer: assistant
+```
 
 {{close_checklist}} is this period's close scope. Walk it with the person who owns the close and confirm
 each step still reflects how {{period_label}} is actually closed. A checklist that drifted from the real
@@ -50,6 +55,10 @@ inputs:
 ```
 
 ## Step 2: Check every total against its signed-off figure
+```yaml step
+id: step-2
+performer: assistant
+```
 
 Your control totals for this period, each declared as `measure:Table/Name ~ <dax context> ~ <exact value>`:
 
@@ -70,6 +79,10 @@ inputs:
 ```
 
 ## Step 3: Prove the headline number matches
+```yaml step
+id: step-3
+performer: assistant
+```
 
 The period's headline figure gets the engine's proof, not an attestation. The check evaluates the headline
 measure at the model's DEFAULT (grand total) context, no slicer applied, and compares it to the signed-off
@@ -97,6 +110,10 @@ verify:
 ```
 
 ## Step 4: Capture the certified figures and sign off
+```yaml step
+id: step-4
+performer: assistant
+```
 
 Now freeze what was certified. For EACH declared line in {{control_totals}} (the headline is one of them),
 capture it with capture_baseline into ONE certified baseline labeled "{{period_label}}": pass the measure as
@@ -108,8 +125,8 @@ be re-checked identically, so the gate REFUSES it. Restate that context with col
 IMMUTABLE: to correct one, use a new label (e.g. "{{period_label}} r2").
 
 Record the agreed freeze: {{freeze_window}}. This records the agreement; nothing here mechanically blocks
-edits or refreshes. Record sign-off from {{signoff_owner}} against the check log and the Step 3 proof, then
-save_model.
+edits or refreshes. Record sign-off from {{signoff_owner}} against the check log and the Step 3 proof.
+Semanticus saves the model in the next step.
 
 This step cannot pass until EVERY declared line is certified at its declared context with its exact declared
 value: the gate re-parses {{control_totals}}, and a line it cannot read, or a figure whose certified context
@@ -122,7 +139,7 @@ figure is matched by its own identity, so a shape change is only noted, never a 
 also reflect a different security role: effective-user context is not captured.
 
 ```yaml gate
-ops: [capture_baseline, compare_baseline, save_model]
+ops: [capture_baseline, compare_baseline]
 inputs:
   - name: certifiedLabel
     question: "The label you captured the certified figures under (use the period, e.g. '{{period_label}}')."
@@ -136,3 +153,15 @@ verify:
   - kind: baseline_captured
     probe: certifiedLabel
 ```
+
+## Step 5: Save the certified model
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_model
+```
+
+Semanticus saves the model once the certified figures are captured and the close is signed off. Nothing
+here runs if a check before it stopped the draft.

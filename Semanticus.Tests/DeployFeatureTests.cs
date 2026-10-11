@@ -146,6 +146,7 @@ namespace Semanticus.Tests
         // ============================================================================================
         // 1) deploy_gate — pass and block verdicts, blockers named.
         // ============================================================================================
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task DeployGate_passes_on_a_clean_model_with_no_blockers()
         {
@@ -270,31 +271,23 @@ namespace Semanticus.Tests
             Assert.True(AnyDeployPost(h));
         }
 
-        [Fact]
-        public async Task DeployStage_forceOverride_needs_a_reason_and_is_recorded()
+        // Kane 8 Oct: the stage gate is gone on both doors. It scanned the model open in Studio, not what the pipeline
+        // moves (engine-17), so a red model must not stop a move, and nothing asks for forceOverride or a reason.
+        // What stays is covered above: the production confirm token and the agent production refusal.
+        [Theory]
+        [InlineData("human")]
+        [InlineData("agent")]
+        public async Task DeployStage_a_red_open_model_does_not_stop_a_move_to_a_non_production_stage(string origin)
         {
             var h = InstallFabric(StdRoute);
-            using var engine = await BlockedModelAsync();   // RED gate open ⇒ commit is blocked
+            using var engine = await BlockedModelAsync();   // RED gate open: it used to block this commit
 
-            // A failing gate blocks a commit with no override.
-            var blocked = await engine.DeployStageAsync("p1", "s0", "s1", null, null, commit: true, confirmToken: null,
-                forceOverride: false, authMode: "azcli", tenantId: null, origin: "human");
-            Assert.False(blocked.Committed);
-            Assert.Contains("readiness gate", blocked.Error);
-            Assert.Contains("forceOverride", blocked.Error);
+            var r = await engine.DeployStageAsync("p1", "s0", "s1", null, null, commit: true, confirmToken: null,
+                forceOverride: false, authMode: "azcli", tenantId: null, origin: origin);
 
-            // forceOverride WITHOUT a reason is refused (accountable override).
-            var noReason = await engine.DeployStageAsync("p1", "s0", "s1", null, null, commit: true, confirmToken: null,
-                forceOverride: true, authMode: "azcli", tenantId: null, origin: "human");
-            Assert.False(noReason.Committed);
-            Assert.Contains("overrideReason", noReason.Error);
-            Assert.False(AnyDeployPost(h));
-
-            // A reasoned override ships past the RED gate (and records the accountable checkpoint before the POST).
-            var overridden = await engine.DeployStageAsync("p1", "s0", "s1", null, null, commit: true, confirmToken: null,
-                forceOverride: true, authMode: "azcli", tenantId: null, origin: "human", overrideReason: "hotfix approved by data owner");
-            Assert.True(overridden.Committed, overridden.Error);
+            Assert.True(r.Committed, r.Error ?? r.Plan);
             Assert.True(AnyDeployPost(h));
+            Assert.DoesNotContain("readiness gate", r.Plan ?? "");
         }
 
         // ============================================================================================
@@ -318,18 +311,6 @@ namespace Semanticus.Tests
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.DeployLiveAsync("powerbi://api.powerbi.com/v1.0/myorg/ws", null, "serviceprincipal", null, null, commit: false));
             Assert.Contains("database", ex.Message);
-        }
-
-        [Fact]
-        public async Task DeployLive_commit_is_blocked_by_a_red_gate_before_connecting()
-        {
-            using var engine = await BlockedModelAsync();
-            // commit=true runs the deploy gate BEFORE any auth/network — a RED gate throws with the blockers + recovery.
-            var token = await ReviewFenceTest.TokenAsync(engine, "powerbi://api.powerbi.com/v1.0/myorg/ws", "Sales");
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                engine.DeployLiveAsync("powerbi://api.powerbi.com/v1.0/myorg/ws", "Sales", "serviceprincipal", null, null, commit: true, origin: "human", overrideReason: null, confirmToken: token));
-            Assert.Contains("blocked by the deploy gate", ex.Message);
-            Assert.Contains("overrideReason", ex.Message);
         }
 
         // ============================================================================================

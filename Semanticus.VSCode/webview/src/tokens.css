@@ -1,0 +1,302 @@
+/* Semanticus visual language. One base unit (4 px), one of everything else.
+   Spacing, grid and heights: "One Visual Language", approved by Kane on 23 September 2026.
+   Colour, type, corners, borders and elevation: "Instrument", look-and-feel direction B, picked by Kane the
+   same day. Every surface and text colour comes from the VS Code theme; the product adds one colour, the jade
+   accent, and uses it only for the primary button, the current tab, kept lines and the selected plan. Colour
+   level B (24 September) adds meaning colour, also worked out from the theme: three status hues, three doer
+   hues and five soft tints. State is a word or a small dot, never a coloured pill.
+   Loaded before every other style: main.tsx imports it first for the Studio, and the Properties grid links the
+   copy the build ships as media/studio/tokens.css. Padding, margin, gap, text size, line height, corners and
+   control heights anywhere in the Studio source may use only these names; scripts/visual-style-scan.mjs
+   checks it on every npm test, and tools/uishot/screencheck.mjs checks every page in three themes. */
+:root {
+  /* spacing scale: the only lengths allowed for padding, margin and gap */
+  --sem-space-1: 4px;   /* icon to text, hairline gaps */
+  --sem-space-2: 8px;   /* between lines inside a card (--sem-stack) */
+  --sem-space-3: 12px;  /* THE gap between cards and sections; grid gutter */
+  --sem-space-4: 16px;  /* card padding */
+  --sem-space-6: 24px;  /* page margin */
+  --sem-space-8: 32px;  /* groups in the status bar */
+
+  /* layout */
+  --sem-page-margin: var(--sem-space-6);
+  --sem-gap: var(--sem-space-3);           /* between sibling cards and sections, everywhere */
+  --sem-grid-columns: 12;                  /* gutter = --sem-gap */
+  --sem-card-pad: var(--sem-space-4);
+  --sem-inset-pad: var(--sem-space-3);     /* flat inset inside a card */
+  --sem-stack: var(--sem-space-2);
+
+  /* heights */
+  --sem-bar-h: 40px;         /* header and area row */
+  --sem-row: 32px;           /* one-line list row, status bar */
+  --sem-row-2: 48px;         /* two-line list row, card header */
+  --sem-control-h: 28px;     /* buttons, fields, tabs */
+  --sem-control-h-sm: 24px;  /* buttons inside cards and the header */
+  --sem-chip-h: 20px;        /* chips and pills */
+
+  /* type: five sizes, two weights, line heights on the 4 px grid. Sentence case everywhere, labels too. */
+  --sem-text-label: 11px;  --sem-lh-label: 16px;
+  --sem-text-meta: 12px;   --sem-lh-meta: 16px;
+  --sem-text-body: 13px;   --sem-lh-body: 20px;
+  --sem-text-title: 14px;  --sem-lh-title: 20px;   /* 600 */
+  --sem-text-page: 22px;   --sem-lh-page: 28px;    /* 600 */
+  --sem-text-grade: 44px; --sem-lh-grade: 48px;    /* 600, the AI readiness grade letter only */
+  --sem-weight: 400;
+  --sem-weight-strong: 600;
+  /* The UI font is the VS Code UI font; numbers are set in the editor font with tabular figures, so columns
+     of figures line up. No font is bundled. */
+  --sem-font-ui: var(--vscode-font-family, "Segoe WPC", "Segoe UI", system-ui, sans-serif);
+  --sem-font-num: var(--vscode-editor-font-family, Consolas, "Courier New", monospace);
+
+  /* corners: small and square-ish, an instrument, not a toy */
+  --sem-radius-control: 3px;
+  --sem-radius-inner: 3px;
+  --sem-radius-card: 4px;
+  --sem-radius-chip: 2px;
+
+  /* borders and elevation: hairline rules instead of boxes, and nothing floats */
+  --sem-hairline: 1px;
+  --sem-elev: none;
+
+  /* Older names still used across the pages. Each points at a token above and holds no value of its own,
+     so the style check can accept them without letting a literal in through an alias. The page lanes
+     retire them as they move each page onto the names above. */
+  --sem-page-gutter: var(--sem-page-margin);
+  --sem-control-pad: 0 var(--sem-space-3);
+  --sem-control-pad-sm: 0 var(--sem-space-2);
+  --sem-control-radius: var(--sem-radius-control);
+  --sem-control-font: var(--sem-text-body);
+  --sem-control-font-sm: var(--sem-text-meta);
+  --sem-control-weight: var(--sem-weight-strong);
+}
+
+/* Colour. Declared on body as well as :root, so a colour derived from another token is worked out again where
+   VS Code puts its theme class (on body) and follows the light and high-contrast mappings below. The hex after
+   each --vscode-* name is Dark Modern's value, used only where no theme is present (the screenshot harness). */
+:root, body {
+  --sem-bg: var(--vscode-editor-background, #1F1F1F);
+  --sem-fg: var(--vscode-foreground, #CCCCCC);
+  /* Light Modern gives plain and secondary text the same colour, so muted text is mixed, not borrowed. 74% keeps
+     it at 4.5:1 or better in Dark Modern and Light Modern (the direction's frames used 64%, which measures 3.9:1
+     on Light Modern's white). It mixes against a card, the ground furthest from the page that text sits on, so
+     it holds on the page, on a card and on every mark in between. */
+  --sem-muted-mix: 74%;
+  --sem-muted: color-mix(in srgb, var(--sem-fg) var(--sem-muted-mix), var(--sem-surface));
+  /* Faint is for marks, ticks and struck-out lines. It is below 4.5:1, so it is never the colour of text that
+     has to be read. */
+  --sem-faint: color-mix(in srgb, var(--sem-fg) 44%, var(--sem-bg));
+  /* Content surfaces (Kane, 27 September 2026, option B): cards, table boxes, lineage nodes, menus and panels sit
+     one clear step off the page, lighter in dark themes and darker in light ones, because mixing in the text
+     colour moves toward it either way. --sem-lift is that step; a theme whose own colours cannot hold 4.5:1 on
+     an 8% card gets a smaller one (the theme rules at the end of this block). */
+  --sem-lift: 8%;
+  --sem-surface: color-mix(in srgb, var(--sem-fg) var(--sem-lift), var(--sem-bg));
+  /* Everything below is drawn relative to the ground it sits on, never to the page: --sem-ground is the page
+     here and a card inside a lifted surface (the lifted rule below re-declares them for its children).
+     On the page a mark (an inset, a picked row, a pressed segment, the current item) sits halfway to a card,
+     which is the 4% the page always had; inside a card it steps BACK from the card by --sem-recess, toward the
+     page, because a step further from the page would take red and orange text under 4.5:1. A hover in a card is
+     that step back tinted jade; Kane ratified this as what option B's "one step further" means in a card on
+     28 September 2026. */
+  --sem-ground: var(--sem-bg);
+  --sem-recess: -0.03;
+  --sem-surface-2: color-mix(in srgb, var(--sem-surface) 50%, var(--sem-bg));
+  /* Hover: a mark tinted jade (--sem-jade-a and -b push oklab a and b toward the accent's hue at the mark's own
+     lightness). So it is one step off whatever it sits on, like a mark, and distinct from the ground, a card and
+     a mark by its hue, and its text holds wherever a mark's does. The lifted rule works it out again in a card. */
+  --sem-jade-a: -0.024;
+  --sem-jade-b: 0.007;
+  --sem-hover: oklab(from var(--sem-surface-2) l calc(a + var(--sem-jade-a)) calc(b + var(--sem-jade-b)));
+  --sem-border: color-mix(in srgb, var(--sem-fg) 16%, var(--sem-ground));
+  --sem-rule: color-mix(in srgb, var(--sem-fg) 11%, var(--sem-ground));
+  --sem-accent: #3CC08F;
+  --sem-on-accent: #04241A;
+  --sem-accent-soft: color-mix(in srgb, var(--sem-accent) 16%, transparent);
+  --sem-mark: var(--sem-accent);
+  /* Colour level B (Kane, 24 September 2026): colour carries meaning only. Status is green, yellow and red; who
+     does a step is blue for Semanticus, orange for you and purple for your assistant. Each hue is a VS Code chart
+     colour mixed toward the text colour by --sem-hue-mix, so it follows the theme and stays readable as text:
+     the theme's own warning yellow measured 3.1:1 on Light Modern's white, and the mix lifts it past 4.5:1.
+     test/token-contrast.test.mjs checks every hue on the page, the inset and every tint in each theme.
+     charts.orange is VS Code's find-match highlight, which ships see-through (#EA5C0055) and is unset in high
+     contrast, so its alpha is dropped before the mix and the fallback covers the themes that leave it unset. */
+  /* Dark knobs: the design's 80% hue and 11% tint put red and orange text on a tint at 4.2:1 on Dark Modern, so
+     the hues sit a little nearer the text colour (70%) and the tints are a little softer (9%). */
+  --sem-hue-mix: 70%;
+  /* A theme whose chart colour cannot hold 4.5:1 at this mix (VS Code's own stock themes, measured by
+     test/token-contrast.test.mjs) steps that one hue's oklab lightness away from its page by --sem-<hue>-step,
+     keeping its hue and chroma so it still reads as green, yellow, red, blue, orange or purple (the theme rules
+     below). Mixing it further toward a pale text colour greys it out instead: Quiet Light's warning yellow at
+     the 15% that would hold measured chroma 0.03 against 0.10 when stepped. */
+  --sem-good-step: 0;
+  --sem-warn-step: 0;
+  --sem-bad-step: 0;
+  --sem-engine-step: 0;
+  --sem-you-step: 0;
+  --sem-agent-step: 0;
+  --sem-you-src: rgb(from var(--vscode-charts-orange, #D18616) r g b / 1);
+  --sem-good: oklab(from color-mix(in srgb, var(--vscode-charts-green, #89D185) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-good-step)) a b);
+  --sem-warn: oklab(from color-mix(in srgb, var(--vscode-charts-yellow, #CCA700) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-warn-step)) a b);
+  --sem-bad: oklab(from color-mix(in srgb, var(--vscode-charts-red, #F14C4C) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-bad-step)) a b);
+  --sem-doer-engine: oklab(from color-mix(in srgb, var(--vscode-charts-blue, #59A4F9) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-engine-step)) a b);
+  --sem-doer-you: oklab(from color-mix(in srgb, var(--sem-you-src) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-you-step)) a b);
+  --sem-doer-agent: oklab(from color-mix(in srgb, var(--vscode-charts-purple, #B180D7) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-agent-step)) a b);
+  /* Soft tints: behind each strip track (one per doer), behind the Needs you band, and behind a selected row.
+     --sem-tint-mix sets their strength; high contrast turns them off and draws an outline instead. */
+  --sem-tint-mix: 9%;
+  --sem-tint-engine: color-mix(in srgb, var(--sem-doer-engine) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-you: color-mix(in srgb, var(--sem-doer-you) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-agent: color-mix(in srgb, var(--sem-doer-agent) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-warn: color-mix(in srgb, var(--sem-warn) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-good: color-mix(in srgb, var(--sem-good) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-select: color-mix(in srgb, var(--vscode-focusBorder, #0078D4) var(--sem-tint-mix), var(--sem-bg));
+  /* The washes behind the Optimize page's before and after chips: the old value in red, the new one in green,
+     both carrying plain text. They mix with transparent, not the page, so a chip reads the same on a card as on
+     the page. A wash darkens a light card, and in a theme whose own text colour is already pale that took the
+     text under 4.5:1, so each has its own mix a theme can step down (below), the way the lift does. */
+  --sem-wash-bad-mix: 12%;
+  --sem-wash-good-mix: 14%;
+  --sem-wash-bad: color-mix(in srgb, var(--sem-bad) var(--sem-wash-bad-mix), transparent);
+  --sem-wash-good: color-mix(in srgb, var(--sem-good) var(--sem-wash-good-mix), transparent);
+  --sem-focus: var(--vscode-focusBorder, #0078D4);
+  --sem-link: var(--vscode-textLink-foreground, #4DAAFC);
+  /* Field kinds (Kane, 8 October 2026): a measure, a column and a table each take VS Code's own editor colour for that
+     kind of name (function, name, type), so a field looks in the wells the way its name looks in the DAX view. Dark
+     Modern's values here; light themes darken them (below) so each glyph holds 4.5:1 on its own wash, and high
+     contrast hands them back to the text colour (the glyph, fx or a box, still says the kind). --sem-kind-mix is the
+     wash under a chip and --sem-kind-edge its edge. test/token-contrast.test.mjs checks the three as text. */
+  --sem-kind-measure: #DCDCAA;
+  --sem-kind-column: #9CDCFE;
+  --sem-kind-table: #4EC9B0;
+  --sem-kind-mix: 16%;
+  --sem-kind-edge: 55%;
+  --sem-strong-border: var(--sem-border);
+  /* The drop shadow under a menu or popover that floats over the page. Light themes use a lighter one (below):
+     the dark one darkened a Light Modern card under the menu's edge enough to take muted text to 4.46:1. */
+  --sem-shadow-pop-alpha: .28;
+  --sem-shadow-pop: 0 8px 24px rgba(0, 0, 0, var(--sem-shadow-pop-alpha));
+}
+/* Light Modern: the jade darkens so it holds 4.5:1 as a fill under white text and as a line on white. */
+body.vscode-light, body.vscode-high-contrast-light {
+  --sem-accent: #0A7A55;
+  --sem-on-accent: #FFFFFF;
+  /* Light themes mix the hues further toward the text colour, and the tints are softer. */
+  --sem-hue-mix: 55%;
+  --sem-tint-mix: 7%;
+  --sem-kind-measure: #795E26;
+  --sem-kind-column: #005FB8;
+  --sem-kind-table: #1A6478;
+  --sem-kind-mix: 10%;
+  --sem-kind-edge: 45%;
+  /* A card is darker than the page here, so stepping back toward the page is stepping lighter. */
+  --sem-recess: 0.03;
+  /* A lighter menu shadow: under the dark one, muted text measured 4.46:1 on a Light Modern card beside a menu's
+     edge (#E9E9E9). */
+  --sem-shadow-pop-alpha: .10;
+}
+/* High contrast: every tint, the accent and every rule hand back to the theme. Rules become the theme's
+   contrast border, the primary action is outlined in the active contrast border, and muted text is plain text. */
+body.vscode-high-contrast, body.vscode-high-contrast-light {
+  --sem-surface: var(--sem-bg);
+  --sem-surface-2: var(--sem-bg);
+  --sem-hover: var(--sem-bg);
+  --sem-border: var(--vscode-contrastBorder, #6FC3DF);
+  --sem-rule: var(--vscode-contrastBorder, #6FC3DF);
+  --sem-muted: var(--sem-fg);
+  --sem-faint: var(--vscode-descriptionForeground, #FFFFFFB3);
+  /* The accent becomes the text colour, so anything a page draws in the accent (a kept line, the grade after the
+     plan, a link-like action) stays readable; a filled primary button is drawn as an outline instead (styles.css). */
+  --sem-accent: var(--sem-fg);
+  --sem-on-accent: var(--sem-bg);
+  --sem-accent-soft: transparent;
+  --sem-mark: var(--sem-fg);
+  --sem-strong-border: var(--vscode-contrastActiveBorder, #F38518);
+  /* High contrast chart colours are already strong enough to read as they are, and tints hand back to the
+     theme: a Needs you band or a selected row is outlined instead, and the Optimize chips' washes go too (their
+     strike and arrow still tell the old value from the new). */
+  --sem-hue-mix: 100%;
+  --sem-tint-mix: 0%;
+  --sem-wash-bad-mix: 0%;
+  --sem-wash-good-mix: 0%;
+  --sem-kind-measure: var(--sem-fg);
+  --sem-kind-column: var(--sem-fg);
+  --sem-kind-table: var(--sem-fg);
+  --sem-kind-mix: 0%;
+  --sem-kind-edge: 100%;
+}
+/* High Contrast Light has no strong chart orange (VS Code leaves it unset), so its hues keep the light mix. */
+body.vscode-high-contrast-light {
+  --sem-hue-mix: 55%;
+}
+
+/* The lifted rule: inside a content surface, marks, hovers, rules and control edges are drawn against the
+   surface, not the page, so each stays as visible inside a card as it is on the page. A rule and an edge take two
+   points more of the text colour than on the page, because the same 11% and 16% measure a little less on the
+   lighter ground (CIE76 7.7 against 9.0 for a rule in Dark Modern); with 13% and 18% both the difference and the
+   contrast ratio are at least what they are on the page. It names every class that
+   paints --sem-surface, and catches the inline ones by their style attribute; test/token-contrast.test.mjs fails
+   when a class paints --sem-surface without being named here. High contrast keeps its own borders and no fills. */
+body:not(.vscode-high-contrast) :where(
+  .sem-card, .overview-card, .tool-chooser-menu, .compact-menu, .studio-page-notes-pop, .studio-zoom-toast,
+  .area-tabs-create-menu, .studio-chip-menu, .sem-rowmenu-pop, .sem-canvas-chip, .hub-menu, .hub-job-opts, .hub-pop,
+  .pw-toast, .sem-wf-author-head, .sem-wf-canvas-stage, .sem-wf-canvas-idchip, .sem-wf-drawer, .sem-wf-outline,
+  .sem-wf-form-card, .sem-wf-preview, .sem-wf-new, .sem-wf-draft-host, .sem-wf-side, .sem-wf-toast, .sem-wf-ab,
+  .pw-list, .pw-starts, .ph-rows, .sem-wf-list, .xe-grid-framed, .xe-edge-box, .plan-wc,
+  [style*="background: var(--sem-surface)"], [style*="background-color: var(--sem-surface)"]
+) > * {
+  --sem-ground: var(--sem-surface);
+  --sem-surface-2: oklab(from var(--sem-surface) calc(l + var(--sem-recess)) a b);
+  --sem-hover: oklab(from var(--sem-surface-2) l calc(a + var(--sem-jade-a)) calc(b + var(--sem-jade-b)));
+  --sem-border: color-mix(in srgb, var(--sem-fg) 18%, var(--sem-ground));
+  --sem-rule: color-mix(in srgb, var(--sem-fg) 13%, var(--sem-ground));
+  --sem-strong-border: var(--sem-border);
+}
+
+/* Stock themes whose own text colours cannot hold 4.5:1 on an 8% card (coordinator, 27 September 2026: make the
+   lift smaller rather than fail the text). Each lift is the largest half step at which every text colour still
+   holds 4.55:1 (4.5 and a little headroom for 8-bit rounding) on that theme's card, marks and hover, after the
+   hue steps below, measured by
+   test/token-contrast.test.mjs from VS Code 1.136's own theme files. The colour that stops the next half step is
+   named on each line; the link blue is the theme's (or VS Code's default), which the product does not mix. VS Code
+   gives a webview the theme's id on body (data-vscode-theme-id); a theme not named here keeps the 8% step.
+   Where the lift is small a mark halfway to a card would not show, so a mark on the page steps back instead,
+   like one in a card. Muted text in the four themes whose text colour is itself pale (#616161) mixes nearer the
+   text colour, so it holds on the page, a card and every tint; at 74% it measured about 3.3:1 there on the page. */
+body[data-vscode-theme-id="Solarized Dark"] { --sem-lift: 3%; }                  /* the default link blue, 4.9:1 on the page */
+body[data-vscode-theme-id="Monokai"] { --sem-lift: 2.5%; }                           /* the default link blue, 4.8:1 */
+body[data-vscode-theme-id="Tomorrow Night Blue"] { --sem-lift: 4.5%; }               /* the default link blue */
+body[data-vscode-theme-id="Solarized Light"] { --sem-lift: 6%; --sem-muted-mix: 96%; }   /* the jade accent */
+body[data-vscode-theme-id="Quiet Light"] { --sem-lift: 5.5%; --sem-muted-mix: 96%; }     /* the jade accent */
+body:is([data-vscode-theme-id="Light+"], [data-vscode-theme-id="Visual Studio Light"]) { --sem-muted-mix: 94%; }
+/* Hue steps (coordinator, 27 September 2026): where a theme's own chart colour, mixed at --sem-hue-mix, falls
+   under 4.55:1 on its page, a card, a mark, a hover or a tint, that hue steps its lightness away from the page
+   (darker in a light theme, lighter in a dark one) by the smallest half step that holds everywhere, plus one
+   half step of margin. Quiet Light's charts.orange is its find highlight, a pink (#EDC9D8), so its doer orange
+   starts from VS Code's default find-match orange, the one every other light theme uses. Abyss's is a grey
+   (#eeeeee44), which mixes to a grey and leaves the You track with no hue at all, so it starts from the same
+   default; token-contrast.test.mjs measures every doer's oklab chroma to catch the next theme that does this. */
+body:is([data-vscode-theme-id="Light+"], [data-vscode-theme-id="Visual Studio Light"]) { --sem-warn-step: -0.045; --sem-you-step: -0.02; }
+body[data-vscode-theme-id="Solarized Light"] { --sem-good-step: -0.015; --sem-warn-step: -0.065; --sem-you-step: -0.035; }
+body[data-vscode-theme-id="Quiet Light"] { --sem-good-step: -0.02; --sem-warn-step: -0.065; --sem-you-step: -0.04; --sem-you-src: #EA5C00; }
+body[data-vscode-theme-id="Solarized Dark"] { --sem-bad-step: 0.02; --sem-you-step: 0.015; }
+body[data-vscode-theme-id="Abyss"] { --sem-you-src: #EA5C00; }
+body[data-vscode-theme-id="Monokai"] { --sem-bad-step: 0.025; --sem-you-step: 0.02; }
+body[data-vscode-theme-id="Tomorrow Night Blue"] { --sem-bad-step: 0.03; --sem-you-step: 0.02; }
+/* Wash steps: a wash darkens a light card, and in the two themes whose own text colour is already pale (#616161)
+   that took the Optimize chips' plain text under 4.5:1. At 12% and 14% they measured 4.45 and 4.42:1 on the card
+   in token-contrast.test.mjs and 4.28 and 4.27:1 off the pixels in tools/uishot/verify-surface-r2-drive.mjs. 10%
+   still passes the token test (4.56:1) and 9% reads 4.61 to 4.63:1 off the pixels on one machine, but glyph
+   rendering moved the pixel reading by 0.06 between two machines, so 8% keeps that much headroom: 4.70 to 4.80:1
+   on the card in the token test and 4.64 to 4.70:1 off the pixels on both. */
+body:is([data-vscode-theme-id="Solarized Light"], [data-vscode-theme-id="Quiet Light"]) { --sem-wash-bad-mix: 8%; --sem-wash-good-mix: 8%; }
+body:is([data-vscode-theme-id="Solarized Dark"], [data-vscode-theme-id="Monokai"], [data-vscode-theme-id="Tomorrow Night Blue"], [data-vscode-theme-id="Solarized Light"], [data-vscode-theme-id="Quiet Light"]) {
+  --sem-surface-2: oklab(from var(--sem-bg) calc(l + var(--sem-recess)) a b);
+}
+
+/* Narrow windows step the page margin down the same scale, never off it. */
+@media (max-width: 1100px) {
+  :root { --sem-page-margin: var(--sem-space-4); }
+}
+@media (max-width: 720px) {
+  :root { --sem-page-margin: var(--sem-space-3); }
+}

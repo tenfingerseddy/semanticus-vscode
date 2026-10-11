@@ -134,8 +134,8 @@ if (mode == "apply")
     Directory.CreateDirectory(args[3]);
     var tmdlFolder = Path.Combine(args[3], "definition");
     var bimOut = Path.Combine(args[3], "Contoso.optimised.bim");
-    await engine.SaveAsync(tmdlFolder, "tmdl");
-    await engine.SaveAsync(bimOut, "bim");
+    await engine.SaveAsync(tmdlFolder, "tmdl", false, "human");
+    await engine.SaveAsync(bimOut, "bim", false, "human");
 
     var after = await engine.AiReadinessScanAsync();
     Console.WriteLine($"AFTER:  grade {after.Grade}  overall {after.Overall}  findings {after.Findings.Count()}");

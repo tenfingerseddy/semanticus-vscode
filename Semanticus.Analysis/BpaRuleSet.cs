@@ -47,6 +47,79 @@ namespace Semanticus.Analysis
             catch { return _standard = Array.Empty<BpaRule>(); }
         }
 
+        /// <summary>The rules in force on a model: the bundled standard set (the curated defaults only if the embedded
+        /// resource failed to load, so a scan is never left with zero rules), plus the rules embedded in the model (the
+        /// BestPracticeAnalyzer annotation, where load_rules persists user and org rules), merged by id with the model's
+        /// rule winning. A model rule is tagged with its provenance. Shared by the engine and the analyzers, so the scan, the
+        /// fixes and the declined-change set all read the SAME effective set.</summary>
+        public static List<BpaRule> ForModel(TabularEditor.TOMWrapper.Model m)
+        {
+            var byId = new Dictionary<string, BpaRule>(StringComparer.OrdinalIgnoreCase);
+            var standard = Standard();
+            foreach (var r in (standard.Count > 0 ? standard : BpaDefaultRules.Rules)) byId[r.ID] = r;
+            try
+            {
+                var json = m.GetAnnotation("BestPracticeAnalyzer");
+                if (!string.IsNullOrWhiteSpace(json))
+                    foreach (var r in Parse(json))
+                    {
+                        // A Tabular Editor user who embeds the standard set has put the BUNDLED rule in the annotation, not written
+                        // one: same id and the same behaviour in EVERY field (SameRule) is the bundled rule, so it is advice where the bundled rule is
+                        // advice and the gate skips it (M11 join part 4, E3). A rule that differs in any field, its severity above all, is one the
+                        // model wrote, and keeps its own severity 3 gate.
+                        r.FromModelAnnotation = !(byId.TryGetValue(r.ID, out var bundled) && !bundled.FromModelAnnotation && SameRule(bundled, r));
+                        byId[r.ID] = r;
+                    }
+            }
+            catch { /* malformed embedded rules: ignore, keep the base set */ }
+            // Built in: never from the bundled file, so a model that carries only its own rules, or whose bundled set failed to load, is still checked for it.
+            foreach (var r in Native()) byId[r.ID] = r;
+            return byId.Values.ToList();
+        }
+
+        /// <summary>The rules Semanticus adds to the Tabular Editor set. Each one needs the engine's own checks, which a Dynamic-LINQ predicate cannot call, so it is a token
+        /// check (<see cref="BpaRule.TokenCheck"/>).</summary>
+        public static IReadOnlyList<BpaRule> Native() => _native ??= new[]
+        {
+            new BpaRule
+            {
+                ID = BpaGrading.BrokenFormulaRuleId, Name = "A formula refers to an object the model does not have",
+                Category = "Error Prevention", Severity = 3, Scope = "Measure, CalculatedColumn, CalculationItem, ModelRole",
+                TokenCheck = "missing-objects",
+                Description = "%object% has a formula that refers to a table, column or measure the model does not have, so it cannot give a number. Point the formula at objects that exist.",
+            },
+        };
+        private static IReadOnlyList<BpaRule> _native;
+
+        /// <summary>Everything about a rule that changes WHAT IT DOES: which objects it looks at, what it flags, how bad a hit is, what its fix
+        /// writes, which models it applies to. Every public property of <see cref="BpaRule"/> is one of these unless it is named here as words a person
+        /// reads (the name and the description), the id that matched it, or provenance. So a property added to the rule later is compared on its own
+        /// and a copy that differs in it is the model's own rule, instead of passing for the bundled one until somebody remembers to list it
+        /// (Sol 6.1 on the M11 delta, finding B1, the second strike of 4.3: the first version compared the expression alone, so a copy with its
+        /// severity raised to an error was taken for the bundled rule and the gate skipped it).</summary>
+        internal static readonly System.Reflection.PropertyInfo[] BehaviourFields = typeof(BpaRule)
+            .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .Where(p => p.Name != nameof(BpaRule.ID) && p.Name != nameof(BpaRule.Name) && p.Name != nameof(BpaRule.Description) && p.Name != nameof(BpaRule.FromModelAnnotation))
+            .ToArray();
+
+        /// <summary>Whether <paramref name="b"/> is the bundled rule <paramref name="a"/> and nothing else: the same id, and every behaviour field the
+        /// same (text compared with its whitespace squashed, so a reflowed expression still matches).</summary>
+        internal static bool SameRule(BpaRule a, BpaRule b)
+        {
+            if (!string.Equals(a.ID, b.ID, StringComparison.OrdinalIgnoreCase)) return false;
+            foreach (var field in BehaviourFields)
+            {
+                var x = field.GetValue(a);
+                var y = field.GetValue(b);
+                if (x is string || y is string) { if (!string.Equals(Squash(x as string), Squash(y as string), StringComparison.Ordinal)) return false; }
+                else if (!Equals(x, y)) return false;
+            }
+            return true;
+        }
+
+        private static string Squash(string expression) =>
+            System.Text.RegularExpressions.Regex.Replace(expression ?? "", @"\s+", " ").Trim();
+
         /// <summary>Parse standard-format rules JSON — a rule array, OR a single rule object (treated as a
         /// one-element array). Tolerant of comments / trailing commas / string-encoded numbers and of extra or
         /// missing fields; throws <see cref="JsonException"/> on genuinely malformed JSON so a bad file is

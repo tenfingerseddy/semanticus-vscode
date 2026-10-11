@@ -132,14 +132,14 @@ namespace Semanticus.Tests
             Assert.Equal(run.RunId, listedRun.RunId);
             Assert.Equal(run.ModelFingerprint, listedRun.ModelFingerprint);
 
+            // Validation went free on 22 September 2026, so the free session reads the same history. Both calls
+            // are still READ-ONLY, which is what this file is really policing.
             using var freeSessions = new SessionManager();
             using var freeEngine = new LocalEngine(freeSessions, new Tier(pro: false), _dir);
             await freeEngine.CreateModelAsync("FreeHistory", 1604);
             freeSessions.Current.SourcePath = Path.Combine(_dir, "free-history.bim");
-            await AssertReadOnlyFailureAsync<EntitlementException>(freeSessions,
-                () => McpToolsTesting.ListTestRuns(freeEngine), "Tests is a Semanticus Pro feature");
-            await AssertReadOnlyFailureAsync<EntitlementException>(freeSessions,
-                () => McpToolsTesting.ListTests(freeEngine), "Unlock Pro from Pro Plans and Support");
+            Assert.NotNull(await ReadOnlyAsync(freeSessions, () => McpToolsTesting.ListTestRuns(freeEngine)));
+            Assert.NotNull(await ReadOnlyAsync(freeSessions, () => McpToolsTesting.ListTests(freeEngine)));
         }
 
         private static async Task<T> ReadOnlyAsync<T>(SessionManager sessions, Func<Task<T>> action)

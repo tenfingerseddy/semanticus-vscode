@@ -10,7 +10,7 @@ namespace Semanticus.Engine
 {
     /// <summary>
     /// Metadata-only "save to the live model": pushes the OPEN SESSION's metadata — names, descriptions,
-    /// visibility, data categories, format strings, display folders, summarize-by, measure/calc-column DAX,
+    /// visibility, a column's Excel/MDX availability, data categories, format strings, display folders, summarize-by, measure/calc-column DAX,
     /// partition source expressions (M / calc-table DAX / legacy query), shared M expressions/parameters,
     /// and the linguistic schema (synonyms + AI instructions) — to a live XMLA model via Model.SaveChanges().
     /// The deploy half of <see cref="LiveModelExport"/>: open_live reads metadata out, deploy_live writes it back.
@@ -930,6 +930,7 @@ namespace Semanticus.Engine
                             if (SupportsLineage(live) && !string.IsNullOrEmpty(sc.LineageTag)) ncc.LineageTag = sc.LineageTag;
                             ncc.Description = sc.Description; ncc.IsHidden = sc.IsHidden; ncc.DataCategory = sc.DataCategory;
                             ncc.FormatString = sc.FormatString; ncc.DisplayFolder = sc.DisplayFolder; ncc.SummarizeBy = sc.SummarizeBy;
+                            ncc.IsAvailableInMDX = sc.IsAvailableInMDX;
                             ModelCompare.CopyLiveColumnSupplement(sc, ncc);
                             var newColumnSourceState = ModelCompare.LiveColumnState(sc);
                             var newColumnState = ModelCompare.LiveColumnState(ncc);
@@ -979,14 +980,34 @@ namespace Semanticus.Engine
                     SetStr(sc.FormatString, () => lc.FormatString, v => lc.FormatString = v, apply, ref fmt, "format " + id, changes);
                     SetStr(sc.DisplayFolder, () => lc.DisplayFolder, v => lc.DisplayFolder = v, apply, ref fold, "folder " + id, changes);
                     if (sc.SummarizeBy != lc.SummarizeBy) { if (apply) lc.SummarizeBy = sc.SummarizeBy; sum++; changes.Add("summarizeBy " + id); }
+                    // Excel/MDX availability is a column's own flag, as plain as IsHidden: the BPA fix and the base measure
+                    // row both turn it off for a hidden column nothing slices by, so a push carries it rather than hold the
+                    // column as "cannot sync" on every push after (ModelCompare.LiveColumnState no longer keeps it residual).
+                    // Never off while the LIVE model still needs it: a hierarchy level, a sort-by either way, or a variation
+                    // there requires the attribute (a live-only hierarchy is kept by this push, so the session cannot vouch).
+                    var liveNeedsMdx = !sc.IsAvailableInMDX && lc.IsAvailableInMDX
+                        && (lt.Hierarchies.Cast<TOM.Hierarchy>().Any(h => h.Levels.Cast<TOM.Level>().Any(l => ReferenceEquals(l.Column, lc)))
+                            || lc.SortByColumn != null || lt.Columns.Cast<TOM.Column>().Any(o => ReferenceEquals(o.SortByColumn, lc))
+                            || lc.Variations.Count > 0);
+                    if (liveNeedsMdx)
+                    {
+                        unmatched.Add(AlmRef.Child("column", st.Name, sc.Name) + " (was not taken out of Excel/MDX: a hierarchy, sort order or variation on the live model still uses it; remove that first, or deploy via TMDL/XMLA)");
+                        heldRefs.Add(AlmRef.Child("column", st.Name, sc.Name));
+                    }
+                    else
+                        SetBool(sc.IsAvailableInMDX, () => lc.IsAvailableInMDX, v => lc.IsAvailableInMDX = v, apply, ref metadata, "availableInMdx " + id, changes);
                     if (sc is TOM.CalculatedColumn scc)
                     {
                         if (lc is TOM.CalculatedColumn lcc) SetExpr(scc.Expression, () => lcc.Expression, v => lcc.Expression = v, apply, ref expr, "expression " + id, changes);
                         else unmatched.Add($"expression-type-mismatch {id} (session CalculatedColumn, live {lc.GetType().Name}: DAX not deployed)");
                     }
                     var columnRef = AlmRef.Child("column", st.Name, sc.Name);
-                    var sourceColumnState = ModelCompare.LiveColumnState(sc);
-                    var liveColumnState = ModelCompare.LiveColumnState(lc);
+                    // The key mark and the default-label mark are plain column flags the service takes, so a matched column
+                    // carries them (the fix-the-model rows set both). A NEW column still refuses them: its clone cannot carry them.
+                    SetBool(sc.IsKey, () => lc.IsKey, v => lc.IsKey = v, apply, ref metadata, "key " + id, changes);
+                    SetBool(sc.IsDefaultLabel, () => lc.IsDefaultLabel, v => lc.IsDefaultLabel = v, apply, ref metadata, "defaultLabel " + id, changes);
+                    var sourceColumnState = ModelCompare.LiveColumnState(sc, marksCarried: true);
+                    var liveColumnState = ModelCompare.LiveColumnState(lc, marksCarried: true);
                     if (SupplementIntroducesChange(sourceColumnState.Supplement, liveColumnState.Supplement))
                     {
                         try
@@ -1822,6 +1843,7 @@ namespace Semanticus.Engine
             if (supportsLineage && !string.IsNullOrEmpty(sc.LineageTag)) c.LineageTag = sc.LineageTag;
             c.Description = sc.Description; c.IsHidden = sc.IsHidden; c.DataCategory = sc.DataCategory;
             c.FormatString = sc.FormatString; c.DisplayFolder = sc.DisplayFolder; c.SummarizeBy = sc.SummarizeBy;
+            c.IsAvailableInMDX = sc.IsAvailableInMDX;
             return c;
         }
 

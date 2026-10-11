@@ -23,7 +23,7 @@ assert.match(lineage, /rpc<ImpactAssessmentResult>\('impactAssessment'/, 'the ca
 assert.match(lineage, /scope: 'modelAndReports'/, 'the page must ask for report coverage rather than imply model-only safety');
 assert.doesNotMatch(lineage, /reportPaths:/, 'the reports come from the engine scope now, not from a path list the page holds');
 assert.match(lineage, /rpc\('addPlanItem', r, 'delete_if_unused'/, 'removal must be proposed with the self-re-verifying kind');
-assert.match(model, /This adds a proposal to Changes > Proposed\. The field stays until you apply the proposal\./,
+assert.match(model, /This adds a change to Changes > Pending changes\. The field stays until you apply it\./,
   'the proposal must say where it goes and that nothing left the model');
 assert.match(app, /onOpenPlan=\{\(\) => goTab\('optimize'\)\}/, 'a proposal must route into the existing Changes view');
 assert.match(app, /onAddCheck=\{\(ref\) => goTab\('tests', undefined, ref, undefined, \{ kind: 'test', value: ref \}\)\}/,
@@ -168,7 +168,7 @@ for (const [what, src] of [['the tree', tree], ['the graph', graphView]])
 
 // The slicers and the Fit behaviour survive the compaction: every control stays reachable.
 for (const [what, src, labels] of [
-  ['the tree', tree, ['Upstream', 'Downstream', 'Horizontal', 'Vertical', 'Expand all', 'Collapse', 'Fit']],
+  ['the tree', tree, ['Built from', 'Used by', 'Horizontal', 'Vertical', 'Expand all', 'Collapse']],
   ['the graph', graphView, ['Whole model', 'Focused', 'Force', 'Circular', 'Fit', 'Reset']],
 ]) for (const label of labels)
   assert.match(src, new RegExp('>[^<>]*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<'), `${what} must keep its ${label} control`);
@@ -177,9 +177,26 @@ for (const [what, src] of [['the tree', tree], ['the graph', graphView]]) {
   assert.match(src, /<MultiSelect label="Fields"/, `${what} must keep its Fields slicer`);
 }
 
-// The kind filters fold into one Show menu so a long list of kinds cannot push the row onto a second line.
-for (const [what, src] of [['the tree', tree], ['the graph', graphView]])
-  assert.match(src, /<RowMenu label="Show"/, `${what} must fold its kind filters into one Show menu`);
+// Minimalism pass (8 Oct): each row is the view switcher, the search, one switch, and two menus. The layout buttons fold
+// into Layout and the slicers and kind filters into Filter, so a long list of kinds cannot push the row onto a second line.
+for (const [what, src] of [['the tree', tree], ['the graph', graphView]]) {
+  assert.match(src, /<RowMenu label="Layout"/, `${what} must fold its layout buttons into one Layout menu`);
+  assert.match(src, /<RowMenu label="Filter"/, `${what} must fold its slicers and kind filters into one Filter menu`);
+  assert.doesNotMatch(src, /<RowMenu label="Show"|<RowMenu label="Slice"/, `${what} keeps no second kind menu`);
+}
+// Fit is the zoom stack's own button on the Tree (React Flow draws it). The Graph is an EChart with no zoom stack, so its Fit
+// moved into Layout instead of going.
+assert.doesNotMatch(tree, /<ToolBtn[^>]*>Fit</, 'the tree row has no Fit button of its own');
+assert.match(tree, /<Controls showInteractive=\{false\} \/>/, 'the tree keeps the zoom stack that fits the view');
+// The minimap is for a tree too big to see at once: a tree that fits the pane at full size draws none.
+assert.match(tree, /const showMiniMap = [^;]*&& !treeFitsPane;/, 'the tree minimap waits until the tree is larger than the pane');
+// The report warning is one short line with its fix beside it; the engine's long sentence stays for the assistant.
+for (const [what, src] of [['the tree', tree], ['the graph', graphView]]) {
+  assert.match(src, /Check reports/, `${what} offers Check reports beside the warning`);
+  assert.doesNotMatch(src, /Model-only/, `${what} never prints the engine's Model-only sentence`);
+}
+assert.match(lineage, /REPORTS_NOT_COUNTED = 'Reports are not counted yet\. A field that only a report uses can look unused\.'/, 'the warning is the plain line');
+assert.match(lineage, /setMode\('impact'\); setCleanup\(false\); setDrawerOpen\(true\)/, 'Check reports opens Impact with the Choose reports drawer');
 assert.match(studioCss, /\.sem-toolrow\s*\{[^}]*flex-wrap:\s*nowrap/, 'the tool row must refuse to wrap onto a second line');
 
 // The scripted browser check reads the selection through a stable hook rather than a sentence on a row that

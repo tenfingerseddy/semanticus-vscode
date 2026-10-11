@@ -1,0 +1,42 @@
+table Absence
+	/// absence record identifier
+	column 'Absence ID'
+		dataType: int64
+		sourceColumn: AbsenceID
+		summarizeBy: none
+
+	column 'Employee Number'
+		dataType: int64
+		sourceColumn: EmployeeNumber
+		summarizeBy: none
+
+	/// absence date join key
+	column 'Date Key'
+		dataType: int64
+		sourceColumn: DateKey
+		summarizeBy: none
+
+	/// hours absent, including partial hours. Hundredths matter.
+	column Hours
+		dataType: double
+		sourceColumn: Hours
+		summarizeBy: none
+
+	/// scheduled hours, including partial hours. Hundredths matter.
+	column 'Scheduled Hours'
+		dataType: double
+		sourceColumn: ScheduledHours
+		summarizeBy: none
+
+	column Reason
+		dataType: string
+		sourceColumn: Reason
+		summarizeBy: none
+
+	partition Absence = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [AbsenceID = Int64.Type, EmployeeNumber = Int64.Type, DateKey = Int64.Type, Hours = type number, ScheduledHours = type number, Reason = type text], {})
+			in
+				Source

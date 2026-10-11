@@ -1,0 +1,220 @@
+[
+  {
+    "id": "S01",
+    "shape": "Shop sales and refunds share one calendar and product dimension.",
+    "date_table": "dim_calendar",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_sale",
+      "fact_refund"
+    ],
+    "time_facts": [
+      "fact_sale",
+      "fact_refund"
+    ],
+    "why": "The calendar has direct relationships to both sale and refund facts. Both can be filtered by its date, so both can receive time measures."
+  },
+  {
+    "id": "S02",
+    "shape": "Freight trips and fuel purchases share a day and vehicle.",
+    "date_table": "dim_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_trip",
+      "fact_fuel"
+    ],
+    "time_facts": [
+      "fact_trip",
+      "fact_fuel"
+    ],
+    "why": "Each fact has a direct day key to dim_day. The vehicle dimension adds another slice but does not change date reachability."
+  },
+  {
+    "id": "S03",
+    "shape": "Dated visits coexist with undated supply issues.",
+    "date_table": "dim_visit_date",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_visit",
+      "fact_supply_issue"
+    ],
+    "time_facts": [
+      "fact_visit"
+    ],
+    "why": "Visit date filters fact_visit directly. Supply issues join clinic and supply only, so dim_visit_date cannot reach fact_supply_issue through the relationships."
+  },
+  {
+    "id": "S04",
+    "shape": "A calendar is present but production has only raw timestamps.",
+    "date_table": null,
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_run"
+    ],
+    "time_facts": [],
+    "why": "The unlinked dim_date has no active path to fact_run. RUN_STARTED_AT is a raw DateTime column, so it does not make the separate calendar useful as a marked date table."
+  },
+  {
+    "id": "S05",
+    "shape": "Live sales use one calendar while a legacy calendar is stranded.",
+    "date_table": "dim_sales_date",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_order",
+      "fact_order_line"
+    ],
+    "time_facts": [
+      "fact_order",
+      "fact_order_line"
+    ],
+    "why": "Both order facts point directly to dim_sales_date. The similarly shaped dim_legacy_date has no relationship to either fact and should not be marked."
+  },
+  {
+    "id": "S06",
+    "shape": "Delivery and repair activity sit on separate valid calendars.",
+    "date_table": "dim_delivery_day",
+    "also_acceptable_date_tables": [
+      "dim_service_day"
+    ],
+    "facts": [
+      "fact_delivery",
+      "fact_return",
+      "fact_repair"
+    ],
+    "time_facts": [
+      "fact_delivery",
+      "fact_return"
+    ],
+    "why": "Delivery and return facts use dim_delivery_day, while repairs use only dim_service_day. Either calendar can legitimately be marked for its own activity, but time measures must stay on facts reachable from the chosen one."
+  },
+  {
+    "id": "S07",
+    "shape": "Ledger postings are dated; cost allocations have a loose timestamp.",
+    "date_table": "dim_posting_date",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_ledger",
+      "fact_allocation"
+    ],
+    "time_facts": [
+      "fact_ledger"
+    ],
+    "why": "dim_posting_date directly filters ledger rows. Allocations carry POSTED_AT but no foreign key to that date table, and their account link alone does not carry the date filter to them."
+  },
+  {
+    "id": "S08",
+    "shape": "Timestamped readings have no calendar dimension.",
+    "date_table": null,
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_reading",
+      "fact_alarm"
+    ],
+    "time_facts": [],
+    "why": "The facts have DateTime event columns but there is no date table to mark. No calendar relationship exists, so neither fact should receive drafted time measures."
+  },
+  {
+    "id": "S09",
+    "shape": "Reservations and payments are dated; capacity is not.",
+    "date_table": "dim_booking_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_reservation",
+      "fact_payment",
+      "fact_capacity"
+    ],
+    "time_facts": [
+      "fact_reservation",
+      "fact_payment"
+    ],
+    "why": "The booking calendar has direct keys from reservation and payment facts. Capacity is keyed by trip and cabin but has no date path, so its seat count is excluded from time measures."
+  },
+  {
+    "id": "S10",
+    "shape": "A day reaches output through shifts and reaches defects directly.",
+    "date_table": "dim_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_output",
+      "fact_defect"
+    ],
+    "time_facts": [
+      "fact_output",
+      "fact_defect"
+    ],
+    "why": "dim_day filters dim_shift, which filters fact_output through its shift key. fact_defect has its own direct day key, so both facts are reachable even though only one has a direct calendar foreign key."
+  },
+  {
+    "id": "S11",
+    "shape": "Orders have two date roles; stock balances have no date link.",
+    "date_table": "dim_calendar",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_order",
+      "fact_balance"
+    ],
+    "time_facts": [
+      "fact_order"
+    ],
+    "why": "ORDER_DAY_KEY and SHIP_DAY_KEY both link the order fact to dim_calendar; at least one relationship can be active. fact_balance joins only item and warehouse, so the calendar cannot filter its quantity."
+  },
+  {
+    "id": "S12",
+    "shape": "A day reaches batch yields through the batch dimension.",
+    "date_table": "dim_process_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_yield",
+      "fact_rework"
+    ],
+    "time_facts": [
+      "fact_yield",
+      "fact_rework"
+    ],
+    "why": "The date filters dim_batch and then fact_yield through a single relationship path. Rework rows have a direct date key, so both facts qualify for time measures."
+  },
+  {
+    "id": "S13",
+    "shape": "A calendar is stranded next to timestamped inventory snapshots.",
+    "date_table": null,
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_inventory_snapshot",
+      "fact_transfer"
+    ],
+    "time_facts": [],
+    "why": "Neither fact has a relationship to dim_reporting_date. Snapshot and transfer timestamps do not form a relationship to it, so marking that date table would serve no fact."
+  },
+  {
+    "id": "S14",
+    "shape": "Charge and adjustment facts use billing day; service cases do not.",
+    "date_table": "dim_billing_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_charge",
+      "fact_adjustment",
+      "fact_case"
+    ],
+    "time_facts": [
+      "fact_charge",
+      "fact_adjustment"
+    ],
+    "why": "Charges and adjustments have direct billing day keys. Cases share the customer dimension but have no date key or active path from dim_billing_day, so case counts need no time measures."
+  },
+  {
+    "id": "S15",
+    "shape": "Trades and settlements are dated; forecasts carry only a timestamp.",
+    "date_table": "dim_trade_day",
+    "also_acceptable_date_tables": [],
+    "facts": [
+      "fact_trade",
+      "fact_settlement",
+      "fact_forecast"
+    ],
+    "time_facts": [
+      "fact_trade",
+      "fact_settlement"
+    ],
+    "why": "The trade calendar directly filters trades and settlements. Forecasts use a crop key and FORECAST_AT but no relationship to that calendar, so their numeric estimates must not get its time measures."
+  }
+]

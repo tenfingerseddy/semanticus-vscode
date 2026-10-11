@@ -1,0 +1,173 @@
+{
+  "Server": "s10-sql.example.invalid",
+  "Database": "ShiftOutput",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "WORK_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_shift",
+      "KeyColumns": [
+        "SHIFT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SHIFT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "SHIFT_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "HOURS",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_workcell",
+      "KeyColumns": [
+        "CELL_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CELL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CELL_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_output",
+      "KeyColumns": [
+        "OUTPUT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "OUTPUT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SHIFT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CELL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "GOOD_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "OUTPUT_KG",
+          "DataType": "Double"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_defect",
+      "KeyColumns": [
+        "DEFECT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "DEFECT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CELL_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DEFECT_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "LOSS_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "dim_shift",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_output",
+      "FromColumn": "SHIFT_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_shift",
+      "ToColumn": "SHIFT_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_output",
+      "FromColumn": "CELL_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_workcell",
+      "ToColumn": "CELL_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_defect",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_defect",
+      "FromColumn": "CELL_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_workcell",
+      "ToColumn": "CELL_ID"
+    }
+  ]
+}

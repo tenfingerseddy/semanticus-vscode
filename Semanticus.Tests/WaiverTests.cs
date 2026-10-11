@@ -84,6 +84,8 @@ namespace Semanticus.Tests
                 var after = await engine.AiReadinessScanAsync();
                 var fmt = after.Categories.First(c => c.Category == "Formatting");
                 Assert.True(fmt.Waived >= waivedOfRule, $"Formatting.Waived was {fmt.Waived}, expected at least {waivedOfRule}");
+                // A finding another rule of the category asks the same change for (SUMMARIZE-DIMENSION beside FMT-SUMMARIZE) is left alone
+                // by every path, but it is not accepted, so it still counts against the score (m11/rule-clashes round 8).
                 Assert.Equal(fmtBefore.Violations - waivedOfRule, fmt.Violations);
                 Assert.True(after.Findings.Where(f => f.RuleId == ruleId).All(f => f.Waived));
                 Assert.True(after.WaivedCount >= waivedOfRule);
@@ -135,6 +137,7 @@ namespace Semanticus.Tests
 
         // ---- tier: waiving is free at every scope (Kane removed the rule-level gate on 2026-09-15) ------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rule_level_waiver_is_free_on_both_spellings_and_so_is_per_instance()
         {
@@ -163,6 +166,7 @@ namespace Semanticus.Tests
 
         // ---- list + un-waive round-trip persists on the model ------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task List_and_unwaive_round_trip()
         {
@@ -188,6 +192,7 @@ namespace Semanticus.Tests
 
         // ---- BPA: waiving drops the active count + mirrors to Tabular Editor's ignore annotation -------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bpa_waiver_drops_the_active_count_and_mirrors_to_tabular_editor()
         {
@@ -218,6 +223,7 @@ namespace Semanticus.Tests
 
         // ---- the bulk AIR safe-fixer must NOT auto-fix a finding the user accepted --------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Apply_safe_fixes_does_not_auto_fix_a_waived_finding()
         {
@@ -237,6 +243,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bpa_honors_a_tabular_editor_ignore_set_outside_semanticus()
         {
@@ -303,6 +310,7 @@ namespace Semanticus.Tests
         // read treated them as an empty set and the rewrite destroyed them with no preservation. Structural validity
         // is now the FULL expected schema (one RuleIDs property, an array of strings). Neuter: accept any parseable
         // JSON as valid again and the aside annotation disappears — this test fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Structurally_invalid_te_ignore_is_preserved_aside_before_rewrite()
         {
@@ -333,6 +341,7 @@ namespace Semanticus.Tests
         // Review follow-up (sol): the legacy "BestPractizeAnalyzer_IgnoreRules" key was removed unconditionally while
         // only the preferred key was inspected — a corrupt legacy value was silently destroyed by the consolidation.
         // Neuter: skip the legacy preserve and the backup annotation disappears — this test fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Corrupt_legacy_te_ignore_is_preserved_before_consolidation()
         {
@@ -405,6 +414,7 @@ namespace Semanticus.Tests
         // whitespace preferred key took precedence over a valid LEGACY value — the legacy set was ignored and then
         // consolidated away, destroying real ignore ids. A whitespace preferred is now treated as ABSENT so the valid
         // legacy seeds the set. Neuter: restore `prefRaw != null && prefOk` and the legacy KEEP is lost — this fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Whitespace_preferred_te_ignore_does_not_destroy_a_valid_legacy_set()
         {
@@ -437,6 +447,7 @@ namespace Semanticus.Tests
         // Review follow-up (sol): a raw value of literal `null` deserialized to null, coalesced to an empty list, left
         // corruptRaw null, and the next Save overwrote it with no preservation. Now treated as corrupt: preserved
         // aside + warned. Neuter: coalesce the deserializer's null to an empty list again and no aside appears — fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Waive_over_a_literal_null_waiver_annotation_preserves_it_aside()
         {

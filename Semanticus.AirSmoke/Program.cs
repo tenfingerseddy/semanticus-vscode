@@ -15,10 +15,15 @@ namespace Semanticus.AirSmoke
     /// </summary>
     internal static class Program
     {
+        // AdventureWorks' dimensions that carry a label column and no row label (DIM-PRIMARY-NAME, 27 Sep row-label form).
+        private static readonly string[] ExpectedRowLabels = { "column:Currency/CurrencyName", "column:Product Category/Product Category Name", "column:Promotion/Promotion Name" };
+
         private static int _failures;
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("airsmoke");
             var sessions = new SessionManager();
             // Smoke harness runs as Pro so it exercises the BULK functionality (apply_safe_fixes etc.); the Pro GATE
             // itself is covered by Semanticus.Tests/EntitlementGateTests.
@@ -74,34 +79,18 @@ namespace Semanticus.AirSmoke
                 var undescribedHierarchies = c1.Findings.Where(f => f.RuleId == "DESC-HIERARCHY").Select(f => f.ObjectName).OrderBy(x => x, StringComparer.Ordinal).ToArray();
                 Check("catalog batch 7: DESC-HIERARCHY names exactly AdventureWorks' six undescribed hierarchies",
                     undescribedHierarchies.SequenceEqual(new[] { "Calendar", "Category", "Fiscal", "Geography", "Production Calendar", "Territory" }));
-                // Pinned on the OBJECT REF, not the name: the ref carries the dimension AND the label column, which is
-                // the object the advertised AiContent rename actually edits. The finding used to name the table, so
-                // this assertion also proves the retarget did not change WHICH dimensions fire , the same three
-                // tables, and Currency's no-space "<Table>Name" shape is resolved to its real column.
+                // Pinned on the OBJECT REF: the ref carries the dimension AND the label column the safe fix marks as the
+                // row label (27 Sep: the rule sets the row label instead of advising a rename).
                 var unlabelledDimensions = c1.Findings.Where(f => f.RuleId == "DIM-PRIMARY-NAME").Select(f => f.ObjectRef).OrderBy(x => x, StringComparer.Ordinal).ToArray();
-                Check("catalog batch 7: DIM-PRIMARY-NAME names exactly the three label COLUMNS of AdventureWorks' unlabelled dimensions",
-                    unlabelledDimensions.SequenceEqual(new[] { "column:Currency/CurrencyName", "column:Product Category/Product Category Name", "column:Promotion/Promotion Name" }));
-                // The rule advertises FixKind.AiContent, so on a real model the advertised fix must actually reach the
-                // plan. It produced NOTHING before MapAiContent gained the case. Budget is generous on purpose: this
-                // asserts the mapping exists, not how the per-object AI throttle rations a 90-rule scan.
-                //
-                // Each of the three label columns gets exactly ONE rename item on `name` (one property, one item),
-                // needs_content at rename risk so the rename stays an explicit human opt-in. Which RULE owns that
-                // item depends on whether another rename rule reached the column first: AdventureWorks' CurrencyName
-                // is codey, so NAME-COLUMN owns it and DIM-PRIMARY-NAME owns the other two. Either way the intended
-                // "rename it to the table's name" guidance must be IN the item's rationale , the dedup used to drop
-                // it with the losing item, which is the behaviour the rationale merge restores.
+                Check("catalog batch 7: DIM-PRIMARY-NAME names the label COLUMN of each AdventureWorks dimension with no row label",
+                    unlabelledDimensions.SequenceEqual(ExpectedRowLabels)
+                    && c1.Findings.Where(f => f.RuleId == "DIM-PRIMARY-NAME").All(f => f.Fix == "SafeFix" && f.Message.Contains("row label", StringComparison.Ordinal)));
+                // The advertised SafeFix reaches the plan: one approved set_default_label item per finding, and no rename.
                 var dimPlan = await engine.ProposePlanAsync(null, true, 500, "agent");
-                var labelItems = unlabelledDimensions
-                    .Select(reference => dimPlan.Items.Where(i => i.ObjectRef == reference && i.Target == "name").ToArray()).ToArray();
-                Check("catalog batch 7: each unlabelled dimension's label column carries exactly one rename plan item",
-                    labelItems.All(items => items.Length == 1)
-                    && labelItems.SelectMany(items => items).All(i => i.Kind == "rename" && i.Risk == "rename"
-                        && i.Status == "needs_content" && i.After == null && i.Grounding != null));
-                Check("catalog batch 7: DIM-PRIMARY-NAME's advertised AiContent fix reaches the plan (2 items it owns, 1 merged into NAME-COLUMN's)",
-                    dimPlan.Items.Count(i => i.RuleId == "DIM-PRIMARY-NAME" && i.Kind == "rename") == 2
-                    && labelItems.SelectMany(items => items)
-                        .All(i => (i.Rationale ?? "").Contains("has no field named", StringComparison.Ordinal)));
+                var labelItems = dimPlan.Items.Where(i => i.RuleId == "DIM-PRIMARY-NAME").ToArray();
+                Check("catalog batch 7: DIM-PRIMARY-NAME's safe fix reaches the plan as one approved row-label item per finding, and no rename",
+                    labelItems.Select(i => i.ObjectRef).OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(unlabelledDimensions)
+                    && labelItems.All(i => i.Kind == "set_default_label" && i.Status == "approved" && i.Risk == "safe"));
                 await engine.ClearPlanAsync("agent");
                 Check("scan: grade is assigned", !string.IsNullOrEmpty(c1.Grade));
                 Check("scan: findings produced", c1.Findings.Length > 0);
@@ -148,11 +137,11 @@ namespace Semanticus.AirSmoke
                 if (av != null)
                 {
                     var fr = await engine.BpaFixAsync(av.RuleId, av.ObjectRef, "agent");
-                    Check("bpa_fix: deterministic fix applied", fr.Changed);
+                    Check("apply_fix (bpa): deterministic fix applied", fr.Changed);
                     var b3 = await engine.BpaScanAsync();
-                    Check("bpa_fix: violation cleared after fix",
+                    Check("apply_fix (bpa): violation cleared after fix",
                         !b3.Violations.Any(v => v.RuleId == av.RuleId && v.ObjectRef == av.ObjectRef));
-                    Console.WriteLine($"[i] bpa_fix cleared {av.RuleId} on {av.ObjectRef}");
+                    Console.WriteLine($"[i] apply_fix (bpa) cleared {av.RuleId} on {av.ObjectRef}");
                 }
 
                 // Pin the SummarizeBy=None enum-coercion fix specifically (standard NUMERIC_COLUMN_SUMMARIZE_BY),
@@ -168,24 +157,24 @@ namespace Semanticus.AirSmoke
                 {
                     await engine.BpaFixAsync(sv.RuleId, sv.ObjectRef, "agent");
                     var b4 = await engine.BpaScanAsync();
-                    Check($"bpa_fix: {SummarizeByRule} (SummarizeBy=None enum coercion) clears the violation",
+                    Check($"apply_fix (bpa): {SummarizeByRule} (SummarizeBy=None enum coercion) clears the violation",
                         !b4.Violations.Any(v => v.RuleId == SummarizeByRule && v.ObjectRef == sv.ObjectRef));
                 }
 
-                // bpa_fix_all runs without error; AI fix-prompt routes a content violation to Claude.
+                // apply_safe_fixes (bpa) runs without error; AI fix-prompt routes a content violation to Claude.
                 var bpaPre = await engine.BpaScanAsync();   // pre-fix count, to prove ONE undo reverts the whole bulk (#22)
                 var fixAll = await engine.BpaFixAllAsync("agent");
-                Check("bpa_fix_all: ran (applied >= 0, returns scorecard)", fixAll.Scorecard != null && fixAll.Applied >= 0);
-                Console.WriteLine($"[i] bpa_fix_all applied {fixAll.Applied}; remaining violations {fixAll.Scorecard.ViolationCount}");
-                // SINGLE-UNDO ATOMICITY (#22): bpa_fix_all applies every auto-fix inside ONE mutate batch, so a single
+                Check("apply_safe_fixes (bpa): ran (applied >= 0, returns scorecard)", fixAll.Scorecard != null && fixAll.Applied >= 0);
+                Console.WriteLine($"[i] apply_safe_fixes (bpa) applied {fixAll.Applied}; remaining violations {fixAll.Scorecard.ViolationCount}");
+                // SINGLE-UNDO ATOMICITY (#22): apply_safe_fixes (bpa) applies every auto-fix inside ONE mutate batch, so a single
                 // undo must restore EVERY fixed object in one timeline step. Only meaningful when the pass changed something.
                 if (fixAll.Applied > 0)
                 {
-                    Check("bpa_fix_all: the bulk pass reduced the violation count (so undo has something to revert)",
+                    Check("apply_safe_fixes (bpa): the bulk pass reduced the violation count (so undo has something to revert)",
                         fixAll.Scorecard.ViolationCount < bpaPre.ViolationCount);
                     await engine.UndoAsync("agent");
                     var afterUndoAll = await engine.BpaScanAsync();
-                    Check("bpa_fix_all: ONE undo atomically reverts ALL bulk fixes (count returns to the exact pre-fix value)",
+                    Check("apply_safe_fixes (bpa): ONE undo atomically reverts ALL bulk fixes (count returns to the exact pre-fix value)",
                         afterUndoAll.ViolationCount == bpaPre.ViolationCount);
                     await engine.BpaFixAllAsync("agent");   // re-apply so the rest of the smoke runs against the fixed model
                 }
@@ -196,7 +185,7 @@ namespace Semanticus.AirSmoke
                 if (nonFixV != null)
                 {
                     var fp = await engine.BpaGetFixPromptAsync(nonFixV.RuleId, nonFixV.ObjectRef);
-                    Check("bpa_get_fix_prompt: names the object + rule",
+                    Check("get_fix_prompt (bpa): names the object + rule",
                         fp != null && fp.ObjectRef == nonFixV.ObjectRef && fp.RuleId == nonFixV.RuleId
                         && !string.IsNullOrEmpty(fp.Prompt) && fp.Prompt.Contains("Best Practice"));
                 }
@@ -404,7 +393,7 @@ namespace Semanticus.AirSmoke
                         Check("a built-in readiness rule id collision is refused with teaching", crCollided);
 
                         var crReset = await engine.ResetReadinessRulesAsync("agent");
-                        Check("reset_readiness_rules clears the custom rules (scan back to built-ins only)",
+                        Check("reset_rules (air) clears the custom rules (scan back to built-ins only)",
                             crReset.ModelRules == 0 && !(await engine.AiReadinessScanAsync()).Findings.Any(f => f.RuleId.StartsWith("ORG-SMOKE")));
                         foreach (var p in crPick) await engine.SetObjectPropertyAsync(p.Ref, "DisplayFolder", p.Folder, "agent");   // restore
                     }
@@ -449,9 +438,9 @@ namespace Semanticus.AirSmoke
                 }
                 else
                 {
-                    await engine.EnableQnaAsync(null, "agent");
+                    await engine.CreateLinguisticSchemaAsync(null, "agent");
                     var afterQna = await engine.AiReadinessScanAsync();
-                    Check("enable_qna: 'no linguistic schema' finding cleared", !afterQna.Findings.Any(f => f.RuleId == "SYN-SCHEMA"));
+                    Check("create_linguistic_schema: 'no linguistic schema' finding cleared", !afterQna.Findings.Any(f => f.RuleId == "SYN-SCHEMA"));
                     var synTarget = afterQna.Findings.FirstOrDefault(f => f.RuleId == "SYN-FIELD" && f.ObjectRef.StartsWith("measure:"))?.ObjectRef;
                     if (synTarget != null)
                     {
@@ -499,9 +488,9 @@ namespace Semanticus.AirSmoke
 
                     if (mc.Categories.Any(c => c.Category == "Synonyms" && c.HasRules))
                     {
-                        await engine.EnableQnaAsync(null, "agent");
+                        await engine.CreateLinguisticSchemaAsync(null, "agent");
                         var aq = await engine.AiReadinessScanAsync();
-                        Check("modern: enable_qna clears the no-linguistic-schema finding", !aq.Findings.Any(f => f.RuleId == "SYN-SCHEMA"));
+                        Check("modern: create_linguistic_schema clears the no-linguistic-schema finding", !aq.Findings.Any(f => f.RuleId == "SYN-SCHEMA"));
                         var t = aq.Findings.FirstOrDefault(f => f.RuleId == "SYN-FIELD")?.ObjectRef;
                         if (t != null)
                         {
@@ -545,14 +534,14 @@ namespace Semanticus.AirSmoke
                             // since the seeded LSDL started with no entities) — must survive a TMDL save + reopen. If the
                             // synthesized entity were dropped on reload, re-excluding would register as a change.
                             var tmpDs = Path.Combine(Path.GetTempPath(), "semanticus_ds_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                            await engine.SaveAsync(tmpDs, "TMDL");
+                            await engine.SaveAsync(tmpDs, "TMDL", false, "human");
                             await engine.OpenAsync(tmpDs);
                             var reEx = await engine.SetAiDataSchemaAsync(dsField, false, null, "agent");
                             Check("set_ai_data_schema: exclusion survives TMDL save + reopen (re-excluding is a no-op)", !reEx.Changed);
                         }
 
                         // ---- AI INSTRUCTIONS round-trip (Prep-for-AI CustomInstructions in the LSDL) ----
-                        // After enable_qna the model has a linguistic schema, so DAC-AI-INSTRUCTIONS is applicable + fires.
+                        // After create_linguistic_schema the model has a linguistic schema, so DAC-AI-INSTRUCTIONS is applicable + fires.
                         var preInstr = await engine.AiReadinessScanAsync();
                         if (preInstr.Findings.Any(f => f.RuleId == "DAC-AI-INSTRUCTIONS"))
                         {
@@ -588,7 +577,7 @@ namespace Semanticus.AirSmoke
                             var instr2 = "Persisted AI instructions for the TMDL round-trip test.";
                             await engine.SetAiInstructionsAsync(instr2, null, "agent");
                             var tmpAi = Path.Combine(Path.GetTempPath(), "semanticus_ai_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                            await engine.SaveAsync(tmpAi, "TMDL");
+                            await engine.SaveAsync(tmpAi, "TMDL", false, "human");
                             await engine.OpenAsync(tmpAi);
                             var reSet = await engine.SetAiInstructionsAsync(instr2, null, "agent");
                             Check("set_ai_instructions: survives TMDL save + reopen (re-setting the same value is a no-op)", !reSet.Changed);
@@ -603,7 +592,7 @@ namespace Semanticus.AirSmoke
                 if (planModel != null)
                 {
                     await engine.OpenAsync(planModel);
-                    await engine.EnableQnaAsync(null, "agent"); // linguistic schema → DAC-AI-INSTRUCTIONS becomes applicable
+                    await engine.CreateLinguisticSchemaAsync(null, "agent"); // linguistic schema → DAC-AI-INSTRUCTIONS becomes applicable
                     var prePlan = await engine.AiReadinessScanAsync();
                     if (prePlan.Findings.Any(f => f.RuleId == "DAC-AI-INSTRUCTIONS"))
                     {
@@ -734,7 +723,7 @@ namespace Semanticus.AirSmoke
                     // DAC-GLOSSARY-GAP: a code in a VISIBLE field name that the AI instructions don't define is flagged;
                     // defining it clears it; the rule is dormant when the model has no instructions at all.
                     await engine.OpenAsync(waveModel);
-                    await engine.EnableQnaAsync(null, "agent");
+                    await engine.CreateLinguisticSchemaAsync(null, "agent");
                     var gp0 = await engine.AiReadinessScanAsync();
                     var catalogBatch3 = new[] { "SYN-COLLIDE", "SYN-LSDL-XML", "FMT-COLUMN" };
                     var shippedRuleIds = ReadinessRuleSet.Default().Select(r => r.Id).ToHashSet(StringComparer.Ordinal);
@@ -846,7 +835,7 @@ namespace Semanticus.AirSmoke
                 // definition.pbism beside it with qnaEnabled=false, reopen, and confirm ReadDiskArtifacts + the rule read it.
                 {
                     var pbipRoot = Path.Combine(Path.GetTempPath(), "semanticus_pbip_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                    await engine.SaveAsync(pbipRoot, "TMDL");
+                    await engine.SaveAsync(pbipRoot, "TMDL", false, "human");
                     System.IO.File.WriteAllText(Path.Combine(pbipRoot, "definition.pbism"), "{\"settings\":{\"qnaEnabled\":false}}");
                     await engine.OpenAsync(pbipRoot);
                     var diskScan = await engine.AiReadinessScanAsync();
@@ -858,12 +847,12 @@ namespace Semanticus.AirSmoke
                 // A model migrated to the new format stores Copilot grounding in a `copilot/` folder, NOT the legacy
                 // linguistic schema (LSDL). Detect its presence so (a) DAC-AI-INSTRUCTIONS stands down (no false
                 // "missing" on the stale LSDL signal), and (b) an explicit DAC-COPILOT-TOOLING-FORMAT advisory fires.
-                // Setup: enable_qna seeds an LSDL (so DAC-AI-INSTRUCTIONS would normally fire), then drop a copilot/ folder.
+                // Setup: create_linguistic_schema seeds an LSDL (so DAC-AI-INSTRUCTIONS would normally fire), then drop a copilot/ folder.
                 {
                     var ctfRoot = Path.Combine(Path.GetTempPath(), "semanticus_ctf_" + Guid.NewGuid().ToString("N").Substring(0, 8));
                     await engine.SetCompatibilityLevelAsync(1604, "agent");   // Q&A/synonyms need CL >= 1465
-                    await engine.EnableQnaAsync(null, "agent");      // seed the linguistic schema → DAC-AI-INSTRUCTIONS becomes applicable
-                    await engine.SaveAsync(ctfRoot, "TMDL");
+                    await engine.CreateLinguisticSchemaAsync(null, "agent");      // seed the linguistic schema → DAC-AI-INSTRUCTIONS becomes applicable
+                    await engine.SaveAsync(ctfRoot, "TMDL", false, "human");
                     System.IO.File.WriteAllText(Path.Combine(ctfRoot, "definition.pbism"), "{\"settings\":{\"qnaEnabled\":true}}");
                     var copilotDir = Path.Combine(ctfRoot, "copilot");
                     System.IO.Directory.CreateDirectory(copilotDir);
@@ -891,7 +880,7 @@ namespace Semanticus.AirSmoke
                     {
                         await engine.OpenAsync(FindTestBim());          // fresh AdventureWorks
                         Directory.CreateDirectory(defDir);
-                        await engine.SaveAsync(defDir, "TMDL");          // engine writes a flat TMDL root INTO .../definition
+                        await engine.SaveAsync(defDir, "TMDL", false, "human");          // engine writes a flat TMDL root INTO .../definition
                         File.WriteAllText(Path.Combine(semModel, "definition.pbism"), "{\"settings\":{\"qnaEnabled\":false}}");
                         File.WriteAllText(Path.Combine(proj, "Probe.pbip"), "{\"version\":\"1.0\",\"artifacts\":[]}");
 
@@ -934,7 +923,7 @@ namespace Semanticus.AirSmoke
                         var sbBefore = Snap();
                         var stamp = "saveback " + Guid.NewGuid().ToString("N").Substring(0, 8);
                         await engine.SetDescriptionAsync(sbMeasure.Ref, stamp, "agent");
-                        await engine.SaveAsync(null, null);   // in-place, default format (TMDL)
+                        await engine.SaveAsync(null, null, false, "human");   // in-place, default format (TMDL)
                         Check("PBIP save-back: every .SemanticModel sibling preserved byte-for-byte (none missing/added/changed)",
                             Matches(sbBefore, Snap()));
                         Check("PBIP save-back: no flat TMDL littered into the .SemanticModel root",
@@ -945,7 +934,7 @@ namespace Semanticus.AirSmoke
 
                         // Format-coercion guard: a folder/JSON save into a PBIP definition/ is coerced to TMDL (no clobber).
                         await engine.SetDescriptionAsync(sbMeasure.Ref, stamp + "-2", "agent");
-                        await engine.SaveAsync(null, "folder");
+                        await engine.SaveAsync(null, "folder", false, "human");
                         Check("PBIP save-back: format='folder' is coerced to TMDL — no JSON written into definition/, siblings intact",
                             !Directory.EnumerateFiles(defDir, "*.json", SearchOption.AllDirectories).Any()
                             && Directory.EnumerateFiles(defDir, "*.tmdl", SearchOption.AllDirectories).Any()
@@ -962,7 +951,7 @@ namespace Semanticus.AirSmoke
                         // resolved into definition/ and coerced to TMDL — no parallel split-model (database.json/tables/)
                         // littered into the publishable item folder; siblings intact.
                         await engine.SetDescriptionAsync(sbMeasure.Ref, stamp + "-3", "agent");
-                        await engine.SaveAsync(semModel, "folder");
+                        await engine.SaveAsync(semModel, "folder", false, "human");
                         Check("PBIP save-back: a folder-save targeting the .SemanticModel parent is redirected to definition/+TMDL (no split-model litter)",
                             !File.Exists(Path.Combine(semModel, "database.json")) && !Directory.Exists(Path.Combine(semModel, "tables"))
                             && Matches(sbBefore, Snap()));
@@ -971,7 +960,7 @@ namespace Semanticus.AirSmoke
                         // export) is STILL protected — the guard keys on IsTmdlRoot (structure), not definition.pbism,
                         // so a folder-save is coerced to TMDL and never mixes JSON into the TMDL tree. (Done LAST: deletes pbism.)
                         File.Delete(Path.Combine(semModel, "definition.pbism"));
-                        await engine.SaveAsync(defDir, "folder");
+                        await engine.SaveAsync(defDir, "folder", false, "human");
                         Check("PBIP save-back: a pbism-LESS definition/ is still coerced to TMDL (structural guard, never lags the open-resolver)",
                             !Directory.EnumerateFiles(defDir, "*.json", SearchOption.AllDirectories).Any()
                             && Directory.EnumerateFiles(defDir, "*.tmdl", SearchOption.AllDirectories).Any());
@@ -990,7 +979,7 @@ namespace Semanticus.AirSmoke
                     {
                         await engine.OpenAsync(FindTestBim());
                         Directory.CreateDirectory(defDir);
-                        await engine.SaveAsync(defDir, "TMDL");
+                        await engine.SaveAsync(defDir, "TMDL", false, "human");
                         File.WriteAllText(Path.Combine(semModel, "definition.pbism"), "{\"settings\":{\"qnaEnabled\":true}}");
                         File.WriteAllText(Path.Combine(proj, "Probe.pbip"), "{\"version\":\"1.0\",\"artifacts\":[]}");
                         var tbl = await sessions.Current.ReadAsync<(string Name, string Tag)>(m =>
@@ -1035,7 +1024,7 @@ namespace Semanticus.AirSmoke
                     {
                         await engine.OpenAsync(FindTestBim());
                         Directory.CreateDirectory(defDir);
-                        await engine.SaveAsync(defDir, "TMDL");
+                        await engine.SaveAsync(defDir, "TMDL", false, "human");
                         File.WriteAllText(Path.Combine(semModel, "definition.pbism"), "{\"settings\":{\"qnaEnabled\":true}}");
                         File.WriteAllText(Path.Combine(proj, "Probe.pbip"), "{\"version\":\"1.0\",\"artifacts\":[]}");
                         var name = await sessions.Current.ReadAsync(m => m.Tables.First(x => !x.IsHidden && !(x is CalculationGroupTable)).Name);
@@ -1093,7 +1082,7 @@ namespace Semanticus.AirSmoke
 
                     // Round-trip the function through TMDL.
                     var tmp = Path.Combine(Path.GetTempPath(), "semanticus_udf_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                    await engine.SaveAsync(tmp, "TMDL");
+                    await engine.SaveAsync(tmp, "TMDL", false, "human");
                     await engine.OpenAsync(tmp);
                     var afterFuncs = await engine.ListFunctionsAsync();
                     Check("udf TMDL round-trip: function survives save+reload", afterFuncs.Any(f => f.Name == "Semanticus_Triple"));
@@ -1865,7 +1854,7 @@ namespace Semanticus.AirSmoke
                     Check("create_model: a blank session is created (named, 0 tables)",
                         !string.IsNullOrEmpty(created.SessionId) && created.Tables == 0 && created.ModelName == "SmokeFromScratch");
                     Check("create_model: an unsaved model refuses a no-path save (first save needs a path)",
-                        await Throws(() => engine.SaveAsync(null, "TMDL")));
+                        await Throws(() => engine.SaveAsync(null, "TMDL", false, "human")));
 
                     var dsName = await engine.CreateDataSourceAsync("FabricSql", "ws.datawarehouse.fabric.microsoft.com", "DW", "agent");
                     Check("create_data_source: structured Fabric SQL data source created", dsName == "FabricSql");
@@ -1896,7 +1885,7 @@ namespace Semanticus.AirSmoke
                         && custT.Partitions[0].SchemaName == "dbo");
 
                     var tmp = Path.Combine(Path.GetTempPath(), "semanticus_scratch_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                    var saved = await engine.SaveAsync(tmp, "TMDL");
+                    var saved = await engine.SaveAsync(tmp, "TMDL", false, "human");
                     Check("create_model: first save with a path writes TMDL files", saved.FileCount > 0);
                     await engine.OpenAsync(tmp);
                     var doc2 = await engine.GetDocModelAsync(0);
@@ -1990,7 +1979,7 @@ namespace Semanticus.AirSmoke
 
                     // Save -> reopen round-trip.
                     var btmp = Path.Combine(Path.GetTempPath(), "semanticus_built_" + Guid.NewGuid().ToString("N").Substring(0, 8));
-                    await engine.SaveAsync(btmp, "TMDL");
+                    await engine.SaveAsync(btmp, "TMDL", false, "human");
                     await engine.OpenAsync(btmp);
                     var redoc = await engine.GetDocModelAsync(0);
                     Check("build: the built model round-trips (tables + measures survive save+reopen)",
@@ -2060,9 +2049,15 @@ namespace Semanticus.AirSmoke
                     var dlspec = LocalEngine.FabricSchemaToSpec(fab, "x", "DW", "directLake");
                     Check("fabric->spec: directLake mode tags tables with a source binding",
                         dlspec.StorageMode == "directLake" && dlspec.Tables.All(t => t.SourceName == "FabricSource"));
-                    Check("fabric->spec: time-intelligence base measures == the proposed additive measures, explicitly set (review fix 5)",
-                        fspec.TimeIntelligenceBaseMeasures != null && fspec.TimeIntelligenceBaseMeasures.Length == fspec.Measures.Length
-                        && fspec.TimeIntelligenceBaseMeasures.Contains("Total Amount"));
+                    // Round 6 (verifier round 5, F1) and round 7 (verifier round 6, S08): this source has no date table, so none is added
+                    // and none is marked (a CALENDAR no fact links to filters nothing), no time-intelligence measures are drafted, and
+                    // the note says so.
+                    Check("fabric->spec: no date table, so none is added or marked, no time-intelligence measures are drafted and the note says so (round 7)",
+                        fspec.TimeIntelligenceBaseMeasures != null && fspec.TimeIntelligenceBaseMeasures.Length == 0
+                        && fspec.TimeIntelligence != null && fspec.TimeIntelligence.Length == 0
+                        && string.IsNullOrEmpty(fspec.DateTable?.Name) && fspec.DateTable?.MarkAsDate == false
+                        && !fspec.Tables.Any(t => t.Name == "Date")
+                        && fspec.DateTable?.Note != null && fspec.DateTable.Note.Contains("no date table"));
 
                     // review fix 3: the same table name across two schemas must disambiguate, not collapse.
                     var fab2 = new FabricSchema { Tables = new[]
@@ -2079,7 +2074,7 @@ namespace Semanticus.AirSmoke
                 // Gated on the SP creds AND a configured test dataset (SEMANTICUS_LIVE_XMLA = the XMLA endpoint,
                 // SEMANTICUS_LIVE_DB = the dataset). When all are set (CI with the secrets, or a local run) it verifies the
                 // live model lane end-to-end: open_live (load TOM from XMLA) → run_dax → vertipaq_scan (LIVE storage stats)
-                // → ai_readiness_scan_live (the DMV-cardinality rules). Else it skips (offline-green). READ-ONLY — no writes.
+                // → ai_readiness_scan live=true (the DMV-cardinality rules). Else it skips (offline-green). READ-ONLY: no writes.
                 {
                     var liveXmla = Environment.GetEnvironmentVariable("SEMANTICUS_LIVE_XMLA");
                     var liveDb = Environment.GetEnvironmentVariable("SEMANTICUS_LIVE_DB");
@@ -2097,7 +2092,7 @@ namespace Semanticus.AirSmoke
                             var vpaq = await engine.VertiPaqScanAsync(10);
                             Check("live model: vertipaq_scan returns LIVE storage statistics (tables with stats, no error)", vpaq != null && vpaq.Error == null && (vpaq.Tables?.Length ?? 0) > 0);
                             var live = await engine.AiReadinessScanLiveAsync();
-                            Check("live model: ai_readiness_scan_live runs the DMV-cardinality rules on the open live model (graded A–F)", live != null && !string.IsNullOrEmpty(live.Grade));
+                            Check("live model: ai_readiness_scan live=true runs the DMV-cardinality rules on the open live model (graded A to F)", live != null && !string.IsNullOrEmpty(live.Grade));
 
                             // Start all three without awaiting so the same live XMLA session receives simultaneous
                             // trace-bearing and ordinary query requests through independent public paths. The
@@ -2234,7 +2229,37 @@ namespace Semanticus.AirSmoke
             catch { return true; }
         }
 
-        private static string FindTestBim() => FindTestData("AdventureWorks.bim") ?? throw new FileNotFoundException("AdventureWorks.bim not found from " + AppContext.BaseDirectory);
+
+        // THE SMOKE OPENS A COPY. Opening the vendored AdventureWorks.bim in place writes the model's sidecar (plan
+        // memory, evidence, report scope, workflow settings) into .semanticus/ beside it, which is inside the
+        // TabularEditor submodule and left it dirty after every run. The copy lives in a scratch folder whose name
+        // does NOT start with "semanticus-", because that prefix marks an ephemeral anchor (ExperienceLog).
+        private static string _testBimCopy;
+        private static string FindTestBim()
+        {
+            if (_testBimCopy != null) return _testBimCopy;
+            var source = FindVendoredTestBim();
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return _testBimCopy = copy;
+        }
+
+        private static string FindVendoredTestBim() => FindTestData("AdventureWorks.bim") ?? throw new FileNotFoundException("AdventureWorks.bim not found from " + AppContext.BaseDirectory);
+
+        // A scratch copy of the vendored fixture, never the file itself: an edit writes the History beside the model
+        // it edits (.semanticus/history.json, Plan-heart E4), and that must not land inside the submodule.
+        private static string ScratchCopy(string source)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return copy;
+        }
 
         private static string FindTestData(string fileName)
         {
@@ -2245,7 +2270,7 @@ namespace Semanticus.AirSmoke
                 foreach (var root in new[] { Path.Combine("external", "TabularEditor"), "TabularEditor" })
                 {
                     var c = Path.Combine(dir.FullName, root, "TOMWrapperTest", "TestData", fileName);
-                    if (File.Exists(c)) return c;
+                    if (File.Exists(c)) return ScratchCopy(c);
                 }
                 dir = dir.Parent;
             }

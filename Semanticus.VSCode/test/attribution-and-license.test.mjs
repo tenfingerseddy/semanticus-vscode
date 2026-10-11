@@ -193,6 +193,10 @@ const SHIPPED_ENGINE_PROJECTS = projectReferenceClosure(PACKAGE_ENTRY_PROJECT, r
 const THIS_REPO_LICENCE = 'Elastic License 2.0';
 const manifest = JSON.parse(read('third-party-manifest.json'));
 const entries = manifest.entries;
+// A declared font must ship its OFL text beside it (the font check below), so that text is part of the font's
+// declaration, not an undeclared borrowing: the notices may name it and the marker scan reads it as declared.
+const FONT_LICENCE_TEXTS = new Set(entries.filter((e) => e.kind === 'font')
+  .map((e) => e.path.replace(/\/([A-Za-z]+)-[^/]*\.woff2$/u, '/$1-OFL.txt')));
 const notices = read('THIRD-PARTY-NOTICES.md');
 
 // Entries whose upstream licence could NOT be verified. A temporary state, and it is temporary BY
@@ -222,7 +226,7 @@ const THIRD_PARTY_MARKER = {
   'THIRD-PARTY-NOTICES.md': '\n## ',
 };
 
-const KINDS = new Set(['copy', 'bundle', 'nuget']);
+const KINDS = new Set(['copy', 'bundle', 'nuget', 'font']);
 const ISO_DATE = /^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/u;
 const HTTPS_URL = /^https:\/\/[a-z0-9][a-z0-9.-]*\.[a-z]{2,}(?:\/\S*)?$/iu;
 const GIT_SHA = /^[0-9a-f]{40}$/u;
@@ -575,12 +579,12 @@ check('every manifest entry is fully and validly specified', () => {
       assert.ok(typeof e.headerWaiverReason === 'string' && e.headerWaiverReason.trim().length > 0,
         `${where} carries no attribution header and gives no headerWaiverReason`);
       const commentless = extname(e.path).toLowerCase() === '.json';
-      assert.ok(commentless || e.kind === 'bundle' || e.kind === 'nuget',
-        `${where} sets header:false, but ${extname(e.path)} files can carry a comment and this is not a generated bundle or NuGet binary. `
-        + 'The only exceptions are comment-less formats (JSON), generated bundles, and NuGet binaries.');
+      assert.ok(commentless || e.kind === 'bundle' || e.kind === 'nuget' || e.kind === 'font',
+        `${where} sets header:false, but ${extname(e.path)} files can carry a comment and this is not a generated bundle, a NuGet binary or a font file. `
+        + 'The only exceptions are comment-less formats (JSON), generated bundles, NuGet binaries and font files.');
     }
     // Every copy must be pinned by content, or its "unmodified" claim decays silently.
-    if (e.kind === 'copy') {
+    if (e.kind === 'copy' || e.kind === 'font') {
       assert.match(e.bodySha256 ?? '', /^[0-9a-f]{64}$/u,
         `${where} is a copy with no valid bodySha256, so nothing stops its content changing under a stale claim`);
     }
@@ -602,6 +606,15 @@ check('every declared file exists, and its body still matches what was verified'
     if (e.kind === 'nuget') continue; // NuGet binaries have no path in this tree
     assert.ok(existsSync(resolve(repoRoot, e.path)),
       `the manifest declares ${e.path}, which does not exist; a notice naming a file that is gone is a false claim`);
+    // A font is a binary: its pin is the sha256 of the raw bytes, and its licence text must ship beside it.
+    if (e.kind === 'font') {
+      assert.equal(createHash('sha256').update(readFileSync(resolve(repoRoot, e.path))).digest('hex'), e.bodySha256,
+        `${e.path} has changed since its licence was verified; the manifest still pins the old bytes. Re-verify the licence, then update bodySha256, version and evidence together.`);
+      const licenceFile = e.path.replace(/\/([A-Za-z]+)-[^/]*\.woff2$/u, '/$1-OFL.txt');
+      assert.ok(existsSync(resolve(repoRoot, licenceFile)),
+        `${e.path} is a font under the SIL Open Font License, which requires the licence text to travel with it, but ${licenceFile} does not exist.`);
+      continue;
+    }
     if (e.kind !== 'copy') continue;
     const actual = sha256(e.path.toLowerCase().endsWith('.json') ? norm(read(e.path)) : bodyOf(e.path));
     assert.equal(actual, e.bodySha256,
@@ -709,7 +722,7 @@ check('every borrowed file path named in THIRD-PARTY-NOTICES.md is declared in t
   for (const m of attributionRegion.matchAll(/`([A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+)`/gu)) {
     const p = m[1];
     if (p.startsWith('external/') || p.includes('node_modules/')) continue;   // not our file
-    if (!tracked.has(p) || declared.has(p)) continue;
+    if (!tracked.has(p) || declared.has(p) || FONT_LICENCE_TEXTS.has(p)) continue;
     orphans.push(p);
   }
   assert.deepEqual(orphans, [],
@@ -770,6 +783,7 @@ const FIRST_PARTY_EMBEDDED = new Map([
   ['Semanticus.Engine/format-templates.json', 'ours: the DAX format-string template catalogue'],
   ['docs/interview-fix-map.json', 'ours: maps interview findings to fix ops'],
   ['docs/interview-hard-pack.json', 'ours: the authored hard-question interview pack'],
+  ['Semanticus.Engine/Facts/Data/gazetteer.json', 'ours: the model facts place list, compiled from public facts (Facts/Data/README.md)'],
 ]);
 
 // The shipped NOTICE is blocks separated by rules of dashes, not markdown headings, so it needs its own
@@ -2410,7 +2424,10 @@ const PRE_HEADING_REGION = '(content above the first heading, which no row may p
 // carries the version line on purpose: "Apache License, Version 2.0" with that comma is the phrase used in
 // prose and in the MCP relicensing quote, and matching it would report those as licence bodies.
 const LICENCE_BODY_DETECTORS = [
-  { family: 'MIT', start: 'Permission is hereby granted, free of charge' },
+  // "of this software": the SIL Open Font License opens with the same words but grants "a copy of the Font Software",
+  // and it used to be read as an MIT body (K9, the two embedded fonts). It has its own detector below.
+  { family: 'MIT', start: 'Permission is hereby granted, free of charge, to any person obtaining a copy of this software' },
+  { family: 'OFL-1.1', start: 'PREAMBLE The goals of the Open Font License (OFL)' },
   { family: 'BSD-3-Clause', start: 'Redistribution and use in source and binary forms' },
   { family: 'Apache-2.0', start: 'Apache License Version 2.0, January 2004' },
   { family: 'ISC', start: 'Permission to use, copy, modify, and/or distribute this software for any purpose with or without fee is hereby granted, provided that' },
@@ -2451,7 +2468,15 @@ const PINNED_FROM_COMMITTED = 'pinned from the committed text; no upstream artif
 // below share this one constant.
 const ISC_DIGEST = '4829cc8e654be69dd1edcebedbda21758a239c230e38f532d6bf4b0adc1a0427';
 
+// The SIL Open Font License 1.1 body, from the PREAMBLE to the end. Two upstream files carry it (Instrument Sans and
+// JetBrains Mono), read at the commits recorded in third-party-manifest.json; both reproduce the same words, so the
+// two rows below share one digest and differ in the copyright line.
+const OFL_DIGEST = '65a67a379d9157a5d3e26b95313206afe983db9743688fc98d9545c9f24bbe7d';
+const UPSTREAM_OFL = 'OFL.txt at the pinned upstream commit, identical to the file in media/fonts';
+
 const REPRODUCED_LICENCE_TEXTS = [
+  { doc: 'THIRD-PARTY-NOTICES.md', section: 'Instrument Sans font', family: 'OFL-1.1', copyright: ['Copyright 2022 The Instrument Sans Project Authors'], digest: OFL_DIGEST, from: UPSTREAM_OFL },
+  { doc: 'THIRD-PARTY-NOTICES.md', section: 'JetBrains Mono font', family: 'OFL-1.1', copyright: ['Copyright 2020 The JetBrains Mono Project Authors'], digest: OFL_DIGEST, from: UPSTREAM_OFL },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'Tabular Editor 2', family: 'MIT', copyright: ['Copyright (c) 2025 Tabular Editor ApS'], digest: MIT_CANONICAL_DIGEST, from: UPSTREAM_MIT },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'ANTLR runtime', family: 'BSD-3-Clause', copyright: ['Copyright (c) 2013 Sam Harwell', 'Copyright (c) 2013 Terence Parr'], digest: '4b05ad22ab5dd8aa7cd9858615f400a3b527dbffe733b6acd592f31807fe9c37', from: PINNED_FROM_COMMITTED },
   { doc: 'THIRD-PARTY-NOTICES.md', section: 'Dax.Vpax', family: 'MIT', copyright: ['Copyright (c) 2019 SQLBI'], digest: MIT_CANONICAL_DIGEST, from: UPSTREAM_MIT },
@@ -2855,7 +2880,7 @@ check('every tracked file carrying a foreign attribution marker is declared or e
   const hits = [];
   const unreadable = [];
   for (const rel of trackedFiles()) {
-    if (declared.has(rel) || ATTRIBUTION_MACHINERY.has(rel) || proseMentionExempt(rel)) continue;
+    if (declared.has(rel) || FONT_LICENCE_TEXTS.has(rel) || ATTRIBUTION_MACHINERY.has(rel) || proseMentionExempt(rel)) continue;
     let buf;
     // NEVER skip silently. A file that cannot be read is an unknown, and an unknown a scan swallows is how a
     // borrowed file passes by being unreadable rather than by being clean.

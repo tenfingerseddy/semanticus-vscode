@@ -374,3 +374,20 @@ test('the instructions word budget counts words and only warns above the 1.1.3 t
   assert.equal(countWords(Array.from({ length: INSTRUCTIONS_WORD_BUDGET }, () => 'word').join(' ')) > INSTRUCTIONS_WORD_BUDGET, false,
     'a step exactly at the budget is quiet, because the budget is guidance and never a limit');
 });
+
+test('a field typed one key at a time is one edit from what it held to what it holds (VR7)', () => {
+  let draft = createWorkflowDraft(projectedDocument(), 'session-7');
+  let was = 'Review it.';
+  for (const now of ['Review it. ', 'Review it. T', 'Review it. Th', 'Review it. Then check it.']) {
+    draft = applyWorkflowOperation(draft, { op: 'set_field', target: 'step:2', field: 'instructions', expect: was, value: now });
+    was = now;
+  }
+  assert.deepEqual(draft.operations, [{ op: 'set_field', target: 'step:2', field: 'instructions', expect: 'Review it.', value: 'Review it. Then check it.' }],
+    'no value on the way, such as one ending in a space, is sent on its own');
+  assert.equal(undoWorkflowDraft(draft).operations[0].value, 'Review it. Th', 'each key is still one undo');
+  // Another field between two edits of one field keeps them apart: each edit still expects what the one before it left.
+  draft = applyWorkflowOperation(draft, { op: 'set_field', target: 'step:2', field: 'title', expect: draft.editModel.definition.steps[1].title, value: 'Check' });
+  draft = applyWorkflowOperation(draft, { op: 'set_field', target: 'step:2', field: 'instructions', expect: was, value: was + '!' });
+  assert.deepEqual(draft.operations.map((o) => [o.field, o.expect, o.value]).at(-1), ['instructions', was, was + '!']);
+  assert.equal(draft.operations.length, 3);
+});

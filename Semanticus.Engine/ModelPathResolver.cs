@@ -83,6 +83,95 @@ namespace Semanticus.Engine
                 && di.Parent != null;
         }
 
+        /// <summary>The kinds of model a folder can be, as the code that OPENS models sees them: TE2's handler constructor
+        /// (<c>TabularModelHandler.FileHandling.cs</c>) and <see cref="Resolve"/>. A folder can be several at once.</summary>
+        [Flags]
+        public enum ModelShape
+        {
+            None = 0,
+            /// <summary>database.tmd[l] or model.tmd[l] directly in it (TE2 <c>IsRootTmdlDirectory</c>).</summary>
+            TmdlRoot = 1,
+            /// <summary>A <c>definition/</c> folder in it that is a TMDL root (what <see cref="Resolve"/> redirects to).</summary>
+            DefinitionFolder = 2,
+            /// <summary>A Power BI <c>*.SemanticModel</c> folder.</summary>
+            SemanticModelFolder = 4,
+            /// <summary>A <c>.pbip</c> directly in it: TE2 opens the folder as that project's model.</summary>
+            PbipProject = 8,
+            /// <summary>definition.pbism directly in it: the marker of a Power BI semantic model.</summary>
+            PbismMarker = 16,
+            /// <summary>database.json at its root: a Tabular Editor split folder (the loader's fall-through for any folder).</summary>
+            TabularEditorFolder = 32,
+            /// <summary>A folder named like a .bim file: it is not a file, but it is named as one.</summary>
+            BimNamedFolder = 64,
+            /// <summary>Exactly one <c>*.SemanticModel</c> in it with a TMDL <c>definition/</c>: <see cref="Resolve"/> opens the folder as that model (a project folder with no .pbip).</summary>
+            SemanticModelHolder = 128,
+        }
+
+        /// <summary>Shapes that name a place that HOLDS a model without owning what is beside it: a project folder has its
+        /// <c>*.SemanticModel</c> and reports in named children, and a Tabular Editor folder reads only its named folders
+        /// (<see cref="TabularEditorFolderParts"/>). A new child of either is inert to the model; the folder itself, and anything
+        /// inside a folder the model reads, is not. Every other shape owns its whole subtree.</summary>
+        public const ModelShape HostShapes = ModelShape.PbipProject | ModelShape.TabularEditorFolder | ModelShape.SemanticModelHolder;
+
+        /// <summary>Every file or folder name an opener looks for to decide a folder is a model. One list, read by
+        /// <see cref="ShapeOf"/> and by the test that fails when the opener starts looking for a name that is not here
+        /// (<c>ModelShapeDriftTests</c>). Entries starting with a dot are an extension or a folder-name ending.</summary>
+        public static readonly string[] OpenerNames =
+        {
+            "database.tmdl", "database.tmd", "model.tmdl", "model.tmd", "definition", ".SemanticModel",
+            ".pbip", "definition.pbism", "database.json", ".bim",
+        };
+
+        /// <summary>Names the opener reads that are not a way for a FOLDER to be a model, each with why. Reached only through a
+        /// shape above (a project file's own contents, a single file, or an extension test on a file).</summary>
+        public static readonly (string Name, string Why)[] OpenerNamesThatAreNotFolderShapes =
+        {
+            ("model.bim", "a .bim file the .pbip points at; reached only from a folder with a .pbip in it (PbipProject)"),
+            ("definition.pbir", "the report's pointer inside a .pbip project; reached only through a .pbip (PbipProject)"),
+            (".pbit", "a Power BI template FILE; a folder is never one"),
+            (".tmd", "an extension test on a FILE the person opened; the folder walk uses the TMDL root names"),
+            (".tmdl", "an extension test on a FILE the person opened; the folder walk uses the TMDL root names"),
+            (".json", "the files inside a split folder's own folders; reached only through database.json (TabularEditorFolder)"),
+        };
+
+        /// <summary>The folders (and their members) a Tabular Editor split folder's loader reads by name from its root
+        /// (<c>SplitModelSerializer.CombineFolderJson</c>): every folder directly inside <c>tables/</c> is read as a table, so
+        /// a stranger there stops the model opening. Anything else directly in the root is inert.</summary>
+        public static readonly string[] TabularEditorFolderParts =
+            { "tables", "dataSources", "expressions", "relationships", "cultures", "perspectives", "roles" };
+
+        /// <summary>True when a folder named <paramref name="leaf"/> inside <paramref name="parent"/> is read BY NAME by the opener
+        /// of <paramref name="parent"/>: <see cref="Resolve"/> looks for a <c>definition</c> folder in any folder (the bare folder
+        /// names in <see cref="OpenerNames"/>), and a Tabular Editor split folder reads each of
+        /// <see cref="TabularEditorFolderParts"/> from its root, case-insensitively. A new model folder with such a name makes the
+        /// folder around it open as that model, or stop opening, so it is never a free name.</summary>
+        public static bool IsNameReadInside(string parent, string leaf)
+        {
+            if (string.IsNullOrEmpty(leaf)) return false;
+            if (OpenerNames.Any(n => !n.Contains('.') && string.Equals(n, leaf, StringComparison.OrdinalIgnoreCase))) return true;
+            return TabularEditorFolderParts.Contains(leaf, StringComparer.OrdinalIgnoreCase)
+                && ShapeOf(parent).HasFlag(ModelShape.TabularEditorFolder);
+        }
+
+        /// <summary>What kinds of model <paramref name="dir"/> is, by the same marks the openers use. <see cref="ModelShape.None"/>
+        /// for a folder that is not one or does not exist. Read-only probing of that one folder, never its parents.</summary>
+        public static ModelShape ShapeOf(string dir)
+        {
+            if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return ModelShape.None;
+            var shape = ModelShape.None;
+            var leaf = Path.GetFileName(dir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            if (IsTmdlRoot(dir)) shape |= ModelShape.TmdlRoot;
+            if (IsTmdlRoot(Path.Combine(dir, "definition"))) shape |= ModelShape.DefinitionFolder;
+            if (leaf.EndsWith(".SemanticModel", StringComparison.OrdinalIgnoreCase)) shape |= ModelShape.SemanticModelFolder;
+            if (leaf.EndsWith(".bim", StringComparison.OrdinalIgnoreCase)) shape |= ModelShape.BimNamedFolder;
+            try { if (Directory.EnumerateFiles(dir, "*.pbip", SearchOption.TopDirectoryOnly).Any()) shape |= ModelShape.PbipProject; }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException) { }
+            if (File.Exists(Path.Combine(dir, "definition.pbism"))) shape |= ModelShape.PbismMarker;
+            if (File.Exists(Path.Combine(dir, "database.json"))) shape |= ModelShape.TabularEditorFolder;
+            if (DefinitionUnderProjectFolder(dir) != null) shape |= ModelShape.SemanticModelHolder;
+            return shape;
+        }
+
         /// <summary>Mirrors TE2's <c>IsRootTmdlDirectory</c> (which is private in the vendored handler): a directory is
         /// a TMDL root iff it directly contains database.tmd[l] or model.tmd[l]. Public so the save path can refuse to
         /// write a folder/JSON format into ANY existing TMDL tree (mixing the two formats corrupts the folder).</summary>

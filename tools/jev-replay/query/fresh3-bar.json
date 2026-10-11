@@ -1,0 +1,17 @@
+{
+ "point": "query.summarize",
+ "committed": "2026-09-27",
+ "committedBeforeFirstRun": true,
+ "version": 5,
+ "labels": "fresh3-labels.json",
+ "reader": "22ba51e3",
+ "supersedes": "version 4 (fresh2-bar.json), whose 160-item set was used up by the run that switched JevReads on (LIVE: 118 vs 99 right, 4 vs 55 harmful, McNemar p = 0.018, at the reader in c4bce91a). The reader has changed since: it now reads measure and table synonyms, sends descriptions in every call, sends a table rather than a one-option question when the split shortlist is empty, parses each culture's linguistic schema once per ask, and cuts the third call's OFFER rather than its list. Kane's rule is unchanged; what is new is the held-out set and the reader it is scored at. The set is 168 questions, none repeating the old 62, the 80 or the 160, and for the first time one of its two models is prepared for AI (contoso-ai), so the metadata the reader now reads is actually scored. Scored at the reader in 22ba51e3; nothing under Semanticus.Engine changes between that commit and the run. Committed before any run on fresh3-labels.json.",
+ "rule": "Jev reads data questions for Pro only when ALL hold on fresh3-labels.json, run once: (1) Jev beats the best non-Jev baseline: more items Jev gets right and that baseline gets wrong than the other way round, with an exact two-sided McNemar test on those discordant items at p < mcnemarAlpha; (2) Jev makes no more harmful mistakes than that baseline, a harmful mistake being a reading settled with confidence that is wrong and would run, so it returns a plausible number (wrongRan). The best baseline is the one with the most right items on this set, ties broken by fewer harmful mistakes. A reading Jev is not sure of must say so and run nothing; it counts as not right and is never harmful. A decline item is right when nothing is settled, and harmful when a reading runs.",
+ "baselines": {
+  "words": "the word match (JevQueryWordArm.Read): closest measures and columns by name, exact value matches, top N from the words",
+  "shortlist": "the word match with every split replaced by the engine's own split shortlist, top pick first (JevQueryWordArm.ReadShortlist): the redesign's shortlist with no Jev"
+ },
+ "mcnemarAlpha": 0.05,
+ "harmfulNotAboveBaseline": true,
+ "ifItFails": "JevQueryReader.JevReads goes back to false and the note in docs/redesign/jev-query-replay.md says so plainly. No tuning, no second run on this set."
+}

@@ -321,6 +321,7 @@ namespace Semanticus.Tests
             Assert.Equal("identity-changed", impostor.status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Identity_a_renamed_measure_keeps_its_tag_but_the_name_no_longer_matches_so_it_is_identity_changed()
         {

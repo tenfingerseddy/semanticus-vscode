@@ -25,6 +25,15 @@ namespace Semanticus.Engine
             public string[] DatabaseNames { get; set; }
         }
 
+        /// <summary>The published model a snapshot folder was taken from (see <see cref="WriteOriginMarker"/>).</summary>
+        public sealed class SnapshotOrigin
+        {
+            internal const string MarkerName = "origin.json";
+            public string Endpoint { get; set; }
+            public string Database { get; set; }
+            public string LocalName { get; set; }
+        }
+
         private const string TempDirName = "semanticus-live";
 
         /// <summary>Test seam: redirect the snapshot root so tests never sweep the real %TEMP%.</summary>
@@ -148,6 +157,40 @@ namespace Semanticus.Engine
 
             try { server.Disconnect(); } catch { /* best-effort; the snapshot is already written */ }
             return new Snapshot { BimPath = bimPath, DatabaseName = db.Name, DatabaseCount = names.Length, DatabaseNames = names };
+        }
+
+        /// <summary>What a snapshot folder remembers about the published model it was taken from, so a model opened from that folder
+        /// LATER (VS Code was closed and opened again: the extension reopens the cached snapshot as a plain file) is still known as the
+        /// same model. Written beside the .bim by open_live / open_local after the session's LiveOrigin is stamped. Coordinates only,
+        /// never a secret. IDENTITY ONLY: it names the model for a held draft and for nothing else. It is never a LiveOrigin, so it
+        /// can bind no deploy and no query (Session.LiveOrigin is the one write authority, pinned by a test).</summary>
+        public static void WriteOriginMarker(string bimPath, LiveOrigin origin)
+        {
+            if (string.IsNullOrEmpty(bimPath) || origin == null) return;
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(new SnapshotOrigin { Endpoint = origin.Endpoint, Database = origin.Database, LocalName = origin.LocalName });
+                File.WriteAllText(Path.Combine(Path.GetDirectoryName(bimPath)!, SnapshotOrigin.MarkerName), json);
+            }
+            catch { /* best-effort: with no marker the snapshot is a plain file model, as it was before this marker existed */ }
+        }
+
+        /// <summary>The marker of the snapshot folder <paramref name="path"/> sits in, or null (not under the snapshot root, no marker,
+        /// an unreadable one, or a build older than the marker).</summary>
+        public static SnapshotOrigin ReadOriginMarker(string path)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path)) return null;
+                var dir = Path.GetDirectoryName(Path.GetFullPath(path));
+                var root = Norm(TempRoot) + Path.DirectorySeparatorChar;
+                if (dir == null || !(Norm(dir) + Path.DirectorySeparatorChar).StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
+                var marker = Path.Combine(dir, SnapshotOrigin.MarkerName);
+                if (!File.Exists(marker)) return null;
+                var o = System.Text.Json.JsonSerializer.Deserialize<SnapshotOrigin>(File.ReadAllText(marker));
+                return o != null && (!string.IsNullOrWhiteSpace(o.LocalName) || !string.IsNullOrWhiteSpace(o.Endpoint)) ? o : null;
+            }
+            catch { return null; }
         }
 
         private static string Sanitize(string name)

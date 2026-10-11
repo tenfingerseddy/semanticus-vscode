@@ -50,13 +50,13 @@ Now, and only now, choose the dimensions and facts. Every dimension must be
 consistent with the declared grain; plan CONFORMED dimensions: a single Date, Customer, Product
 shared across every fact table so numbers reconcile across processes. Each fact must be true to the
 grain; prefer additive numerics, and store ratios as numerator/denominator to compute in measures,
-never as pre-divided values. Read the current shape with `get_model_graph` (or `model_graph_summary`
+never as pre-divided values. Read the current shape with `get_model_graph` (detail summary
 for a large model) and classify STRICTLY: a table is a fact or a dimension, never both: no
 mixed-role tables. The star schema is mandated twice over: it is how the query engine filters
 efficiently, and it is the shape the LLM's generated DAX assumes. Confirm the classification below.
 
 ```yaml gate
-ops: [get_model_graph, model_graph_summary]
+ops: [get_model_graph]
 inputs:
   - name: classificationConfirmed
     question: "Have you classified every table strictly as a fact OR a dimension (no mixed-role tables), with dimensions planned as conformed across the facts?"

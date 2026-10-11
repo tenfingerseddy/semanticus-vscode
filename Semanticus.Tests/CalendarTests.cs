@@ -54,6 +54,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("set_compatibility_level", list.Note);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Define_list_tag_delete_round_trip()
         {
@@ -124,6 +125,7 @@ namespace Semanticus.Tests
             Assert.Equal("Date", Assert.Single(cal.Groups, g => g.TimeUnit == "Date").PrimaryColumn);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calendars_survive_a_tmdl_save_and_reopen()
         {
@@ -138,7 +140,7 @@ namespace Semanticus.Tests
                         new CalendarMappingSpec { Column = "Date", TimeUnit = "Date" },
                         new CalendarMappingSpec { Column = "Year", TimeUnit = "Year" },
                     }, null, "agent");
-                    await engine.SaveAsync(dir, "TMDL");
+                    await engine.SaveAsync(dir, "TMDL", false, "human");
                 }
                 using (var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
                 {
@@ -214,6 +216,7 @@ namespace Semanticus.Tests
             Assert.Empty((await engine.ListCalendarsAsync(null)).Calendars);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Template_existing_table_undo_redo_survives_process_global_handler_drift()
         {
@@ -229,6 +232,7 @@ namespace Semanticus.Tests
             Assert.Single((await engine.ListCalendarsAsync("Dim Date")).Calendars);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Fiscal_template_keeps_existing_columns_and_labels_by_ending_year()
         {
@@ -284,6 +288,7 @@ namespace Semanticus.Tests
             Assert.Contains("timeRelated", badUnit.Message);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Template_refusals_and_notes_use_plain_words_not_parameter_or_op_names()
         {
@@ -323,6 +328,7 @@ namespace Semanticus.Tests
         private static async Task<bool> FiresAsync(LocalEngine engine) =>
             (await engine.AiReadinessScanAsync()).Findings.Any(f => f.RuleId == RuleId);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cal_advisory_dormant_below_cl_1701_even_with_classic_ti()
         {
@@ -341,6 +347,7 @@ namespace Semanticus.Tests
             Assert.False(await FiresAsync(engine));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cal_advisory_dormant_when_calendars_exist()
         {
@@ -352,6 +359,7 @@ namespace Semanticus.Tests
             Assert.False(await FiresAsync(engine));   // already calendar-based ⇒ dormant (never an always-pass finding)
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cal_advisory_fires_at_cl_1701_with_classic_ti_and_no_calendars()
         {
@@ -363,6 +371,7 @@ namespace Semanticus.Tests
             Assert.Contains("1", f.Message);   // names the count of classic-TI measures
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Grounding_surfaces_the_models_calendars_after_define()
         {
@@ -390,6 +399,7 @@ namespace Semanticus.Tests
         }
 
         // D-022: mapping a string column onto the Date category must refuse, and the existing Date mapping must stay.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mapping_a_string_column_to_date_is_refused_and_keeps_the_existing_primary()
         {
@@ -411,6 +421,7 @@ namespace Semanticus.Tests
             Assert.Equal("Date", Assert.Single(cal.Groups, g => g.TimeUnit == "Date").PrimaryColumn);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Define_calendar_refuses_a_wrong_typed_date_mapping_before_the_calendar_exists()
         {
@@ -428,6 +439,7 @@ namespace Semanticus.Tests
         }
 
         // D-077: a calendar whose Date category is pointed at a non-date column is a readiness finding.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calendar_mapping_readiness_fires_when_date_is_mapped_to_a_string_column()
         {
@@ -458,6 +470,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("tag_calendar_column", f.DisplayMessage ?? "");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calendar_mapping_readiness_is_dormant_when_the_date_column_is_datetime()
         {
@@ -470,6 +483,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain((await engine.AiReadinessScanAsync()).Findings, f => f.RuleId == "CAL-MAPPING");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calendar_mapping_readiness_is_dormant_when_the_model_has_no_calendars()
         {

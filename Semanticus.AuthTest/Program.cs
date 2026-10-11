@@ -14,7 +14,19 @@ var authMode = args.Length > 1 && !string.IsNullOrWhiteSpace(args[1]) ? args[1] 
 var tenantId = args.Length > 2 && !string.IsNullOrWhiteSpace(args[2]) ? args[2] : null;
 
 Console.WriteLine($"endpoint = {endpoint}\nauth = {authMode}  tenant = {tenantId ?? "(default)"}\n");
-var tok = await EntraToken.AcquireFullAsync(authMode, null, CancellationToken.None, tenantId);
+// A throwaway run like the probes: nothing it does, the sign-in included, may open a browser or reach the desktop
+// session, or write the person's real ~/.semanticus (28 Sep, round 4). A person runs it by hand to sign in as
+// themselves, so unlike a test run it keeps their Azure CLI and device code (KeepPersons).
+SemanticusHome.IsolateForTestRun("authtest", CloudSignIn.KeepPersons);
+Azure.Core.AccessToken tok;
+try { tok = await EntraToken.AcquireFullAsync(authMode, null, CancellationToken.None, tenantId); }
+catch (Exception ex)
+{
+    // A refused browser sign-in, an expired Azure CLI login: say so and stop, rather than crash on the exception.
+    Console.Error.WriteLine("AUTH FAILED: " + ex.GetType().Name + ": " + ex.Message);
+    if (ex.InnerException != null) Console.Error.WriteLine("  inner: " + ex.InnerException.Message);
+    return 2;
+}
 Console.WriteLine($"token acquired: {tok.Token.Length} chars, expires {tok.ExpiresOn:u}\n");
 
 void Result(string label, Action body)

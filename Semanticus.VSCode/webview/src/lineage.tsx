@@ -274,10 +274,13 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onAddCheck, on
     </div>
   );
   const counts = fullGraph ? `${fullGraph.nodes.length} things · ${fullGraph.edges.length} links${reportsMerged ? ' · reports included' : ''}` : null;
-  const caveat = (mode === 'graph' || mode === 'tree') ? fullGraph?.caveat : null;
+  // The engine keeps its long "Model-only" sentence for the assistant. The person reads one short line and gets the fix
+  // beside it: Check reports opens Impact with the Choose reports drawer. It goes once reports are merged (caveat is cleared).
+  const caveat = (mode === 'graph' || mode === 'tree') && fullGraph?.caveat ? REPORTS_NOT_COUNTED : null;
+  const checkReports = () => { setMode('impact'); setCleanup(false); setDrawerOpen(true); };
 
-  if (mode === 'graph') return <LineageGraphView graph={fullGraph} modeSwitch={modeSwitch} counts={counts} caveat={caveat ?? null} error={err ?? null} onOpenImpact={(r) => { setMode('impact'); setCleanup(false); void loadImpact(r); }} />;
-  if (mode === 'tree') return <LineageTreeView graph={fullGraph} unusedItems={unused?.items} modeSwitch={modeSwitch} counts={counts} caveat={caveat ?? null} error={err ?? null} onOpenImpact={(r) => { setMode('impact'); setCleanup(false); void loadImpact(r); }} />;
+  if (mode === 'graph') return <LineageGraphView graph={fullGraph} modeSwitch={modeSwitch} counts={counts} caveat={caveat} onCheckReports={checkReports} error={err ?? null} onOpenImpact={(r) => { setMode('impact'); setCleanup(false); void loadImpact(r); }} />;
+  if (mode === 'tree') return <LineageTreeView graph={fullGraph} unusedItems={unused?.items} modeSwitch={modeSwitch} counts={counts} caveat={caveat} onCheckReports={checkReports} error={err ?? null} onOpenImpact={(r) => { setMode('impact'); setCleanup(false); void loadImpact(r); }} />;
 
   return (
     <div className="flex flex-col">
@@ -285,7 +288,7 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onAddCheck, on
         {modeSwitch}
         <CheckedStrip scope={scope} onChoose={() => setDrawerOpen(true)} />
       </ToolRow>
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col gap-4 px-6 py-6">
         {err && <Banner color="var(--sem-bad)">{err}</Banner>}
         <ImpactPane graph={graph} root={root} impact={impact} unused={unused} unusedStale={unusedStale} onPick={(r) => void loadImpact(r)}
           onOpenPlan={onOpenPlan} onOpenTests={onOpenTests} onAddCheck={onAddCheck} onOpenWorkflow={onOpenWorkflow} onRename={onRename} />
@@ -295,6 +298,9 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onAddCheck, on
     </div>
   );
 }
+
+/** What Graph and Tree say while reports are not merged in. Plain words; the engine's own sentence stays for the assistant. */
+export const REPORTS_NOT_COUNTED = 'Reports are not counted yet. A field that only a report uses can look unused.';
 
 export const LINEAGE_NOTES: string[] = [
   'Trace where a field comes from and what relies on it, then see what is safe to clean up.',
@@ -346,7 +352,7 @@ function ImpactPane({ graph, root, impact, unused, unusedStale, onPick, onOpenPl
   }, [drawerOpen, expandedRow, setDrawerOpen]);
 
   // The card's own answer comes from the engine's assessment when it has one (it carries the report hits and
-  // the checked scope), and from impact_of before that, so a pick paints at once instead of waiting.
+  // the checked scope), and from the impactOf RPC before that, so a pick paints at once instead of waiting.
   // P4. An absent assessment used to be read as zero report hits, so the card said "No use was found" before
   // the request had finished, and kept saying it after the request failed. The answer is shown only when a
   // request has come back FOR THIS field and THIS scope; until then the row says it is still checking.
@@ -407,36 +413,35 @@ function ImpactPane({ graph, root, impact, unused, unusedStale, onPick, onOpenPl
           onPropose={() => void proposeRemoval([...ticked], `Remove ${ticked.size} cleanup candidate${ticked.size === 1 ? '' : 's'}`)} />
       ) : (
         <Panel className="min-w-0 flex flex-col overflow-hidden lg:h-full">
-          <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Measures and columns</div>
+          <div className="text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>Measures and columns</div>
           <input value={q} onChange={(e) => setQ(e.target.value)} data-testid="impact-picker-filter"
             aria-label="Find a measure or column" placeholder="Find a measure or column" spellCheck={false}
-            className="mt-2 text-[12px] px-2 py-1 rounded-md outline-none w-full shrink-0"
+            className="mt-2 text-xs px-2 py-1 rounded-(--sem-radius-control) outline-none w-full shrink-0"
             style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-          <label className="flex items-center gap-2 mt-2 text-[12px] shrink-0" data-testid="impact-cleanup-toggle-row">
+          <label className="flex items-center gap-2 mt-2 text-xs shrink-0" data-testid="impact-cleanup-toggle-row">
             <input type="checkbox" checked={cleanup} data-testid="impact-cleanup-toggle" onChange={(e) => setCleanup(e.target.checked)} />
             <span>Show cleanup candidates</span>
-            <span className="ml-auto text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>{candidates.length}</span>
+            <span className="ml-auto text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>{candidates.length}</span>
           </label>
           <div className="mt-2 overflow-auto flex-1 min-h-0 max-h-[460px] lg:max-h-none">
             {view.map((n) => (
               <div key={n.ref} onClick={() => onPick(n.ref)} data-testid="lineage-impact-object"
-                className="flex items-center gap-2 px-2 py-1 rounded-md cursor-pointer text-[12px] hover:bg-[var(--sem-surface-2)]"
-                style={n.ref === root ? { background: 'var(--sem-accent-soft)' } : undefined}>
-                <span className="shrink-0 text-[12px] w-4 text-center" style={{ color: KIND_COLOR[n.kind] ?? 'var(--sem-muted)' }}>{KIND_GLYPH[n.kind] ?? '•'}</span>
+                className="flex items-center gap-2 px-2 py-1 rounded-(--sem-radius-control) cursor-pointer text-xs hover:bg-[var(--sem-hover)]"
+                style={n.ref === root ? { background: 'var(--sem-surface-2)' } : undefined}>
+                <span className="shrink-0 text-xs w-4 text-center" style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[n.kind] ?? '•'}</span>
                 <span className="truncate" style={{ opacity: n.isHidden ? 0.55 : 1 }}>{n.name}</span>
-                <span className="ml-auto text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 110 }}>{n.table}</span>
+                <span className="ml-auto text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)', maxWidth: 110 }}>{n.table}</span>
               </div>
             ))}
-            {view.length === 0 && <div className="text-[12px] py-6 text-center" style={{ color: 'var(--sem-muted)' }}>Nothing matches.</div>}
+            {view.length === 0 && <div className="text-xs py-6 text-center" style={{ color: 'var(--sem-muted)' }}>Nothing matches.</div>}
           </div>
         </Panel>
       )}
 
       {cleanup && !impact ? null : !impact ? (
         <Panel className="min-w-0 flex flex-col overflow-hidden lg:h-full">
-          <div className="text-[12px] py-6 text-center" data-testid="impact-empty" style={{ color: 'var(--sem-muted)' }}>
-            Pick anything on the left. The card says what uses it, in the model and in the reports that were checked,
-            and which saved checks to run after changing it.
+          <div className="text-xs py-6 text-center" data-testid="impact-empty" style={{ color: 'var(--sem-muted)' }}>
+            Pick a field to see what uses it.
           </div>
         </Panel>
       ) : (
@@ -469,10 +474,23 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
   const { cloudGen, tenantOwner } = gates;
   const { session } = useConnection();
   const wsNameHint = useMemo(() => workspaceNameFromEndpoint(session?.liveEndpoint), [session?.liveEndpoint]);
+  // What the last check came back with, in words. It belongs to this open drawer and to this selection: any
+  // change to the selection drops the reading it was made against, so it drops this sentence too.
+  const [checkResult, setCheckResult] = useState<string | null>(null);
 
-  // A tick in the drawer selects a report to CHECK. Everything already chosen for this model is pre-ticked,
-  // so pressing Check reads the whole selection rather than silently only the newest addition.
-  useEffect(() => { setSel(new Set(scope.reports.map((r) => r.id))); }, [scope.reports.length]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A tick in the drawer selects a report to CHECK. Everything already chosen for this model is pre-ticked when the drawer opens,
+  // so pressing Check reads the whole selection rather than silently only the newest addition. When the chosen list changes after that
+  // (the assistant's set_report_scope, or a refresh), the person's ticks stay (sweep 3, site 8): a report that went loses its tick, a report
+  // that is new is ticked, and an untick the person made stays unticked.
+  const reportIds = scope.reports.map((r) => r.id);
+  const reportSig = reportIds.join('\n');
+  const seenIds = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenIds.current;
+    seenIds.current = new Set(reportIds);
+    if (!seen) { setSel(new Set(reportIds)); return; }
+    setSel((prev) => new Set(reportIds.filter((id) => prev.has(id) || !seen.has(id))));
+  }, [reportSig]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadWorkspaces() {
     const gen = ++cloudGen.current;
@@ -508,18 +526,25 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     // P3. Every report carries its OWN workspace and report id, from the row itself. The first build rebuilt
     // them from whichever workspace the picker happened to be showing, so adding a report from workspace B
     // silently moved an existing report from workspace A into B, keeping its id and changing what it pointed at.
-    const choices = next.map((r) => r.kind === 'published'
-      ? { id: r.id, kind: 'published', name: r.name, workspaceId: r.workspaceId, workspaceName: r.source, reportId: r.reportId }
-      : { id: r.id, kind: 'local', name: r.name, path: r.source });
-    setBusy('save'); setError(null);
+    //
+    // One builder for every save path - untick, exclude, add, folder - because the second bug here was the
+    // same fact lost a different way: the rows this rebuilds from came back from the engine WITHOUT the
+    // coordinates, so unticking one of several chosen reports saved the survivors with no workspace and no
+    // report id. M.scopeChoice reads them back out of the row's own choice id when a row lacks them.
+    setBusy('save'); setError(null); setCheckResult(null);
     try {
+      // The list is read again first and the person's change is applied to it: the assistant can choose or drop a report
+      // (set_report_scope) while this drawer is open, and the page's older list would write that away.
+      const live = (await rpc<ReportScopeResult>('listReportScope')).reports ?? [];
+      next = M.scopeChange(scope.reports, live, next);
+      const choices = next.map(M.scopeChoice);
       setScope(await rpc<ReportScopeResult>('setReportScope', choices, 'human'));
       // A changed selection drops the reading it was made against, so nothing on the page may keep showing an
       // answer measured with the old one. P1: the cleanup list above all.
       setUsage(null);
       onScopeChanged?.();
     }
-    catch (e) { setError(String((e as Error).message ?? e)); }
+    catch (e) { setError(String((e as Error).message ?? e)); return null; }   // null: the engine did not take the list (callers keep what the person typed)
     finally { setBusy(null); }
     return next;
   }
@@ -534,7 +559,7 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     const wsName = workspaces?.find((w) => w.id === wsId)?.displayName;
     const found = (reports ?? []).find((r) => r.id === reportId);
     if (!found) return;
-    const key = `published:${wsId}/${found.id}`;
+    const key = M.publishedChoiceId(wsId, found.id);
     if (scope.reports.some((r) => r.id === key)) return;
     const next: M.ScopeReport[] = [...scope.reports, {
       id: key, kind: 'published', name: found.name, source: wsName ?? 'a workspace',
@@ -543,6 +568,18 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     await save(next);
     // The chosen report is now selected for checking, once, and shows as not checked until it is read.
     setSel((prev) => new Set([...prev, key]));
+  }
+
+  /**
+   * Unticking a discovered report takes it off the model's list, which is what "Exclude from checks" does lower
+   * down. The first build had no inverse at all: ticking an ALREADY chosen report hit an early return and did
+   * nothing. Kane pressed it and reported that nothing happened, and nothing was the literal truth.
+   */
+  async function removePublished(reportId: string) {
+    const key = M.publishedChoiceId(ws.trim(), reportId);
+    if (!scope.reports.some((r) => r.id === key)) return;
+    await save(scope.reports.filter((r) => r.id !== key));
+    setSel((prev) => { const n = new Set(prev); n.delete(key); return n; });
   }
 
   async function addFolder() {
@@ -555,8 +592,9 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
       next.push({ id: key, kind: 'local', name: p.split(/[/\\]/).filter(Boolean).pop() ?? p, source: p, state: 'notChecked' });
     }
     const saved = await save(next);
-    setSel(new Set((saved ?? next).map((r) => r.id)));
-    setFolderPath('');
+    if (!saved) return;   // R-B: refused, so the typed folder stays in its box
+    setSel(new Set(saved.map((r) => r.id)));
+    setFolderPath((now) => now === folderPath ? '' : now);   // only the words that were sent
   }
 
   async function removeOne(id: string) {
@@ -564,11 +602,22 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
   }
 
   async function check() {
-    setBusy('check'); setError(null);
+    const asked = [...sel];
+    // The engine REFUSES a published check without consent, and it is right to. Saying so here, before the
+    // call, names the box that has to be ticked instead of paraphrasing a permission scope back at the person.
+    if (!consent && scope.reports.some((r) => sel.has(r.id) && r.kind === 'published')) {
+      setCheckResult(null);
+      setError('Say yes to the sign-in permission first. Tick "Yes, sign in with that permission" under the report list, then press Check again.');
+      return;
+    }
+    setBusy('check'); setError(null); setCheckResult(null);
     try {
-      const result = await rpc<ReportScopeResult>('checkReports', [...sel], consent, signInMode, tenant.trim() || null, null, 'human');
+      const result = await rpc<ReportScopeResult>('checkReports', asked, consent, signInMode, tenant.trim() || null, null, 'human');
       setScope(result);
       if (result.usage) setUsage(result.usage);
+      // A check that changes nothing a person can see is a check that did nothing, as far as they can tell.
+      // Say what came back, in the drawer, next to the button that was pressed.
+      setCheckResult(M.checkOutcomeSentence(result, asked));
       // P1. A reading changes every answer measured against it. The cleanup list is recomputed from the same
       // reading rather than keeping its old candidates under a new "checked against" label.
       onScopeChanged?.();
@@ -591,8 +640,7 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
         if (next.some((r) => r.id === key)) continue;
         next.push({ id: key, kind: 'local', name: p.split(/[/\\]/).filter(Boolean).pop() ?? p, source: p, state: 'notChecked' });
       }
-      await save(next);
-      setFolderPath('');
+      if (await save(next)) setFolderPath((now) => now === folderPath ? '' : now);   // R-B: a refused save keeps the typed folder
     } catch (e) { setError(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   }
@@ -610,13 +658,12 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
         onSignInMode={(v) => { setSignInMode(v); cloudGen.current++; setWorkspaces(null); setReports(null); }}
         onTenantId={(v) => { tenantOwner.current = v.trim() === '' ? null : 'user'; setTenant(v); cloudGen.current++; setWorkspaces(null); setReports(null); }}
         onLoadWorkspaces={() => void loadWorkspaces()} onLoadReports={() => void loadReports()}
-        onToggle={(id) => {
-          // A report in the DISCOVERED list is a choice being made: add it once, with its own coordinates, and
-          // let the save decide the next selection. A report already on the model's list is only a tick.
-          if ((reports ?? []).some((r) => r.id === id)) { void addPublished(id); return; }
-          setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-        }}
-        onCheck={() => void check()}
+        // The chosen list's tick is only a selection for the next check. The discovered list's tick is the
+        // CHOICE itself, and it now has both directions. Which list a tick came from is told by which callback
+        // fired, never guessed from the id: guessing is how the two lists came to disagree.
+        onToggle={(id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; })}
+        onChoose={(reportId, chosen) => void (chosen ? addPublished(reportId) : removePublished(reportId))}
+        onCheck={() => void check()} result={checkResult}
         folderPath={folderPath} onFolderPath={setFolderPath} onBrowse={() => void browse()} onAddFolder={() => void addFolder()}
         onRemove={(id) => void removeOne(id)}
         busy={busy} error={error} consent={consent} onConsent={setConsent} />
@@ -669,10 +716,10 @@ function nextTenantValue(current: string, owner: 'auto' | 'user' | null, auto: s
 
 // ---- local primitives -------------------------------------------------------------------------
 function Panel({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <div className={`rounded-xl border p-4 ${className}`} style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
+  return <div className={`rounded-(--sem-radius-card) border p-4 ${className}`} style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
 }
 function Banner({ children, color }: { children: React.ReactNode; color: string }) {
-  return <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,' + color + ' 14%, transparent)', color, border: `1px solid color-mix(in srgb,${color} 40%, transparent)` }}>{children}</div>;
+  return <div className="rounded-(--sem-radius-card) px-3 py-2 text-xs" style={{ background: 'color-mix(in srgb,' + color + ' 14%, transparent)', color, border: `1px solid color-mix(in srgb,${color} 40%, transparent)` }}>{children}</div>;
 }
 
 export { mergeReportPaths, nextTenantValue, sessionIdentityKey, workspaceNameFromEndpoint };

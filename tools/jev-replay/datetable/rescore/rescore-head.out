@@ -1,0 +1,10 @@
+ruleNeeded differs round3 vs head: []
+ruleTable differs round3 vs head: [('ns-1', None, 'table:Date'), ('ns-2', None, 'table:Date')]
+dateMarkFires==usesTi&&!marked for all: True
+replay population (key needed & offered), round3 rule: (33, 33, 9, 24, 0, 1.1920928955078125e-07)
+replay population (key needed & offered), head rule  : (33, 33, 11, 22, 0, 4.76837158203125e-07)
+models the head asks Jev about: 11 ['ns-1', 'ns-2', 'ns-8', 'cm-6', 'aw-1', 'aw-2', 'aw-3', 'aw-4', 's-8', 'h-9', 'h-17']
+  of which key-needed & offered: 11
+shipped population, head rule: (11, 11, 11, 0, 0, 1.0)
+shipped Pro path vs shipped rule on all 33: {'n': 33, 'pro': 11, 'rule': 11, 'b': 0, 'c': 0, 'p': 1.0}
+head question text: ['date_table: This model needs a date table. Which table should it be?']

@@ -9,10 +9,11 @@ const view = read('webview/src/mcode.tsx');
 const transform = read('webview/src/mtransform.ts');
 const pq = read('webview/src/pqtransforms.tsx');
 
-assert.match(view, /rangeStart \? 'updateNamedExpression' : 'createNamedExpression'/, 'RangeStart must be created or upgraded');
-assert.match(view, /rangeEnd \? 'updateNamedExpression' : 'createNamedExpression'/, 'RangeEnd must be created or upgraded');
+// An update names the expression it replaces (Sol join 6, round 2); a create has nothing to name, so the two are separate calls.
+assert.match(view, /rangeStart \? rpc\('updateNamedExpression', 'RangeStart'[^\n]*rangeStart\.expression \?\? ''\) : rpc\('createNamedExpression', 'RangeStart'/, 'RangeStart must be created or upgraded');
+assert.match(view, /rangeEnd \? rpc\('updateNamedExpression', 'RangeEnd'[^\n]*rangeEnd\.expression \?\? ''\) : rpc\('createNamedExpression', 'RangeEnd'/, 'RangeEnd must be created or upgraded');
 assert.match(view, /label: 'Add range filter'/, 'the missing partition filter must have a direct action');
-assert.match(view, /setIncrementalRefreshPolicy[\s\S]*form\.mode, pollingExpressionForSave\(form\.polling\), true\)/, 'saving must preserve polling independently of disclosure state and opt into engine auto-wiring');
+assert.match(view, /setIncrementalRefreshPolicy[\s\S]*form\.mode, pollingExpressionForSave\(form\.polling\), true, 'human', policyFence\(policyRaw\.current\)\)/, 'saving must preserve polling independently of disclosure state and opt into engine auto-wiring');
 assert.match(transform, /incrementalRefreshFilter[\s\S]*Source = \$\{m\.trim\(\)\}/, 'a bare source must be wrapped explicitly');
 assert.match(transform, /appendStep\(source, 'Filtered for incremental refresh'/, 'range wiring must use the non-clobbering appendStep kernel');
 assert.match(transform, />= RangeStart and \$\{c\} < RangeEnd/, 'the generated filter must be half-open');
@@ -43,7 +44,7 @@ assert.match(saveBlock, /if \(busyRef\.current\[busyKey\][\s\S]*\) return;/, 'sa
 assert.match(saveBlock, /if \(!beginBusy\(busyKey, 'save-policy'\)\) return;/, 'save must atomically claim its resource');
 assert.match(removeBlock, /if \(!beginBusy\(busyKey, 'remove-policy'\)\) return;/, 'remove must atomically claim its resource');
 assert.match(saveBlock, /const t = selected;/, 'save must capture the table at dispatch');
-assert.match(saveBlock, /if \(selectedRef\.current === t\) \{\s+setPolicy\(p\); setEnabled/, "save's policy continuation applies only to the still-selected table");
+assert.match(saveBlock, /if \(selectedRef\.current === t\) \{\s+setPolicy\(p\);\s+if \(!typedSince\) \{\s+setEnabled/, "save's policy continuation applies only to the still-selected table (and the form is reset from the server only when nothing newer was typed, R-B)");
 assert.match(removeBlock, /if \(selectedRef\.current === t\) \{\s+policyDraftDirtyRef\.current = false;\s+setEnabled\(false\); setPolicy\(null\); setForm\(DEFAULT_FORM\);\s+\}/, "remove's state reset applies only to the still-selected table");
 
 // Profile fault isolation (defect: ONE query over ≤12 columns — one bad column nuked the whole strip, and the
@@ -204,5 +205,9 @@ assert.match(view, /sourceMName\(c\)/, 'the date-column picker must use the shar
 assert.match(view, /eligibleDateColumns/, 'the picker must name the eligible set so an empty set is explained');
 assert.match(view, /loaded from the source/, 'an empty eligible set must say why, not offer a choice the save will reject');
 assert.match(view, /refreshWindowFitsArchive/, 'the form must refuse a refresh window wider than the archive window before Save');
+
+// UAT-J9-S10a-004: the page's scroll box is a fixed-height grid, so a card that clips its content (Incremental refresh)
+// was sized to nothing and Configure could never bring its controls into view. Rows must size to their content.
+assert.match(view, /overflow-auto relative sem-page" style=\{\{ gridAutoRows: 'max-content' \}\}/, 'the Power Query page grid must size its rows to their content');
 
 console.log('incremental refresh auto-wire + keyed-busy + profile fault-isolation UI contract tests passed');

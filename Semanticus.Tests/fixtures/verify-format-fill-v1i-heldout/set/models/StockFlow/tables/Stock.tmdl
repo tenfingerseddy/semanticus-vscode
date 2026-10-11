@@ -1,0 +1,78 @@
+table Stock
+	/// snapshot row identifier
+	column 'Snapshot ID'
+		dataType: int64
+		sourceColumn: SnapshotID
+		summarizeBy: none
+
+	/// snapshot date join key
+	column 'Date Key'
+		dataType: int64
+		sourceColumn: DateKey
+		summarizeBy: none
+
+	/// product join key
+	column 'Product Key'
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	/// warehouse join key
+	column 'Warehouse Key'
+		dataType: int64
+		sourceColumn: WarehouseKey
+		summarizeBy: none
+
+	/// units physically on hand
+	column 'On Hand Units'
+		dataType: int64
+		sourceColumn: OnHandUnits
+		summarizeBy: none
+
+	/// target safety stock units
+	column 'Safety Stock Units'
+		dataType: int64
+		sourceColumn: SafetyStockUnits
+		summarizeBy: none
+
+	/// inventory valuation in dollars. Cents must remain visible.
+	column 'Inventory Value'
+		dataType: double
+		sourceColumn: InventoryValue
+		summarizeBy: none
+
+	column 'Batch Code'
+		dataType: int64
+		sourceColumn: BatchCode
+		summarizeBy: none
+
+	/// units on hand
+	measure 'On Hand' = SUM(Stock[On Hand Units])
+
+	/// safety stock units
+	measure 'Safety Stock' = SUM(Stock[Safety Stock Units])
+
+	/// inventory value in dollars. Cents must remain visible.
+	measure 'Inventory Value Total' = SUM(Stock[Inventory Value])
+
+	/// dollars per unit. Cents must remain visible.
+	measure 'Average Unit Cost' = DIVIDE([Inventory Value Total], [On Hand])
+
+	/// on hand divided by safety stock, shown as x multiple. Display as an x multiple to hundredths.
+	measure 'Stock to Safety Multiple' = DIVIDE([On Hand], [Safety Stock])
+
+	measure 'Reorder Coverage' = DIVIDE([On Hand], 24.0)
+
+	/// number of products under safety stock
+	measure 'Low Stock Product Count' = COUNTROWS(FILTER(Product, [On Hand] < [Safety Stock]))
+
+	/// shortfall divided by safety stock. Report to at least a tenth of a percentage point.
+	measure 'Shrinkage Rate' = DIVIDE([Safety Stock] - [On Hand], [Safety Stock])
+
+	partition Stock = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [SnapshotID = Int64.Type, DateKey = Int64.Type, ProductKey = Int64.Type, WarehouseKey = Int64.Type, OnHandUnits = Int64.Type, SafetyStockUnits = Int64.Type, InventoryValue = type number, BatchCode = Int64.Type], {})
+			in
+				Source

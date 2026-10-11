@@ -8,15 +8,15 @@
     },
     "sourceRequirementsWithSourceUrl": 192,
     "sourceDocuments": 24,
-    "reconciliationRows": 207,
-    "covered": 67,
+    "reconciliationRows": 206,
+    "covered": 66,
     "partial": 48,
     "missing": 92,
-    "reconciliationRowsWithLedgerEntry": 191,
+    "reconciliationRowsWithLedgerEntry": 190,
     "reconciliationRowsWithoutLedgerEntry": 16,
-    "ledgerEntriesRejected": 1,
+    "ledgerEntriesRejected": 2,
     "residualNonGoals": 138,
-    "countsDerivation": "Recomputed 2026-09-06 from the arrays in this file. TWO DIFFERENT POPULATIONS, previously conflated: the source-requirement LEDGER and the coverage RECONCILIATION. sourceRequirements = the `requirements` object, the only array of confirmed source requirements in this file: 26 hardGate + 130 recommended + 36 bestPractice = 192. reconciliationRows = 67 covered + 48 partial + 92 missing = 207, where covered is the `covered` array and partial/missing are the `gaps` rows that are in neither the `covered` nor the `rejected` array. These 207 rows are NOT 207 confirmed source requirements, which is what the earlier rawRequirements/distinct/confirmed = 207 triple asserted: matching row titles against the ledger, 191 rows carry a ledger entry and 16 do not (reconciliationRowsWithoutLedgerEntry , Semanticus-authored deterministic checks folded in by the completion-batch lane, which have no source requirement and no sourceUrl behind them), while 1 ledger entry is held in `rejected` and so has no reconciliation row (191 + 1 = 192). Provenance is the ledger's own: all 192 of 192 entries carry a sourceUrl, across 24 distinct Microsoft Learn documents (sourceDocuments). No provenance is claimed for anything else. RESIDUAL UNCERTAINTY: the ledger-to-row match is by exact normalised title, so a row whose title was reworded on one side only reads as unmatched; the 16/191 split is therefore a lower bound on matching and an upper bound on the unmatched set. `residualNonGoals` counts residualBuckets entries, a third population again, and is not a requirement count."
+    "countsDerivation": "Recomputed 2026-09-06 from the arrays in this file, amended 2026-09-23 when MODE-DIRECTLAKE-QNA was retired with Q&A and its one covered row moved to `rejected`. TWO DIFFERENT POPULATIONS, previously conflated: the source-requirement LEDGER and the coverage RECONCILIATION. sourceRequirements = the `requirements` object, the only array of confirmed source requirements in this file: 26 hardGate + 130 recommended + 36 bestPractice = 192. reconciliationRows = 66 covered + 48 partial + 92 missing = 206, where covered is the `covered` array and partial/missing are the `gaps` rows that are in neither the `covered` nor the `rejected` array. These 206 rows are NOT 206 confirmed source requirements, which is what the earlier rawRequirements/distinct/confirmed = 207 triple asserted: matching row titles against the ledger, 190 rows carry a ledger entry and 16 do not (reconciliationRowsWithoutLedgerEntry , Semanticus-authored deterministic checks folded in by the completion-batch lane, which have no source requirement and no sourceUrl behind them), while 2 ledger entries are held in `rejected` and so have no reconciliation row (190 + 2 = 192). Provenance is the ledger's own: all 192 of 192 entries carry a sourceUrl, across 24 distinct Microsoft Learn documents (sourceDocuments). No provenance is claimed for anything else. RESIDUAL UNCERTAINTY: the ledger-to-row match is by exact normalised title, so a row whose title was reworded on one side only reads as unmatched; the 16/190 split is therefore a lower bound on matching and an upper bound on the unmatched set. `residualNonGoals` counts residualBuckets entries, a third population again, and is not a requirement count."
   },
   "requirements": {
     "hardGate": [
@@ -2462,8 +2462,8 @@
       "status": "covered",
       "ourRuleId": "SYN-FIELD, SYN-TABLE",
       "proposedRuleId": "SYN-TABLE",
-      "proposedCheck": "Implemented as SYN-FIELD plus SYN-TABLE. Both read JSON LSDL through SynonymHelper, stay dormant below compatibility level 1465 or without a readable schema, and route authored terms through set_synonyms.",
-      "notes": "SYN-FIELD covers visible columns and measures; SYN-TABLE covers visible business tables and excludes calculation groups. Both stay dormant without readable JSON LSDL or at compatibility levels below 1465, and both hand the AiContent fix to the user's assistant through set_synonyms."
+      "proposedCheck": "Implemented as SYN-FIELD plus SYN-TABLE. Both read JSON LSDL through SynonymHelper and route authored terms through set_synonyms, which creates the schema when there is none. They count every visible field and table from the start, schema or not, so creating the schema opens no second round of findings. They stay dormant below compatibility level 1465, when the only schema is the legacy XML kind, and while SYN-SCHEMA is waived with no schema, because the person declined the schema their only fix would create.",
+      "notes": "SYN-FIELD covers visible columns and measures; SYN-TABLE covers visible business tables and excludes calculation groups. Both are counted before a schema exists (the Plan statement check, 28 Sep) and stay dormant at compatibility levels below 1465, beside a legacy XML schema, or while SYN-SCHEMA is waived and no schema exists. Both hand the AiContent fix to the user's assistant through set_synonyms."
     },
     {
       "title": "Make the primary synonym unique to avoid ambiguity",
@@ -3035,17 +3035,17 @@
     },
     {
       "title": "Direct Lake / Lakehouse models not supported by Q&A live connect (Desktop)",
-      "status": "covered",
-      "ourRuleId": "MODE-DIRECTLAKE-QNA",
-      "notes": "MODE-DIRECTLAKE-QNA deterministically inspects effective partition storage mode and surfaces a Direct Lake routing advisory. Applicable remains 0 because mode context is not a model-quality pass or failure.",
+      "status": "missing",
+      "ourRuleId": "",
+      "notes": "RETIRED 2026-09-23 (see rejected). MODE-DIRECTLAKE-QNA covered this row until Q&A was dropped from the product: Microsoft retires Q&A in February 2027 and Copilot reads nothing from Q&A live connect. It was advisory (Applicable 0), so its removal moved no grade.",
       "proposedRuleId": "MODE-DIRECTLAKE-QNA",
       "proposedCheck": "Implemented as MODE-DIRECTLAKE-QNA with FixKind.None and service-authoring guidance."
     },
     {
       "title": "Q&A setup (linguistic teaching) only for Import and DirectQuery",
       "status": "covered",
-      "ourRuleId": "MODE-DIRECTLAKE-QNA, CFG-PREP-MODE",
-      "notes": "MODE-DIRECTLAKE-QNA deterministically detects effective Direct Lake partition mode and explicitly says that Desktop Q&A setup linguistic teaching is unavailable. CFG-PREP-MODE routes Prep-for-AI authoring for the same model to the Fabric service. Both are non-scoring advisories with Applicable=0, so mode context never inflates or docks the grade.",
+      "ourRuleId": "CFG-PREP-MODE",
+      "notes": "CFG-PREP-MODE detects effective Direct Lake partition mode and routes Prep-for-AI authoring for the model to the Fabric service. It is a non-scoring advisory with Applicable=0, so mode context never inflates or docks the grade. (MODE-DIRECTLAKE-QNA, which warned that Desktop Q&A setup teaching is unavailable, was retired on 2026-09-23 with Q&A.)",
       "proposedRuleId": "SYN-MODE-LIMIT",
       "proposedCheck": "Implemented by the existing storage-mode advisories rather than a duplicate Synonyms rule. Import and DirectQuery remain clean; Direct Lake is routed to service authoring."
     },
@@ -3601,15 +3601,15 @@
       "ourRuleId": "DESC-HIERARCHY",
       "proposedRuleId": "DESC-HIERARCHY",
       "proposedCheck": "A hierarchy is a grounded object; without a description Copilot and Q&A see a drill path with no stated meaning.",
-      "notes": "Closes the one object type the Descriptions category never evaluated. The ruleset already checks hierarchy NAMES (NAME-HIERARCHY) and drill shape (REL-HIERARCHY-SINGLE-LEVEL). Implemented as DESC-HIERARCHY over visible hierarchies on visible business tables, dormant on a model that defines none. FixKind is Proposal, not AiContent: the shipped description writer accepts measures, tables, columns and perspectives only, so an agent-applyable content fix would be an affordance the engine cannot honour."
+      "notes": "Closes the one object type the Descriptions category never evaluated. The ruleset already checks hierarchy NAMES (NAME-HIERARCHY) and drill shape (REL-HIERARCHY-SINGLE-LEVEL). Implemented as DESC-HIERARCHY over visible hierarchies on visible business tables, dormant on a model that defines none. FixKind was Proposal while set_description refused hierarchies; since 27 Sep set_description writes them, so the fix is AiContent like DESC-TABLE and DESC-COLUMN."
     },
     {
       "title": "The column that identifies a dimension row should carry the table name",
       "status": "covered",
       "ourRuleId": "DIM-PRIMARY-NAME",
       "proposedRuleId": "DIM-PRIMARY-NAME",
-      "proposedCheck": "Name the primary dimension column after its table (Product, not Product Name, in table Product) so a natural-language question resolves to one field.",
-      "notes": "Folded in from the Microsoft naming-conventions candidates (docs/archive/ms-fabric-skills-research.md). Implemented as deterministic DIM-PRIMARY-NAME. The dimension set is the graph slice REL-SNOWFLAKE already uses (a table that is only ever the one side of a relationship), so there is no fact/dimension guesswork, and the population is only the dimensions that already carry a table-named label column. The dim/fact plural-singular naming candidates from the same source are NOT shipped: regular-plural detection is an English heuristic with the false-positive blast radius that kept UNUSED-COLUMN-VISIBLE deferred."
+      "proposedCheck": "Mark the column that names each row of a dimension as its row label (Column.IsDefaultLabel: 'Product Name' in table Product), so a natural-language question like \"list the products\" answers with names.",
+      "notes": "Folded in from the Microsoft naming-conventions candidates (docs/archive/ms-fabric-skills-research.md), and since 27 Sep (Kane's ruling) expressed as Microsoft's row label instead of a rename: \"for a table called 'Customer', the row label is usually 'Display Name' ... instead of treating 'customer' as a table, it can instead use 'Display Name'\" (Learn, Intro to Q&A tooling). Implemented as deterministic DIM-PRIMARY-NAME, Info, SafeFix. The dimension set is the graph slice REL-SNOWFLAKE already uses (a table that is only ever the one side of a many-to-one relationship), so there is no fact/dimension guesswork, and the population is only the dimensions that carry a visible text label column (named after the table, or '<Table> Name' and the other label shapes). Clean when a visible column of the table is its row label. The fix marks the column the finding names: apply_fix (MCP) and applyFix (Studio) as one undo step each, apply_safe_fixes and the Model Plan's safe-fix rows in bulk, and a set_default_label item in the change plan. The rule used to advise renaming the label column to the table's name; that rename was what DAC-QNA-NAME-COLLISIONS then flagged, so the rule had gone quiet on every Power BI model. The row label collides with nothing and runs at every compatibility level. The dim/fact plural-singular naming candidates from the same source are NOT shipped: regular-plural detection is an English heuristic with the false-positive blast radius that kept UNUSED-COLUMN-VISIBLE deferred. DAC-QNA-NAME-COLLISIONS, on the evidence each part rests on (27 Sep): it keeps only two or more VISIBLE FIELDS (columns and measures) that read as the same word, by name or by an old name term a rename left behind, and reports them at Medium as a Copilot ambiguity. Evidence: Microsoft's Copilot guidance, \"avoid duplicate field names across tables\" and \"distinguish between similarly named fields, such as Name in the Customer table and Name in the Store table\" (Learn, Prepare semantic model for AI; Use Copilot with semantic models), with its own examples of Copilot filtering Customer[Country] instead of Sales Region[Country] and answering 'Profit' for 'Profit %'. What it no longer claims: that the linguistic validator refuses such a schema and every synonym write fails. The only refusal on record (15 Jul) came from entities bound to hidden shadow columns, which set_synonyms prunes; nothing recorded shows a refusal for two visible objects, and the design note the old claim cited (docs/bug-set_synonyms-duplicate-name-collision.md) never existed. What it no longer flags, because Power BI Desktop saves each in Microsoft's own samples: a table beside its own label column ('Customer'[Customer]), 'Date'[Date], a same-named key on two tables joined by a relationship (Customer[CustomerKey] and Sales[CustomerKey]), and the 'Sales' table beside its '# Sales' measure. Tables and hierarchies are out of the population for the same reason. The plural fold (Month against Months) is gone too: it was our approximation of the validator's lemmatiser, with nothing behind it. set_synonyms refuses none of these; it still refuses hidden targets, prunes dead and hidden entities, and rewraps a real validator refusal with its remedy. The rules that name a deterministic rename target (NAME-TECH-PREFIX, NAME-INVALID-CHARS) are each followed and rescanned for a new High finding or name clash in LinguisticSchemaFeedbackTests; the rules whose rename the assistant writes (NAME-MEASURE, NAME-COLUMN, NAME-TABLE, NAME-HIERARCHY) name no target, so nothing guards the name the assistant picks."
     }
   ],
   "covered": [
@@ -3688,10 +3688,6 @@
     {
       "title": "Mark grounding-irrelevant tables as private / hide all-hidden tables",
       "ourRuleId": "VIS-TABLE-ALL-HIDDEN"
-    },
-    {
-      "title": "Direct Lake / Lakehouse models not supported by Q&A live connect (Desktop)",
-      "ourRuleId": "MODE-DIRECTLAKE-QNA"
     },
     {
       "title": "Prep-for-AI authoring in Desktop limited to Import/DirectQuery/Composite",
@@ -3807,7 +3803,7 @@
     },
     {
       "title": "Q&A setup (linguistic teaching) only for Import and DirectQuery",
-      "ourRuleId": "MODE-DIRECTLAKE-QNA, CFG-PREP-MODE"
+      "ourRuleId": "CFG-PREP-MODE"
     },
     {
       "title": "Implicit measures and wrong default summarization degrade results",
@@ -4119,7 +4115,6 @@
       "SCALE-HICARD-COLUMN",
       "SCALE-QNA-INDEX",
       "REL-DISCONNECTED",
-      "MODE-DIRECTLAKE-QNA",
       "CFG-PREP-MODE",
       "SYN-COLLIDE",
       "NAME-COLUMN-ID",
@@ -4156,7 +4151,7 @@
       "why": "These cannot be determined safely from names or object counts. They are suited to the Model Interview, workflows and human review, not deterministic scoring rules."
     }
   ],
-  "criticVerdict": "Enough for 1.0, with the next-release completion lane still adding deterministic model-visible rows. Semanticus ships 87 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI Q&A/schema/instructions/verified answers, AI-data-schema dependency closure, linguistic-entity integrity, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Q&A/DAX scale limits. The completion ledger, recomputed 2026-09-06 from this file's own arrays, records 67 covered, 48 partial and 92 missing coverage-reconciliation rows, 207 in total. Those rows are not 207 confirmed requirements: the source-requirement ledger in this file holds 192 (191 of the 207 rows carry a ledger entry, 16 are Semanticus-authored checks with no source requirement, and 1 ledger entry is rejected). See counts.countsDerivation. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for the Q&A index and null/blank profiling.",
+  "criticVerdict": "Enough for 1.0, with the next-release completion lane still adding deterministic model-visible rows. Semanticus ships 88 offline and 2 live built-in readiness rules covering the high-value model-visible path: naming/descriptions/synonyms, visibility, formats and sort order, relationship/star-shape risks, Prep-for-AI indexing setting/schema/instructions/verified answers, AI-data-schema dependency closure, linguistic-entity integrity, helper and duplicate measures, calculation-group/field-parameter complexity, implicit measures, deterministic DAX practice and Copilot index/DAX scale limits. The completion ledger, recomputed 2026-09-06 from this file's own arrays, records 66 covered, 48 partial and 92 missing coverage-reconciliation rows, 206 in total (amended 2026-09-23: the Q&A-only Direct Lake row was retired with Q&A). Those rows are not 206 confirmed requirements: the source-requirement ledger in this file holds 192 (190 of the 206 rows carry a ledger entry, 16 are Semanticus-authored checks with no source requirement, and 2 ledger entries are rejected). See counts.countsDerivation. Its 138 residual non-goals remain explicit because they depend on unpublished linguistic storage, partial Prep-for-AI storage, service/report state, or subjective business judgment. Excluding covered, rejected and bucketed rows leaves two objective gaps that need new live Engine statistics: maximum text length for Copilot's value index and null/blank profiling.",
   "rejected": [
     {
       "title": "Harmful/problematic phrases in metadata break Copilot entirely",
@@ -4173,6 +4168,10 @@
     {
       "title": "Measures must be in a valid (error-free) state",
       "note": "NOT OFFLINE-DETERMINISTIC (batch 2). A measure's calculation-error state is only known after the engine evaluates/recalculates the model; the offline metadata (TOM over a .bim/TMDL that hasn't been processed) carries the DAX text but NOT an error flag. Detecting a broken measure therefore needs a LIVE connection (the analyzer's ReadinessLiveStats/LiveRules path), which is out of scope for this offline batch. Deterministic given a live engine, but not from offline model metadata alone."
+    },
+    {
+      "title": "Direct Lake / Lakehouse models not supported by Q&A live connect (Desktop)",
+      "note": "RETIRED 2026-09-23. Microsoft retires Q&A in February 2027 (learn.microsoft.com/power-bi/natural-language/q-and-a-intro) and Kane dropped Q&A-only considerations from Semanticus. This requirement is about the Desktop Q&A visual's live connect, which Copilot does not use. Its rule, MODE-DIRECTLAKE-QNA, was advisory (Applicable 0), so no grade moved. The Copilot-relevant half, Prep data for AI authoring on Direct Lake, stays covered by CFG-PREP-MODE."
     }
   ]
 }

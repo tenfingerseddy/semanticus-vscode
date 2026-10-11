@@ -15,6 +15,13 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
+/** A text-size token in pixels, for a chart drawn on a canvas, which takes a number rather than a CSS value.
+ *  The fallback is only for a page with no tokens.css (it matches tokens.css). */
+export function tokenPx(name: '--sem-text-label' | '--sem-text-meta' | '--sem-text-body'): number {
+  const v = parseFloat(cssVar(name, ''));
+  return Number.isFinite(v) ? v : name === '--sem-text-label' ? 11 : name === '--sem-text-meta' ? 12 : 13;
+}
+
 // The treemap tooltip is rendered by ECharts as innerHTML; model names are interpolated into it,
 // so escape them. (The nonce CSP already blocks script execution — this is defense-in-depth.)
 function esc(s: string): string {
@@ -96,8 +103,8 @@ export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns:
         roam: false,
         nodeClick: 'zoomToNode',
         breadcrumb: { show: true, height: 22, bottom: 0, itemStyle: { color: accent, textStyle: { color: '#fff' } } },
-        label: { show: true, color: '#fff', fontSize: 11, overflow: 'truncate' },
-        upperLabel: { show: true, height: 20, color: fg, fontSize: 11 },
+        label: { show: true, color: '#fff', fontSize: tokenPx('--sem-text-label'), overflow: 'truncate' },
+        upperLabel: { show: true, height: 20, color: fg, fontSize: tokenPx('--sem-text-label') },
         itemStyle: { borderColor: border, borderWidth: 1, gapWidth: 1 },
         levels: [
           { itemStyle: { borderColor: border, borderWidth: 3, gapWidth: 3 }, upperLabel: { show: true } },
@@ -170,10 +177,10 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
             + `<span style="color:${C.hash}">■</span> Hash index ${fmt(it.hash)}${rem}`;
         },
       },
-      xAxis: { type: 'value', axisLabel: { color: muted, fontSize: 10, formatter: (v: number) => fmt(v) }, splitLine: { lineStyle: { color: border } } },
+      xAxis: { type: 'value', axisLabel: { color: muted, fontSize: tokenPx('--sem-text-label'), formatter: (v: number) => fmt(v) }, splitLine: { lineStyle: { color: border } } },
       yAxis: {
         type: 'category', inverse: true, data: rows.map((r) => r.label),
-        axisLabel: { color: fg, fontSize: 11, width: 150, overflow: 'truncate' },
+        axisLabel: { color: fg, fontSize: tokenPx('--sem-text-label'), width: 150, overflow: 'truncate' },
         axisLine: { lineStyle: { color: border } }, axisTick: { show: false },
       },
       series,
@@ -194,8 +201,8 @@ export function BenchBars({ runsMs }: { runsMs: number[] }) {
   const border = cssVar('--sem-border', 'rgba(140,140,160,0.22)');
   const option = useMemo<echarts.EChartsCoreOption>(() => ({
     grid: { left: 38, right: 10, top: 10, bottom: 22 },
-    xAxis: { type: 'category', data: runsMs.map((_, i) => `#${i + 1}`), axisLine: { lineStyle: { color: border } }, axisLabel: { color: muted, fontSize: 10 } },
-    yAxis: { type: 'value', name: 'ms', nameTextStyle: { color: muted, fontSize: 10 }, axisLabel: { color: muted, fontSize: 10 }, splitLine: { lineStyle: { color: border } } },
+    xAxis: { type: 'category', data: runsMs.map((_, i) => `#${i + 1}`), axisLine: { lineStyle: { color: border } }, axisLabel: { color: muted, fontSize: tokenPx('--sem-text-label') } },
+    yAxis: { type: 'value', name: 'ms', nameTextStyle: { color: muted, fontSize: tokenPx('--sem-text-label') }, axisLabel: { color: muted, fontSize: tokenPx('--sem-text-label') }, splitLine: { lineStyle: { color: border } } },
     tooltip: { trigger: 'axis', formatter: (p: any) => `${p[0].value} ms` },
     series: [{ type: 'bar', data: runsMs, itemStyle: { color: accent, borderRadius: [3, 3, 0, 0] } }],
   }), [runsMs, accent, muted, border]);

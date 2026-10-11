@@ -1,2099 +1,589 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, onWorkflowLibraryChange } from './bridge';
-import { mdToHtml } from './docrender';
-import { DesignMode } from './workflowdesign';
-import { ScenariosPanel } from './workflowscenarios';
-import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResultW } from './artifactdialog';
-import { uiLabel, opTitle, checkTitle } from './copy';
-import { Caret } from './ui';
-import {
-  liveRuns, mostRecentLive, mostRecentTerminal, runForWorkflow, focusedRun,
-  stepGateSkipped, runSections, frameProgress, frameIsCurrent, providedAnswerDraft, type RunFrameItem, type RunSection, type RunRow, type RunMapState,
-} from './workflowruns.mjs';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { rpc, onWorkflowLibraryChange, onEntitlementChange } from './bridge';
+import { DesignMode, heldDrafts, type AuthorSeed } from './workflowdesign';
+import { heldPlaces } from './workflowheld.mjs';
 import { createDefinitionLoader } from './workflowload.mjs';
-import { gateArg, submitStepArgs } from './workflowsubmit.mjs';
+import { liveRuns, type RunMapState } from './workflowruns.mjs';
+import { DoerMark } from './plan-row';
+import { ComposerDraft } from './composer-draft';
+import { draftRowId, type DraftView } from './composer-model';
+import * as M from './workflows-model';
+import { LockMark, SideDrawer, TeamRulesDrawer, hasTeamRules, requiredWords } from './workflow-rules';
+import {
+  Banner, type WorkflowDef, type WorkflowEnforcement, type WorkflowInfo, type WorkflowPolicy, type WorkflowProfileInfo,
+  type WorkflowProfileResult, type WorkflowRunView,
+} from './workflow-ui';
+
+// Every shared piece the other files import from here lives in workflow-ui.tsx now; the names stay reachable.
+export * from './workflow-ui';
+export { CHECKS_OFF_LINE } from './workflows-model';
+export { ChecksSwitch, TeamRulesDrawer } from './workflow-rules';
 
 // ===================================================================================================
-// Workflows — a workflow is "a skill with teeth": a named, versioned playbook (markdown instructions per
-// step) whose steps chain MCP primitive actions and carry engine-enforced gates. The tab is a stable SECTION
-// workbench (Home · Library · Runs · Governance · Author) with an AMBIENT live-run banner, so a long AI
-// Assistant run never takes the tab over: the human can still read a playbook or check policy while the agent
-// drives a run on the SAME session (dual-drive on one run; both doors watch workflow/didChange). The four
-// legible halves stay visible on a playbook and inside a run — actions (op chips), sequence (the numbered
-// rail), instructions (verbatim), and constraints (the gate). Design of this rework: the ratified wireframe.
+// Workflows, one page (lane W2; Plan-heart contract 21, Kane 24 Sep: "yes to all five").
+//
+// The page is the list of YOUR workflows, and Author when you open one. That is all. The five-section rail
+// (Home, Library, Runs, Governance, Author) went with its four lists of the same workflows: starters live under
+// New, team rules in one drawer behind a quiet link, a workflow's own settings in its Settings drawer, and every
+// run on the Plan as a row (R3), its receipt in History. Nothing the old page could do is lost: the checklist of
+// all 73 things it did, and where each one lives now, is in the lane report and test/workflows-one-page.test.mjs.
+//
+// Both doors: every control here is one of the workflow ops the agent door has, on the same session. The page
+// follows workflow/libraryDidChange, so a save or a rule the assistant makes shows here at once.
 // ===================================================================================================
 
-// The honest message for a run that has aged out of the engine's bounded store (MaxHeld) — surfaced whether the
-// engine RESOLVES the miss as { note } or REJECTS it, so a raw "run 'wfr-N' not found" never reaches the analyst.
-const RUN_AGED_OUT = 'This run is no longer available for an evidence report. Only the most recent runs are kept, and this one has aged out. Start the workflow again to produce a fresh run you can seal.';
+type View = { kind: 'list' } | { kind: 'author'; name: string | null; seed?: AuthorSeed | null } | { kind: 'draft'; draftId: string };
 
-// ---- wire shapes (camelCase, mirror Semanticus.Engine/Workflow.cs) --------------------------------
-export interface WorkflowInfo {
-  name: string; title: string; description: string; version: number; source: string;
-  stepCount: number; gated: boolean; triggers: string[]; error?: string | null;
-  whenToUse?: string | null;
-  // §9a availability (the manual per-workflow kill switch) + §10.6 activation (rule-driven menu curation).
-  // enabled:false = can't be started until turned back on; active:false while enabled = off today's menu but
-  // still startable. Both stay LISTED (the honesty rule): a hidden workflow can't be re-enabled. Optional so
-  // absent reads as the engine default (on) — every check is an explicit `=== false`.
-  enabled?: boolean; active?: boolean; activeReason?: string | null;
-}
-export interface GateInput { name: string; question: string; type: string; required: string }
-export interface VerifySpec { kind: string; when?: string; probe?: string; scope?: string; intent?: string }
-export interface GateSpec { strictness?: string | null; inputs: GateInput[]; verify: VerifySpec[] }
-export interface ForEachSpec {
-  inLiteral?: string[] | null;
-  inInput?: string | null;
-  as?: string;
-  maxIterations?: number;
-}
-export interface CallSpec {
-  workflow?: string;
-  with?: Record<string, string>;
-  returns?: string[];
-}
-export interface WorkflowStep {
-  id: string; number: number; title: string; instructions: string; gate?: GateSpec | null; ops: string[];
-  when?: string | null;
-  forEach?: ForEachSpec | null;
-  call?: CallSpec | null;
-  hasExplicitId?: boolean;
-}
-export interface WorkflowDef {
-  name: string; title: string; description: string; version: number; strictness?: string;
-  triggers: string[]; source: string; filePath?: string; error?: string | null; steps: WorkflowStep[];
-  provenance?: Record<string, string>;   // unknown frontmatter keys (a distilled workflow carries derived_from here)
-  schemaVersion?: number;
-  kind?: string | null;
-  whenToUse?: string | null;
-  tags?: string[];
-  slots?: unknown[];
-}
-export interface AnswerValue { value?: string | null; declined?: boolean; declineReason?: string | null; answered?: boolean }
-// status: passed | failed | unavailable (blocked, Missing names why) | not_applicable (when: not met) | skipped (legacy advisory)
-export interface VerifyResult {
-  kind: string; status: string; detail?: string;
-  missing?: string | null;                                       // unavailable: the one thing that was absent
-  shapes?: { shapeId: string; pinned: boolean; rowsCompared: number; mismatchCount: number; truncated?: boolean }[] | null;
-  mismatchCells?: { context: string; valueA?: string; valueB?: string }[] | null;
-}
-export interface WitnessLockView { probe: string; hash: string }
-export interface WitnessRevision { probe: string; beforeHash: string; afterHash: string; stepId: string; timestampUtc: string }
-export interface PartitionRevision { key: string; before: string; after: string; stepId: string; timestampUtc: string }
-export interface AnchorLockView { anchorsInput: string; initialHash: string; currentHash: string; stepId: string }
-export interface AnchorRevisionChange {
-  context: string; originalExpect: string; correctedExpect: string; extractQuery: string;
-  extractRowCount: number; extractTruncated: boolean; extractResultHash: string;
-}
-export interface AnchorRevision {
-  key?: string | null; anchorsInput: string; beforeHash: string; afterHash: string; stepId: string;
-  timestampUtc: string; changes: AnchorRevisionChange[];
-}
-export interface ShapeMismatchLedgerEntry {
-  shapeId: string; open: boolean; state: string; totalMismatchCount: number; lastMismatchCount: number;
-  lastMismatchReconciledCount: number;
-  cells: { coordinate: string; displayContext: string; candidateValue: string; witnessValue: string }[];
-}
-export interface ShapeMismatchCountersign {
-  shapeId: string; coordinate: string; candidateValue: string; witnessValue: string;
-  stated: string; stepId: string; timestampUtc: string;
-}
-export interface StepResult {
-  stepId: string; title: string; status: string; note?: string | null;
-  answers: Record<string, AnswerValue>; verifyResults: VerifyResult[]; effectiveStrictness?: string | null;
-}
-export interface CurrentStepView {
-  stepId: string; title: string; instructions: string; questions: GateInput[];
-  verifyKinds: string[]; effectiveStrictness?: string | null; ops: string[];
-  providedAnswers?: Record<string, AnswerValue> | null;
-  handOff?: { callee?: string; calleeTitle?: string; expectedReturns?: string[]; nextStepTitle?: string; gateOff?: boolean } | null;
-}
-interface WorkflowRunFrameProof {
-  stepId: string; state: string; steps: StepResult[];
-  parentFrameIndex?: number | null;
-  witnessLocks?: WitnessLockView[]; witnessRevisions?: WitnessRevision[]; partitionRevisions?: PartitionRevision[];
-  anchorLocks?: AnchorLockView[]; anchorRevisions?: AnchorRevision[];
-  shapeMismatchLedger?: ShapeMismatchLedgerEntry[]; shapeMismatchCountersigns?: ShapeMismatchCountersign[];
-}
-export interface WorkflowIterationFrame extends WorkflowRunFrameProof {
-  kind: 'iteration'; iterationIndex: number; loopVariable: string; loopValue: string;
-}
-export interface WorkflowCallFrame extends WorkflowRunFrameProof {
-  kind: 'call'; workflow: string; depth: number; passed: string[]; returned: string[]; returnNote?: string | null;
-}
-export type WorkflowRunFrame = WorkflowIterationFrame | WorkflowCallFrame;
-export interface WorkflowRunView {
-  runId: string; workflow: string; title: string; workflowVersion: number; status: string; abortReason?: string | null;
-  startedUtc?: string | null; finishedUtc?: string | null; modelName?: string | null; modelFingerprint?: string | null;
-  stepIndex: number; totalSteps: number; totalStepsProvisional?: boolean | null; steps: StepResult[]; frames?: WorkflowRunFrame[]; currentStep?: CurrentStepView | null;
-  witnessLocks?: WitnessLockView[] | null; witnessRevisions?: WitnessRevision[] | null; partitionRevisions?: PartitionRevision[] | null;
-}
-function totalStepsText(run: WorkflowRunView) {
-  return run.totalStepsProvisional ? `at least ${run.totalSteps} steps` : `${run.totalSteps} steps`;
-}
-interface WorkflowEnforcement { mode?: string | null; enforced: boolean; note?: string | null }
-
-// §9c op→workflow BINDING (mandatory routing) — the whole project policy in one read (get_workflow_policy).
-// One row per workflow (which ops REQUIRE it, inverted) + the raw op→workflow bindings + any policy contradictions.
-// Mirrors Semanticus.Engine/Workflow.cs (WorkflowPolicy / WorkflowBindingView / WorkflowPolicyLint / WorkflowPolicyEntry).
-export interface WorkflowPolicyEntry {
-  name: string; enabled: boolean; active: boolean; activeReason?: string | null;
-  gated: boolean; whenToUse?: string | null; requiredForOps: string[];
-}
-export interface WorkflowBindingView { op: string; require: string[]; mode: string; userDisablable: boolean }
-export interface WorkflowPolicyLint { severity: string; message: string }
-export interface WorkflowPolicy {
-  activeProfile?: string | null; enforcement?: string | null; workflows: WorkflowPolicyEntry[];
-  bindings: WorkflowBindingView[]; lints: WorkflowPolicyLint[];
-}
-// The engine-owned policy bundles (list_workflow_profiles). Applying one is atomic (activate_workflow_profile).
-interface WorkflowProfileInfo {
-  name: string; title: string; description: string; effects: string[]; pro: boolean; selected: boolean;
-}
-interface WorkflowProfileResult { activeProfile: string; workflows: WorkflowInfo[]; note?: string | null }
-
-// The v1 bindable authoring chokepoints (the EnforceBindingAsync call sites in LocalEngine.cs) — the ONLY ops a
-// binding can route, offered in a fixed order. Labelled in plain language (the "UI never speaks engine" rule):
-// the analyst picks "New measure", never the raw op id. An unwired op can't be bound, so only these appear.
-const BINDABLE_OPS: { op: string; label: string }[] = [
-  { op: 'create_measure', label: 'New measure' },
-  { op: 'update_measure', label: 'Edit measure DAX' },
-  { op: 'create_table', label: 'New table' },
-  { op: 'create_calculated_column', label: 'New calculated column' },
-  { op: 'create_relationship', label: 'New relationship' },
-  { op: 'create_calculation_item', label: 'New calculation item' },
-];
-const opLabel = (op: string) => BINDABLE_OPS.find((b) => b.op === op)?.label ?? opTitle(op);
-
-// "hard" / "warn" / "inherit" are engine words. A person reads what actually happens to their run.
-export function strictnessWords(s?: string | null): string {
-  return s === 'hard' ? 'must pass' : s === 'warn' ? 'warn only' : 'as the workflow says';
-}
-
-// One plain sentence for a step, built from what the step really is: who does the work, what it asks you,
-// and how many checks it records. The workflow's own instructions are written for the assistant, so they
-// are never the sentence a person reads first — they sit behind a disclosure.
-export function stepSummary(ops: string[], gate?: GateSpec | null): string {
-  const parts: string[] = [];
-  parts.push(ops.length
-    ? `Your assistant does the work: ${ops.map((op) => opTitle(op).toLowerCase()).join(', ')}.`
-    : 'Your assistant does this part.');
-  const asks = gate?.inputs.length ?? 0;
-  if (asks) parts.push(`It asks you ${asks} question${asks === 1 ? '' : 's'} first.`);
-  const checks = gate?.verify.length ?? 0;
-  if (checks) parts.push(`${checks} check${checks === 1 ? '' : 's'} ${checks === 1 ? 'is' : 'are'} recorded before the run moves on.`);
-  return parts.join(' ');
-}
-
-// The engine's op catalog, read once per session. It carries a one-sentence description per op, which is
-// the honest explanation to hang on a chip; the short title comes from opTitle.
-let opHintCache: Promise<Record<string, string>> | null = null;
-function opHints(): Promise<Record<string, string>> {
-  opHintCache ??= rpc<{ name: string; description: string }[]>('getOpCatalog')
-    .then((list) => Object.fromEntries((list ?? []).map((o) => [o.name, o.description])))
-    .catch(() => ({}));
-  return opHintCache;
-}
-
-// The step-node visual language — one glyph + tint per run status (mirrors Edit History's verdict rail).
-// Overview mode (no run) uses the neutral 'todo' style with the step number in the circle.
-const STEP_STYLE: Record<string, { glyph: string; color: string; label: string }> = {
-  passed: { glyph: '✓', color: 'var(--sem-good)', label: 'passed' },
-  done: { glyph: '·', color: 'var(--sem-muted)', label: 'done' },
-  not_applicable: { glyph: '◇', color: 'var(--sem-muted)', label: 'did not apply' },
-  skipped: { glyph: '⤼', color: 'var(--sem-muted)', label: 'skipped' },
-  failed: { glyph: '✕', color: 'var(--sem-bad)', label: 'failed' },
-  in_progress: { glyph: '▶', color: 'var(--sem-accent)', label: 'current' },
-  pending: { glyph: '○', color: 'var(--sem-muted)', label: 'pending' },
-};
-const stepStyle = (s: string) => STEP_STYLE[s] ?? STEP_STYLE.pending;
-
-// Verify-evidence chip tint. passed = good, failed = bad, unavailable = AMBER (blocked: applicable but no
-// authoritative evidence — never conflated with the muted, legitimately-not-run styles), not_applicable/skipped = muted.
-const VERIFY_COLOR: Record<string, string> = {
-  passed: 'var(--sem-good)', failed: 'var(--sem-bad)',
-  unavailable: 'var(--sem-warn, #d7a54a)',
-  not_applicable: 'var(--sem-muted)', skipped: 'var(--sem-muted)',
-};
-const verifyColor = (s: string) => VERIFY_COLOR[s] ?? 'var(--sem-muted)';
-
-const isDeclined = (a: AnswerValue) => a.declined === true;
-const isAnswered = (a: AnswerValue) => !a.declined && a.value != null && a.value !== '';
-
-// A run belongs to a section only while it is worth showing. Terminal keeps its evidence reachable.
-const isTerminal = (r: WorkflowRunView | null) => !!r && r.status !== 'active';
-
-type Section = 'home' | 'library' | 'runs' | 'governance' | 'author';
-
-// ===================================================================================================
-// The tab shell — a stable section sidebar + a main pane that changes per section. The ambient live-run banner
-// rides across the top of every section (never a takeover). All engine wiring is shared: one library, one run,
-// one policy read, all live off the same broadcasts, so an agent-driven change surfaces in Studio immediately.
-// ===================================================================================================
-export function WorkflowsView({ navTarget, onNavConsumed, runs, onRunUpdate, markOwnRun, isOwnRun }: {
-  navTarget?: { kind: 'workflow' | 'section'; value: string; nonce: number } | null;
+export function WorkflowsView({ navTarget, onNavConsumed, runs, onRunUpdate, markOwnRun, onOpenPlan, onGo }: {
+  navTarget?: { kind: 'workflow' | 'section' | 'draft'; value: string; nonce: number } | null;
   onNavConsumed?: (nonce: number) => void;
-  // Runs live at the SHELL (App.tsx) so an agent-driven run isn't missed while this tab is unmounted. We read the
-  // shared run-map and fold our own transitions back into it; ownership is tracked by the shell too.
   runs: RunMapState; onRunUpdate: (r: WorkflowRunView) => void;
-  markOwnRun: (runId: string) => void; isOwnRun: (runId: string) => boolean;
+  markOwnRun: (runId: string) => void; isOwnRun?: (runId: string) => boolean;
+  /** Open the Plan with this row opened ("run/wfr-3", "draft/dr-..."). A run always lands there. */
+  onOpenPlan?: (rowId: string | null) => void;
+  /** Any other page, for the draft's own links (a step's object, History). */
+  onGo?: (tool: string, target?: string) => void;
 }) {
-  const [section, setSection] = useState<Section>('home');
   const [library, setLibrary] = useState<WorkflowInfo[] | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);   // the workflow a playbook page / author pane is showing
-  const [openName, setOpenName] = useState<string | null>(null);    // library: a playbook page is open when set
-  const [creating, setCreating] = useState(false);                  // author: a brand-new playbook
-  const [guided, setGuided] = useState(false);                      // home: the ready-made-workflow setup overlay
-  const [libraryFilter, setLibraryFilter] = useState('');
-  const [def, setDef] = useState<WorkflowDef | null>(null);
-  const [focusedRunId, setFocusedRunId] = useState<string | null>(null);  // Runs: which live run has focus (multi-run)
-  const [tier, setTier] = useState<string>('free');
+    const [rawTemplates, setRawTemplates] = useState<{ name: string; title: string; whenToUse?: string | null; slotCount?: number; error?: string | null }[] | null>(null);
+  const [tier, setTier] = useState('free');
   const [libErr, setLibErr] = useState<string | null>(null);
-  const [startErr, setStartErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [evidenceRun, setEvidenceRun] = useState<WorkflowRunView | null>(null);
-  const [enforcement, setEnforcement] = useState<WorkflowEnforcement | null>(null);
   const [policy, setPolicy] = useState<WorkflowPolicy | null>(null);
+  const [policyErr, setPolicyErr] = useState<string | null>(null);
+  const [, setHeldTick] = useState(0);
+  const [enforcement, setEnforcement] = useState<WorkflowEnforcement | null>(null);
   const [profiles, setProfiles] = useState<WorkflowProfileInfo[] | null>(null);
-  // Deep-link from a playbook's "Edit rules" to THAT workflow's Governance row (expand + scroll), never just the
-  // section. A nonce so repeat clicks on the same row re-fire the scroll.
-  const [govTarget, setGovTarget] = useState<{ name: string; nonce: number } | null>(null);
-  const govNonce = useRef(0);
+  const [defs, setDefs] = useState<Record<string, WorkflowDef>>({});
+  const [lastRuns, setLastRuns] = useState<Map<string, M.LastRun>>(new Map());
+  const [view, setView] = useState<View>({ kind: 'list' });
+  const [query, setQuery] = useState('');
+  const [filter, setFilter] = useState<M.WfFilter | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  // True while the New panel holds words the person typed (or an open Start blank box): the panel stays on the page whatever the library does (sweep 3, site 3).
+  // The assistant saving the first workflow makes the library non-empty, which used to take the panel, and the words, away with no press.
+  const [newHeld, setNewHeld] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
+  const [using, setUsing] = useState<M.Starter | null>(null);
+  const [rowErr, setRowErr] = useState<{ name: string; text: string } | null>(null);
+  const [pageErr, setPageErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [def, setDef] = useState<WorkflowDef | null>(null);
   const selectedRef = useRef<string | null>(null);
-  selectedRef.current = selected;
-  // ONE loader for every door that fetches a definition (selection change, library notification, human
-  // save). A response installs only if it is still the newest request AND its workflow is still the
-  // selected one, so a slow response for a workflow the person has left cannot overwrite what is on
-  // screen. Built once , the ticket state lives inside it, so a per-render rebuild would reset the rule.
+  selectedRef.current = view.kind === 'author' ? view.name : null;
+  const isPro = tier === 'pro';
+
+  // ONE loader for the open workflow's definition (selection change, library notification, a save), so a slow
+  // answer for a workflow the person has left can never overwrite what is on screen (workflowload.mjs).
   const defLoader = useRef<ReturnType<typeof createDefinitionLoader<WorkflowDef>> | null>(null);
-  if (!defLoader.current) {
-    defLoader.current = createDefinitionLoader<WorkflowDef>({
-      rpc: (method, ...args) => rpc<WorkflowDef>(method, ...(args as string[])),
-      setDef,
-      currentSelection: () => selectedRef.current,
-    });
-  }
+  if (!defLoader.current) defLoader.current = createDefinitionLoader<WorkflowDef>({
+    rpc: (method, ...args) => rpc<WorkflowDef>(method, ...(args as string[])), setDef, currentSelection: () => selectedRef.current,
+  });
   const defLoad = defLoader.current;
 
-  const refreshPolicy = () => rpc<WorkflowPolicy>('getWorkflowPolicy').then(setPolicy).catch(() => undefined);
-  const refreshProfiles = () => rpc<WorkflowProfileInfo[]>('listWorkflowProfiles').then((items) => { setProfiles(items); setProfileErr(null); })
-    .catch((e) => { setProfileErr('Could not load project profiles: ' + String((e as Error).message ?? e)); setProfiles([]); });
+  // Every read keeps the page honest about what the engine holds: a failed read says so, never "none".
+  const refreshPolicy = () => rpc<WorkflowPolicy>('getWorkflowPolicy').then((p) => { setPolicy(p); setPolicyErr(null); })
+    .catch((e) => { setPolicy(null); setPolicyErr(String((e as Error).message ?? e)); });
+  const refreshLibrary = () => rpc<WorkflowInfo[]>('listWorkflows').then((l) => { setLibrary(l); setLibErr(null); })
+    .catch((e) => setLibErr(String((e as Error).message ?? e)));
   const refreshEnforcement = () => rpc<WorkflowEnforcement>('getWorkflowEnforcement').then(setEnforcement).catch(() => undefined);
+  const refreshProfiles = () => rpc<WorkflowProfileInfo[]>('listWorkflowProfiles').then(setProfiles).catch(() => setProfiles([]));
+  const refreshHistory = () => rpc<{ rows?: M.RunHistoryRow[] }>('getPlanHistory', 'workflow', null, null, 200)
+    .then((h) => setLastRuns(M.lastRuns(h?.rows))).catch(() => undefined);
 
-  // Load the library + entitlement + policy; keep everything live (a save_workflow / set_*_binding / profile
-  // change on EITHER door re-broadcasts the library, and we refetch the policy + enforcement + profiles alongside).
-  // The RUN stream is owned by the shell (App.tsx) so it survives leaving this tab — we only read `runs` here.
   useEffect(() => {
-    rpc<WorkflowInfo[]>('listWorkflows').then((l) => { setLibrary(l); setLibErr(null); }).catch((e) => setLibErr(String((e as Error).message ?? e)));
-    rpc<{ tier?: string }>('getEntitlement').then((e) => setTier(e?.tier ?? 'free')).catch(() => undefined);
-    refreshEnforcement(); refreshPolicy(); refreshProfiles();
+    void refreshLibrary();
+    rpc<typeof rawTemplates>('listWorkflowTemplates').then(setRawTemplates).catch(() => setRawTemplates([]));
+    const readTier = () => rpc<{ tier?: string }>('getEntitlement').then((e) => setTier(e?.tier ?? 'free')).catch(() => undefined);
+    void readTier();
+    const offTier = onEntitlementChange(() => { void readTier(); });
+    void refreshPolicy(); void refreshEnforcement(); void refreshProfiles(); void refreshHistory();
     const offLib = onWorkflowLibraryChange((v) => {
-      setLibrary(v as WorkflowInfo[]);
-      refreshEnforcement(); refreshPolicy(); refreshProfiles();
+      setLibrary(v as WorkflowInfo[]); setLibErr(null); setDefs({});
+      void refreshPolicy(); void refreshEnforcement(); void refreshProfiles();
       defLoad.loadAfterNotification();
     });
-    return () => { offLib(); };
-  }, []);
+    return () => { offLib(); offTier(); };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // A feature surface can hand off to the exact playbook that completes the job (lineage → workflow). Land on
-  // its runnable playbook page and reset transient authoring/overlay state.
+  // The steps behind each row's marks. One read per workflow on the list, cached until the library changes.
+  const rows = useMemo(() => M.filterRows(library, query, filter) as WorkflowInfo[], [library, query, filter]);
+  useEffect(() => {
+    const missing = rows.filter((w) => !w.error && !defs[w.name]).map((w) => w.name);
+    if (missing.length === 0) return;
+    let alive = true;
+    void Promise.all(missing.map((n) => rpc<WorkflowDef>('getWorkflow', n).then((d) => [n, d] as const).catch(() => null))).then((got) => {
+      if (!alive) return;
+      setDefs((cur) => { const next = { ...cur }; for (const g of got) if (g) next[g[0]] = g[1]; return next; });
+    });
+    return () => { alive = false; };
+  }, [rows, defs]);
+
+  // A route can open a workflow (lineage hands off to one; Edit rules opens its Settings). An old route to
+  // Workflows' Runs lands on the Plan, where runs are rows now.
   useEffect(() => {
     if (!navTarget) return;
-    setGuided(false); setCreating(false); setStartErr(null);
-    if (navTarget.kind === 'section' && navTarget.value === 'runs') { setSection('runs'); setOpenName(null); }
-    else if (navTarget.kind === 'workflow' && navTarget.value) { setSection('library'); setOpenName(navTarget.value); setSelected(navTarget.value); }
+    if (navTarget.kind === 'workflow' && navTarget.value) openAuthor(navTarget.value);
+    else if (navTarget.kind === 'section' && navTarget.value === 'runs') onOpenPlan?.(null);
+    else if (navTarget.kind === 'draft' && navTarget.value) { setNewOpen(false); setRulesOpen(false); setView({ kind: 'draft', draftId: navTarget.value }); }
     onNavConsumed?.(navTarget.nonce);
   }, [navTarget?.nonce]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load the selected workflow's definition (full instructions + gates) — free: reading the playbook is content.
-  // Same loader as the notification path, so one validity rule decides which response is allowed to install.
-  useEffect(() => defLoad.loadForSelection(selected), [selected]);
+  useEffect(() => { if (view.kind === 'author') defLoad.loadForSelection(view.name); }, [view]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derived run views off the shared map (BLOCKER 2): the live set drives the count + banner; the focused run
-  // drives the Runs section; the most-recent terminal run drives Home + the playbook's last-run panel.
-  const live = liveRuns(runs);
-  const liveCount = live.length;
-  const bannerRun = mostRecentLive(runs);       // the ambient banner shows the newest live run (+ a count if many)
-  const recentRun = mostRecentTerminal(runs);
-  const focused = focusedRun(runs, focusedRunId);   // Runs section subject
-  const activeProfile = profiles?.find((p) => p.selected) ?? null;
+  const openAuthor = (name: string | null, seed: AuthorSeed | null = null) => {
+    setNewOpen(false); setRulesOpen(false); setUsing(null); setPageErr(null); setDef(null);
+    setView({ kind: 'author', name, seed });
+  };
+  const backToList = () => { setView({ kind: 'list' }); setDef(null); void refreshHistory(); };
 
-  // ---- navigation helpers (one door per concept) ----
-  const openPlaybook = (name: string) => { setSection('library'); setOpenName(name); setSelected(name); setStartErr(null); };
-  const backToLibrary = () => { setOpenName(null); };
-  const editWorkflow = (name: string) => { setSection('author'); setCreating(false); setSelected(name); };
-  const newPlaybook = () => { setSection('author'); setCreating(true); setSelected(null); };
-  const gotoLibrary = (filter = '') => { setLibraryFilter(filter); setOpenName(null); setSection('library'); };
-  const editRules = (name: string) => { setGovTarget({ name, nonce: ++govNonce.current }); setSection('governance'); };
-
-  // Start a run and enter the run path directly (the ratified Home "Start"). Returns false on refusal so the
-  // caller can fall back to the playbook page, where the engine's verbatim upsell/off reason renders.
-  const startRun = async (name: string): Promise<boolean> => {
-    setBusy(true); setStartErr(null); setSelected(name);
+  // ---- Run: every run lands on the Plan, as a row (contract 11.3) ----
+  const runWorkflow = async (name: string, known?: WorkflowDef | null) => {
+    setBusy(`run:${name}`); setRowErr(null);
     try {
-      const r = await rpc<WorkflowRunView>('startWorkflow', name, 'human');
-      markOwnRun(r.runId); onRunUpdate(r); setFocusedRunId(r.runId); setSection('runs');
-      return true;
-    } catch (e) {
-      // the engine's EntitlementException message IS the upsell — show it verbatim, right where Start was pressed
-      setStartErr(String((e as Error).message ?? e));
-      return false;
-    } finally { setBusy(false); }
-  };
-  // A Home hero "Start" enters the run directly; on refusal it lands on the playbook so the reason is visible. We
-  // navigate WITHOUT clearing startErr (openPlaybook would wipe it) — startRun just set the engine's verbatim
-  // refusal (the Pro upsell), and it must render on the playbook, right where the reason belongs (HIGH 5).
-  const startHero = async (name: string) => {
-    if (await startRun(name)) return;
-    setSection('library'); setOpenName(name); setSelected(name);
-  };
-  const submit = async (runId: string, stepId: string, answersJson: string, callGate?: string) => {
-    // Built by the shared module so every element is a string or null: the bridge structured-clones these
-    // arguments, and one DOM event among them fails the whole call (D-171: the Submit step could not move).
-    onRunUpdate(await rpc<WorkflowRunView>('submitWorkflowStep', ...submitStepArgs(runId, stepId, answersJson, 'human', callGate)));
-  };
-  const skip = async (runId: string, stepId: string, reason: string) => {
-    onRunUpdate(await rpc<WorkflowRunView>('skipWorkflowStep', runId, stepId, reason, 'human'));
-  };
-  const abort = async (runId: string, reason: string) => {
-    onRunUpdate(await rpc<WorkflowRunView>('abortWorkflow', runId, reason, 'human'));
+      const d = known ?? defs[name] ?? await rpc<WorkflowDef>('getWorkflow', name);
+      if (M.runKind(d as unknown as M.WfDef) === 'draft') {
+        const draft = await rpc<{ draftId: string }>('composeTask', null, name, null, null, d?.title ?? name);
+        onOpenPlan?.(`draft/${draft.draftId}`);
+      } else {
+        const r = await rpc<WorkflowRunView>('startWorkflow', name, 'human');
+        markOwnRun(r.runId); onRunUpdate(r); onOpenPlan?.(`run/${r.runId}`);
+      }
+    } catch (e) { setRowErr({ name, text: String((e as Error).message ?? e) }); }
+    finally { setBusy(null); }
   };
 
-  // The enforcement kill-switch: off ⇔ per-definition. The engine broadcast refreshes the rail's gated dots.
-  const setEnforcementMode = async (turnOff: boolean) => {
-    try { setEnforcement(await rpc<WorkflowEnforcement>('setWorkflowEnforcement', turnOff ? 'off' : 'default', 'human')); }
-    catch (e) { setStartErr(String((e as Error).message ?? e)); }
+  // ---- Run once (Plan-heart contract 21.5; lane author-gaps, B6): Author's unsaved text, not the saved file. A
+  // workflow with a step Semanticus runs is drafted; any other starts as a guided run. Either lands on the Plan as a
+  // row, like Run. Nothing is saved: the person still chooses Save.
+  const runOnce = async (name: string, text: string, kind: 'draft' | 'guided', title: string) => {
+    setBusy(`run:${name}`); setRowErr(null);
+    try {
+      if (kind === 'draft') {
+        const draft = await rpc<{ draftId: string }>('composeTask', null, name, null, null, title, 'human', text);
+        onOpenPlan?.(`draft/${draft.draftId}`);
+      } else {
+        const r = await rpc<WorkflowRunView>('startWorkflow', name, 'human', text);
+        markOwnRun(r.runId); onRunUpdate(r); onOpenPlan?.(`run/${r.runId}`);
+      }
+    } catch (e) { setRowErr({ name, text: String((e as Error).message ?? e) }); }
+    finally { setBusy(null); }
   };
-  // §9a per-workflow availability. Free (menu curation is content); the engine returns the fresh library AND
-  // re-broadcasts it, so the other door sees the flip live. A refusal is teaching content: show it verbatim.
-  const [availErr, setAvailErr] = useState<string | null>(null);
-  const toggleEnabled = async (name: string, enabled: boolean) => {
-    setAvailErr(null);
-    try { setLibrary(await rpc<WorkflowInfo[]>('setWorkflowEnabled', name, enabled, 'human')); }
-    catch (e) { setAvailErr(String((e as Error).message ?? e)); }
+
+  // ---- Use a starter (contract 21.2): copies it into your workflows, or opens the required one ----
+  const useStarter = async (s: M.Starter, values?: Record<string, string>) => {
+    if (s.required) { openAuthor(s.name); return; }
+    if (s.template && !values) { setUsing(s); return; }
+    setBusy(`use:${s.name}`); setPageErr(null);
+    try {
+      const name = s.template ? (M.copyName(s.name, library) ?? null) : M.copyName(s.name, library);
+      const made = await rpc<WorkflowInfo[]>('instantiateWorkflowTemplate', s.name, name, values ? JSON.stringify(values) : null, 'human');
+      const lib = await rpc<WorkflowInfo[]>('listWorkflows').catch(() => null);
+      if (lib) setLibrary(lib);
+      setUsing(null);
+      openAuthor(made?.[0]?.name ?? name ?? s.name);
+    } catch (e) { setPageErr(String((e as Error).message ?? e)); }
+    finally { setBusy(null); }
   };
-  // §9c op→workflow binding. Setting hard|warn is Pro; the engine's refusal message IS the teaching content.
-  const [bindErr, setBindErr] = useState<string | null>(null);
+
+  // ---- Describe it in words: AUTHORING (Kane's UAT on 25 Sep) ----
+  // It used to draft on the Plan (compose_task), which put a "Needs you" row and a menu of every step there and left
+  // the person on the Plan instead of in Author. Describing a workflow is writing one: the engine cuts the words into
+  // steps (describeWorkflowSteps, which stores nothing and puts nothing on the Plan), and Author opens a new, unsaved
+  // workflow with those steps. Only running a workflow makes Plan rows. Words typed on the Plan still draft there.
+  // `stillHolds` asks the box whether it still holds exactly the words that were sent. Author takes the page over, so it opens only then;
+  // words typed while the steps were being written stay in the box, and the person presses Write the steps again.
+  const describe = async (words: string, stillHolds: () => boolean = () => true) => {
+    setBusy('describe'); setPageErr(null);
+    try {
+      const d = await rpc<M.DescribedWorkflow>('describeWorkflowSteps', words);
+      if (!stillHolds()) { setPageErr('You changed the words while the steps were being written, so nothing was opened. Your new words are still in the box.'); return; }
+      setNewOpen(false);
+      // The engine writes the description as a format 3 file (lane C7 on L5): each step's action, who does it, its
+      // questions and its checks. Author opens that file unsaved; without one it seeds the steps as before.
+      openAuthor(null, d.document
+        ? { title: M.describedTitle(words), document: d.document, note: M.describedNote(d) }
+        : { title: M.describedTitle(words), words, steps: d.steps ?? [], note: M.describedNote(d) });
+    } catch (e) { setPageErr(String((e as Error).message ?? e)); }
+    finally { setBusy(null); }
+  };
+
+  // ---- team rules, through the same ops the agent door has ----
+  // The controls hand over the whole list they drew. The change the person made is the difference from the list on the page,
+  // and that difference is applied to the rule as it stands now: the assistant can add or drop a workflow in the same
+  // rule (set_workflow_binding), and writing the page's older list back would silently undo it (UAT stale-copy class).
   const setBinding = async (op: string, require: string[], mode: string) => {
-    setBindErr(null);
-    try { setLibrary(await rpc<WorkflowInfo[]>('setWorkflowBinding', op, require, mode, 'human')); await refreshPolicy(); }
-    catch (e) { setBindErr(String((e as Error).message ?? e)); }
+    setPageErr(null);
+    try {
+      const shown = policy?.bindings.find((b) => b.op === op)?.require ?? [];
+      const live = (await rpc<WorkflowPolicy>('getWorkflowPolicy')).bindings.find((b) => b.op === op);
+      const change = M.bindingChange(shown, live, require, mode);
+      setLibrary(await rpc<WorkflowInfo[]>('setWorkflowBinding', op, change.require, change.mode, 'human'));
+      await refreshPolicy();
+    }
+    catch (e) { setPageErr(String((e as Error).message ?? e)); await afterFailedChange(); }
   };
-  // §10.6 dynamic activation ("Hide when"): set/clear the set='off' rule that curates a workflow off today's menu.
-  const [actErr, setActErr] = useState<string | null>(null);
-  const setActivation = async (name: string, when: string, setStr: string) => {
-    setActErr(null);
-    try { setLibrary(await rpc<WorkflowInfo[]>('setWorkflowActivation', name, when, setStr, 'human')); await refreshPolicy(); }
-    catch (e) { setActErr(String((e as Error).message ?? e)); }
+  // A change that errors may still have landed (the setting written, then the answer lost). The page never keeps
+  // its own guess: it reads back what the engine now holds, so the switch and the rules show the real state.
+  const afterFailedChange = () => Promise.all([refreshEnforcement(), refreshPolicy(), refreshLibrary()]);
+  const setEnforced = async (on: boolean) => {
+    setPageErr(null);
+    try { setEnforcement(await rpc<WorkflowEnforcement>('setWorkflowEnforcement', on ? 'default' : 'off', 'human')); }
+    catch (e) { setPageErr(String((e as Error).message ?? e)); await afterFailedChange(); }
   };
-  // Applying a profile is atomic; the engine hands back its plain-language note + the fresh library.
-  const [profileErr, setProfileErr] = useState<string | null>(null);
   const applyProfile = async (name: string): Promise<string> => {
-    setProfileErr(null);
     try {
       const r = await rpc<WorkflowProfileResult>('activateWorkflowProfile', name, 'human');
       if (r.workflows) setLibrary(r.workflows);
       await refreshPolicy(); await refreshProfiles();
-      return r.note || 'Workflow profile applied.';
-    } catch (e) { const msg = String((e as Error).message ?? e); setProfileErr(msg); throw new Error(msg); }
+      return r.note || 'Team rules applied.';
+    } catch (e) { const t = String((e as Error).message ?? e); setPageErr(t); await afterFailedChange(); throw e; }
   };
-  const titleOf = (name: string) => library?.find((w) => w.name === name)?.title || name;
-  const enforced = enforcement?.enforced !== false;
-
-  const shared = { library, policy, tier, titleOf } as const;
-
-  return (
-    <div className="h-full flex min-h-0">
-      <SectionSidebar
-        section={section} liveCount={liveCount} enforced={enforced}
-        profileTitle={activeProfile?.title ?? 'Custom'}
-        onNavigate={(s) => { setSection(s); if (s !== 'library') setOpenName(null); if (s !== 'home') setGuided(false); }} />
-      <main className="flex-1 min-w-0 overflow-auto">
-        {/* Author is the one section whose content is a picture that should fill the page rather than a
-            column that scrolls. The extra class makes this page at least as tall as the scroll region, so
-            the canvas below it has a real height to grow into. Every other section is unchanged. */}
-        <div className={`sem-tool-page flex flex-col gap-4 min-w-0${section === 'author' ? ' sem-wf-author-page' : ''}`}>
-          {/* ambient live-run banner — every section but Runs (there it IS the content) */}
-          {bannerRun && section !== 'runs' && (
-            <LiveBanner run={bannerRun} liveCount={liveCount} startedByYou={isOwnRun(bannerRun.runId)}
-              onContinue={() => { setFocusedRunId(bannerRun.runId); setSection('runs'); }} />
-          )}
-          {/* honest enforcement-off notice, everywhere the state matters except Governance (which owns the control) */}
-          {!enforced && section !== 'governance' && (
-            <EnforcementOffBanner onFix={() => setSection('governance')} />
-          )}
-
-          {section === 'home' && (guided ? (
-            <div className="flex flex-col gap-3">
-              <button onClick={() => setGuided(false)} className="text-[11px] font-medium self-start" style={{ color: 'var(--sem-muted)' }}>← Back to Home</button>
-              <ScenariosPanel variant="templates" tier={tier} library={library}
-                onApplied={(l) => { if (l) setLibrary(l); else rpc<WorkflowInfo[]>('listWorkflows').then(setLibrary).catch(() => undefined); refreshPolicy(); }}
-                onActiveChange={() => undefined} />
-            </div>
-          ) : (
-            <HomeSection
-              library={library} activeRun={bannerRun} recentRun={recentRun}
-              profileTitle={activeProfile?.title ?? 'Custom'} enforced={enforced}
-              onStartHero={startHero} onExplain={openPlaybook} onBrowse={gotoLibrary} onGuided={() => setGuided(true)}
-              onGovernance={() => setSection('governance')} onOpenRun={() => setSection('runs')} />
-          ))}
-
-          {section === 'library' && (openName ? (
-            <PlaybookPage
-              name={openName} def={def} info={library?.find((w) => w.name === openName) ?? null}
-              run={runForWorkflow(runs, openName)} tier={tier} busy={busy} startErr={startErr}
-              policy={policy}
-              onBack={backToLibrary} onStart={() => startRun(openName)} onEdit={() => editWorkflow(openName)}
-              onToggleEnabled={toggleEnabled} onEditRules={() => editRules(openName)}
-              onEvidence={(r) => setEvidenceRun(r)} />
-          ) : (
-            <LibrarySection
-              items={library} err={libErr} availErr={availErr} policy={policy}
-              initialFilter={libraryFilter}
-              onOpen={openPlaybook} onNew={newPlaybook} onToggleEnabled={toggleEnabled} />
-          ))}
-
-          {section === 'runs' && (
-            <RunsSection run={focused} liveRuns={live} focusedRunId={focusedRunId} onFocusRun={setFocusedRunId}
-              startedByYou={!!focused && isOwnRun(focused.runId)}
-              onSubmit={submit} onSkip={skip} onAbort={abort}
-              onEvidence={() => focused && setEvidenceRun(focused)} onBrowse={gotoLibrary} />
-          )}
-
-          {section === 'governance' && (
-            <GovernanceSection
-              {...shared} enforcement={enforcement} profiles={profiles}
-              focusTarget={govTarget}
-              profileErr={profileErr} bindErr={bindErr} actErr={actErr}
-              onSetEnforcement={setEnforcementMode} onApplyProfile={applyProfile} onReloadProfiles={refreshProfiles}
-              onToggleEnabled={toggleEnabled} onSetBinding={setBinding} onSetActivation={setActivation} />
-          )}
-
-          {section === 'author' && (
-            <AuthorSection
-              creating={creating} info={library?.find((w) => w.name === selected) ?? null} def={def}
-              sessionId={runs.sessionId} activeRun={selected ? runForWorkflow(runs, selected) : null}
-              onNew={newPlaybook}
-              onSaved={(n) => { setCreating(false); setSelected(n); defLoad.reload(n); }}
-              onDeleted={() => { setCreating(false); setSelected(null); setSection('library'); }} />
-          )}
-        </div>
-      </main>
-      {evidenceRun && <EvidenceArtifactDialog
-        title="Workflow evidence"
-        subtitle={`${evidenceRun.title || evidenceRun.workflow} · run ${evidenceRun.runId} · ${evidenceRun.modelName || 'current model'}`}
-        baseName={`${(evidenceRun.modelName || 'semanticus').replace(/[^\w.-]+/g, '_')}-${evidenceRun.workflow}-evidence`}
-        stateKey="workflows.evidence.format"
-        load={() => rpc<EvidenceArtifactW>('exportWorkflowEvidence', evidenceRun.runId).then((a) => {
-          // The engine keeps only its most recent runs (MaxHeld). An aged-out run is RESOLVED as { note: "…not
-          // found." } (not a rejection), so the round-2 catch alone missed it and the raw note rendered verbatim.
-          // Normalize that resolved shape into the same honest, actionable message the rejection path uses (MEDIUM 3).
-          if (a?.note && !a.html && !a.json && !a.markdown && /not found/i.test(a.note)) return { error: RUN_AGED_OUT };
-          return a;
-        }).catch((e) => {
-          const msg = String((e as Error).message ?? e);
-          if (/not found/i.test(msg)) return { error: RUN_AGED_OUT };
-          throw e;
-        })}
-        save={() => rpc<EvidenceSaveResultW>('saveEvidence', 'workflow', evidenceRun.runId, 'human')}
-        onClose={() => setEvidenceRun(null)}
-      />}
-    </div>
-  );
-}
-
-// ---- section sidebar -----------------------------------------------------------------------------
-// Five stable destinations so Library, Runs and Governance are always one click away, plus a read-only project
-// policy card whose only editing door is Governance (one home per concept). Runs carries a live count.
-const SECTIONS: { id: Section; label: string; glyph: string }[] = [
-  { id: 'home', label: 'Home', glyph: '⌂' },
-  { id: 'library', label: 'Library', glyph: '≡' },
-  { id: 'runs', label: 'Runs', glyph: '▶' },
-  { id: 'governance', label: 'Governance', glyph: '◇' },
-  { id: 'author', label: 'Author', glyph: '{}' },
-];
-function SectionSidebar({ section, liveCount, enforced, profileTitle, onNavigate }: {
-  section: Section; liveCount: number; enforced: boolean; profileTitle: string; onNavigate: (s: Section) => void;
-}) {
-  return (
-    <aside className="w-[210px] shrink-0 border-r flex flex-col min-h-0" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface)' }}>
-      <div className="px-2.5 py-3 flex flex-col gap-0.5 flex-1 min-h-0">
-        <div className="text-[10px] uppercase tracking-wider font-bold px-2.5 pb-2" style={{ color: 'var(--sem-muted)' }}>Workflows</div>
-        {SECTIONS.map((s) => {
-          const on = s.id === section;
-          return (
-            <button key={s.id} onClick={() => onNavigate(s.id)} data-section={s.id} aria-current={on ? 'page' : undefined}
-              className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-[12.5px] font-semibold text-left transition-colors"
-              style={on
-                ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)', boxShadow: 'inset 2px 0 var(--sem-accent)' }
-                : { color: 'var(--sem-muted)', background: 'transparent' }}>
-              <span className="w-3.5 text-center tnum" style={{ color: on ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>{s.glyph}</span>
-              <span className="flex-1">{s.label}</span>
-              {s.id === 'runs' && liveCount > 0 && (
-                <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>{liveCount} live</span>
-              )}
-            </button>
-          );
-        })}
-        <div className="mt-auto rounded-lg border p-2.5" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
-          <div className="text-[9px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Project policy</div>
-          <div className="text-[11.5px] font-semibold mt-0.5" style={{ color: enforced ? 'var(--sem-fg)' : 'var(--sem-warn, #d7a54a)' }}>{enforced ? 'Required workflows are on' : 'Required workflows are off'}</div>
-          <div className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{profileTitle} profile</div>
-          <button onClick={() => onNavigate('governance')} className="text-[11px] font-semibold mt-1" style={{ color: 'var(--sem-accent)' }}>Review controls</button>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-// ---- ambient banners -----------------------------------------------------------------------------
-function LiveBanner({ run, liveCount, startedByYou, onContinue }: { run: WorkflowRunView; liveCount: number; startedByYou: boolean; onContinue: () => void }) {
-  const more = liveCount > 1;
-  return (
-    <div className="flex items-center gap-3 rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, var(--sem-border))' }}>
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: 'var(--sem-accent)', boxShadow: '0 0 0 4px var(--sem-accent-soft)' }} />
-      <span className="text-[12px] font-semibold">{run.title || run.workflow} is running</span>
-      <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>step {Math.min(run.stepIndex + 1, run.totalSteps)} of {totalStepsText(run)}, started by {startedByYou ? 'you' : 'your assistant'}{more ? ` · ${liveCount} runs live` : ''}</span>
-      <button onClick={onContinue} className="ml-auto text-[11px] px-2.5 py-1 rounded-md font-semibold shrink-0" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{more ? 'Continue runs' : 'Continue run'}</button>
-    </div>
-  );
-}
-function EnforcementOffBanner({ onFix }: { onFix: () => void }) {
-  return (
-    <div className="flex items-center gap-2 rounded-md px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 45%, transparent)', color: 'var(--sem-fg)' }}>
-      <span aria-hidden>!</span>
-      <span className="flex-1"><b>Required workflows are off.</b> Edits are not checked against required workflows until you turn them back on. Runs already underway keep the setting they started with. Good for quick tasks; turn it back on for accountable runs.</span>
-      <button onClick={onFix} className="text-[11px] px-2 py-0.5 rounded-md font-semibold shrink-0" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Review in Governance</button>
-    </div>
-  );
-}
-
-// ===================================================================================================
-// HOME — the calm landing: the current/recent run, the two ratified quick-start jobs, and three quiet cards.
-// ===================================================================================================
-const HOME_JOBS: { workflow: string; title: string; when: string; outcome: string; careful?: string }[] = [
-  { workflow: 'new-measure', title: 'Add a measure', when: 'A clear calculation with one number you can check it against.', outcome: 'A new measure with its format and description, checked against one number you trust.', careful: 'verified-measure' },
-  { workflow: 'optimize-dax', title: 'Fix a slow measure', when: 'A measure that is right but slow, or hard to read.', outcome: 'Selected answers and speed compared before and after; the faster or clearer version kept.' },
-  { workflow: 'import-table', title: 'Import a table', when: 'A new source table for the model.', outcome: 'The table imported, typed and tidied, with its load checked against one number from the source.' },
-  { workflow: 'add-relationship', title: 'Connect tables', when: 'Two tables that need a relationship.', outcome: 'The relationship created with the right direction, and its join checked against one control total.' },
-  { workflow: 'model-hygiene-pass', title: 'Tidy a model', when: 'A quality and AI-readiness pass before a review or release.', outcome: 'Selected quality issues fixed, then the scan checked again.' },
-  { workflow: 'deploy-to-production', title: 'Publish changes', when: 'Reviewed changes ready for a chosen stage.', outcome: 'A reviewed publish to the selected stage, with the result recorded.' },
-];
-function HomeSection({ library, activeRun, recentRun, profileTitle, enforced, onStartHero, onExplain, onBrowse, onGuided, onGovernance, onOpenRun }: {
-  library: WorkflowInfo[] | null; activeRun: WorkflowRunView | null; recentRun: WorkflowRunView | null;
-  profileTitle: string; enforced: boolean;
-  onStartHero: (n: string) => void; onExplain: (n: string) => void; onBrowse: (f?: string) => void; onGuided: () => void; onGovernance: () => void; onOpenRun: () => void;
-}) {
-  const [q, setQ] = useState('');
-  const total = library?.length ?? 0;
-  const available = (library ?? []).filter((w) => !w.error && w.enabled !== false).length;
-  const heroExists = (n: string) => (library ?? []).some((w) => w.name === n);
-  const needle = q.trim().toLowerCase();
-  const hits = needle ? (library ?? []).filter((w) => matchesFilter(w, needle)) : [];
-  return (
-    <div className="flex flex-col gap-4 min-w-0">
-      {/* current or most-recent activity — only when there is something to say (calm by default) */}
-      {!activeRun && recentRun && (
-        <button onClick={onOpenRun} className="flex items-center gap-3 rounded-lg px-3 py-2 text-left" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: recentRun.status === 'completed' ? 'var(--sem-good)' : 'var(--sem-muted)' }} />
-          <span className="text-[12px] font-semibold">{recentRun.title || recentRun.workflow}</span>
-          <span className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>Last run {recentRun.status === 'completed' ? 'completed' : uiLabel(recentRun.status).toLowerCase()} · {recentRun.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(recentRun)} passed</span>
-          <span className="ml-auto text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>View run →</span>
-        </button>
-      )}
-
-      <header className="sem-wf-pagehead">
-        <div>
-          <div className="sem-wf-kicker">Workflows</div>
-          <h2>Repeatable ways to do a job well</h2>
-        </div>
-      </header>
-
-      <section aria-labelledby="sem-wf-start-jobs">
-        <h3 id="sem-wf-start-jobs" className="text-[15px] font-semibold mb-2.5">Start a job</h3>
-        <div className="sem-wf-job-grid">
-          {HOME_JOBS.map((h) => (
-            <HeroCard key={h.workflow} title={h.title} blurb={(library ?? []).find((w) => w.name === h.workflow)?.whenToUse || h.when} outcome={h.outcome}
-              disabled={library != null && !heroExists(h.workflow)}
-              onStart={() => onStartHero(h.workflow)} onExplain={() => onExplain(h.workflow)}
-              careful={h.careful ? () => onExplain(h.careful!) : undefined} />
-          ))}
-        </div>
-      </section>
-
-      <div className="flex items-center gap-3">
-        <button onClick={() => onBrowse()} className="sem-btn shrink-0">All workflows ({total})</button>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search workflows" data-wf-home-search
-          onKeyDown={(e) => { if (e.key === 'Enter') onBrowse(q.trim()); }}
-          className="flex-1 text-[12px] px-3 py-1.5 rounded-lg outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-      </div>
-
-      {needle ? (
-        hits.length === 0 ? (
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No workflows match “{q.trim()}”.</div>
-        ) : (
-          <div className="flex flex-col gap-1.5">
-            {hits.map((w) => (
-              <button key={w.name} onClick={() => onExplain(w.name)} className="text-left rounded-lg px-3 py-2" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-                <div className="text-[13px] font-semibold">{w.title || w.name}</div>
-                {(w.whenToUse || w.description) && <div className="text-[11.5px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>{w.whenToUse || w.description}</div>}
-              </button>
-            ))}
-          </div>
-        )
-      ) : (
-        <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-          <QuietCard kicker="Ready-made setups" title="Choose a project profile" body="Pick a prepared set of workflows, or keep using your own selection." onClick={onGuided} />
-          <QuietCard kicker="Library" title={`${total} workflows, ${available} available`} body="Browse every workflow, inspect its steps, or turn it on or off." onClick={() => onBrowse()} />
-          <QuietCard kicker="Policy" title={profileTitle} body={enforced ? 'Required workflows are on.' : 'Required workflows are off.'} onClick={onGovernance} />
-        </div>
-      )}
-    </div>
-  );
-}
-function HeroCard({ title, blurb, outcome, disabled, onStart, onExplain, careful }: {
-  title: string; blurb: string; outcome: string; disabled: boolean; onStart: () => void; onExplain: () => void; careful?: () => void;
-}) {
-  return (
-    <div className="rounded-xl border p-4" style={{ background: 'var(--sem-surface-2)', borderColor: disabled ? 'var(--sem-border)' : 'color-mix(in srgb, var(--sem-accent) 35%, var(--sem-border))', opacity: disabled ? 0.6 : 1 }}>
-      <h3 className="text-[13.5px] font-semibold">{title}</h3>
-      <p className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>{blurb}</p>
-      <p className="text-[11.5px] mt-2 mb-2.5"><b>What you end up with:</b> {outcome}</p>
-      <div className="flex items-center gap-2">
-        <button disabled={disabled} onClick={onStart} className="sem-btn sem-btn-primary">Start</button>
-        <button disabled={disabled} onClick={onExplain} className="text-[12px] px-2.5 py-1.5 rounded-lg font-medium disabled:opacity-50" style={{ color: 'var(--sem-muted)' }}>Open</button>
-        {careful && <button disabled={disabled} onClick={careful} className="text-[11px] ml-auto disabled:opacity-50" style={{ color: 'var(--sem-accent)' }}>Careful route</button>}
-      </div>
-    </div>
-  );
-}
-function QuietCard({ kicker, title, body, onClick }: { kicker: string; title: string; body: string; onClick: () => void }) {
-  return (
-    <button onClick={onClick} className="text-left rounded-xl border p-3.5 transition-colors" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>
-      <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>{kicker}</div>
-      <div className="text-[13px] font-semibold mt-1">{title}</div>
-      <div className="text-[11.5px] mt-0.5" style={{ color: 'var(--sem-muted)' }}>{body}</div>
-    </button>
-  );
-}
-
-// ===================================================================================================
-// LIBRARY — a browsing task: calm scannable rows with plain-language action chips + the §9a availability
-// toggle. Everything else about a playbook is on its page. Journey-ordered groups; broken files stay listed.
-// ===================================================================================================
-// Journey-ordered groups, keyed by the actual stock seed ids (Semanticus.Engine/workflows/*.md). Anything outside
-// the known set lands in Other. Keep this list honest: a phantom key reads as coverage that does not exist.
-const GROUP_OF: Record<string, string> = {
-  'new-measure': 'Change a measure', 'verified-measure': 'Change a measure', 'time-intelligence-variants': 'Change a measure', 'refactor-to-calculation-group': 'Change a measure',
-  'optimize-dax': 'Fix a slow measure',
-  'add-relationship': 'Change a relationship',
-  'import-table': 'Change the source or schema', 'calendar-setup': 'Change the source or schema', 'incremental-refresh-setup': 'Change the source or schema',
-  'governed-rename': 'Review a change', 'check-blast-radius': 'Review a change',
-  'secure-with-rls': 'Access rules',
-  'deploy-to-production': 'Publish',
-  'model-hygiene-pass': 'Tidy the model', 'make-ai-ready': 'Tidy the model',
-  'reconcile-saved-tests-sql': 'Reconcile with SQL',
-};
-const GROUP_ORDER = ['Change a measure', 'Fix a slow measure', 'Change a relationship', 'Change the source or schema', 'Reconcile with SQL', 'Review a change', 'Access rules', 'Tidy the model', 'Publish', 'Other'];
-const groupOf = (w: WorkflowInfo) => GROUP_OF[w.name] ?? 'Other';
-const matchesFilter = (w: WorkflowInfo, f: string) =>
-  !f || [w.name, w.title, w.description, w.whenToUse, ...(w.triggers ?? [])].join(' ').toLowerCase().includes(f);
-
-function LibrarySection({ items, err, availErr, policy, initialFilter, onOpen, onNew, onToggleEnabled }: {
-  items: WorkflowInfo[] | null; err: string | null; availErr: string | null; policy: WorkflowPolicy | null;
-  initialFilter: string; onOpen: (n: string) => void; onNew: () => void; onToggleEnabled: (n: string, e: boolean) => void;
-}) {
-  const [filter, setFilter] = useState(initialFilter);
-  useEffect(() => { setFilter(initialFilter); }, [initialFilter]);
-  const f = filter.trim().toLowerCase();
-  const requiredCount = (name: string) => policy?.workflows.find((w) => w.name === name)?.requiredForOps.length ?? 0;
-
-  const groups = useMemo(() => {
-    const kept = (items ?? []).filter((w) => matchesFilter(w, f));
-    return GROUP_ORDER.map((name) => ({ name, items: kept.filter((w) => groupOf(w) === name) })).filter((g) => g.items.length > 0);
-  }, [items, f]);
-
-  return (
-    <div className="flex flex-col gap-3 min-w-0">
-      <div className="flex items-center gap-2.5">
-        <input value={filter} onChange={(e) => setFilter(e.target.value)} spellCheck={false} data-wf-filter
-          onKeyDown={(e) => { if (e.key === 'Escape') setFilter(''); }}
-          placeholder="Search by title or when to use it"
-          className="flex-1 text-[12px] px-3 py-1.5 rounded-lg outline-none" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-        <button onClick={onNew} className="sem-btn sem-btn-primary shrink-0">+ New workflow</button>
-      </div>
-      {err && <Banner color="var(--sem-bad)">{err}</Banner>}
-      {availErr && <Banner color="var(--sem-warn, #d7a54a)">{availErr}</Banner>}
-      {items == null ? (
-        <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading library…</div>
-      ) : groups.length === 0 ? (
-        <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>No workflows match “{filter.trim()}”.</div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          {groups.map((g) => (
-            <div key={g.name} className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--sem-border)' }}>
-              <div className="text-[10.5px] uppercase tracking-wide font-bold px-3.5 py-2 border-b" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{g.name}</div>
-              {g.items.map((w) => <LibraryRow key={w.name} w={w} requiredCount={requiredCount(w.name)} onOpen={() => onOpen(w.name)} onToggleEnabled={onToggleEnabled} />)}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// A calm row: the title (opens the page), the state pills, the plain-language action chips, and the §9a switch.
-// Off / hidden-now / broken are DISTINCT chips (never conflated). A div, not a button — it hosts the nested switch.
-function LibraryRow({ w, requiredCount, onOpen, onToggleEnabled }: {
-  w: WorkflowInfo; requiredCount: number; onOpen: () => void; onToggleEnabled: (n: string, e: boolean) => void;
-}) {
-  const broken = !!w.error;
-  const off = w.enabled === false;
-  const offMenu = !broken && !off && w.active === false;
-  const dim = off ? { opacity: 0.6 } : undefined;
-  return (
-    <div className="flex items-center gap-3 px-3.5 py-2.5 border-b last:border-b-0 flex-wrap" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }} data-workflow={w.name}>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          {broken
-            ? <span className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>{w.title || w.name}</span>
-            : <button onClick={onOpen} className="text-[13px] font-semibold text-left" style={{ color: 'var(--sem-accent)', ...dim }}>{w.title || w.name}</button>}
-          {broken
-            ? <Pill tint="var(--sem-bad)">File error</Pill>
-            : <>
-                <SourceBadge source={w.source} name={w.name} />
-                <Pill>{w.stepCount} step{w.stepCount === 1 ? '' : 's'}</Pill>
-                {requiredCount > 0 && <Pill>Required for {requiredCount} action{requiredCount === 1 ? '' : 's'}</Pill>}
-                {off && <Pill tint="var(--sem-bad)">Off</Pill>}
-                {offMenu && <Pill tint="var(--sem-warn, #d7a54a)">Hidden now</Pill>}
-              </>}
-        </div>
-        <div className="text-[11.5px] mt-0.5 flex items-center gap-1.5 flex-wrap" style={{ color: 'var(--sem-muted)', ...dim }}>
-          {broken ? <span>Step could not be read. Open it to repair the file or rebuild it in Author.</span> : (
-            <>
-              {(w.whenToUse || w.description) && <span className="max-w-[90ch]">{w.whenToUse || w.description}</span>}
-            </>
-          )}
-        </div>
-        {offMenu && (
-          <div className="text-[10.5px] mt-1" style={{ color: 'var(--sem-muted)', fontStyle: 'italic' }}>Off today’s menu: {w.activeReason || 'hidden by a project rule'}. You can still open and run it.</div>
-        )}
-      </div>
-      <div className="shrink-0">
-        {broken
-          ? <button onClick={onOpen} className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>View error</button>
-          : (
-            <span className="flex items-center gap-1.5">
-              <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Available in this project</span>
-              <AvailabilitySwitch on={!off} label={`Available in this project: ${w.title || w.name}`}
-                title={off ? 'Off: this workflow can’t be started until you turn it back on. Click to turn it on.' : 'On: this workflow can be started. Click to turn it off for this project (it stays listed so you can turn it back on).'}
-                onToggle={() => onToggleEnabled(w.name, off)} />
-            </span>
-          )}
-      </div>
-    </div>
-  );
-}
-
-// ===================================================================================================
-// PLAYBOOK PAGE — a workflow reads as a document: purpose, sequence, checks, Start. Visible verbs (no ellipsis
-// menu): availability, Edit workflow, Start run, and Edit rules are all in the open. Steps expand to verbatim
-// instructions in place; governance is summarized here with a deep link, edited only in Governance.
-// ===================================================================================================
-function PlaybookPage({ name, def, info, run, tier, busy, startErr, policy, onBack, onStart, onEdit, onToggleEnabled, onEditRules, onEvidence }: {
-  name: string; def: WorkflowDef | null; info: WorkflowInfo | null; run: WorkflowRunView | null;
-  tier: string; busy: boolean; startErr: string | null; policy: WorkflowPolicy | null;
-  onBack: () => void; onStart: () => void; onEdit: () => void; onToggleEnabled: (n: string, e: boolean) => void;
-  onEditRules: () => void; onEvidence: (r: WorkflowRunView) => void;
-}) {
-  const broken = !!info?.error;
-  const title = broken ? (info?.name || name) : (def?.title || info?.title || name);
-  const gated = !!info?.gated;
-  const lockedFree = gated && tier !== 'pro';
-  const off = !broken && info?.enabled === false;
-  const offMenu = !broken && !off && info?.active === false;
-  const offButRequired = off && info?.active === true;
-  const startBlocked = off && !offButRequired;
-  const entry = policy?.workflows.find((w) => w.name === name) ?? null;
-  const requiredOps = entry?.requiredForOps ?? [];
-  const bindMode = (op: string) => policy?.bindings.find((b) => b.op === op && b.require.includes(name))?.mode ?? null;
-  const terminal = isTerminal(run);
-
-  return (
-    <div className="flex flex-col gap-3 min-w-0">
-      <div className="text-[11.5px]" style={{ color: 'var(--sem-muted)' }}>
-        <button onClick={onBack} className="font-semibold" style={{ color: 'var(--sem-accent)' }}>Library</button> / {title}
-      </div>
-
-      {broken ? (
-        <>
-          <ErrorPanel name={info?.name || name} error={info?.error || 'This workflow file could not be read.'} />
-          <div><Button onClick={onEdit}>Edit workflow</Button></div>
-        </>
-      ) : (
-        <>
-          <div className="flex items-start gap-4 flex-wrap">
-            <div className="flex-1 min-w-[260px]">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-[17px] font-semibold" style={off ? { opacity: 0.7 } : undefined}>{title}</h2>
-                {info && <SourceBadge source={info.source} name={info.name} />}
-                {gated && <Pill tint="var(--sem-accent)" title="This workflow asks you questions and runs checks as it goes.">Checks as you go</Pill>}
-                {lockedFree && <Pill tint="var(--sem-accent)" title={WORKFLOWS_ARE_PRO}>Pro</Pill>}
-                {off && <Pill tint="var(--sem-warn, #d7a54a)">Off</Pill>}
-              </div>
-              <div className="text-[11.5px] mt-1 tnum" style={{ color: 'var(--sem-muted)' }}>
-                {info ? `Version ${info.version}` : ''}{def ? ` · ${def.steps.length} step${def.steps.length === 1 ? '' : 's'}` : ''}
-                {def?.strictness ? ` · checks ${strictnessWords(def.strictness)}` : ''}
-                {terminal ? ' · last run completed' : ''}
-              </div>
-              {(def?.description || info?.description) && (
-                <p className="text-[12.5px] mt-2 max-w-[66ch]" style={{ color: 'var(--sem-muted)' }}>{def?.description || info?.description}</p>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {info && (
-                <span className="flex items-center gap-1.5">
-                  <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>{off ? 'Off' : 'Available'}</span>
-                  <AvailabilitySwitch on={!off} label={`Availability: ${name}`}
-                    title={off ? 'Off: turn it on to start a run.' : 'On: click to turn it off for this project.'}
-                    onToggle={() => onToggleEnabled(name, off)} />
-                </span>
-              )}
-              <Button onClick={onEdit}>Edit workflow</Button>
-              <Button primary disabled={busy || lockedFree || startBlocked} onClick={onStart}
-                title={startBlocked ? 'Turned off for this project. Turn it back on to start a run.'
-                  : lockedFree ? 'Starting an enforced workflow is a Pro capability. Free: read the steps below and follow them manually.'
-                  : 'Start a run. Each gate is verified as you go.'}>
-                {busy ? 'Starting…' : run && run.workflow === name && terminal ? 'Start again' : 'Start run'}
-              </Button>
-            </div>
-          </div>
-
-          {startBlocked && <Banner color="var(--sem-warn, #d7a54a)">This workflow is turned off for this project, so it can’t be started. Use the switch above (or on its row in the Library) to turn it back on.</Banner>}
-          {offButRequired && <Banner color="var(--sem-warn, #d7a54a)">Turned off, but a project mandate still requires it ({info?.activeReason || 'required by a policy'}), so it can still be started.</Banner>}
-          {offMenu && <Banner color="var(--sem-muted)">Off today’s menu: {info?.activeReason || 'hidden by a project rule'}. This curates the menu; you can still start it, and the run records a note.</Banner>}
-          {startErr && <Banner color="var(--sem-accent)">{startErr}</Banner>}
-
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0, 1.5fr) minmax(0, 1fr)' }}>
-            <Panel>
-              <SectionTitle>What this workflow does</SectionTitle>
-              {def?.error ? (
-                <div className="text-[12px] mt-2" style={{ color: 'var(--sem-bad)' }}>{def.error}</div>
-              ) : !def ? (
-                <div className="text-[12px] mt-2" style={{ color: 'var(--sem-muted)' }}>Loading steps…</div>
-              ) : (
-                <div className="relative mt-2">
-                  <RailLine />
-                  <div className="flex flex-col">{def.steps.map((s) => <OverviewStep key={s.id} step={s} />)}</div>
-                </div>
-              )}
-            </Panel>
-            <div className="flex flex-col gap-3">
-              <Panel>
-                <div className="flex items-center">
-                  <SectionTitle>When it applies</SectionTitle>
-                  <button onClick={onEditRules} className="ml-auto text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>Edit rules</button>
-                </div>
-                <div className="text-[11.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>
-                  {info?.active === false ? <>Hidden from the menu right now: {info.activeReason || 'a project rule'}.</> : <>Shown on the menu now.</>}
-                </div>
-                {requiredOps.length > 0 ? (
-                  <div className="text-[11.5px] mt-1.5 flex items-center gap-1.5 flex-wrap" style={{ color: 'var(--sem-muted)' }}>
-                    Required for:
-                    {requiredOps.map((op) => (
-                      <span key={op} className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>{opLabel(op)}{bindMode(op) ? ` · ${uiLabel(bindMode(op)!)}` : ''}</span>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>Required for: nothing. No action makes you use this workflow.</div>
-                )}
-              </Panel>
-              <Panel>
-                <SectionTitle>Last completed run</SectionTitle>
-                {terminal && run ? (
-                  <>
-                    <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>
-                      {run.status === 'completed' ? 'Completed' : uiLabel(run.status)} · {run.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(run)} passed · {run.steps.reduce((n, s) => n + s.verifyResults.filter((v) => v.status === 'passed').length, 0)} verified checks recorded.
-                    </div>
-                    <button onClick={() => onEvidence(run)} className="text-[11px] font-semibold mt-1.5" style={{ color: 'var(--sem-accent)' }}>Evidence report</button>
-                  </>
-                ) : (
-                  <div className="text-[11.5px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>No completed run recorded this session.</div>
-                )}
-              </Panel>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-}
-
-// ===================================================================================================
-// RUNS — the focused run treatment: header + one expanded current step, completed steps compressed to records
-// that reopen on click, decline-with-reason, and the honest enforcement-off state (read from the RUN's OWN frozen
-// snapshot, never the current model-wide flag — a mid-run toggle can't tear a run). Evidence exports only after
-// the run is terminal. Up to 8 runs can be live at once, so a switcher focuses one when there is more than one.
-// ===================================================================================================
-function RunsSection({ run, liveRuns, focusedRunId, onFocusRun, startedByYou, onSubmit, onSkip, onAbort, onEvidence, onBrowse }: {
-  run: WorkflowRunView | null; liveRuns: WorkflowRunView[]; focusedRunId: string | null; onFocusRun: (id: string) => void;
-  startedByYou: boolean;
-  onSubmit: (runId: string, stepId: string, answersJson: string, callGate?: string) => Promise<void>;
-  onSkip: (runId: string, stepId: string, reason: string) => Promise<void>;
-  onAbort: (runId: string, reason: string) => Promise<void>; onEvidence: () => void; onBrowse: () => void;
-}) {
-  if (!run) {
-    return (
-      <div className="h-full flex items-center justify-center p-8">
-        <div className="text-center max-w-sm">
-          <div className="text-[15px] font-semibold mb-1">No active run</div>
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a workflow from the Library and press Start run. A run appears here whether you or your assistant starts it.</div>
-          <button onClick={onBrowse} className="text-[12px] font-semibold mt-3" style={{ color: 'var(--sem-accent)' }}>Browse the Library →</button>
-        </div>
-      </div>
-    );
-  }
-  const live = run.status === 'active';
-  const terminal = isTerminal(run);
-  // The switcher lists the LIVE runs AND the focused run when it is a terminal receipt the human chose to keep
-  // reading — otherwise the moment a selected run finishes, a still-live run silently becomes unreachable from Runs
-  // (HIGH 2). We respect the selection (the completed run stays shown) and keep every live run one click away.
-  const switchable = liveRuns.some((r) => r.runId === run.runId) ? liveRuns : [...liveRuns, run];
-  return (
-    <div className="flex flex-col gap-3 min-w-0">
-      {/* multi-run switcher — when there is more than one run to focus (dual-drive: you + your assistant, plus a
-          completed run you're still viewing while others run) */}
-      {switchable.length > 1 && (
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wide font-semibold mr-1" style={{ color: 'var(--sem-muted)' }}>{liveRuns.length} run{liveRuns.length === 1 ? '' : 's'} live</span>
-          {switchable.map((r) => {
-            const on = r.runId === (focusedRunId ?? run.runId);
-            const rActive = r.status === 'active';
-            return (
-              <button key={r.runId} onClick={() => onFocusRun(r.runId)}
-                className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                style={on
-                  ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }
-                  : rActive
-                    ? { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }
-                    : { background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px dashed var(--sem-border)' }}>
-                {r.title || r.workflow} · {rActive ? `step ${Math.min(r.stepIndex + 1, r.totalSteps)} of ${totalStepsText(r)}` : uiLabel(r.status)}
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {/* the focused run's own view — keyed by runId so ALL run-local form state (a step's typed answers, an open
-          decline/skip/abort reason) resets when focus moves to another run; two runs that share step ids can never
-          leak an answer or a reason across a switch (BLOCKER 1). No run-scoped state lives above this boundary —
-          focusedRunId belongs to the parent. */}
-      <div key={run.runId} className="flex flex-col gap-3 min-w-0">
-      <div className="flex items-center gap-2 flex-wrap">
-        <h2 className="text-[16px] font-semibold">{run.title || run.workflow}</h2>
-        {live
-          ? <Pill tint="var(--sem-accent)">Live</Pill>
-          : <Pill tint={run.status === 'completed' ? 'var(--sem-good)' : 'var(--sem-muted)'}>{uiLabel(run.status)}</Pill>}
-        <Pill>Started by {startedByYou ? 'you' : 'your assistant'}</Pill>
-        <div className="ml-auto flex items-center gap-2">
-          <button onClick={onEvidence} disabled={!terminal}
-            title={terminal ? 'Export the sealed evidence report' : 'Evidence exports after the run completes or is aborted, so an active run is never presented as final.'}
-            className="text-[11.5px] px-2.5 py-1 rounded-md font-medium disabled:opacity-45"
-            style={{ background: 'var(--sem-surface-2)', color: terminal ? 'var(--sem-accent)' : 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-            {terminal ? 'Evidence report' : 'Evidence (after completion)'}
-          </button>
-          {live && <ReasonButton label="Abort" title="Abort this run. The reason is recorded on the audit trail." onConfirm={(reason) => onAbort(run.runId, reason)} danger />}
-        </div>
-      </div>
-      {/* an aborted run keeps its recorded reason visible (the audit is the point) */}
-      {run.status === 'aborted' && run.abortReason && (
-        <div className="rounded-md px-3 py-2 text-[11.5px]" style={{ background: 'color-mix(in srgb, var(--sem-bad) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-bad) 34%, transparent)', color: 'var(--sem-fg)' }}>
-          Aborted: {run.abortReason}
-        </div>
-      )}
-      {/* A run's gate-skip is shown PER STEP (the current step's card + each completed step's "Ran at skipped"
-          chip), never as a run-wide claim: the wire exposes only per-step effectiveStrictness, so an early "off"
-          step beside a later HARD step must not read as "the whole run skips gates" (HIGH 6). */}
-      <RunRail run={run} onSubmit={onSubmit} onSkip={onSkip} onAbort={onAbort} />
-      </div>
-    </div>
-  );
-}
-
-// ===================================================================================================
-// GOVERNANCE — one home for every policy control: enforcement (with a consequence preview), the profiles
-// (the only home for profiles), and the whole-project table with THREE separate columns for the three distinct
-// concepts (On the menu / Required for / Hidden when). Per-workflow editing expands the three-axis rules inline.
-// ===================================================================================================
-function GovernanceSection({ library, policy, tier, titleOf, enforcement, profiles, focusTarget, profileErr, bindErr, actErr, onSetEnforcement, onApplyProfile, onReloadProfiles, onToggleEnabled, onSetBinding, onSetActivation }: {
-  library: WorkflowInfo[] | null; policy: WorkflowPolicy | null; tier: string; titleOf: (n: string) => string;
-  enforcement: WorkflowEnforcement | null; profiles: WorkflowProfileInfo[] | null;
-  focusTarget: { name: string; nonce: number } | null;
-  profileErr: string | null; bindErr: string | null; actErr: string | null;
-  onSetEnforcement: (turnOff: boolean) => void; onApplyProfile: (name: string) => Promise<string>;
-  onReloadProfiles: () => void;
-  onToggleEnabled: (n: string, e: boolean) => void; onSetBinding: (op: string, require: string[], mode: string) => void;
-  onSetActivation: (n: string, when: string, setStr: string) => Promise<void>;
-}) {
-  const enforced = enforcement?.enforced !== false;
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [profileChoice, setProfileChoice] = useState('');
-  const chosenProfile = profiles?.find((p) => p.name === profileChoice) ?? profiles?.find((p) => p.selected) ?? profiles?.[0];
-  const tableRef = useRef<HTMLDivElement | null>(null);
-  const lints = policy?.lints ?? [];
-  // rows: only real, non-broken workflows that carry SOME governance signal or are simply governable — keep the
-  // table scannable by showing workflows that have any state to govern (all non-broken workflows qualify).
-  const rows = (library ?? []).filter((w) => !w.error);
-
-  // A playbook's "Edit rules" deep-links HERE to that workflow's row — expand it and scroll it into view (never
-  // just dump the analyst at the top of Governance to hunt for the row).
-  useEffect(() => {
-    if (!focusTarget?.name) return;
-    setExpanded(focusTarget.name);
-    const el = tableRef.current?.querySelector(`[data-gov-row="${CSS.escape(focusTarget.name)}"]`);
-    el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [focusTarget?.nonce]);   // eslint-disable-line react-hooks/exhaustive-deps
-
-  return (
-    <div ref={tableRef} className="flex flex-col gap-4 min-w-0">
-      <EnforcementCard enforced={enforced} onSetEnforcement={onSetEnforcement} />
-
-      <div>
-        <h3 className="text-[13.5px] font-semibold mb-1.5">Project profile <span className="text-[11.5px] font-normal" style={{ color: 'var(--sem-muted)' }}>(one choice sets availability, requirements and check strength; saved with the project)</span></h3>
-        {profileErr && <div className="mb-2"><Banner color="var(--sem-warn, #d7a54a)">{profileErr}</Banner></div>}
-        {profiles == null ? <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading profiles…</div>
-          : profiles.length === 0 ? <div className="text-[12px]">No project profiles loaded. <button className="underline" onClick={onReloadProfiles}>Retry</button></div>
-          : <div className="flex flex-col gap-3">
-            <label className="text-[12px] font-semibold">Choose a project profile
-              <select aria-label="Project profile" value={chosenProfile?.name ?? ''} onChange={(e) => setProfileChoice(e.target.value)}
-                className="block mt-1 px-2 py-1.5 rounded-md w-full max-w-md" style={{ color: 'var(--sem-fg)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-                {profiles.map((p) => <option key={p.name} value={p.name}>{p.title}{p.selected ? ' (current)' : ''}{p.pro ? ' · Pro' : ''}</option>)}
-              </select>
-            </label>
-            {chosenProfile && <ProfileCard key={chosenProfile.name} profile={chosenProfile} tier={tier} onApply={() => onApplyProfile(chosenProfile.name)} />}
-          </div>}
-      </div>
-
-      <div>
-        <h3 className="text-[13.5px] font-semibold mb-1.5">Workflows</h3>
-        <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--sem-border)' }}>
-          <div className="grid items-center gap-2 px-3.5 py-2 text-[10px] uppercase tracking-wide font-bold border-b" style={{ gridTemplateColumns: 'minmax(0,2fr) 90px minmax(0,1.6fr) minmax(0,1.4fr) 60px', color: 'var(--sem-muted)', background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-            <span>Workflow</span><span>Available in this project</span><span>Required for</span><span>Hidden when</span><span></span>
-          </div>
-          {rows.map((w) => {
-            const entry = policy?.workflows.find((p) => p.name === w.name) ?? null;
-            const reqOps = entry?.requiredForOps ?? [];
-            // Each required op carries its MODE (Hard blocks, Warn flags) and whether it is LOCKED by committed team
-            // policy — the "Required for" column must not flatten those to a bare op name (they change what happens).
-            const bindFor = (op: string) => policy?.bindings.find((b) => b.op === op && b.require.includes(w.name)) ?? null;
-            const off = w.enabled === false;
-            const isOpen = expanded === w.name;
-            return (
-              <div key={w.name} data-gov-row={w.name} className="border-b last:border-b-0" style={{ borderColor: 'var(--sem-border)' }}>
-                <div className="grid items-center gap-2 px-3.5 py-2.5 text-[12px]" style={{ gridTemplateColumns: 'minmax(0,2fr) 90px minmax(0,1.6fr) minmax(0,1.4fr) 60px', background: 'var(--sem-surface-2)' }}>
-                  <span className="font-medium truncate" style={off ? { opacity: 0.6 } : undefined}>{w.title || w.name}</span>
-                  <span>
-                    <AvailabilitySwitch on={!off} label={`Available in this project: ${w.title || w.name}`}
-                      title={off ? 'Off: turn it on to allow runs.' : 'On: click to turn it off for this project.'}
-                      onToggle={() => onToggleEnabled(w.name, off)} />
-                  </span>
-                  <span className="text-[11px]">
-                    {reqOps.length === 0 ? <span style={{ color: 'var(--sem-muted)' }}>Nothing</span> : (
-                      <span className="flex flex-wrap gap-1">
-                        {reqOps.map((op) => {
-                          const m = bindFor(op);
-                          const mode = m?.mode ?? null;   // null = a conditional (rule-driven) requirement
-                          const locked = m ? !m.userDisablable : false;
-                          const tint = mode === 'warn' ? 'var(--sem-warn, #d7a54a)' : 'var(--sem-accent)';
-                          return (
-                            <span key={op} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-                              {opLabel(op)}
-                              <span style={{ color: tint }}>· {mode ? uiLabel(mode) : 'Conditional'}</span>
-                              {locked && <span title="Locked by committed team policy" style={{ color: 'var(--sem-muted)' }}>· locked</span>}
-                            </span>
-                          );
-                        })}
-                      </span>
-                    )}
-                  </span>
-                  <span className="text-[11px]" style={{ color: w.active === false ? 'var(--sem-warn, #d7a54a)' : 'var(--sem-muted)' }}>
-                    {w.active === false ? (w.activeReason || 'hidden by a rule') : 'Never'}
-                  </span>
-                  <button onClick={() => setExpanded(isOpen ? null : w.name)} className="text-[11px] font-semibold text-right" style={{ color: 'var(--sem-accent)' }}>{isOpen ? 'Close' : 'Rules'}</button>
-                </div>
-                {isOpen && (
-                  <div className="px-3.5 pb-3 pt-1" style={{ background: 'var(--sem-surface)' }}>
-                    <RequiredForControl name={w.name} policy={policy} tier={tier} onSetBinding={onSetBinding} err={bindErr} titleOf={titleOf} />
-                    <HideWhenControl info={w} policy={policy} tier={tier} onSetActivation={onSetActivation} err={actErr} />
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {lints.length > 0 && (
-        <div>
-          <h3 className="text-[13.5px] font-semibold mb-1.5">Policy notes</h3>
-          <div className="flex flex-col gap-1.5">
-            {lints.map((l, i) => (
-              <div key={i} className="text-[11.5px] rounded-md px-3 py-2" style={l.severity === 'warn'
-                ? { color: 'var(--sem-fg)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }
-                : { color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-                <span aria-hidden>! </span>{l.message}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The model-wide enforcement toggle. Turning it OFF shows a consequence preview first (never a silent flip).
-function EnforcementCard({ enforced, onSetEnforcement }: { enforced: boolean; onSetEnforcement: (turnOff: boolean) => void }) {
-  const [confirming, setConfirming] = useState(false);
-  return (
-    <Panel>
-      <div className="flex items-start gap-3">
-        <div className="flex-1">
-          <h3 className="text-[13.5px] font-semibold">Required workflows: {enforced ? 'On' : 'Off'}</h3>
-          <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>Off skips the checks for new runs, so those runs have no verified test results. Review the effect before applying the change.</div>
-        </div>
-        {enforced ? (
-          confirming ? (
-            <div className="flex items-center gap-2 shrink-0">
-              <button onClick={() => { onSetEnforcement(true); setConfirming(false); }} className="text-[11.5px] px-2.5 py-1 rounded-md font-semibold" style={{ background: 'var(--sem-warn, #d7a54a)', color: 'var(--sem-on-accent)' }}>Turn required workflows off</button>
-              <button onClick={() => setConfirming(false)} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Cancel</button>
-            </div>
-          ) : (
-            <Button onClick={() => setConfirming(true)}>Turn off</Button>
-          )
-        ) : (
-          <Button primary onClick={() => onSetEnforcement(false)}>Turn required workflows on</Button>
-        )}
-      </div>
-      {confirming && (
-        <div className="mt-3 rounded-md px-3 py-2 text-[11.5px]" style={{ background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 40%, transparent)', color: 'var(--sem-fg)' }}>
-          After this, required checks are skipped across the model and runs record no verified evidence. Per-workflow strictness is ignored until you turn required workflows back on. Existing runs and audit trails are unchanged.
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function ProfileCard({ profile, tier, onApply }: { profile: WorkflowProfileInfo; tier: string; onApply: () => Promise<string> }) {
-  const isPro = tier === 'pro';
-  const proBlocked = profile.pro && !isPro;
-  const [preview, setPreview] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const apply = async () => { setBusy(true); try { setNote(await onApply()); setPreview(false); } catch { /* error surfaces at the section */ } finally { setBusy(false); } };
-  return (
-    <div className="rounded-xl border p-3.5" style={{ background: 'var(--sem-surface-2)', borderColor: profile.selected ? 'color-mix(in srgb, var(--sem-accent) 45%, transparent)' : 'var(--sem-border)' }}>
-      <div className="flex items-center gap-2">
-        <b className="text-[13px]">{profile.title}</b>
-        {profile.selected && <Pill tint="var(--sem-good)">Current</Pill>}
-        {profile.pro && <Pill tint="var(--sem-accent)">Pro</Pill>}
-      </div>
-      <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>{profile.description}</div>
-      {preview && (
-        <ul className="mt-2 flex flex-col gap-1">
-          {profile.effects.map((e, i) => (
-            <li key={i} className="text-[11px] flex items-start gap-1.5" style={{ color: 'var(--sem-fg)' }}><span style={{ color: 'var(--sem-accent)' }}>●</span> {e}</li>
-          ))}
-          <li className="text-[10.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>To undo: pick Solo analyst, or change individual workflow rules in the table below.</li>
-        </ul>
-      )}
-      {note && <div className="text-[11px] mt-2 rounded-md px-2 py-1" style={{ color: 'var(--sem-good)', background: 'color-mix(in srgb, var(--sem-good) 12%, transparent)' }}>✓ {note}</div>}
-      {!profile.selected && (
-        <div className="flex items-center gap-2 mt-2">
-          {!preview ? (
-            <button onClick={() => setPreview(true)} className="text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }}>Preview changes</button>
-          ) : (
-            <>
-              <button disabled={busy || proBlocked} onClick={apply}
-                title={proBlocked ? 'Applying a profile that makes a workflow required is a Pro capability. Browsing and previewing are free.' : 'Apply this profile'}
-                className="text-[11px] px-2.5 py-1 rounded-md font-semibold disabled:opacity-45" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>
-                {busy ? 'Applying…' : proBlocked ? 'Apply · Pro' : 'Apply profile'}
-              </button>
-              <button onClick={() => setPreview(false)} className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Cancel</button>
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ===================================================================================================
-// AUTHOR — a real authoring destination: the outline + focused-editor designer (workflowdesign.tsx). Entry
-// points: the sidebar, "Edit workflow" on a playbook, and "+ New playbook" from the Library (creation mode).
-// ===================================================================================================
-function AuthorSection({ creating, info, def, sessionId, activeRun, onNew, onSaved, onDeleted }: {
-  creating: boolean; info: WorkflowInfo | null; def: WorkflowDef | null;
-  sessionId: string | null; activeRun: WorkflowRunView | null;
-  onNew: () => void; onSaved: (n: string) => void; onDeleted: () => void;
-}) {
-  if (!creating && !info) {
-    return (
-      <div className="h-full flex items-center justify-center p-8">
-        <div className="text-center max-w-sm">
-          <div className="text-[15px] font-semibold mb-1">Author a workflow</div>
-          <div className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Open a workflow from the Library and choose Edit workflow, or start a new one from scratch.</div>
-          <button onClick={onNew} className="sem-btn sem-btn-primary mt-3">+ New workflow</button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <DesignMode key={creating ? 'new' : (info?.name ?? 'edit')} info={creating ? null : info} def={creating ? null : def} creating={creating} layout="outline"
-      sessionId={sessionId} activeRun={activeRun} onSaved={onSaved} onDeleted={onDeleted} />
-  );
-}
-
-// ---- §9c "Required for" (op→workflow binding / mandatory routing) --------------------------------
-// The third axis (availability · REQUIRED · strictness): which authoring actions MUST route through THIS workflow.
-// Reads from get_workflow_policy (the bindings, filtered to this workflow) and writes with set_workflow_binding —
-// dual-drive with the AI-assistant door, on the same session. Setting hard/warn is Pro (the enforcement is what's
-// paid); reading is free, and CLEARING the last mandate on an action is free too (the engine's rule, mirrored here).
-// One sentence for the whole feature, the same one help.tsx carries. The notices here used to promise free
-// reading, free authoring and free rule-clearing, and every one of those is Pro from 2026-09-15: Workflows
-// is one whole feature, reads included, on both doors.
-const WORKFLOWS_ARE_PRO = 'Workflows is a Semanticus Pro feature. The app still shows any run already going and anything waiting for you.';
-const PRO_BIND_REASON = WORKFLOWS_ARE_PRO;
-const LOCKED_BIND_REASON = 'Locked by committed team policy. Change it in .semanticus/workflow-settings.json via review.';
-
-// A policy lint is either about a REQUIREMENT (binding) or about a `when:` RULE (activation). The two live in
-// separate controls, so split them by their plain-language phrasing to surface each lint under the right control.
-const isActivationLint = (m: string) => /activation rule|a rule shows|a rule hides|but a rule hides it/i.test(m);
-const PRO_ACT_REASON = WORKFLOWS_ARE_PRO;
-const ACTIVATION_EXAMPLES: { label: string; expr: string }[] = [
-  { label: 'On a production workspace', expr: "connection.workspace ~ '*prod*'" },
-  { label: 'Off the main branch', expr: "git.branch != 'main'" },
-  { label: 'Outside the month-end window', expr: 'date.monthEndOffset < -3' },
-  { label: 'Small model (under 50 tables)', expr: 'model.tableCount < 50' },
-  { label: 'No row-level security', expr: 'model.hasRls == false' },
-  { label: 'Readiness already B or better', expr: "model.readinessGrade >= 'B'" },
-];
-
-function RequiredForControl({ name, policy, tier, onSetBinding, err, titleOf }: {
-  name: string; policy: WorkflowPolicy | null; tier: string;
-  onSetBinding: (op: string, require: string[], mode: string) => void; err: string | null; titleOf: (name: string) => string;
-}) {
-  const isPro = tier === 'pro';
-  const bindings = policy?.bindings ?? [];
-  const requiredOps = (policy?.workflows.find((w) => w.name === name)?.requiredForOps) ?? [];
-  const flatForOp = (op: string) => bindings.find((b) => b.op === op && b.require.includes(name)) ?? null;
-  const lockedOps = new Set(bindings.filter((b) => !b.userDisablable).map((b) => b.op));
-  const addable = BINDABLE_OPS.filter((b) => !requiredOps.includes(b.op) && !lockedOps.has(b.op));
-  const lints = (policy?.lints ?? []).filter((l) => l.message.includes(name) && !isActivationLint(l.message));
-
-  const addOp = (op: string) => {
-    const ex = bindings.find((b) => b.op === op);
-    const require = ex ? Array.from(new Set([...ex.require, name])) : [name];
-    onSetBinding(op, require, ex?.mode ?? 'hard');
-  };
-  const removeOp = (m: WorkflowBindingView) =>
-    m.require.length <= 1 ? onSetBinding(m.op, [], 'off') : onSetBinding(m.op, m.require.filter((r) => r !== name), m.mode);
-
-  return (
-    <div className="mt-3 rounded-lg border p-3" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Required for</span>
-        {requiredOps.length > 0 && (
-          <span className="text-[9px] tnum px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)' }}>{requiredOps.length}</span>
-        )}
-        <div className="flex-1" />
-        <AddActionMenu addable={addable} isPro={isPro} onAdd={addOp} />
-      </div>
-      <div className="text-[10.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        Actions listed here must be done inside a run of this workflow. If someone does one on its own, it is either blocked (hard) or allowed but flagged for the record (warn).
-      </div>
-
-      {requiredOps.length === 0 ? (
-        <div className="text-[11.5px] mt-2" style={{ color: 'var(--sem-muted)' }}>No actions require this workflow yet.</div>
-      ) : (
-        <div className="flex flex-col gap-1.5 mt-2">
-          {requiredOps.map((op) => {
-            const m = flatForOp(op);
-            if (!m) {
-              return (
-                <div key={op} className="flex items-center gap-2 flex-wrap rounded-md px-2 py-1.5" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-                  <span className="text-[12px] font-medium" style={{ color: 'var(--sem-fg)' }}>{opLabel(op)}</span>
-                  <span title="Required by a conditional rule (it only applies when a condition holds). Edit it in .semanticus/workflow-settings.json." className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>conditional</span>
-                  <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>set by a rule; edit it in the workflow settings file</span>
-                </div>
-              );
-            }
-            const locked = !m.userDisablable;
-            const clears = m.require.length <= 1;
-            const others = m.require.filter((r) => r !== name);
-            const removeBlocked = locked || (!clears && !isPro);
-            const modeBlocked = locked || !isPro;
-            return (
-              <div key={op} className="flex items-center gap-2 flex-wrap rounded-md px-2 py-1.5" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-                <span className="text-[12px] font-medium" style={{ color: 'var(--sem-fg)' }}>{opLabel(m.op)}</span>
-                <button type="button" disabled={modeBlocked}
-                  title={locked ? LOCKED_BIND_REASON : !isPro ? PRO_BIND_REASON
-                    : m.mode === 'warn' ? 'Warn: the action on its own is allowed but flagged for the record. Click to switch to blocking it.'
-                    : 'Hard: the action on its own is blocked and routed into this workflow. Click to switch to a flagged warning instead.'}
-                  onClick={() => onSetBinding(m.op, m.require, m.mode === 'hard' ? 'warn' : 'hard')}
-                  className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full disabled:cursor-default"
-                  style={m.mode === 'hard'
-                    ? { color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }
-                    : { color: 'var(--sem-warn, #d7a54a)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 14%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 40%, transparent)' }}>
-                  {uiLabel(m.mode)}
-                </button>
-                {locked && (
-                  <span title={LOCKED_BIND_REASON} className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>locked</span>
-                )}
-                {others.length > 0 && (
-                  <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>also: {others.map(titleOf).join(', ')}</span>
-                )}
-                <div className="flex-1" />
-                <button type="button" disabled={removeBlocked}
-                  aria-label={clears ? `Remove requirement: ${opLabel(m.op)}` : `Stop requiring ${opLabel(m.op)} for this workflow`}
-                  title={locked ? LOCKED_BIND_REASON : removeBlocked ? PRO_BIND_REASON : clears ? 'Remove this requirement (clears the binding; free).' : `Stop requiring this workflow for ${opLabel(m.op)} (keeps ${others.length} other).`}
-                  onClick={() => removeOp(m)}
-                  className="text-[13px] leading-none px-1.5 py-0.5 rounded-md disabled:opacity-40"
-                  style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>✕</button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {!isPro && (
-        <div className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--sem-muted)' }}>
-          <span className="uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Pro</span>
-          {WORKFLOWS_ARE_PRO}
-        </div>
-      )}
-
-      {lints.length > 0 && (
-        <div className="flex flex-col gap-1 mt-2">
-          {lints.map((l, i) => (
-            <div key={i} className="text-[10.5px] rounded-md px-2 py-1" style={l.severity === 'warn'
-              ? { color: 'var(--sem-fg)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }
-              : { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-              <span aria-hidden>! </span>{l.message}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {err && (
-        <div className="text-[11.5px] mt-2 rounded-md px-2.5 py-1.5" style={{ color: 'var(--sem-fg)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }}>{err}</div>
-      )}
-    </div>
-  );
-}
-
-function AddActionMenu({ addable, isPro, onAdd }: { addable: { op: string; label: string }[]; isPro: boolean; onAdd: (op: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const none = addable.length === 0;
-  const disabled = !isPro || none;
-  return (
-    <div className="relative">
-      <button type="button" disabled={disabled}
-        title={none ? 'No more actions can be required here (the rest already route through this workflow or are locked by committed team policy).' : !isPro ? PRO_BIND_REASON : 'Require an action to route through this workflow'}
-        onClick={() => setOpen((o) => !o)}
-        className="text-[11px] px-2 py-0.5 rounded-md font-semibold disabled:opacity-45"
-        style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-        + Require an action{!isPro ? ' · Pro' : ''}
-      </button>
-      {open && !disabled && (
-        <div className="absolute right-0 z-20 mt-1 rounded-lg py-1 shadow-lg" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', minWidth: 190 }}>
-          {addable.map((b) => (
-            <button key={b.op} type="button" onClick={() => { onAdd(b.op); setOpen(false); }}
-              className="w-full text-left text-[12px] px-3 py-1.5 hover:bg-[var(--sem-surface-2)]" style={{ color: 'var(--sem-fg)' }}>{b.label}</button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---- §10.6 "Hide when" (dynamic activation) ------------------------------------------------------
-function HideWhenControl({ info, policy, tier, onSetActivation, err }: {
-  info: WorkflowInfo; policy: WorkflowPolicy | null; tier: string;
-  onSetActivation: (name: string, when: string, setStr: string) => Promise<void>; err: string | null;
-}) {
-  const isPro = tier === 'pro';
-  const [when, setWhen] = useState('');
-  const [wrote, setWrote] = useState(false);
-  useEffect(() => { setWhen(''); setWrote(false); }, [info.name]);
-
-  const entry = policy?.workflows.find((w) => w.name === info.name) ?? null;
-  const requiredOps = entry?.requiredForOps ?? [];
-  const forced = requiredOps.length > 0;
-  const off = info.enabled === false;
-  const active = info.active !== false;
-  const reason = info.activeReason || null;
-  const ruleHiding = !active && !off && !forced;
-
-  const stateLine = forced
-    ? { text: `Always on the menu, required for ${requiredOps.map(opLabel).join(', ')}. A hide rule here is overridden.`, tone: 'info' as const }
-    : off
-      ? { text: 'Turned off with the switch. Turn it back on to use a hide-when rule.', tone: 'muted' as const }
-      : ruleHiding
-        ? { text: `Hidden from the menu right now: ${reason}. You can still start it on demand.`, tone: 'muted' as const }
-        : reason
-          ? { text: `On the menu now: ${reason}.`, tone: 'muted' as const }
-          : { text: 'Shown on the menu now. No hide rule is active now.', tone: 'muted' as const };
-
-  const lints = (policy?.lints ?? []).filter((l) => l.message.includes(info.name) && isActivationLint(l.message));
-  // Keep "Clear rule" available whenever a rule is in effect — a rule that is currently SHOWING it (set:on with a
-  // reason) is just as committed as one currently hiding it, so both must be clearable. `reason` present (and not
-  // the forced/off states, whose reasons are not activation rules) is the signal a rule fired; `wrote` covers a
-  // rule we just applied this session. (A committed rule whose `when:` is currently FALSE leaves no trace in the
-  // resolved library data, so it can only be cleared while its condition holds or in the settings file.)
-  const showClear = (!off && !forced && !!reason) || lints.length > 0 || wrote;
-
-  const insert = (expr: string) => setWhen((cur) => (cur.trim() ? `${cur.trim()} && ${expr}` : expr));
-  const applyBlocked = !isPro || !when.trim();
-  const apply = async () => { if (applyBlocked) return; await onSetActivation(info.name, when.trim(), 'off'); setWrote(true); };
-  const clear = async () => { await onSetActivation(info.name, '', ''); setWrote(false); };
-
-  return (
-    <div className="mt-3 rounded-lg border p-3" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>Hide when</span>
-        <div className="flex-1" />
-        {showClear && (
-          <button type="button" onClick={clear} title="Remove the hide-when rule for this workflow. It shows on the menu normally again (free)."
-            className="text-[11px] px-2 py-0.5 rounded-md font-semibold" style={{ background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>Clear rule</button>
-        )}
-      </div>
-      <div className="text-[10.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        Drop a workflow off the menu while a condition holds, e.g. hide an experimental workflow on the production workspace, or hide a month-end checklist outside its window. It stays startable on demand; this just curates what is on offer.
-      </div>
-
-      <div className="text-[11.5px] mt-2 rounded-md px-2.5 py-1.5" style={stateLine.tone === 'info'
-        ? { color: 'var(--sem-fg)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 34%, transparent)' }
-        : { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-        {stateLine.text}
-      </div>
-
-      <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
-        <span className="text-[11px] font-semibold shrink-0" style={{ color: 'var(--sem-muted)' }}>Hide it when</span>
-        <input value={when} onChange={(e) => setWhen(e.target.value)} spellCheck={false}
-          placeholder="a condition, e.g. connection.workspace ~ '*prod*'"
-          onKeyDown={(e) => { if (e.key === 'Enter') void apply(); }}
-          className="flex-1 min-w-[180px] text-[11.5px] px-2 py-1 rounded-md outline-none"
-          style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', fontFamily: 'ui-monospace,SFMono-Regular,Consolas,monospace' }} />
-        <button type="button" disabled={applyBlocked}
-          title={!isPro ? PRO_ACT_REASON : !when.trim() ? 'Type a condition first. Use an example below to start.' : 'Save this rule. The views here update at once, and your assistant sees it on its next call.'}
-          onClick={() => void apply()}
-          className="text-[11px] px-2 py-1 rounded-md font-semibold disabled:opacity-45"
-          style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-          Apply rule{!isPro ? ' · Pro' : ''}
-        </button>
-      </div>
-
-      <div className="flex items-center gap-1 mt-2 flex-wrap">
-        <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Hide when:</span>
-        {ACTIVATION_EXAMPLES.map((ex) => (
-          <button key={ex.expr} type="button" onClick={() => insert(ex.expr)} title={ex.expr}
-            className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'var(--sem-surface)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>{ex.label}</button>
-        ))}
-      </div>
-
-      {!isPro && (
-        <div className="text-[10px] mt-2 flex items-center gap-1.5" style={{ color: 'var(--sem-muted)' }}>
-          <span className="uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>Pro</span>
-          {WORKFLOWS_ARE_PRO}
-        </div>
-      )}
-
-      {lints.length > 0 && (
-        <div className="flex flex-col gap-1 mt-2">
-          {lints.map((l, i) => (
-            <div key={i} className="text-[10.5px] rounded-md px-2 py-1" style={l.severity === 'warn'
-              ? { color: 'var(--sem-fg)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }
-              : { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-              <span aria-hidden>! </span>{l.message}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {err && (
-        <div className="text-[11.5px] mt-2 rounded-md px-2.5 py-1.5" style={{ color: 'var(--sem-fg)', background: 'color-mix(in srgb, var(--sem-warn, #d7a54a) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }}>{err}</div>
-      )}
-    </div>
-  );
-}
-
-// ---- overview rail (playbook steps, no run) ------------------------------------------------------
-function OverviewStep({ step }: { step: WorkflowStep }) {
-  const [open, setOpen] = useState(false);
-  const g = step.gate;
-  const gateBits = g
-    ? [g.inputs.length ? `${g.inputs.length} question${g.inputs.length === 1 ? '' : 's'} for you` : null,
-       g.verify.length ? `${g.verify.length} check${g.verify.length === 1 ? '' : 's'}: ${g.verify.map((v) => checkTitle(v.kind).toLowerCase()).join(', ')}` : null,
-       `Checks: ${strictnessWords(g.strictness)}`].filter(Boolean)
-    : [];
-  return (
-    <div className="relative flex items-start gap-3 py-2.5">
-      <NumberNode n={step.number} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[12.5px] font-semibold">{step.title}</span>
-          {g && g.inputs.length + g.verify.length > 0 && (
-            <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" title="This step asks you something and records the answer before the run moves on." style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)' }}>needs you</span>
-          )}
-        </div>
-        <div className="text-[11.5px] mt-1" style={{ color: 'var(--sem-muted)' }}>{stepSummary(step.ops, g)}</div>
-        {step.ops.length > 0 && (
-          <div className="flex items-center gap-1 mt-1.5 flex-wrap">{step.ops.map((op) => <OpChip key={op} op={op} />)}</div>
-        )}
-        {gateBits.length > 0 && (
-          <div className="text-[11px] mt-1.5" style={{ color: 'var(--sem-muted)' }}>{gateBits.join(' · ')}</div>
-        )}
-        <AssistantInstructions md={step.instructions} open={open} onToggle={() => setOpen((o) => !o)} />
-      </div>
-    </div>
-  );
-}
-
-// ---- run rail (a run is active or terminal) ------------------------------------------------------
-// Actions carry THIS run's id up to the shell so a switch to another live run never targets the wrong run.
-function RunRail({ run, onSubmit, onSkip, onAbort }: {
-  run: WorkflowRunView;
-  onSubmit: (runId: string, stepId: string, answersJson: string, callGate?: string) => Promise<void>;
-  onSkip: (runId: string, stepId: string, reason: string) => Promise<void>; onAbort: (runId: string, reason: string) => Promise<void>;
-}) {
-  const rid = run.runId;
-  const currentId = run.status === 'active' ? run.currentStep?.stepId : null;
-  const renderStep = ({ result, n }: RunRow) => (
-    <RunStep key={`${rid}:${result.stepId}`} n={n} result={result}
-      current={currentId === result.stepId ? run.currentStep ?? null : null}
-      onSubmit={(stepId, json, gate) => onSubmit(rid, stepId, json, gate)}
-      onSkip={(stepId, reason) => onSkip(rid, stepId, reason)} onAbort={(reason) => onAbort(rid, reason)} />
-  );
-  return (
-    <Panel>
-      <SectionTitle>Run <span style={{ color: 'var(--sem-muted)' }}>· {run.steps.filter((s) => s.status === 'passed').length} of {totalStepsText(run)} passed</span></SectionTitle>
-      <div className="relative mt-2">
-        <RailLine />
-        <div className="flex flex-col">
-          <RunSections sections={runSections(run)} runId={rid} currentId={currentId} renderStep={renderStep} />
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-function RunSections({ sections, runId, currentId, renderStep }: {
-  sections: RunSection[]; runId: string; currentId?: string | null; renderStep: (row: RunRow) => React.ReactNode;
-}) {
-  return <>{sections.map((section) => section.kind === 'step' ? renderStep(section.row)
-    : section.frameKind === 'call' ? section.items.map((item) => (
-      <RunFrameCard key={`${runId}:frame-${item.frameIndex}`} item={item} total={1} runId={runId} currentId={currentId} renderStep={renderStep} />
-    )) : (
-      <div key={`${runId}:${section.key}`} className="relative my-2 rounded-lg border p-3" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-        <div className="flex items-center gap-2 flex-wrap mb-2">
-          <b className="text-[12px]">Repeat · {section.items[0].rows[0]?.result.title ?? uiLabel(section.stepId)}</b>
-          <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>
-            {section.items.filter((item) => !['pending', 'in_progress'].includes(frameProgress(item, currentId))).length} of {section.items.length} items finished
-          </span>
-        </div>
-        {section.items.map((item) => (
-          <RunFrameCard key={`${runId}:frame-${item.frameIndex}`} item={item} total={section.items.length} runId={runId} currentId={currentId} renderStep={renderStep} />
-        ))}
-      </div>
-    ))}</>;
-}
-
-function RunFrameCard({ item, total, runId, currentId, renderStep }: {
-  item: RunFrameItem; total: number; runId: string; currentId?: string | null; renderStep: (row: RunRow) => React.ReactNode;
-}) {
-  const status = frameProgress(item, currentId);
-  const current = frameIsCurrent(item, currentId);
-  const [expanded, setExpanded] = useState(false);
-  const open = current || expanded;
-  const style = stepStyle(status);
-  const frame = item.frame;
-  return (
-    <div className="rounded-md border mt-1.5 px-2.5 py-2" style={{ borderColor: current ? 'var(--sem-accent)' : 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
-      <button type="button" className="w-full text-left flex items-center gap-2 min-w-0" aria-expanded={open}
-        onClick={() => setExpanded((value) => !value)} disabled={current}>
-        <span className="text-[11px]" style={{ color: style.color }}>{style.glyph}</span>
-        {frame.kind === 'iteration' ? <>
-          <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-muted)' }}>Item {frame.iterationIndex + 1} of {total}</span>
-          <span className="text-[12px] font-semibold break-words min-w-0">{frame.loopValue}</span>
-        </> : <span className="text-[12px] font-semibold">Run workflow · {uiLabel(frame.workflow)}</span>}
-        <span className="text-[9px] uppercase ml-auto shrink-0" style={{ color: style.color }}>{style.label}</span>
-        {!current && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>{open ? '▾' : '▸'}</span>}
-      </button>
-      {frame.kind === 'call' && <div className="text-[10.5px] mt-1 flex flex-wrap gap-x-4 gap-y-1" style={{ color: 'var(--sem-muted)' }}>
-        <span>{item.rows.filter(({ result }) => !['pending', 'in_progress'].includes(result.status)).length} of {item.rows.length} planned steps finished</span>
-        <span>Inputs received: {frame.passed.length ? frame.passed.map((name) => uiLabel(name)).join(', ') : 'none'}</span>
-        <span>{frame.returnNote || `Outputs returned: ${frame.returned.length ? frame.returned.map((name) => uiLabel(name)).join(', ') : status === 'pending' || current ? 'none yet' : 'none'}`}</span>
-      </div>}
-      {open && <div className="mt-1"><RunSections sections={item.sections} runId={runId} currentId={currentId} renderStep={renderStep} /></div>}
-    </div>
-  );
-}
-
-function RunStep({ n, result, current, onSubmit, onSkip, onAbort }: {
-  n: number; result: StepResult; current: CurrentStepView | null;
-  onSubmit: (stepId: string, answersJson: string, callGate?: string) => Promise<void>;
-  onSkip: (stepId: string, reason: string) => Promise<void>; onAbort: (reason: string) => Promise<void>;
-}) {
-  const st = stepStyle(result.status);
-  const done = result.status === 'passed' || result.status === 'done' || result.status === 'not_applicable' || result.status === 'skipped' || result.status === 'failed';
-  const notable = !!result.note
-    || Object.values(result.answers).some((a) => a.declined)
-    || result.verifyResults.some((v) => v.status !== 'passed');
-  const [open, setOpen] = useState(notable);
-  const hasRecord = !!result.note || Object.keys(result.answers).length > 0 || result.verifyResults.length > 0;
-  return (
-    <div className="relative flex items-start gap-3 py-2.5">
-      <StatusNode status={result.status} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-[10px] tnum" style={{ color: 'var(--sem-muted)' }}>{n}</span>
-          <span className="text-[12.5px] font-semibold" style={{ color: current || done ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{result.title}</span>
-          <span className="text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: st.color, background: `color-mix(in srgb, ${st.color} 16%, transparent)` }}>{st.label}</span>
-          {result.effectiveStrictness && done && (
-            <span className="text-[9.5px]" style={{ color: 'var(--sem-muted)' }} title="Whether this step stopped on failure, warned, or had its checks turned off">Checks {stepGateSkipped(result.effectiveStrictness) ? 'were turned off' : strictnessWords(result.effectiveStrictness)}</span>
-          )}
-        </div>
-
-        {/* every completed step is reopenable — a clean pass must still be inspectable, not just the notable ones */}
-        {done && (
-          <>
-            <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="mt-1 flex items-center gap-1 text-[11px] font-medium" style={{ color: 'var(--sem-muted)' }}>
-              <Caret open={open} />
-              {open ? 'Hide record' : 'Record'}
-            </button>
-            {open && (
-              <div className="mt-1.5 flex flex-col gap-2">
-                {result.note && <div className="text-[11px] px-2 py-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{result.note}</div>}
-                {Object.entries(result.answers).map(([nm, a]) => <AnswerRow key={nm} name={nm} a={a} />)}
-                {result.verifyResults.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5">{result.verifyResults.map((v, i) => <VerifyChip key={v.kind + i} v={v} />)}</div>
-                )}
-                {!hasRecord && <div className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>No questions or checks were recorded for this step.</div>}
-              </div>
-            )}
-          </>
-        )}
-
-        {current && (
-          <CurrentStepCard current={current}
-            onSubmit={(json, gate) => onSubmit(current.stepId, json, gate)}
-            onSkip={(reason) => onSkip(current.stepId, reason)} onAbort={onAbort} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function personGateError(raw: string) {
-  if (/Ask the user/i.test(raw) || /\{"declined"/.test(raw) || /gate input/.test(raw))
-    return raw.includes('may not be declined') ? 'This one cannot be declined. Type an answer.'
-      : raw.includes('without a reason') ? 'Say why you are declining.'
-      : 'This question still needs an answer.';
-  return raw;
-}
-
-function CurrentStepCard({ current, onSubmit, onSkip, onAbort }: {
-  current: CurrentStepView; onSubmit: (answersJson: string, callGate?: string) => Promise<void>;
-  onSkip: (reason: string) => Promise<void>; onAbort: (reason: string) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(() => providedAnswerDraft(current.providedAnswers));
-  const { vals, declined, reasons } = draft;
-  const edited = useRef(new Set<string>());
-  useEffect(() => {
-    if (current.providedAnswers) setDraft((previous) => providedAnswerDraft(current.providedAnswers, previous, edited.current));
-  }, [current.providedAnswers]);
-  const [err, setErr] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [showInstructions, setShowInstructions] = useState(false);
-  // The run view carries the gate flattened into questions + verifyKinds, not a GateSpec. Rebuild the shape
-  // stepSummary needs so Runs and the Library detail say exactly the same sentence about the same step.
-  const currentGate: GateSpec = {
-    strictness: current.effectiveStrictness ?? null,
-    inputs: current.questions,
-    verify: current.verifyKinds.map((kind) => ({ kind })),
-  };
-
-  const declineIncomplete = current.questions.some((q) => q.required !== 'required' && declined[q.name] && !(reasons[q.name] || '').trim());
-  const [fieldErr, setFieldErr] = useState<Record<string, string>>({});
-  const [callGate, setCallGate] = useState<string | null>(null);
-
-  const doSubmit = async (gateOverride?: string) => {
-    const nextErr: Record<string, string> = {};
-    if (!gateSkipped) {
-      for (const q of current.questions) {
-        if (q.required === 'optional') continue;
-        if (q.required === 'required' && declined[q.name]) nextErr[q.name] = 'This one cannot be declined. Type an answer.';
-        else if (declined[q.name] && !(reasons[q.name] || '').trim()) nextErr[q.name] = 'Say why you are declining.';
-        else if (!declined[q.name] && !(vals[q.name] || '').trim() && !edited.current.has(q.name)) nextErr[q.name] = 'This question still needs an answer.';
-      }
-    }
-    if (Object.keys(nextErr).length > 0) {
-      setFieldErr(nextErr);
-      setErr(Object.keys(nextErr).length === 1
-        ? Object.values(nextErr)[0]
-        : `${Object.keys(nextErr).length} questions still need an answer before this step can be submitted.`);
-      return;
-    }
-    if (declineIncomplete) { setErr('Say why you are declining.'); return; }
-    setBusy(true); setErr(null); setFieldErr({});
+  const setEnabled = async (name: string, on: boolean, clearRule = false) => {
     try {
-      const payload: Record<string, unknown> = {};
-      for (const q of current.questions) {
-        if (q.required !== 'required' && declined[q.name]) payload[q.name] = { declined: true, reason: (reasons[q.name] || '').trim() };
-        else if (edited.current.has(q.name) || (vals[q.name] || '').trim() !== '') payload[q.name] = vals[q.name] ?? '';
-      }
-      // gateArg drops anything that is not a gate string. A handler bound straight to onClick is called with
-      // the DOM click event, which is not a gate and cannot be cloned onto the wire (D-171).
-      await onSubmit(JSON.stringify(payload), gateArg(gateOverride) ?? callGate ?? undefined);
-    } catch (e) {
-      const raw = String((e as Error).message ?? e);
-      setErr(personGateError(raw));
-    } finally { setBusy(false); }
+      setLibrary(await rpc<WorkflowInfo[]>('setWorkflowEnabled', name, on, 'human'));
+      // Always means always: a saved Only when rule is hidden while a workflow is off and would come back when it is
+      // turned on, so it is cleared after the workflow is on, in that order (Sol on slice 10, F-287).
+      if (clearRule) { setLibrary(await rpc<WorkflowInfo[]>('setWorkflowActivation', name, '', '', 'human')); await refreshPolicy(); }
+    }
+    catch (e) { setPageErr(String((e as Error).message ?? e)); await afterFailedChange(); }
+  };
+  const setActivation = async (name: string, when: string, set: string) => {
+    try { setLibrary(await rpc<WorkflowInfo[]>('setWorkflowActivation', name, when, set, 'human')); await refreshPolicy(); }
+    catch (e) { setPageErr(String((e as Error).message ?? e)); await afterFailedChange(); }
   };
 
-  // Render from THIS run's frozen strictness snapshot (effectiveStrictness), never the current model-wide toggle:
-  // a mid-run enforcement flip can't tear a run, so the UI must show what the engine will actually do.
-  const gateSkipped = stepGateSkipped(current.effectiveStrictness);
-  const strictnessLabel = current.effectiveStrictness && !gateSkipped
-    ? (current.effectiveStrictness === 'hard' ? 'Checks must pass' : current.effectiveStrictness === 'warn' ? 'Checks warn only' : `Checks ${strictnessWords(current.effectiveStrictness)}`)
-    : null;
+  const enforced = enforcement?.enforced !== false;
+  const titleOf = useCallback((n: string) => library?.find((w) => w.name === n)?.title || n, [library]);
+  const shelf = useMemo(() => M.starterShelf(library as M.WfInfo[] | null, rawTemplates), [library, rawTemplates]);
+  const running = useMemo(() => new Map(liveRuns(runs).map((r) => [r.workflow, r])), [runs]);
 
-  return (
-    <div className="mt-2 rounded-lg border p-3" style={{ background: 'var(--sem-surface-2)', borderColor: 'color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-      {strictnessLabel && (
-        <div className="mb-2 inline-block text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded-full" style={{ color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>{strictnessLabel}</div>
-      )}
-      <div className="text-[12px]" style={{ color: 'var(--sem-fg)' }}>{stepSummary(current.ops, currentGate)}</div>
-      <AssistantInstructions md={current.instructions} open={showInstructions} onToggle={() => setShowInstructions((o) => !o)} />
+  const teamRulesDrawer = (onOpenWorkflow: (name: string) => void) =>
+    <TeamRulesDrawer library={library ?? []} policy={policy} policyError={policyErr} enforced={enforced} profiles={profiles} isPro={isPro}
+      error={pageErr} onClose={() => setRulesOpen(false)} onSetEnforcement={(on) => void setEnforced(on)} onApplyProfile={applyProfile}
+      onSetBinding={(op, req, mode) => void setBinding(op, req, mode)} onOpenWorkflow={onOpenWorkflow} />;
 
-      {current.handOff?.gateOff && (
-        <div className="mt-3 rounded-md px-2.5 py-2 text-[11.5px]" style={{ background: 'var(--sem-surface)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)' }}>
-          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>This step hands off to {current.handOff.calleeTitle || 'another workflow'}.</div>
-          <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>Its gate is turned off, so it asks no questions and hands nothing back.{current.handOff.nextStepTitle ? ` ${current.handOff.nextStepTitle} needs those values.` : ''}</div>
-          <div className="mt-2 flex gap-2">
-            <button type="button" className="rounded-md border px-2 py-1 text-[11px] font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }} onClick={() => { setCallGate('on'); void doSubmit('on'); }}>Turn its gate on for this run</button>
-            <button type="button" className="rounded-md border px-2 py-1 text-[11px]" onClick={() => { setCallGate('off'); void doSubmit('off'); }}>Continue without them</button>
-          </div>
-        </div>
-      )}
-      {current.ops.length > 0 && (
-        <div className="flex items-center gap-1 mt-2.5 flex-wrap">
-          <span className="text-[10px] uppercase tracking-wide font-semibold mr-1" style={{ color: 'var(--sem-muted)' }}>actions</span>
-          {current.ops.map((op) => <OpChip key={op} op={op} onStage={(id) => { const planQ = current.questions.find((q) => q.type === 'planItem'); if (planQ) { edited.current.add(planQ.name); setDraft((m) => ({ ...m, vals: { ...m.vals, [planQ.name]: id } })); } }} />)}
-        </div>
-      )}
+  if (view.kind === 'draft') {
+    return <div className="sem-wf-page sem-wf-author-page" data-testid="wf-page" data-view="draft">
+      <DraftInAuthor draftId={view.draftId} library={library ?? []} isPro={isPro} onBack={backToList}
+        onOpenPlan={() => onOpenPlan?.(draftRowId(view.draftId))} onGo={(tool, target) => onGo?.(tool, target)}
+        onMade={(name) => { rpc<WorkflowInfo[]>('listWorkflows').then(setLibrary).catch(() => undefined); openAuthor(name); }}
+        onOpenDocument={(document, title) => openAuthor(null, { title, document })} />
+    </div>;
+  }
 
-      {/* enforcement off (for THIS run) REPLACES the gate form with the honest skipped state — no half-shown
-          questions with a notice tacked on. Enforced: the gate form (questions + the checks the engine will run). */}
-      {gateSkipped ? (
-        <div className="mt-3 rounded-md px-2.5 py-2 text-[11.5px]" style={{ background: 'var(--sem-surface)', border: '1px solid color-mix(in srgb, var(--sem-warn, #d7a54a) 35%, transparent)', color: 'var(--sem-fg)' }}>
-          <div className="font-semibold" style={{ color: 'var(--sem-warn, #d7a54a)' }}>Checks are turned off for this step</div>
-          <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>It asks you nothing and records nothing as checked. Submit to move the run on.</div>
-        </div>
-      ) : (
-        <>
-          {current.questions.length > 0 && (
-            <div className="mt-3 flex flex-col gap-3">
-              <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>What this step needs from you</div>
-              {current.questions.map((q) => (
-                <GateField key={q.name} q={q}
-                  value={vals[q.name] ?? ''} declined={!!declined[q.name]} reason={reasons[q.name] ?? ''} error={fieldErr[q.name]}
-                  onValue={(v) => { edited.current.add(q.name); setDraft((m) => ({ ...m, vals: { ...m.vals, [q.name]: v } })); }}
-                  onDecline={(d) => { edited.current.add(q.name); setDraft((m) => ({ ...m, declined: { ...m.declined, [q.name]: d } })); }}
-                  onReason={(r) => { edited.current.add(q.name); setDraft((m) => ({ ...m, reasons: { ...m.reasons, [q.name]: r } })); }} />
-              ))}
-            </div>
-          )}
-          {current.verifyKinds.length > 0 && (
-            <div className="mt-3">
-              <div className="text-[10px] uppercase tracking-wide font-semibold mb-1" style={{ color: 'var(--sem-muted)' }}>Engine will verify</div>
-              <div className="flex flex-wrap gap-1.5">
-                {current.verifyKinds.map((k) => (
-                  <span key={k} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-                    <span style={{ color: 'var(--sem-muted)' }}>○</span> {uiLabel(k)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-        </>
-      )}
+  if (view.kind === 'author') {
+    const info = view.name ? library?.find((w) => w.name === view.name) ?? null : null;
+    return <div className="sem-wf-page sem-wf-author-page" data-testid="wf-page" data-view="author">
+      <DesignMode info={info} def={view.name && def?.name === view.name ? def : null} creating={!view.name} seed={view.seed ?? null}
+        library={library ?? []} libraryReady={!!library} policy={policy} isPro={isPro} running={view.name ? running.get(view.name) ?? null : null}
+        sessionId={runs.sessionId}
+        onBack={backToList}
+        onRun={(name, d) => void runWorkflow(name, d)} runError={rowErr && view.name && rowErr.name === view.name ? rowErr.text : null}
+        onRunOnce={(name, text, kind, title) => void runOnce(name, text, kind, title)}
+        onSaved={(n, note) => { if (!view.name || view.name !== n) setView({ kind: 'author', name: n, seed: note ? { note } : null }); defLoad.reload(n); }}
+        onDeleted={backToList}
+        onSetEnabled={(on, clearRule) => view.name && void setEnabled(view.name, on, clearRule)}
+        onSetActivation={(when, set) => view.name && void setActivation(view.name, when, set)}
+        onSetBinding={(op, req, mode) => void setBinding(op, req, mode)}
+        onOpenTeamRules={() => setRulesOpen(true)}
+        titleOf={titleOf} />
+      {/* Team rules shows its own error over this page, so the toast stands aside while it is open (UAT-S02-2-006). */}
+      {pageErr && !rulesOpen && <div className="sem-wf-toast" role="alert">{pageErr}</div>}
+      {/* Team rules opens over Author, which stays mounted: its unsaved edits live only in its own state, so
+          switching to the list to show the drawer threw them away (Sol on slice 10, F-285). */}
+      {rulesOpen && teamRulesDrawer((n) => { setRulesOpen(false); if (n !== view.name) openAuthor(n, { settings: true }); })}
+    </div>;
+  }
 
-      {err && (
-        <div className="mt-3 rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb, var(--sem-bad) 12%, transparent)', color: 'var(--sem-bad)', border: '1px solid color-mix(in srgb, var(--sem-bad) 34%, transparent)' }}>{err}</div>
-      )}
+  const empty = !!library && M.listRows(library).length === 0 && !query && !filter;
+  const rulesExist = hasTeamRules(policy, enforced);
+  const held = heldDrafts.list();
+  const places = heldPlaces(held);
+  // Kept work for a saved workflow this model no longer has (the assistant deleted it) opens as a new workflow with the
+  // work: opened by its name it waited for a file that is gone, at "Opening the workflow" for good.
+  const gone = (h: (typeof held)[number]) => !h.creating && !!library && !library.some((w) => w.name === h.name);
+  const dropHeld = (key: string) => { heldDrafts.drop(key); setHeldTick((n) => n + 1); };
+  return <div className="sem-wf-page" data-testid="wf-page" data-view="list">
+    <div className="sem-wf-list-page">
+      <header className="sem-wf-head">
+        <h1 className="sem-page-title">Workflows</h1>
+        <span className="sem-wf-note" data-testid="wf-count">{library ? countLine(M.listRows(library).length) : libErr ? 'Your workflows could not be read.' : 'Reading your workflows…'}</span>
+        {!empty && <span className="sem-wf-head-r">
+          <input className="sem-field sem-field-sm sem-wf-search" value={query} placeholder="Search your workflows" aria-label="Search your workflows"
+            data-testid="wf-search" onChange={(e) => setQuery(e.target.value)} />
+          {M.visibleFilters(library, filter).length > 0 && <span className="sem-seg" role="group" aria-label="Show only">
+            {M.visibleFilters(library, filter).map((f) => <button key={f.id} type="button" className="sem-seg-item" aria-pressed={filter === f.id}
+              data-testid={`wf-filter-${f.id}`} onClick={() => setFilter(filter === f.id ? null : f.id)}>{f.label}</button>)}
+          </span>}
+          <button type="button" className="sem-btn sem-btn-sm sem-btn-primary" data-testid="wf-new" disabled={!isPro}
+            aria-expanded={newOpen} onClick={() => setNewOpen((o) => !o)}>New workflow</button>
+        </span>}
+      </header>
+      {!isPro && <Banner color="var(--sem-muted)">{M.WORKFLOWS_PRO_LINE}</Banner>}
+      {libErr && <Banner color="var(--sem-bad)">{libErr}</Banner>}
+      {/* Once, not twice: while Team rules is open its drawer carries this error (UAT-S02-2-006). */}
+      {pageErr && !rulesOpen && <Banner color="var(--sem-warn)">{pageErr}</Banner>}
+      {held.length > 0 && <div className="sem-wf-held" data-testid="wf-held">
+        {held.map((h) => <Banner key={h.key} color="var(--sem-warn)">
+          <span className="sem-wf-held-line">Unsaved changes to <b>{h.title || h.name}</b>{M.heldPlaceWords(places.get(h.key))} are kept here.
+            <button type="button" className="sem-wf-quiet-link" onClick={() => h.creating || gone(h) ? openAuthor(null, { title: h.title, resume: h.key }) : openAuthor(h.name, { resume: h.key })}>Open it</button>
+            <button type="button" className="sem-wf-quiet-link" onClick={() => dropHeld(h.key)}>Throw it away</button></span>
+        </Banner>)}
+      </div>}
 
-      <div className="mt-3 flex items-center gap-2">
-        <Button primary disabled={busy} onClick={() => { void doSubmit(); }}>{busy ? 'Submitting…' : 'Submit step'}</Button>
-        <ReasonButton label="Skip with reason" title="Skip this step (a reason is required)." onConfirm={onSkip} />
-        <ReasonButton label="Abort" title="Abort the whole run (a reason is required)." onConfirm={onAbort} danger />
-      </div>
+      {(empty || newOpen || newHeld) && <NewPanel lead={shelf.lead} more={shelf.more} isPro={isPro} busy={busy}
+        onDescribe={(w, stillHolds) => void describe(w, stillHolds)} onUse={(s) => void useStarter(s)} onOpen={(n) => openAuthor(n)}
+        onBlank={(title) => openAuthor(null, { title })} onClose={empty ? null : () => { setNewOpen(false); setNewHeld(false); }} onHeld={setNewHeld} />}
+
+      {!empty && library && <div className="sem-wf-list" data-testid="wf-list">
+        <div className="sem-wf-lhead" aria-hidden="true"><span>Name</span><span>Steps</span><span>Last run</span><span /><span /></div>
+        {rows.length === 0 && <div className="sem-wf-note sem-wf-none">{filter ? `No workflow is ${filter === 'required' ? 'required' : filter === 'off' ? 'turned off' : 'hidden'} now.` : 'No workflow matches that search.'}</div>}
+        {rows.map((w) => <WorkflowRow key={w.name} w={w} def={defs[w.name] ?? null} policy={policy} isPro={isPro}
+          last={lastRuns.get(w.name)} running={running.get(w.name) ?? null} busy={busy === `run:${w.name}`}
+          error={rowErr?.name === w.name ? rowErr.text : null}
+          onOpen={() => openAuthor(w.name)} onRun={() => void runWorkflow(w.name)} onOpenPlan={(id) => onOpenPlan?.(id)} />)}
+      </div>}
+
+      <footer className="sem-wf-foot">
+        <button type="button" className="sem-wf-quiet-link" data-testid="wf-team-rules-link" onClick={() => setRulesOpen(true)}>Team rules</button>
+        <DoerLegend />
+      </footer>
     </div>
-  );
+
+    {rulesOpen && teamRulesDrawer((n) => { setRulesOpen(false); openAuthor(n, { settings: true }); })}
+    {using && <UseDrawer starter={using} busy={busy === `use:${using.name}`} error={pageErr}
+      onClose={() => setUsing(null)} onUse={(values) => void useStarter(using, values)} />}
+    <span hidden data-testid="wf-rules-exist">{rulesExist ? 'yes' : 'no'}</span>
+  </div>;
 }
 
-function GateField({ q, value, declined, reason, error, onValue, onDecline, onReason }: {
-  q: GateInput; value: string; declined: boolean; reason: string; error?: string;
-  onValue: (v: string) => void; onDecline: (d: boolean) => void; onReason: (r: string) => void;
+const countLine = (n: number) => n === 0 ? 'No workflows in this model yet' : n === 1 ? '1 workflow in this model' : `${n} workflows in this model`;
+
+// ---- one row of the list ---------------------------------------------------------------------------------
+
+export function WorkflowRow({ w, def, policy, isPro, last, running, busy, error, onOpen, onRun, onOpenPlan, now }: {
+  w: WorkflowInfo; def: WorkflowDef | null; policy: WorkflowPolicy | null; isPro: boolean;
+  last?: M.LastRun; running?: WorkflowRunView | null; busy?: boolean; error?: string | null;
+  onOpen: () => void; onRun: () => void; onOpenPlan?: (rowId: string) => void; now?: Date;
 }) {
-  const required = q.required === 'required';
-  return (
-    <div className="rounded-lg p-2.5" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-      <div className="flex items-start gap-2">
-        <label className="text-[12px] flex-1" style={{ color: 'var(--sem-fg)' }}>{q.question || uiLabel(q.name)}</label>
-        <span className="shrink-0 text-[9px] tnum px-1.5 py-0.5 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>{q.type === 'planItem' ? 'Staged rename' : uiLabel(q.type)}</span>
-        {required && <span title="This one cannot be declined." className="shrink-0 text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded" style={{ color: 'var(--sem-bad)', background: 'color-mix(in srgb, var(--sem-bad) 14%, transparent)' }}>Required</span>}
-        {q.required === 'optional' && <span className="shrink-0 text-[9px]" style={{ color: 'var(--sem-muted)' }}>Optional</span>}
-      </div>
-      {!declined && q.type === 'planItem' && <PlanItemPicker value={value} onValue={onValue} />}
-      {!declined && q.type !== 'planItem' && (
-        <textarea value={value} onChange={(e) => onValue(e.target.value)} rows={q.type === 'text' ? 2 : 1} spellCheck={false} placeholder={uiLabel(q.name)}
-          className="mt-1.5 w-full text-[12px] px-2 py-1 rounded-md outline-none resize-y"
-          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-      )}
-      {q.required !== 'required' && (
-      <div className="mt-1.5 flex items-center gap-2">
-        <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: 'var(--sem-muted)' }}>
-          <input type="checkbox" checked={declined} onChange={(e) => onDecline(e.target.checked)} />
-          I can't answer this. Record why instead.
-        </label>
-        {declined && <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Recorded as an explicit decline.</span>}
-      </div>
-      )}
-      {declined && q.required !== 'required' && (
-        <textarea value={reason} onChange={(e) => onReason(e.target.value)} rows={2} spellCheck={false} placeholder="Say why you are declining."
-          className="mt-1.5 w-full text-[12px] px-2 py-1 rounded-md outline-none resize-y"
-          style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid color-mix(in srgb, var(--sem-warn) 45%, transparent)' }} />
-      )}
-      {error && <div className="mt-1.5 text-[11px]" style={{ color: 'var(--sem-bad)' }}>{error}</div>}
-    </div>
-  );
+  const state = M.stateWord(w);
+  const required = requiredWords(w.name, policy) ?? (w.required ? 'Required by a team rule' : null);
+  const line = M.lastRunLine(last, now);
+  return <div className="sem-wf-row" data-testid={`wf-row-${w.name}`} data-workflow={w.name} data-state={state ?? 'on'}>
+    <button type="button" className="sem-wf-row-name" onClick={onOpen} title={w.description || undefined}>
+      <b>{w.title || w.name}</b>
+      <span className="sem-wf-note">{w.error ? 'This file has an error. Open it to read why.' : M.subLine(w as M.WfInfo, def as unknown as M.WfDef)}</span>
+    </button>
+    <StepStrip def={def} count={w.stepCount} />
+    <span className="sem-wf-last">
+      {running ? <button type="button" className="sem-wf-quiet-link" onClick={() => onOpenPlan?.(`run/${running.runId}`)}>Running now, on the Plan</button>
+        : <>{line.ok != null && <i className={line.ok ? 'sem-wf-ok' : 'sem-wf-notok'} aria-hidden="true" />}{line.text}</>}
+    </span>
+    <span className="sem-wf-marks">
+      {required && <span className="sem-wf-req" data-testid="wf-required-mark"><LockMark />{required}</span>}
+      {w.replacesRequired && <span className="sem-wf-req">{M.REPLACES_REQUIRED}</span>}
+      {state && <span className="sem-wf-state" data-testid="wf-state-word">{state}</span>}
+      {w.starter && !required && <span className="sem-wf-note">Starter</span>}
+    </span>
+    <span className="sem-wf-row-r">
+      <button type="button" className="sem-btn sem-btn-sm" data-testid={`wf-run-${w.name}`}
+        disabled={!isPro || busy || !!w.error || w.enabled === false} title={w.enabled === false ? 'Turned off. Turn it on in its Settings to run it.' : 'Runs as a row on the Plan'}
+        onClick={onRun}>{busy ? 'Starting…' : 'Run'}</button>
+    </span>
+    {error && <div className="sem-wf-row-err" role="alert">{error}</div>}
+  </div>;
 }
 
-function PlanItemPicker({ value, onValue }: { value: string; onValue: (v: string) => void }) {
-  const [items, setItems] = useState<{ id: string; title?: string; objRef?: string; after?: string; status?: string }[]>([]);
+/** One mark per step in the doer hues (Semanticus square, you circle, your assistant diamond), with a thin line
+ *  where the steps after the change begin. Before the steps arrive, the count alone. */
+export function StepStrip({ def, count }: { def: WorkflowDef | null; count: number }) {
+  if (!def) return <span className="sem-wf-strip sem-wf-note">{count === 1 ? '1 step' : `${count} steps`}</span>;
+  const { marks, afterAt } = M.stepMarks(def as unknown as M.WfDef);
+  return <span className="sem-wf-strip" aria-label={`${marks.length} steps`} data-testid="wf-strip">
+    {marks.map((m, i) => <span key={i} className="sem-wf-strip-i">
+      {i === afterAt && <i className="sem-wf-strip-cut" title="After the change" />}
+      <DoerMark doer={m} />
+    </span>)}
+  </span>;
+}
+
+export function DoerLegend() {
+  return <span className="sem-wf-legend" aria-label="What the marks mean">
+    <span><DoerMark doer="semanticus" />Semanticus</span>
+    <span><DoerMark doer="you" />You choose</span>
+    <span><DoerMark doer="assistant" />Your assistant writes</span>
+  </span>;
+}
+
+// ---- New: Describe it first, then the starters, then Start blank --------------------------------------------
+
+export function NewPanel({ lead, more, isPro, busy, onDescribe, onUse, onOpen, onBlank, onClose, onHeld }: {
+  lead: M.Starter[]; more: M.Starter[]; isPro: boolean; busy: string | null;
+  onDescribe: (words: string, stillHolds: () => boolean) => void; onUse: (s: M.Starter) => void; onOpen: (name: string) => void;
+  onBlank: (title: string) => void; onClose: (() => void) | null;
+  /** Told whether the panel holds typed words, so the page keeps it while it does. */
+  onHeld?: (held: boolean) => void;
+}) {
+  const [words, setWords] = useState('');
+  const wordsNow = useRef(''); wordsNow.current = words;   // what the box holds when the engine answers
+  const [showMore, setShowMore] = useState(false);
+  const [blank, setBlank] = useState<string | null>(null);
+  const holds = words.trim() !== '' || blank != null;
+  useEffect(() => { onHeld?.(holds); }, [holds]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => onHeld?.(false), []);   // eslint-disable-line react-hooks/exhaustive-deps
+  return <section className="sem-wf-new" data-testid="wf-new-panel">
+    <div className="sem-wf-desc">
+      <label className="sem-wf-desc-l" htmlFor="wf-describe">Describe it in words</label>
+      {isPro ? <form className="sem-wf-desc-row" onSubmit={(e) => { e.preventDefault(); const sent = words.trim(); if (sent) onDescribe(sent, () => wordsNow.current.trim() === sent); }}>
+        <textarea id="wf-describe" className="sem-field sem-wf-desc-area" rows={2} value={words} data-testid="wf-describe"
+          placeholder="Every month, refresh Sales, run the saved checks and publish the model." onChange={(e) => setWords(e.target.value)} />
+        <button type="submit" className="sem-btn sem-btn-primary" disabled={!words.trim() || busy === 'describe'} data-testid="wf-draft-it">
+          {busy === 'describe' ? 'Writing the steps…' : 'Write the steps'}</button>
+      </form> : <span className="sem-wf-note">{M.DESCRIBE_PRO_LINE}</span>}
+      <span className="sem-wf-note">{M.DESCRIBE_LINE}</span>
+    </div>
+    <div className="sem-wf-shelf-head">
+      <b>Or start from a starter</b>
+      <span className="sem-wf-note">You get your own copy.</span>
+      {onClose && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet sem-wf-close" onClick={onClose}>Close</button>}
+    </div>
+    <div className="sem-wf-shelf">
+      {lead.map((s) => <StarterCard key={s.name} s={s} isPro={isPro} busy={busy === `use:${s.name}`} onUse={() => onUse(s)} onOpen={() => onOpen(s.name)} />)}
+    </div>
+    {more.length > 0 && <div className="sem-wf-more">
+      <button type="button" className="sem-wf-quiet-link" aria-expanded={showMore} onClick={() => setShowMore((o) => !o)} data-testid="wf-more-starters">
+        {showMore ? 'Fewer starters' : `More starters (${more.length})`}</button>
+      {showMore && <ul className="sem-wf-more-list">{more.map((s) => <li key={s.name}>
+        <button type="button" className="sem-wf-quiet-link" onClick={() => onOpen(s.name)}>{s.title}</button>
+        <span className="sem-wf-note">{s.description}</span>
+        <button type="button" className="sem-btn sem-btn-sm" disabled={!isPro || busy === `use:${s.name}`} onClick={() => onUse(s)}>{s.required ? 'Open' : 'Use'}</button>
+      </li>)}</ul>}
+    </div>}
+    <div className="sem-wf-new-foot">
+      {blank == null
+        ? <button type="button" className="sem-wf-quiet-link" disabled={!isPro} data-testid="wf-start-blank" onClick={() => setBlank('')}>Start blank</button>
+        : <form className="sem-wf-acts" onSubmit={(e) => { e.preventDefault(); if (blank.trim()) onBlank(blank.trim()); }}>
+          <input className="sem-field sem-field-sm" autoFocus value={blank} placeholder="Name it, in words" aria-label="Name the new workflow"
+            data-testid="wf-blank-title" onChange={(e) => setBlank(e.target.value)} />
+          <button type="submit" className="sem-btn sem-btn-sm sem-btn-primary" disabled={!blank.trim()}>Start</button>
+          <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={() => setBlank(null)}>Cancel</button>
+        </form>}
+    </div>
+  </section>;
+}
+
+function StarterCard({ s, isPro, busy, onUse, onOpen }: { s: M.Starter; isPro: boolean; busy: boolean; onUse: () => void; onOpen: () => void }) {
+  return <div className="sem-wf-card" data-testid={`wf-starter-${s.name}`}>
+    <div className="sem-wf-card-top">
+      <button type="button" className="sem-wf-card-title" onClick={onOpen} title="Read its steps">{s.title}</button>
+      <button type="button" className="sem-btn sem-btn-sm" disabled={!isPro || busy} data-testid={`wf-use-${s.name}`}
+        title={s.required ? 'A team rule requires this one, so it opens as it is and is never copied.' : 'Copy it into your workflows'}
+        onClick={onUse}>{busy ? 'Copying…' : s.required ? 'Open' : 'Use'}</button>
+    </div>
+    <p className="sem-wf-note">{s.description}</p>
+    <div className="sem-wf-card-foot">
+      {s.template ? <span className="sem-wf-note">Asks a few questions once</span> : <span className="sem-wf-note">{s.stepCount === 1 ? '1 step' : `${s.stepCount} steps`}</span>}
+      {s.required && <span className="sem-wf-req"><LockMark />Required here</span>}
+    </div>
+  </div>;
+}
+
+// ---- Use on a starter with setup questions (contract 21.1 row 19): asked once, then Author opens ------------
+
+interface SlotDef { name: string; question: string; type?: string; required?: string; default?: string | null; example?: string | null; hint?: string | null; values?: string[] | null }
+
+function UseDrawer({ starter, busy, error, onClose, onUse }: {
+  starter: M.Starter; busy: boolean; error: string | null; onClose: () => void; onUse: (values: Record<string, string>) => void;
+}) {
+  const [slots, setSlots] = useState<SlotDef[] | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   useEffect(() => {
-    rpc<{ items?: { id: string; title?: string; objRef?: string; after?: string; status?: string }[] }>('getPlan')
-      .then((p) => setItems(p.items ?? [])).catch(() => undefined);
-  }, []);
-  const stage = async () => {
-    const target = items[0]?.objRef;
-    if (!target) return;
-    const plan = await rpc<{ items?: { id: string }[] }>('addPlanItem', target, 'rename', items[0]?.after ?? '', 'Staged rename', null, null);
-    const id = plan.items?.[plan.items.length - 1]?.id;
-    if (id) onValue(id);
-  };
-  return (
-    <div className="mt-1.5">
-      {items.length === 0 && <div className="mb-1.5 text-[11px]" style={{ color: 'var(--sem-muted)' }}>No staged rename yet. Stage it now from the answers already given.</div>}
-      <select value={value} onChange={(e) => onValue(e.target.value)} className="w-full rounded-md border px-2 py-1 text-[12px]" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', borderColor: 'var(--sem-border)' }}>
-        <option value="">Pick a staged rename</option>
-        {items.map((it) => <option key={it.id} value={it.id}>{it.title || it.objRef || it.id} {it.after ? `→ ${it.after}` : ''} ({it.status || 'proposed'})</option>)}
-      </select>
-      <button type="button" className="mt-1.5 text-[11px] font-semibold" style={{ color: 'var(--sem-accent)' }} onClick={() => void stage()}>Stage it now</button>
+    rpc<{ slots?: SlotDef[] }>('getWorkflowTemplate', starter.name).then((t) => setSlots(t?.slots ?? []))
+      .catch((e) => setLoadErr(String((e as Error).message ?? e)));
+  }, [starter.name]);
+  const missing = (slots ?? []).filter((s) => s.required !== 'optional' && !(values[s.name] ?? '').trim());
+  return <SideDrawer title={`Use ${starter.title}`} sub="asked once" testId="wf-use-drawer" onClose={onClose}>
+    <p className="sem-wf-note">Answer these once. They go into your copy, which is yours to change afterwards.</p>
+    {loadErr && <Banner color="var(--sem-bad)">{loadErr}</Banner>}
+    {!slots && !loadErr && <span className="sem-wf-note" role="status">Reading its questions…</span>}
+    {(slots ?? []).map((s) => <label key={s.name} className="sem-wf-slot">
+      <span>{s.question || s.name}{s.required === 'optional' ? <span className="sem-wf-note"> (optional)</span> : null}</span>
+      {s.type === 'enum' && (s.values?.length ?? 0) > 0
+        ? <select className="sem-field sem-field-sm" value={values[s.name] ?? ''} data-example={s.example ?? ''} onChange={(e) => setValues({ ...values, [s.name]: e.target.value })}>
+          <option value="">Choose</option>{s.values!.map((v) => <option key={v} value={v}>{v}</option>)}</select>
+        : <input className="sem-field sem-field-sm" value={values[s.name] ?? ''} data-example={s.example ?? ''}
+          placeholder={s.example ? `For example ${s.example}` : ''} onChange={(e) => setValues({ ...values, [s.name]: e.target.value })} />}
+      {s.hint && <span className="sem-wf-note">{s.hint}</span>}
+    </label>)}
+    {error && <Banner color="var(--sem-warn)">{error}</Banner>}
+    <div className="sem-wf-acts">
+      <button type="button" className="sem-btn sem-btn-sm sem-btn-primary" data-testid="wf-use-confirm" disabled={busy || !slots || missing.length > 0}
+        onClick={() => onUse(Object.fromEntries(Object.entries(values).filter(([, v]) => v.trim())))}>{busy ? 'Copying…' : 'Use it'}</button>
+      <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={onClose}>Cancel</button>
     </div>
-  );
+  </SideDrawer>;
 }
 
-function AnswerRow({ name, a }: { name: string; a: AnswerValue }) {
-  if (isDeclined(a)) {
-    return (
-      <div className="text-[11px] px-2 py-1.5 rounded" style={{ background: 'color-mix(in srgb, var(--sem-warn) 12%, transparent)', border: '1px solid color-mix(in srgb, var(--sem-warn) 30%, transparent)' }}>
-        <span className="font-semibold" style={{ color: 'var(--sem-warn)' }}>{uiLabel(name)} · declined</span>
-        {a.declineReason && <span style={{ color: 'var(--sem-fg)' }}>: {a.declineReason}</span>}
-      </div>
-    );
-  }
-  return (
-    <div className="text-[11px] px-2 py-1.5 rounded" style={{ background: 'var(--sem-surface-2)' }}>
-      <span className="font-semibold" style={{ color: 'var(--sem-fg)' }}>{uiLabel(name)}</span>
-      <span style={{ color: 'var(--sem-muted)' }}> · {isAnswered(a) ? a.value : '(no value)'}</span>
-    </div>
-  );
-}
+// ---- a draft, handed to Author (Edit in Workflows and Make it reusable on a draft, lane U5's route seed) ------
 
-function VerifyChip({ v }: { v: VerifyResult }) {
-  const color = verifyColor(v.status);
-  // unavailable is BLOCKED-with-a-reason (amber '!'), distinct from the muted not-run glyph — the two must never read alike.
-  const glyph = v.status === 'passed' ? '✓' : v.status === 'failed' ? '✕' : v.status === 'unavailable' ? '!' : '⤼';
-  const tip = v.status === 'unavailable' && v.missing ? `Missing: ${v.missing}${v.detail ? `
-${v.detail}` : ''}` : v.detail;
-  return (
-    <span title={tip} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1"
-      style={{ color, background: `color-mix(in srgb, ${color} 14%, transparent)`, border: `1px solid color-mix(in srgb, ${color} 34%, transparent)` }}>
-      <span aria-hidden>{glyph}</span> {checkTitle(v.kind)}{v.status === 'unavailable' ? ' (blocked)' : ''}
-    </span>
-  );
-}
+/** The draft's source names the saved workflow it was drafted from, or says it came from words, the Plan or the
+ *  assistant (Composer DraftView.Source). */
+export const draftWorkflowOf = (view: { source?: string | null } | null, library: { name: string; error?: string | null }[]): string | null =>
+  view?.source && library.some((w) => w.name === view.source && !w.error) ? view.source : null;
 
-// ---- small primitives ----------------------------------------------------------------------------
-// The small on/off switch shared by the library rows, playbook header, and governance table. Stops propagation so
-// flipping it never also opens a row. Muted when off (calm), accent when on. label = the accessible name.
-function AvailabilitySwitch({ on, label, title, onToggle }: { on: boolean; label: string; title: string; onToggle: () => void }) {
-  return (
-    <button type="button" role="switch" aria-checked={on} aria-label={label} title={title}
-      onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      className="shrink-0 relative rounded-full transition-colors"
-      style={{ width: 26, height: 15, background: on ? 'var(--sem-accent)' : 'var(--sem-surface)', border: `1px solid ${on ? 'var(--sem-accent)' : 'var(--sem-border)'}` }}>
-      <span className="absolute rounded-full transition-transform" style={{ top: 1.5, left: 1.5, width: 10, height: 10, background: on ? 'var(--sem-on-accent)' : 'var(--sem-muted)', transform: on ? 'translateX(11px)' : 'none' }} />
-    </button>
-  );
-}
-
-export function SourceBadge({ source, name }: { source: string; name?: string }) {
-  const stock = source === 'stock';
-  const copy = !stock && !!name && name in GROUP_OF;
-  return (
-    <span className="shrink-0 text-[9px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded"
-      title={stock ? 'Built into Semanticus and read-only' : copy ? 'Your project copy of a built-in workflow' : 'A workflow saved with this project'}
-      style={stock
-        ? { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }
-        : { color: 'var(--sem-accent)', background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb, var(--sem-accent) 40%, transparent)' }}>
-      {stock ? 'Built-in' : copy ? 'Your copy' : 'Project'}
-    </span>
-  );
-}
-
-export function RailLine() {
-  return <div className="absolute top-1 bottom-1 w-px" style={{ left: 15, background: 'var(--sem-border)' }} />;
-}
-export function NumberNode({ n }: { n: number }) {
-  return (
-    <div className="relative z-10 shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold tnum"
-      style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>{n}</div>
-  );
-}
-function StatusNode({ status }: { status: string }) {
-  const st = stepStyle(status);
-  const filled = status === 'passed' || status === 'in_progress';
-  return (
-    <div className="relative z-10 shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-[13px] font-bold" title={st.label}
-      style={filled ? { background: st.color, color: '#fff' } : { background: 'var(--sem-surface-2)', color: st.color, border: `2px solid color-mix(in srgb, ${st.color} 60%, transparent)` }}>
-      {st.glyph}
-    </div>
-  );
-}
-// The assistant's own instructions, collapsed. They are written for the assistant (tool names, conventions,
-// journey references), so they are never the first thing a person reads — but they must stay reachable.
-export function AssistantInstructions({ md, open, onToggle, className = 'mt-1.5' }: { md: string; open: boolean; onToggle: () => void; className?: string }) {
-  if (!md?.trim()) return null;
-  return (
-    <>
-      <button onClick={onToggle} aria-expanded={open} className={`${className} flex items-center gap-1 text-[11px] font-medium`} style={{ color: 'var(--sem-muted)' }}>
-        <Caret open={open} />
-        Instructions for your assistant
-      </button>
-      {open && <Markdown md={md} className="mt-1.5" />}
-    </>
-  );
-}
-
-export function OpChip({ op, onStage }: { op: string; onStage?: (id: string) => void }) {
-  const label = opTitle(op);
-  const [hint, setHint] = useState<string | null>(null);
-  useEffect(() => { let live = true; void opHints().then((m) => { if (live) setHint(m[op] ?? null); }); return () => { live = false; }; }, [op]);
-  const tip = hint ? `${hint} Your assistant does that part.` : 'Your assistant does that part.';
-  const clickable = op === 'add_plan_item' || op === 'get_plan';
-  const go = async () => {
-    if (op === 'get_plan') {
-      window.dispatchEvent(new CustomEvent('semanticus-open-tab', { detail: 'Change Plan' }));
-      return;
-    }
-    if (op === 'add_plan_item' && onStage) {
-      const plan = await rpc<{ items?: { id: string; objRef?: string; after?: string }[] }>('getPlan');
-      const first = plan.items?.[0];
-      if (!first?.objRef) return;
-      const next = await rpc<{ items?: { id: string }[] }>('addPlanItem', first.objRef, 'rename', first.after ?? '', first.objRef, null, null);
-      const id = next.items?.[next.items.length - 1]?.id;
-      if (id) onStage(id);
-    }
-  };
-  if (!clickable) {
-    return (
-      <span title={tip} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-        <span style={{ color: 'var(--sem-accent)' }} aria-hidden>▸</span> {label}
-      </span>
-    );
-  }
-  return (
-    <button type="button" title={tip} onClick={() => void go()} className="text-[10px] tnum px-1.5 py-0.5 rounded flex items-center gap-1" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }}>
-      <span style={{ color: 'var(--sem-accent)' }} aria-hidden>▸</span> {label}
-    </button>
-  );
-}
-export function Pill({ children, tint, title }: { children: React.ReactNode; tint?: string; title?: string }) {
-  return (
-    <span title={title} className="text-[9.5px] uppercase tracking-wide font-semibold px-1.5 py-0.5 rounded"
-      style={tint ? { color: tint, background: `color-mix(in srgb, ${tint} 14%, transparent)` } : { color: 'var(--sem-muted)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-      {children}
-    </span>
-  );
-}
-function Markdown({ md, className = '' }: { md: string; className?: string }) {
-  return <div className={`wf-md text-[12px] ${className}`} style={{ color: 'var(--sem-fg)' }} dangerouslySetInnerHTML={{ __html: mdToHtml(md || '') }} />;
-}
-
-// A button that reveals an inline reason field (skip / abort both require a reason) — no modal, stays in flow.
-function ReasonButton({ label, title, onConfirm, danger }: { label: string; title?: string; onConfirm: (reason: string) => void | Promise<void>; danger?: boolean }) {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState('');
+/** Author on a composer draft: the same draft body the Plan row draws (composer-draft.tsx, lane U5), under Author's
+ *  own back link and head. A draft drafted from a saved workflow is made reusable as a copy of that workflow, marked
+ *  with the draft it came from. A draft built from words or steps is written as a format-3 workflow by the engine
+ *  (open_in_author, lane author-gaps B8) and opened in Author, unsaved. */
+function DraftInAuthor({ draftId, library, isPro, onBack, onOpenPlan, onGo, onMade, onOpenDocument }: {
+  draftId: string; library: WorkflowInfo[]; isPro: boolean; onBack: () => void; onOpenPlan: () => void;
+  onGo: (tool: string, target?: string) => void; onMade: (name: string) => void;
+  onOpenDocument: (document: { name: string; text: string }, title: string) => void;
+}) {
+  const [view, setView] = useState<DraftView | null>(null);
   const [busy, setBusy] = useState(false);
-  const color = danger ? 'var(--sem-bad)' : 'var(--sem-fg)';
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} title={title} className="sem-btn" style={{ color }}>{label}</button>
-    );
-  }
-  const confirm = async () => {
-    if (!reason.trim()) return;
-    setBusy(true);
-    try { await onConfirm(reason.trim()); setOpen(false); setReason(''); } finally { setBusy(false); }
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { rpc<DraftView>('getDraft', draftId).then(setView).catch((e) => setError(String((e as Error).message ?? e))); }, [draftId]);
+  const source = draftWorkflowOf(view, library);
+  // A draft from words, or from a list of steps, has no file behind it: the engine writes it as a format-3 workflow
+  // (edit_draft open_in_author, lane author-gaps B8) and Author opens that as a new, unsaved workflow to save.
+  const openAsWorkflow = async () => {
+    if (!view) return;
+    setBusy(true); setError(null);
+    try {
+      const v = await rpc<DraftView & { document?: { name: string; text: string } | null }>('editDraft', draftId, 'open_in_author', null, null, null, null);
+      if (!v?.document) { setError('The draft could not be written as a workflow.'); return; }
+      onOpenDocument(v.document, view.title);
+    } catch (e) { setError(String((e as Error).message ?? e)); }
+    finally { setBusy(false); }
   };
-  return (
-    <span className="flex items-center gap-1.5">
-      <input value={reason} onChange={(e) => setReason(e.target.value)} autoFocus placeholder={`${label} reason…`} spellCheck={false}
-        className="text-[12px] px-2 py-1 rounded-md outline-none w-52" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: `1px solid color-mix(in srgb, ${color} 45%, transparent)` }} />
-      <button onClick={confirm} disabled={busy || !reason.trim()} className="text-[11px] px-2 py-1 rounded-md font-medium disabled:opacity-40" style={{ background: color === 'var(--sem-bad)' ? 'var(--sem-bad)' : 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{busy ? '…' : label}</button>
-      <button onClick={() => { setOpen(false); setReason(''); }} className="text-[11px] px-2 py-1 rounded-md" style={{ color: 'var(--sem-muted)' }}>Cancel</button>
-    </span>
-  );
-}
-
-function ErrorPanel({ name, error }: { name: string; error: string }) {
-  return (
-    <Panel>
-      <div className="text-[13px] font-semibold" style={{ color: 'var(--sem-bad)' }}>This workflow file has a format error</div>
-      <div className="text-[12px] mt-1" style={{ color: 'var(--sem-muted)' }}>
-        <span className="tnum">{name}</span> is still listed here rather than hidden, but it can't run until the error below is fixed.
-      </div>
-      <pre className="mt-2 rounded-lg px-3 py-2 text-[12px] whitespace-pre-wrap" style={{ background: 'color-mix(in srgb, var(--sem-bad) 10%, transparent)', color: 'var(--sem-bad)', border: '1px solid color-mix(in srgb, var(--sem-bad) 30%, transparent)', font: '12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace' }}>{error}</pre>
-    </Panel>
-  );
-}
-
-export function Panel({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-xl border p-4" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>{children}</div>;
-}
-export function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div className="text-[11px] uppercase tracking-wide font-semibold" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
-}
-export function Button({ children, onClick, primary, disabled, title }: { children: React.ReactNode; onClick?: () => void; primary?: boolean; disabled?: boolean; title?: string }) {
-  return (
-    <button onClick={onClick} disabled={disabled} title={title}
-      className={primary ? 'sem-btn sem-btn-primary' : 'sem-btn'}>
-      {children}
-    </button>
-  );
-}
-export function Banner({ children, color }: { children: React.ReactNode; color: string }) {
-  return <div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color, border: `1px solid color-mix(in srgb, ${color} 40%, transparent)` }}>{children}</div>;
+  const reusable = async () => {
+    if (!source || !view) return;
+    setBusy(true); setError(null);
+    try {
+      const doc = await rpc<{ exactText: string }>('getWorkflowDocument', source);
+      const name = M.reusableName(source, library as M.WfInfo[]);
+      await rpc('saveWorkflow', name, M.reusableCopy(doc.exactText, name, `${view.title}, from a draft`, draftId), 'human', true);
+      onMade(name);
+    } catch (e) { setError(String((e as Error).message ?? e)); }
+    finally { setBusy(false); }
+  };
+  return <div className="sem-wf-author sem-wf-editor" data-testid="wf-author-draft" data-wf-view="draft">
+    <div className="sem-wf-author-top"><button type="button" className="sem-wf-back" data-testid="wf-back" onClick={onBack}>Workflows</button></div>
+    <div className="sem-wf-ahead">
+      <h1 className="sem-page-title sem-wf-atitle">{view?.title ?? 'A draft'}</h1>
+      <span className="sem-wf-saved sem-wf-saved-dirty">A draft, not saved as a workflow</span>
+      <span className="sem-wf-author-acts">
+        <button type="button" className="sem-btn sem-btn-sm" data-testid="wf-draft-open-plan" onClick={onOpenPlan}>Open on the Plan</button>
+        <button type="button" className="sem-btn sem-btn-sm sem-btn-primary" data-testid="wf-draft-reusable" disabled={busy || !isPro || !view}
+          onClick={() => void (source ? reusable() : openAsWorkflow())}>{busy ? 'Opening…' : 'Make it reusable'}</button>
+      </span>
+    </div>
+    <p className="sem-wf-summary">{source
+      ? 'Drafted from one of your workflows. Make it reusable saves a copy of that workflow, marked with this draft.'
+      : 'Make it reusable opens these steps as a new workflow of your own, not saved yet. The draft itself runs from here or from its Plan row.'}</p>
+    {error && <Banner color="var(--sem-bad)">{error}</Banner>}
+    <div className="sem-wf-draft-host"><ComposerDraft draftId={draftId} onGo={onGo} /></div>
+  </div>;
 }

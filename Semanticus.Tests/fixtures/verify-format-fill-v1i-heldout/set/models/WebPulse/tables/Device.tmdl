@@ -1,0 +1,24 @@
+table Device
+	/// device join key
+	column 'Device Key'
+		dataType: int64
+		sourceColumn: DeviceKey
+		summarizeBy: none
+
+	column 'Device Code'
+		dataType: int64
+		sourceColumn: DeviceCode
+		summarizeBy: none
+
+	column 'Device Name'
+		dataType: string
+		sourceColumn: DeviceName
+		summarizeBy: none
+
+	partition Device = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [DeviceKey = Int64.Type, DeviceCode = Int64.Type, DeviceName = type text], {})
+			in
+				Source

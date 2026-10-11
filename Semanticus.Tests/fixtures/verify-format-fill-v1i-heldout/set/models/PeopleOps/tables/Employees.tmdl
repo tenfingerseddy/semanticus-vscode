@@ -1,0 +1,75 @@
+table Employees
+	column 'Employee Number'
+		dataType: int64
+		sourceColumn: EmployeeNumber
+		summarizeBy: none
+
+	/// hire date join key
+	column 'Hire Date Key'
+		dataType: int64
+		sourceColumn: HireDateKey
+		summarizeBy: none
+
+	/// termination date join key
+	column 'Termination Date Key'
+		dataType: int64
+		sourceColumn: TerminationDateKey
+		summarizeBy: none
+
+	/// department join key
+	column 'Department Key'
+		dataType: int64
+		sourceColumn: DepartmentKey
+		summarizeBy: none
+
+	column 'Annual Salary'
+		dataType: double
+		sourceColumn: AnnualSalary
+		summarizeBy: none
+
+	column FTE
+		dataType: double
+		sourceColumn: FTE
+		summarizeBy: none
+
+	/// birth year stored as integer
+	column 'Birth Year'
+		dataType: int64
+		sourceColumn: BirthYear
+		summarizeBy: none
+
+	column 'Employment Type'
+		dataType: string
+		sourceColumn: EmploymentType
+		summarizeBy: none
+
+	/// people in workforce
+	measure Headcount = DISTINCTCOUNT(Employees[Employee Number])
+
+	/// sum of annual salaries in dollars. Cents must remain visible.
+	measure 'Total Salary' = SUM(Employees[Annual Salary])
+
+	/// average annual salary in dollars. Cents must remain visible.
+	measure 'Average Salary' = AVERAGE(Employees[Annual Salary])
+
+	/// full time equivalents. Hundredths matter.
+	measure 'Total FTE' = SUM(Employees[FTE])
+
+	/// employees with a termination date
+	measure 'Leaver Count' = COUNTROWS(FILTER(Employees, NOT ISBLANK(Employees[Termination Date Key])))
+
+	/// leavers divided by headcount. Report to at least a tenth of a percentage point.
+	measure 'Attrition Rate' = DIVIDE([Leaver Count], [Headcount])
+
+	/// absence hours divided by scheduled hours. Report to at least a tenth of a percentage point.
+	measure 'Absence Rate' = DIVIDE(SUM(Absence[Hours]), SUM(Absence[Scheduled Hours]))
+
+	measure 'Absence Hours' = SUM(Absence[Hours])
+
+	partition Employees = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [EmployeeNumber = Int64.Type, HireDateKey = Int64.Type, TerminationDateKey = Int64.Type, DepartmentKey = Int64.Type, AnnualSalary = type number, FTE = type number, BirthYear = Int64.Type, EmploymentType = type text], {})
+			in
+				Source

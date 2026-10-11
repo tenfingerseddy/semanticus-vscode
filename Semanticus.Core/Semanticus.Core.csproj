@@ -47,10 +47,32 @@
     <Compile Include="TmdlApplier.cs" />
     <!-- Raw-TOM calendar seam (CL 1701+) — Calendar objects postdate the pinned wrapper; rides the TmdlApplier undo mechanism. -->
     <Compile Include="CalendarOps.cs" />
+    <!-- The one gate around the wrapper's process-wide handler Singleton (same-assembly access to the internal static and the protected-internal Handler). -->
+    <Compile Include="WrapperGate.cs" />
     <!-- Non-undoable audit-annotation seam (Verified Edits) — same-assembly access to the internal undoable:false overload. -->
     <Compile Include="AuditAnnotations.cs" />
+    <!-- Add a relationship under a chosen name in one undo step (same-assembly access to the protected-internal Handler). -->
+    <Compile Include="NamedRelationship.cs" />
     <!-- Mid-batch dependency-tree flush (same-assembly access to the internal FormulaFixup + postpone flags). -->
     <Compile Include="DependencyMaintenance.cs" />
+    <!-- Level-raise fill-in for the wrapper's OLS indexers (same-assembly access to their internal constructors). -->
+    <Compile Include="CompatibilityGatedMembers.cs" />
+    <!-- A sidecar change (the Primer) as one step on the model's undo timeline (same-assembly access to IUndoAction). -->
+    <Compile Include="SidecarUndo.cs" />
+    <!-- A restored table permission points at its table and columns again (same-assembly: the wrapper's ReapplyReferences is internal). -->
+    <Compile Include="TablePermissionUndo.cs" />
+    <!-- A switched-off incremental refresh policy comes back whole on undo (same-assembly: Table.MetadataObject is internal). -->
+    <Compile Include="RefreshPolicyUndo.cs" />
+    <Compile Include="GroupByUndo.cs" />
+    <Compile Include="PerspectiveTableUndo.cs" />
+    <!-- Every edit takes back exactly: the values the wrapper writes outside its undo are sealed into the batch (same-assembly: UndoManager.Add and the wrapper lookup are internal). -->
+    <Compile Include="ModelSeal.cs" />
+    <!-- The typed decision contract (Jev M0a): IDecisionOracle plus the request, answer, registry, consent,
+         cache and budget types. Pure data and one digest; no transport, no key, no network. It lives HERE and
+         not in Semanticus.Engine because Semanticus.Analysis references Core but not Engine, and the rules
+         lane needs the same contract later. The vendor client stays in Semanticus.Engine, which keeps this
+         assembly (the in-place TOM port) offline and keeps the vendor host in exactly one file. -->
+    <Compile Include="Decisions\**\*.cs" />
   </ItemGroup>
 
   <!-- ===== TOMWrapper project sources (compiled in place from the donor clone) ===== -->
@@ -86,7 +108,7 @@
          (the TE crown-jewel). Replaces the M0 Compat stubs (FormulaFixupStub.cs / DaxAccessors.cs, deleted). -->
     <Compile Include="$(TE2)\TOMWrapper\Utils\DependencyList.cs" />
     <Compile Include="$(TE2)\TOMWrapper\Utils\JObjectExtension.cs" />
-    <Compile Include="$(TE2)\TOMWrapper\Utils\FormulaFixup.cs" />
+    <!-- FormulaFixup.cs is NOT compiled from the donor: Compat\FormulaFixup.Patched.cs is the patched copy (RETURN/NOT/VAR before a bracket, and an unknown table, no longer end the walk). -->
     <Compile Include="$(TE2)\TOMWrapper\Utils\DaxDependencyHelper.cs" />
     <Compile Include="$(TE2)\TOMWrapper\Utils\DaxToken.cs" />
     <Compile Include="$(TE2)\TOMWrapper\Utils\DaxToken.Generated.cs" />

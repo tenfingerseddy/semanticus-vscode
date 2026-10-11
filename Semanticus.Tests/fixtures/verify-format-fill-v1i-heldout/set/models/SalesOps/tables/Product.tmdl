@@ -1,0 +1,30 @@
+table Product
+	/// product join key
+	column 'Product Key'
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	column 'Product Code'
+		dataType: int64
+		sourceColumn: ProductCode
+		summarizeBy: none
+
+	column Category
+		dataType: string
+		sourceColumn: Category
+		summarizeBy: none
+
+	/// list price in dollars. Cents must remain visible.
+	column 'List Price'
+		dataType: double
+		sourceColumn: ListPrice
+		summarizeBy: none
+
+	partition Product = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [ProductKey = Int64.Type, ProductCode = Int64.Type, Category = type text, ListPrice = type number], {})
+			in
+				Source

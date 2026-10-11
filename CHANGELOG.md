@@ -9,6 +9,386 @@ All notable changes to Semanticus are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-08
+
+The Plan is the heart of Semanticus (Kane's decision of 24 September, built in slices 7 to 11). It is where you
+start, it holds every piece of work on the model, and it keeps the record of every edit.
+
+### Hands-on fixes after the first use (rounds 1 and 2, 8 and 9 October)
+
+Kane used the 1.3.0 build on a real model and found 20 problems. Each one is fixed in this release, and each fix was
+tried on a real model, not only in tests.
+
+- Run the plan shows what it does. Rows tick through live, one press runs every wave, and the result line has Undo and
+  Save. Run does not save by itself. Pause is gone (Me and Set aside do the same job), and the Plan has filters for
+  All, AI ready and Quality. AI readiness is part of the Plan from the start.
+- Ask your data always answers. A simple question such as "sales in 2007", "sales by year" or "sales by brand" gives a
+  number and one line that says what it assumed. A year with no data says so. The Asked before list fills its card.
+  When Jev cannot be reached, Ask says so plainly and does not guess with a word match.
+- A year in your question always applies, or Ask says it did not. "Sales in 2008" now finds the year even when the
+  date table holds labels such as "CY 2008" or hides its year column. When a year or month cannot be used, the line under
+  the number says "Could not apply '2008', so this covers every date." A number never shows the all-time total in silence.
+- Quarters and weeks in a question. "Net sales in Q1 2008", "first quarter" and "week 12" now apply: Ask uses the
+  three months, or the day range, and says how it read them. When it cannot apply one, the line under the number says so.
+- A Plan row that another change closed says "No longer needed". When a best-practice fix removed the gap that an
+  assistant row named, the row used to say "Done by your assistant" for work the assistant never did. It now says why.
+- Dates in answers look like dates. A date column shows in its own format, or as a plain short date such as 1 Jan 2025,
+  in Ask answers, the data preview and Queries. A time shows only when the value has one.
+- A link between two fact tables. When one fact table points at another (returns to sales), only that link is switched
+  off if it would give a second path. The links from the facts to the dimensions stay on.
+- Starting fresh from a SQL source. A new start replaces a plan you have not built yet, and when the folder already
+  holds a model of that name the new one takes the next free name in its own folder, with a line that says so.
+- A start can be cancelled. While Semanticus reads the source, the form has a Cancel button. A sign-in window that is
+  closed ends the start with "Sign-in was closed. Start again when ready.", and a new start can begin at once.
+- Publish as a new model offers a free name. When the workspace already has a model with the model's name, the card
+  offers "Gold 2". A name that is taken is refused with "A model called Gold is already in Semanticus Demo. Pick another
+  name." and the model that is there is never changed.
+- A built start plan is a short band over the ordinary Plan. After Approve and build you see the model's own Plan with
+  its grades, rows and Run the plan, and See what was built opens the full plan. The build shows a Building line with
+  a moving bar while it works.
+- Best-practice fixes show under Quality too. A Plan row that fixes a rule both AI readiness and best practice raise
+  now shows under the AI ready filter and the Quality filter, so Quality is no longer empty on a model that scores low.
+- The Asked before list shows your latest 8 questions with a quiet Show all link. It no longer has a scroll bar inside
+  a scroll bar.
+- Charts only offer the kinds that fit the result, so every chart button draws a chart. One measure by two columns draws
+  one line or bar series for each value, Scatter plots one measure against another, and the dead buttons are gone from
+  Ask and Queries.
+- Ask remembers your permission for Jev. If it is ever needed there is one Allow button, and Ask and Queries stop
+  saying you have not allowed it. Ask also reconnects to the model by itself, so a question no longer fails with
+  "The connection is not open".
+- Explain a number. Ask why a measure has a value, or right-click a number and choose Explain this number, and you get
+  a plain answer. Month order and number formats read correctly.
+- Publish is one press. The button says what goes where, for example "Publish 3 changes to Sales", and sits at the top
+  right beside the destination. The header Publish button opens the Publish page. Checks run in the background and stop
+  only what the service would refuse. The reason box and the Advanced tab are gone. A changed key column no longer
+  breaks the pushed model file.
+- Publish as a new model. A model with nowhere to publish yet (for example one built from a SQL source) shows a New
+  model card on the Publish page: pick the workspace, keep or change the name, and press Publish. Semanticus creates
+  the model, loads its data, and makes it the destination and the model Tests read. A Fabric SQL source goes as Direct
+  Lake, so its data loads with no sign-in step; any other source says to set its sign-in in the Power BI service, then
+  refresh. Your assistant can do the same with `publish_new_model`, which shows what it would make first.
+- Reopen. Semanticus opens the model you last used, including a live model, and signs in again by itself when it can.
+  It no longer falls back to a local file.
+- Model quality bars. AI readiness and best practice show one large coloured grade and a bar for each category
+  (green from 80, amber from 60, red below 60). Formatting, Maintenance, Performance and the rest each get a bar.
+- A new logo and icon replace the abacus.
+- Documentation is redesigned. The relationship diagram now shows the relationships. The page follows your theme, prints
+  light, marks hidden tables and columns, and leaves out internal numbers.
+- The bus matrix is back to a clean layout. Dimensions run in one row across the top, facts sit below, and the lines run
+  straight down.
+- Fewer words and fewer duplicates across the app. Model interview is no longer shown in the app (your assistant can
+  still use it), the Plan row controls are one set, and the notes about saving versions appear only when they help.
+  Queries use four labelled wells (Rows, Columns, Measures, Filters) with coloured chips.
+- A new licence key. Old licence keys no longer work, so every existing Pro key needs to be re-issued.
+- The assistant skills are updated for 1.3.0. They cover running the plan, the Ask assumption line, Explain a number and
+  the one-time Jev permission, and the model interview is no longer the first answer to a quality check.
+- The test suite is leaner. A fast default tier runs on every change, and the slow checks run in a nightly sweep.
+
+### M11 in plain words
+
+M11 is the release of the Plan. It was built as many lanes and joined into one build in 13 parts. The join reports are
+kept in `lane-reports/join-1.md` to `join-13.md`, and every number below comes from them.
+
+#### What a person can now do
+
+- Start on the Plan. Every piece of work on the model is one row that says who does it, what state it is in and what it
+  waits for. Type a task or an aim, press Enter, and Run the plan does the ready Semanticus rows as one change that one
+  Undo takes back.
+- Give work to your assistant and watch it. Tasks go to your assistant on its next call. History inside the Plan shows who
+  made each edit, the task it was for, and the values before and after. Undo to here and Redo to here work on both doors.
+- Start a model from a SQL source (Pro, Fabric SQL with an Entra sign-in). Read one start plan, press Approve and build,
+  and your own assistant writes the words. On the test model the Pro build reached AI readiness A (93.3, and 93.6 with no
+  keys) and a few short answers then reached best practice A. The Free build reaches B by design.
+- Describe a workflow in words (Pro) and run it as a draft on the Plan. A draft can wait for you, hand a step to your
+  assistant, run step by step, and say where it stopped. Try again reruns only what did not finish.
+- Ask your data (Pro) reads everyday questions better and says what it used. Jev suggests formats, measures and summarize
+  settings one table at a time, and every suggestion waits in the reviewed Plan before anything is written.
+- Rename an object and every formula that names it follows, including formulas that use VAR blocks, SUMMARIZE,
+  SELECTCOLUMNS and row scans over FILTER or ALL. Explain shows times exact to the second.
+- Connections are on one page, with one SQL endpoint per model and one publish destination that Studio shows before it
+  sends anything.
+
+#### The safety work
+
+- One model fence. A command, a Studio message or a draft runs as the person's action on the model its page showed. A
+  command names the model it started on, and one central writer fence refuses a write that has moved to another model.
+  Drafts are kept in one shared store keyed on the model identity. Approve of a start plan works behind the fence.
+- Kept words. Words you type are never lost to a redraw. Held words survive a refresh, a new plan and Work it out again,
+  are listed with Keep mine and Discard when the object was renamed or deleted, and stay in the box when the press
+  succeeds before you finish typing (a role, a perspective name, a version name, a commit message, a Describe request).
+  When another writer changed an answer while a form was open, the form shows the newer value and you choose.
+- The publish fence. No person path publishes or rolls back to a destination it did not show. Studio sends the endpoint and
+  database it shows, the engine refuses a mismatch before any sign-in, check or write, and a destination moved by your
+  assistant reaches the open page at once. A rollback preview uses the sign-in of the connection that made the push.
+- Rename scope. A rename rewrites only what truly names the object. A VAR is visible only after its own declaration, so an
+  inner VAR's initializer reads the outer table. Scans over FILTER, ALL, CALCULATETABLE, TOPN, SAMPLE and TOPNSKIP of one
+  table bind that table. On 72 real models join 13 made the same 15,118 renames as join 12 (0 differences).
+
+#### How it was proven
+
+The last four joins (10 to 13) each ended with every heavy gate green, run on the exact head:
+
+- Engine suite by class parts, counted by `tools/suite-gate.mjs`: 11,644 passed (join 10), 11,826 (join 11), 12,018 (join
+  12) and 12,099 tests in 9 parts with 0 failed (join 13, one overlap failure that passes alone).
+- Full commutation gate 27 of 27, DAX suite 483 passed, smokes PASS (Cicd and one live Air check are unavailable without a
+  service principal), `npm test` 257 of 257 files, coverage oracle current at 358 operations.
+- The journey check on the release candidate (956b25a9) is READY: upgrade, fresh Free, Pro with real Jev, everyday edits,
+  and explain, ask and publish all passed, with no harm found.
+
+#### Known items and deferred
+
+- The release relay and billing worker are not deployed yet. The two Cloudflare domains, the licence public key and the
+  storage namespace id are Kane's.
+- Picking a draft's steps for you (Jev drafting) is off, so a described workflow starts from the menu. Four starters stay
+  until drafting shows it carries their checks. The Plan statement claim stays unsaid until its rerun passes.
+- The real SQL read needs a Fabric sign-in, Ask your data numbers need a model that holds data, and a Publish preview
+  needs a destination. Each stops in plain words and writes nothing. Windows, a real Fabric read and a real licence key
+  were not tested in the journey check.
+- After the release (Kane agreed each on 6 October, or earlier where noted): words lost when the engine restarts, an outage or
+  a licence change (about 50 boxes); the two rare kept-words cases, unsaved Dynamic format words in the calculation group form
+  after a card redraw and a Properties write that lands over newer words when the person selects another object; and two more
+  forms that clear their box in the same step as the press (a perspective and a calculation group). Three rare rename shapes
+  also wait: a column renamed by SELECTCOLUMNS then the source renamed, and a bare name left stale after ADDCOLUMNS over
+  SUMMARIZE or GROUPBY over ADDCOLUMNS. They were wrong on the older code too.
+- The Pro build stops at best practice C until the person types reasons for the relationship row. Run the plan offers no
+  ready row after the Pro build.
+
+#### Detail by area
+
+The lists below are the full record, in the Keep a Changelog groups.
+
+### Added
+
+- The Plan is the start page. Each piece of work on the model is one row that says who does it (Semanticus, you,
+  or your assistant), what state it is in, and what it waits for. Type a task or an aim in the one field at the top
+  and press Enter to add it. Run the plan does every ready Semanticus row as one change you can undo.
+- Give work to your assistant. A task you type goes to your assistant unless you choose I'll do it. Give to your
+  assistant, on the readiness findings, the storage ideas and every place that used to say Ask AI, puts the work on
+  your Plan as a task. Your assistant sees the ready tasks on its next call, takes one, and marks it done with a
+  reply or says why it could not. One switch pauses your assistant's tasks, and Pause and Up work on single rows.
+- History inside the Plan. Every edit shows who made it, the task or run it was for, and its values before and
+  after. Undo to here takes back that edit and every later one in one step, and Redo to here puts them back. Save a
+  version and Restore work from the same list. Your assistant reads the same history with get_plan_history and can
+  undo to a point with undo_change.
+- Repeat cards (Pro): work that comes back on a schedule. A card comes due and waits on the Plan; nothing runs
+  until you run it.
+- A short tour of the Plan for a new user, and a What changed card for an existing one. Help reopens both.
+- Describe a workflow in words (Pro). In Workflows, New turns your words into steps and opens them in Author;
+  nothing goes on the Plan until you run it. On the Plan, the field or Ctrl J opens a draft on a Plan row instead:
+  pick its steps from the menu Semanticus offers, answer its questions, and run it. When a check after the change
+  fails, Try again reruns only what did not finish, and Keep it anyway closes the draft without undoing it.
+- Formats for number and date columns (Pro). Jev suggests a format for each visible number or date column that has
+  none, from the column's name and type only, and the Plan shows one Format row per table. Approve sets the kept
+  formats in one step that one Undo takes back.
+- Steps for you and for your assistant in a draft. A draft can stop and wait for you to press Continue, or hand a
+  step to your assistant and carry on when its changes pass their checks. It runs step by step, and says how many
+  changes it makes and where it stops.
+- Run once, and Make it reusable. Author runs the steps it holds once without saving them, and Make it reusable
+  opens a draft's steps as a new workflow of your own.
+- Author edits the settings of a version 3 workflow, and after a draft runs the status bar says what one Undo
+  takes back.
+- The cleanup row has Show the changes, with Keep all and Drop all over its list, so removing everything you
+  chose is one press and one Approve.
+- Remove on a Plan row takes it off the Plan, and Undo right after puts it back.
+- Describe it in words opens its steps in Author, and each step Semanticus knows carries its checks.
+- The cleanup row is a list you review. It is Optional and last, every unused column is one line, and Jev can only
+  untick a line, never add one.
+- A plain add in your words ("add a role Analyst") is kept ticked only when the words plainly ask for it. An add
+  that does not read that way is offered unticked, and one that reads as taken back ("just kidding") is never ticked.
+  When Jev cannot be asked whether you still want an add, the add is unticked, and Jev never lifts an add itself.
+  Run draft from your assistant names each add it ran ("It added: ..."), so the person can see what went in.
+  Describe workflow steps follows the same rule for its adds.
+- Starter measures never total a key or a date key, and the starter rows of many fact tables run in one press. The
+  four starters stay until Jev drafting shows it carries their checks.
+- Model Spec, the Plan and Help say the same sentence about starting from a SQL source, and asking Semanticus to
+  make a table or a view from a SQL source is read more plainly (56 recorded asks in the test set).
+- The Queries box shows the reading it used first, with Show it anyway, the same as Ask your data.
+
+### Changed
+
+- Ask your data (Pro) reads everyday questions better. "How did sales do last month" is read against the last day
+  the model's data holds, and the answer says which month it used; on a model with no calendar the numbers are split
+  by month and it says so. When Jev is torn between two fair readings, the answer shows the top one and names the
+  other ("Showing Net Sales. You may have meant Units.") with a button to switch; your assistant gets both. Jev is
+  told when a word you typed is one of the model's own other names for a measure, and the permission card now says
+  so. "Coast vs North", "did 2025 beat 2024" and "coast and north" show both side by side, never one total; where
+  Region is in two tables it reads every region word on the one table that holds them all, and names the other when
+  both do. "Last week", "this week" and "yesterday" are read on the model's days and said. A month or a quarter with
+  no year, on data holding more than one year, is split by year and said. "Bike" finds the value Bikes.
+- Every Ask your data answer starts with one sentence saying what it shows ("This shows Net Sales for each Region,
+  where Year is 2025 (1 January to 31 December 2025)."), in the Studio and for your assistant, with every period it
+  filters or splits named in calendar dates so a different kind of year shows up as a gap. A ratio measure says what it divides ("Return Rate %
+  (Returns Amount divided by Net Sales Amount)"), and the grid shows a percent measure as a percent. Before a number
+  is shown, Jev checks the reading: what, if anything, it leaves out of your question. When Jev is sure something is
+  missing, nothing runs, the answer says what is missing, and the reading is one click away ("Show it anyway");
+  Semanticus never overrides a gap Jev is sure of. When Jev is only unsure, the reading runs only if it plainly covers
+  the gap (two years side by side for a question about change) and says what to read off the rows; otherwise Jev is
+  asked one short follow-up, and nothing runs if that does not settle it. Three checks need no Jev: a
+  qualified period (a tax, school or fiscal year, "fisacl 2025") that the reading does not use and the model has no
+  column for, "from 2024" read as the one year 2024, and a share of a count (orders, customers) answered by a ratio
+  of amounts. "Jev read this" shows only over an answer that ran.
+  A value it matched through a slip ("coats" as Coast) is said, and "last year to date" is the same days of last year.
+- In Ask your data you can filter a date column by a range (after, from, before or up to a day), the same range
+  your assistant can send.
+- A newer extension talking to an older engine now says so and offers to save and restart, instead of showing a
+  raw error.
+- Every Model notes change (the Primer) is a History entry that says who made it, and Undo takes it back. Undoing
+  an accepted suggestion puts it back to waiting.
+- Lessons your assistant writes are listed as not reviewed until you trust them.
+- The Plan's field keeps the lines you type. Shift+Enter starts a new line and Enter adds the task.
+- What Pro decides shows a point this version does not ask about yet as not on yet, with its switch off.
+- Each model now keeps its own What Pro decides switches, including live, unsaved and saved models and two models in
+  one folder. When Semanticus cannot tell which Power BI Desktop file a model is, an off is kept for every file it
+  might be. Semanticus knows a Desktop model by its window title or by nothing, never by the file path Desktop was
+  started with, because the window can show another file by then. So switching it back on is kept for every Desktop
+  file with that name (a copy in another folder too) or for every Desktop model Semanticus cannot name, clears no other
+  file's off, and the row says which models it reached and what stays off. The Microsoft Store and
+  Report Server editions of Power BI Desktop count as Desktop. A local model is placed by its own port: a real
+  Analysis Services database stays one while a Desktop runs on another port, and only a model whose own process cannot
+  be found is treated as a Desktop model Semanticus cannot name. A Desktop window whose title cannot be read is one
+  too. A Primer is kept under a Desktop file's name for the same reason, so a Primer saved earlier for a file opened by
+  double-click is no longer found. Its file is still in the workspace's primers folder, so its words can be saved
+  again. Studio now hears when your assistant opens another model, the panel names the model its rows are for, and a switch clicked
+  for a model that is no longer open, or for rows that cannot say which model they are for, changes nothing.
+
+- Verified Mode is now called Record verified edits. Every DAX write is checked whatever the switch says; the
+  switch only adds a record to the Verified Edits audit trail, and its name now says so. The assistant tools
+  keep their names, get_verified_mode and set_verified_mode, so existing assistants and scripts still work.
+- The assistant's tool descriptions, skills and server instructions now match what the engine does (the prompt
+  audit of 24 Sep). The assistant is no longer told a user's edits reach it in tool results; it re-reads instead.
+- The assistant's tool list is 12 shorter (345 to 333). Near-duplicate tools folded into one tool each, so the
+  assistant has fewer names to choose between and nothing it could do is lost:
+  bpa_scan, ai_readiness_scan and get_model_graph take detail='summary' for the counts-only view;
+  ai_readiness_scan takes live=true for the live cardinality rules; apply_fix, get_fix_prompt and
+  apply_safe_fixes take system='bpa' or 'air'; load_rules and reset_rules replace the four BPA and readiness
+  rule loaders; benchmark_dax takes mode='coldWarm'; impact_assessment with scope='model' replaces impact_of.
+  label_connection left the assistant's list: only the user sets a target label, in VS Code. The VS Code
+  screens are unchanged. Saved workflows that name an old tool keep working, and an assistant or script that
+  calls an old name is told the call that replaced it. The stock refactor-to-calculation-group and
+  model-hygiene-pass workflows now name impact_assessment; their 1.2.1 wording ships so a pinned binding still runs.
+- Workflows is one page: the list of your workflows, and Author when you open one. New starts with Describe it in
+  words, then the starters, then Start blank. Author shows Steps first, with Canvas and Source behind View. Save is
+  one click, and shows the difference first only when something needs a warning or the file changed elsewhere.
+  Each workflow's Settings hold its notes for your assistant, the inputs it asks for, where it is offered, what it
+  is required for, and Repeat on the Plan.
+- Three names for repeatable work, on both doors: a workflow is yours, a starter comes with Semanticus and Use makes
+  a copy of it, and team rules say what a team requires. Team rules sit in a drawer that stays hidden until a rule
+  exists. Help, the assistant skills and the assistant's tool descriptions use the same three words. Tool names do
+  not change, so existing assistants and scripts still work.
+- A workflow run is a row on the Plan, where you answer its questions and submit, skip or stop its steps. Its
+  report is its entry in History, and Make it reusable there saves the run as a workflow of your own.
+- Use on a starter that a team rule requires opens the required workflow instead of copying it, and a project copy
+  that would quietly replace a required workflow is refused, from VS Code and from your assistant alike.
+- The switch for checks inside runs is called Checks in runs. When it is off it says what is true: actions a team
+  rule requires still go through their workflow.
+- The consent version is now 5, so everyone is asked again once. This is the one release bump.
+- Ask your data and the Queries box use calendar dates only on a column that is plainly the calendar. A column named
+  Fiscal, Financial, Tax or FY is not treated as the calendar.
+- A Power BI Desktop model is known by its window title or by nothing. Semanticus no longer uses Desktop's
+  command-line path as a model's identity, and the switch's "on" note says so. Each model keeps its own What Pro
+  decides switches: live, unsaved and saved models, two models in one folder, and Desktop files.
+- A finding a person accepted is never raised again by a fix, the deploy gate or Jev's column-format lines.
+- The field name clash rule counts visible fields only, and DIM-PRIMARY-NAME sets the row label.
+- Jev has no session allowance in the app. The session counter still counts and get_decision_budget now reads it in
+  tokens, requests and US dollars (Jev is USD 0.042 per million input tokens, output free), but nothing stops on a
+  session total any more. Kane, 1 Oct: batching is the best mitigation, not caps.
+- The relay's allowance is money: USD 2 a user a month, which is 47,600,000 input tokens. The house cap is that
+  allowance times the paying count (it used to multiply the old default whatever was configured). Not deployed
+  yet; it goes live with the release.
+- All four Jev Plan points ask a table at a time (measures, column formats, summarize settings, ai.schema). A first read of
+  a 15-table model took about 160 to 190 requests and USD 0.03 where one request per object took about 1,300 to 1,500
+  and USD 0.07 (measured live, two runs). An unsure answer can move and arrive ticked
+  or unticked; it is always in the reviewed Plan before anything is written.
+
+### Removed
+
+- The Overview. The model's facts, the next thing to do and the actions for the selected object are on the Plan,
+  and the tables card is under Explore. Old links open the Plan.
+- The Edit History tab. History is inside the Plan; published versions and roll back stay under Publish >
+  Published. Old links open the Plan's History.
+- Workflows' Home, Library, Runs and Governance tabs, and the banner for a run in progress.
+- Seven starters are parked: Add a measure, Import a table, Connect tables, Tidy a model, Explain the model to
+  assistants, Set up a calendar and Add time comparisons. Describing the work in words finds their steps, and each
+  step Semanticus knows carries the checks that starter ran, on the Plan and in Workflows alike. A project pinned
+  to one still resolves and runs it; starting one by name says what replaced it.
+
+### Fixed
+
+- A script you apply is judged by the object each header names, not by how it is spelled. A block the object already holds is
+  nothing to do, a block nobody edited over an object nobody moved is not rewritten, and Apply mine anyway sends what the
+  editor holds now.
+- Under the Locked preset every assistant write asks first, and that now includes the whole spec-first start: the new model,
+  edits and words written into the start plan, the permission for Jev, the build and the discard.
+- The start plan's held lines say why in the start plan's own words, and a saved check or a Compare over a field the model
+  sorts by another column says so plainly. The chart legend no longer draws over the last axis label.
+- Undo puts back what TE2 writes outside its own undo (a key column, a table permission, a refresh policy), and a first save
+  of a new model never goes into another model's folder.
+- Switching a Pro suggestion off for a model opened live or not yet saved no longer switches it off, or back on,
+  for every other such model in the workspace.
+- A model whose SYN-SCHEMA finding is waived (no linguistic schema on purpose) keeps its grade. The field and table
+  synonym rules stay dormant while that waiver stands and no schema exists, so no fix offers to create the schema
+  the person declined. A person can waive SYN-FIELD and SYN-TABLE at rule level too, and a waived schema now costs
+  the field and table gaps in the Synonyms grade.
+- INTEGER_FORMATTING no longer raises `#,##0` and `#,##0.0`, and the format rule no longer advises `0.00`, `0;(0)`,
+  `00000` or `#`, whose only fix would destroy their decimals, sections or padding.
+- Run the plan no longer writes a summarize setting, a visibility or an Excel setting the person accepted: Jev's
+  summarize row reads stored acceptances the way the format row does. A sure "sum" on a key never becomes a total.
+- Ask your data: a plain Quarter or Year on a table named Fiscal Calendar, Financial Year, Tax or FY gets no calendar
+  dates.
+- Approving changes on a model that was built but never saved says what happened (written, one undo, not saved
+  yet) instead of "failed: there is nowhere to keep this yet".
+- A copy of a bundled best-practice rule embedded in the model (same id and formula, as a Tabular Editor standard set
+  is) counts as the bundled rule, so the format advice stays advice for the deploy gate. A rule the model truly
+  wrote at severity 3 still blocks.
+- Sol's review fixes: percent formats kept in Queries results, charts and cards; a stopped question clears its old
+  rows; "last year" beside an excluded year; ratios inside bigger sums; retail quarters without calendar dates;
+  the grade counts a related finding as open; a replacement object no longer inherits a deleted one's acceptance;
+  a model's own severity 3 rule with a withheld fix still blocks the gate; saving TMDL keeps stamp-shaped text
+  inside another annotation; key parts are never totalled; a switch turned off stops queued requests; an older
+  "on" never beats a newer "off"; undo then swap no longer restores permission.
+- Sol's second review fixes: words you wrote on a Plan line are kept by every refresh, a new plan and Work it out again
+  (held, with the reason, until you tick them); an undone permission stays undone however another model opens; a copy of
+  a bundled rule counts as bundled only when it behaves the same; a case-only rename reads from the connected model;
+  small numbers are never rounded away (0.0068 reads 0.0068 in Queries, charts and the Tests page); a linked copy
+  proves its formats before showing a percent; a column a query defines itself never borrows a measure's format.
+
+### Known issues
+
+- Picking a draft's steps for you (Jev drafting) is not switched on yet, so a described workflow starts from the
+  menu. Four starters (incremental refresh, checking saved tests against SQL, refactoring to a calculation group
+  and certifying a metric) stay until that drafting can show it carries their checks.
+
+## [1.2.1] - 2026-09-16
+
+A fix for the Choose reports drawer under Lineage, found on a real Fabric workspace the day after 1.2.0.
+
+### Fixed
+
+- In Choose reports, ticking a report in the list of published reports now shows the tick and adds the report to
+  the chosen set, and unticking removes it. The list and the chosen set were keyed by different names for the
+  same report, so a tick never showed and a second tick did nothing.
+- Done, the error line and the Check button sit in a fixed header and footer, so they cannot scroll out of
+  sight in a long drawer. Before, the consent refusal and Done were there but below the fold.
+- A check that needs the permission box says so beside the box, and a finished check says what it read.
+- The IN REPORTS row on the Impact card opens with Show all: one line per chosen report with its state in plain
+  words and the time it was read, the pages and visuals it uses the field through (including use through a measure),
+  or "No use found in this report". A report that could not be fully checked now says why and what to do; three
+  cases used to leave that reason empty or wrong.
+- Unticking one of several chosen published reports keeps the others' workspace and report id, so the next
+  check reads them from the right place. Before, the survivors were saved by display name under no workspace.
+- Two chosen reports with the same name in different workspaces keep their own results. Each hit now carries
+  the report it came from, so a report cannot be shown another report's pages or be told it has no use.
+- A field used only in a bookmark, a report filter or a report setting reads as used in the report, not on any
+  page. It used to read as no use found while the summary above said the report uses it.
+- A report with more than 200 matching visuals says how many more matches are not listed, instead of stopping
+  at 200 quietly.
+
+### Known issues
+
+- With nothing chosen, the drawer's footer still says Done and Escape keep the last completed check, which is
+  not true before any check has run.
+- Reading a published report from the cloud is still proven against a stand-in, not a live workspace.
+
 ## [1.2.0] - 2026-09-15
 
 The usability redesign that followed 1.1.3. Installers for every supported platform are attached to the GitHub

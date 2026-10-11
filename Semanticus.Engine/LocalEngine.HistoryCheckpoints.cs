@@ -16,6 +16,9 @@ namespace Semanticus.Engine
         /// <summary>Test seam: when a checkpoint label contains this text, CreateHistoryCheckpoint returns an error instead of committing.</summary>
         internal string FailCheckpointCommitMatchingForTest;
 
+        /// <summary>Test seam: runs after a restore has rewritten the model files and before it reopens them.</summary>
+        internal Func<Task> AfterRestoreFilesForTest;
+
         private sealed class CheckpointContext
         {
             public Session Session;
@@ -49,6 +52,18 @@ namespace Semanticus.Engine
 
         public async Task<HistoryCheckpointResult> CreateHistoryCheckpointAsync(string label, bool commit, string origin)
         {
+            if (commit) GuardOutsideWrite(origin);
+            var result = await CreateHistoryCheckpointCoreAsync(label, commit, origin);
+            // Contract 8.7: a version saved on purpose is a flag row in History. The two a restore makes for itself
+            // (the rescue and the restored state) are told by the one "restored" row instead.
+            if (result.Committed && result.Checkpoint != null && _sessions.Current is Session s)
+                _sessions.Ledger.RecordFlag(s.Id, EditLedgerKinds.Saved, "Saved a version: " + result.Checkpoint.Label,
+                    ChangeBy.For(null, origin), result.Checkpoint.Hash);
+            return result;
+        }
+
+        private async Task<HistoryCheckpointResult> CreateHistoryCheckpointCoreAsync(string label, bool commit, string origin)
+        {
             var context = await CheckpointContextAsync();
             if (context == null)
                 return new HistoryCheckpointResult { Preview = !commit, Error = "Open or save a model inside a git repository first." };
@@ -59,7 +74,8 @@ namespace Semanticus.Engine
             if (!string.IsNullOrEmpty(FailCheckpointCommitMatchingForTest)
                 && cleanLabel.IndexOf(FailCheckpointCommitMatchingForTest, StringComparison.Ordinal) >= 0)
                 return new HistoryCheckpointResult { Error = "forced test failure", SavedModelFirst = context.Session.HasUnsavedChanges };
-            var ownedNow = context.Status.Files.Where(f => IsOwned(f.Path, context.Paths)).Select(f => f.Path).Distinct(PathComparer).ToList();
+            // A rename names two paths, and a table rename in a folder model renames its file, so both count.
+            var ownedNow = context.Status.Files.SelectMany(ChangePaths).Where(p => IsOwned(p, context.Paths)).Distinct(PathComparer).ToList();
             if (context.Session.HasUnsavedChanges && !ownedNow.Contains(context.ModelKey, PathComparer))
                 ownedNow.Add(context.ModelKey);
             if (!commit)
@@ -78,9 +94,11 @@ namespace Semanticus.Engine
             {
                 var format = Directory.Exists(context.Session.SourcePath) ? "TMDL"
                     : context.Session.SourcePath.EndsWith(".bim", StringComparison.OrdinalIgnoreCase) ? "BIM" : "TMDL";
-                await SaveAsync(context.Session.SourcePath, format);
+                await SaveAsync(context.Session.SourcePath, format, false, origin);
                 saved = true;
             }
+            // The History's pending write lands before the folder is read and staged (LocalEngine.cs, SettleSidecarWritesAsync).
+            await SettleSidecarWritesAsync();
 
             context = await CheckpointContextAsync();
             if (context == null)
@@ -88,7 +106,10 @@ namespace Semanticus.Engine
             var unmerged = context.Status.Files.Where(f => f.Status == "U").Select(f => f.Path).ToArray();
             if (unmerged.Length > 0)
                 return new HistoryCheckpointResult { Error = "Resolve the repository conflicts before checkpointing: " + string.Join(", ", unmerged), SavedModelFirst = saved };
-            var stagedOutside = context.Status.Files.Where(f => f.Staged && !IsOwned(f.Path, context.Paths)).Select(f => f.Path).ToArray();
+            // The commit takes the whole index, so a staged rename is the model's own only when BOTH of its paths are:
+            // a file moved into the model folder from outside would also commit that outside path's deletion.
+            var stagedOutside = context.Status.Files.Where(f => f.Staged).SelectMany(ChangePaths)
+                .Where(p => !IsOwned(p, context.Paths)).Distinct(PathComparer).ToArray();
             if (stagedOutside.Length > 0)
                 return new HistoryCheckpointResult
                 {
@@ -106,9 +127,10 @@ namespace Semanticus.Engine
                     add = side;
             }
             if (!add.Ok) return new HistoryCheckpointResult { Error = GitCli.Combine(add), SavedModelFirst = saved };
-            var cached = await GitCli.RunAsync(context.RepoRoot, new[] { "diff", "--cached", "--name-only", "--" }.Concat(context.Paths).ToArray());
+            // -z: without it git quotes a name with a letter outside plain ASCII as octal escapes in this list too.
+            var cached = await GitCli.RunAsync(context.RepoRoot, new[] { "diff", "--cached", "--name-only", "-z", "--" }.Concat(context.Paths).ToArray());
             if (!cached.Ok) return new HistoryCheckpointResult { Error = GitCli.Combine(cached), SavedModelFirst = saved };
-            var files = Lines(cached.Stdout);
+            var files = GitCli.NulFields(cached.Stdout);
 
             var auditHead = await context.Session.ReadAsync(m => VerifiedEditsStore.Load(m).Records.LastOrDefault()?.Hash ?? "");
             var body = string.Join("\n", new[]
@@ -158,30 +180,57 @@ namespace Semanticus.Engine
                     Note = "Preview only. Restore first commits the current model as a rescue checkpoint, then restores only this model's tracked files and commits the result on the current branch. Unrelated files and branch history are not reset.",
                 };
 
+            // Restoring replaces the model's files and reopens it, so under Locked an assistant's restore waits for the
+            // person BEFORE the rescue checkpoint is made: the grant names this checkpoint and nothing else.
+            var heldRestore = HoldFileWrite(origin, "Your assistant wants to restore the model files to the saved version \"" + target.Label + "\" (" + target.ShortHash + "). Anything unsaved is kept as a rescue version first.", "restore:" + target.Hash);
+            if (heldRestore != null) return new HistoryRestoreResult { Target = target, Paths = context.Paths, Error = heldRestore };
+            // The restore was just cleared above (or is the person's), and its rescue and restored checkpoints are part of
+            // it: they save as the engine, so one approval is one restore and not three asks. This is the only place an
+            // assistant's origin is swapped, and only after the hold above let it through.
+            var innerOrigin = string.Equals(origin, "agent", StringComparison.Ordinal) ? "system" : origin;
             var sourcePath = context.Session.SourcePath;
-            var rescue = await CreateHistoryCheckpointAsync("Before restore to " + target.ShortHash, commit: true, origin);
+            var rescue = await CreateHistoryCheckpointCoreAsync("Before restore to " + target.ShortHash, commit: true, innerOrigin);
             if (!string.IsNullOrEmpty(rescue.Error))
                 return new HistoryRestoreResult { Target = target, Paths = context.Paths, Error = "The rescue checkpoint failed, so nothing was restored. " + rescue.Error };
 
             context = await CheckpointContextAsync();
-            var rr = await GitCli.RunAsync(context.RepoRoot,
-                new[] { "restore", "--source", target.Hash, "--staged", "--worktree", "--" }.Concat(context.Paths).ToArray());
-            if (!rr.Ok)
-                return new HistoryRestoreResult
-                {
-                    Target = target, RescueCheckpoint = rescue.Checkpoint, Paths = context.Paths,
-                    Error = "The current state is safe in the rescue checkpoint, but git could not restore the target: " + GitCli.Combine(rr),
-                };
+            // git restore refuses the whole call when one pathspec matches nothing it knows, which is what a sidecar
+            // folder the person git-ignores does. The checkpoint side already tolerates that folder, so the restore
+            // passes only the sidecar paths git holds in the target or the index; an untracked sidecar is left as is.
+            var restorePaths = new List<string> { context.ModelKey };
+            foreach (var spec in context.Paths.Where(p => !string.Equals(p, context.ModelKey, PathComparison)))
+                if (await GitKnowsPathAsync(context.RepoRoot, target.Hash, spec)) restorePaths.Add(spec);
+            OpenResult reopened;
+            _restoringModelFiles = true;
+            try
+            {
+                var rr = await GitCli.RunAsync(context.RepoRoot,
+                    new[] { "restore", "--source", target.Hash, "--staged", "--worktree", "--" }.Concat(restorePaths).ToArray());
+                if (!rr.Ok)
+                    return new HistoryRestoreResult
+                    {
+                        Target = target, RescueCheckpoint = rescue.Checkpoint, Paths = context.Paths,
+                        Error = "The current state is safe in the rescue checkpoint, but git could not restore the target: " + GitCli.Combine(rr),
+                    };
 
-            await OpenAsync(sourcePath, discardUnsaved: true);
+                if (AfterRestoreFilesForTest != null) await AfterRestoreFilesForTest();
+                reopened = await OpenCoreAsync(sourcePath);
+            }
+            finally { _restoringModelFiles = false; }
             var opened = _sessions.Current;
             if (opened != null) PublishSaveNotification(opened, "restore");
-            var restored = await CreateHistoryCheckpointAsync("Restored to " + target.ShortHash + " - " + target.Label, commit: true, origin);
+            // Contract 8.7: the restore reopened the model, so this is a new session and a new undo stack. The row
+            // is the seam: everything above it in History reads "Before the restore".
+            if (opened != null)
+                _sessions.Ledger.RecordFlag(opened.Id, EditLedgerKinds.Restored, "Restored " + target.Label,
+                    ChangeBy.For(null, origin), "restored " + target.ShortHash + "; the state before it is saved as " + rescue.Checkpoint?.ShortHash);
+            PublishSessionSwap(reopened, "restore");
+            var restored = await CreateHistoryCheckpointCoreAsync("Restored to " + target.ShortHash + " - " + target.Label, commit: true, innerOrigin);
             if (!string.IsNullOrEmpty(restored.Error))
                 return new HistoryRestoreResult
                 {
                     Restored = true,
-                    Target = target, RescueCheckpoint = rescue.Checkpoint, Paths = context.Paths,
+                    Target = target, RescueCheckpoint = rescue.Checkpoint, Paths = context.Paths, SessionId = opened?.Id,
                     Error = "The model files were restored and reopened, but the restored state was not committed: " + restored.Error,
                 };
 
@@ -192,8 +241,18 @@ namespace Semanticus.Engine
                 RescueCheckpoint = rescue.Checkpoint,
                 RestoredCheckpoint = restored.Checkpoint,
                 Paths = context.Paths,
+                SessionId = opened?.Id,
                 Note = $"Restored {target.ShortHash} on the current branch. The previous state is {rescue.Checkpoint?.ShortHash}; the restored state is {restored.Checkpoint?.ShortHash}.",
             };
+        }
+
+        /// <summary>Whether git tracks anything under <paramref name="spec"/> in the index or in commit <paramref name="hash"/>.</summary>
+        private static async Task<bool> GitKnowsPathAsync(string repoRoot, string hash, string spec)
+        {
+            var index = await GitCli.RunAsync(repoRoot, "ls-files", "--", spec);
+            if (index.Ok && !string.IsNullOrWhiteSpace(index.Stdout)) return true;
+            var tree = await GitCli.RunAsync(repoRoot, "ls-tree", "-r", "--name-only", hash, "--", spec);
+            return tree.Ok && !string.IsNullOrWhiteSpace(tree.Stdout);
         }
 
         private async Task<CheckpointContext> CheckpointContextAsync()
@@ -202,9 +261,14 @@ namespace Semanticus.Engine
             if (s == null || string.IsNullOrWhiteSpace(s.SourcePath)) return null;
             var working = GitWorkingDirOrNull();
             if (working == null) return null;
-            var status = await GitCli.StatusAsync(working);
-            if (!status.IsRepo || string.IsNullOrWhiteSpace(status.RepoRoot)) return null;
-            var root = Path.GetFullPath(status.RepoRoot);
+            var found = await GitCli.RepoRootAsync(working);
+            if (string.IsNullOrWhiteSpace(found)) return null;
+            var root = Path.GetFullPath(found);
+            // From the root: `git status --porcelain=v2` names paths relative to the folder it runs in, and every owned
+            // key below is repo-relative. Run in the model's folder, a model below the root (every PBIP) owned none of
+            // its own files, so a restore committed nothing and left them staged for the next checkpoint to refuse.
+            var status = await GitCli.StatusAsync(root);
+            if (!status.IsRepo) return null;
             var source = Path.GetFullPath(s.SourcePath);
             var modelKey = RepoRelative(root, source);
             if (modelKey == null) return null;
@@ -258,6 +322,9 @@ namespace Semanticus.Engine
             if (rel == ".." || rel.StartsWith("../", StringComparison.Ordinal) || Path.IsPathRooted(rel) || rel.Contains('\n') || rel.Contains('\r')) return null;
             return string.IsNullOrEmpty(rel) ? "." : rel;
         }
+
+        private static IEnumerable<string> ChangePaths(GitFileChange f)
+            => string.IsNullOrEmpty(f.OrigPath) ? new[] { f.Path } : new[] { f.Path, f.OrigPath };
 
         private static bool IsOwned(string path, IEnumerable<string> specs)
         {

@@ -23,7 +23,9 @@ const REQUIRED = [
   'ReopenMissingError', 'SignInRequiredError', 'reopenLastModel', 'openLiveTarget', 'signInAndReopen',
   'reopenFailureReason', 'reportReopenFailure', 'describeSession', 'rememberLastModel',
   'confirmUnsavedWork', 'confirmAndSendOpen', 'writeLastModel',
-  'readLastModel', 'forgetLastModel', 'bindGridAndTree', 'saveCommand', 'savedAuthMode',
+  'readLastModel', 'forgetLastModel', 'bindGridAndTree', 'saveCommand', 'savedAuthMode', 'setHasModelContext',
+  'setStatusPlain',   // r1 min4: the status item's plain text goes through one setter now
+  'setPendingReconnect', 'signInToReconnect', 'settlePendingReconnect',
 ];
 
 export function extract(names = REQUIRED) {
@@ -57,20 +59,33 @@ const LOCAL_TARGET = {
   modelName: 'SM_NFM',
 };
 
+// The identity the ENGINE sends (SessionInfo.ModelIdentity, LocalEngine.ModelIdentityOf). This is a TypeScript MIRROR of the C# proof in
+// Semanticus.Tests/DraftModelIdentityTests.cs: the pure function ("The_function_has_one_rule_per_kind_of_model..."), the same published model opened twice from two
+// snapshot folders ("The_same_published_model_opened_twice..."), and a cold start that opens the cached snapshot as a plain file
+// ("A_cold_start_that_opens_the_cached_snapshot_as_a_file_has_the_identity_it_had_while_it_was_open_live"). The rules mirrored: a published model is
+// live:<endpoint>|<database> (trimmed, no trailing slash, lower case); a file inside a snapshot folder (its origin.json marker) is the SAME string; any other file is file:<path>.
+const normPart = (v) => String(v ?? '').trim().replace(/[\\/]+$/, '').toLowerCase();
+const liveIdentityOf = (endpoint, database) => 'live:' + normPart(endpoint) + '|' + normPart(database);
+
 // A session as the engine reports it for a model opened live: LiveBound with its origin coordinates, and a
-// Source that points at the temp snapshot the engine exported.
+// Source that points at the temp snapshot the engine exported. modelIdentity is what the engine derives from those coordinates (never from the snapshot path).
 function liveSession(over = {}) {
-  return {
+  const s = {
     sessionId: 'live-session', revision: 1, modelName: 'SM_NFM', source: LIVE_TARGET.path,
     liveBound: true, liveKind: 'xmla', liveEndpoint: LIVE_TARGET.endpoint, liveDatabase: LIVE_TARGET.database,
     currentTenant: 'tenant.example', ...over,
   };
+  s.modelIdentity ??= liveIdentityOf(s.liveEndpoint, s.liveDatabase);
+  return s;
 }
 
 // The same bytes opened as a PLAIN FILE: no LiveOrigin, so the engine reports no live binding at all. This is
-// what a cold start sees after it opens a live model's cached snapshot offline.
+// what a cold start sees after it opens a live model's cached snapshot offline. The snapshot folder holds the origin marker the live open wrote, so the engine still
+// names the model by its coordinates (identity only: liveBound stays false); a file anywhere else is just its path.
 function fileSessionFromSnapshot(over = {}) {
-  return { sessionId: 'file-session', revision: 1, modelName: 'SM_NFM', source: LIVE_TARGET.path, liveBound: false, ...over };
+  const s = { sessionId: 'file-session', revision: 1, modelName: 'SM_NFM', source: LIVE_TARGET.path, liveBound: false, ...over };
+  s.modelIdentity ??= /[\\/]semanticus-live[\\/]/.test(s.source) ? liveIdentityOf(LIVE_TARGET.endpoint, LIVE_TARGET.database) : 'file:' + s.source;
+  return s;
 }
 
 export function makeBench({ pathExists = () => false, sessionAfterOpen, records, configuredModelPath } = {}) {
@@ -79,6 +94,8 @@ export function makeBench({ pathExists = () => false, sessionAfterOpen, records,
   const notices = [];
   const prompts = [];   // modal Save / Discard consent prompts, kept apart from notifications
   const shown = [];
+  const infos = [];     // information notices with their buttons (the "Sign in to reconnect" one)
+  const posted = [];    // what the host posted to the Studio panels
   let lastOpenMethod;
 
   const workspaceState = {
@@ -97,7 +114,7 @@ export function makeBench({ pathExists = () => false, sessionAfterOpen, records,
       if (method === 'sessionInfo') return sandbox.currentSession;
       if (method === 'save') return { path: LIVE_TARGET.path, format: 'BIM', fileCount: 1 };
       lastOpenMethod = method;
-      if (sandbox.openThrows) throw sandbox.openThrows;
+      if (sandbox.openThrows && (!sandbox.openThrowsOnly || sandbox.openThrowsOnly.includes(method))) throw sandbox.openThrows;
       sandbox.currentSession = sessionAfterOpen ? sessionAfterOpen(method, args) : liveSession();
       return { modelName: 'SM_NFM', tables: 3, measures: 4 };
     },
@@ -109,7 +126,13 @@ export function makeBench({ pathExists = () => false, sessionAfterOpen, records,
       workspace: { getConfiguration: () => ({ get: () => configuredModelPath }) },
       window: {
         withProgress: async (_opts, work) => work({ report: () => {} }),
-        showInformationMessage: (m) => { shown.push(m); },
+        showInformationMessage: async (m, ...rest) => {
+          shown.push(m);
+          const actions = rest.filter((a) => typeof a === 'string');
+          infos.push({ message: m, actions });
+          return actions.includes(sandbox.answerInfo) ? sandbox.answerInfo : undefined;
+        },
+        setStatusBarMessage: () => ({ dispose() {} }),   // a save says "Saved" in the status bar, not in a toast
         showWarningMessage: async (m, ...rest) => {
           // Two different surfaces come through here. A MODAL (second argument is an options object) is the
           // Save / Discard consent prompt; everything else is a notification. Keeping them apart is the point
@@ -137,11 +160,13 @@ export function makeBench({ pathExists = () => false, sessionAfterOpen, records,
     out: { appendLine: () => {}, show: () => {} },
     watchModelDisk: () => {},
     refreshStatus: async () => sandbox.currentSession,
-    propGrid: { showModel: async () => {}, showModelIfEmpty: async () => {} },
+    propGrid: { showModel: async () => {}, showModelIfEmpty: async () => {}, commitFocused: async () => {} },
+    commitStudioFocused: async () => {},   // Save asks Studio to commit its focused field first; no Studio here
     rebuildDaxSymbols: () => {},
     refreshOpenDaxEditors: () => {},
     resyncPropertiesFromTree: () => {},
-    postToPanels: () => {},
+    postToPanels: (m) => { posted.push(m); },
+    consentAsks: { noteSwap: () => {} },   // the Pro card's memory (src/consentAsks.ts); not what these tests are about
     tree: { refresh: () => {} },
     setTimeout: () => 0,
     pickFirstSaveDestination: async () => ({ path: '/fixture/chosen/Model.bim', format: 'BIM' }),
@@ -151,16 +176,19 @@ export function makeBench({ pathExists = () => false, sessionAfterOpen, records,
     lastModelGeneration: 0,
     currentSession: undefined,
     openThrows: undefined,
+    openThrowsOnly: undefined,    // limit openThrows to these methods (the silent live open fails; the cached copy still opens)
     answerNotice: undefined,      // the button a case wants pressed on the reopen notice
     holdListConnections: undefined,   // a promise that gates the saved-record read, for late-reply cases
     unsavedAnswer: undefined,     // what the modal Save / Discard prompt returns
+    answerInfo: undefined,        // the button a case wants pressed on an information notice
+    pendingReconnect: undefined,  // module state: the model that is waiting for a sign-in (extension.ts)
   };
 
   vm.createContext(sandbox);
   vm.runInContext(extract(), sandbox);
 
   return {
-    sandbox, context, connection, calls, notices, prompts, shown,
+    sandbox, context, connection, calls, notices, prompts, shown, infos, posted,
     remembered: () => state.get('semanticus.lastModel') ?? null,
     rememberedPath: () => state.get('semanticus.lastModelPath') ?? null,
     seed: (value) => { state.set('semanticus.lastModel', { ...value }); if (value.kind === 'file') state.set('semanticus.lastModelPath', value.path); },

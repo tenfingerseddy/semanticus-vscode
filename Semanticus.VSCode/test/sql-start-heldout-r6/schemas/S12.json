@@ -1,0 +1,173 @@
+{
+  "Server": "s12-sql.example.invalid",
+  "Database": "BatchYields",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_process_day",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "PROCESS_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_batch",
+      "KeyColumns": [
+        "BATCH_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "BATCH_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "BATCH_TYPE",
+          "DataType": "String"
+        },
+        {
+          "Name": "TARGET_KG",
+          "DataType": "Double"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_line",
+      "KeyColumns": [
+        "LINE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "LINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "LINE_NAME",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_yield",
+      "KeyColumns": [
+        "YIELD_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "YIELD_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "BATCH_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "LINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ACCEPTED_KG",
+          "DataType": "Double"
+        },
+        {
+          "Name": "REJECTED_KG",
+          "DataType": "Double"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_rework",
+      "KeyColumns": [
+        "REWORK_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "REWORK_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "LINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "REWORK_KG",
+          "DataType": "Double"
+        },
+        {
+          "Name": "REWORK_COST",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "dim_batch",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_process_day",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_yield",
+      "FromColumn": "BATCH_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_batch",
+      "ToColumn": "BATCH_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_yield",
+      "FromColumn": "LINE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_line",
+      "ToColumn": "LINE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_rework",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_process_day",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_rework",
+      "FromColumn": "LINE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_line",
+      "ToColumn": "LINE_ID"
+    }
+  ]
+}

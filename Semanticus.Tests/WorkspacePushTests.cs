@@ -169,23 +169,37 @@ namespace Semanticus.Tests
 
         // ---- (d) drift guard refuses when the target changed under you; proceeds + records overridden with a reason ----
         [Fact]
-        public async Task Drift_guard_refuses_without_override()
+        public void Drift_guard_for_the_assistant_names_the_objects_and_teaches_overrideReason()
+        {
+            // The assistant door keeps the refusal word for word: it names the drifted objects and the way past.
+            var text = LocalEngine.DriftRefusal("agent", "DS", new[] { "measure:Sales/Total" });
+            Assert.Contains("Drift guard", text);
+            Assert.Contains("measure:Sales/Total", text);
+            Assert.Contains("overrideReason", text);
+            Assert.Equal(text, LocalEngine.DriftRefusal("system", "DS", new[] { "measure:Sales/Total" }));   // fail closed: only an exact "human" is a person
+        }
+
+        // Kane 8 Oct: a person who loses the race is told in plain words, never asked for a reason. The assistant keeps
+        // the drift refusal above (it names the objects and teaches overrideReason).
+        [Fact]
+        public async Task Drift_guard_for_a_person_says_it_in_plain_words_and_asks_for_no_reason()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(Db(m => Measure(m, "Total", "2", "tag-total")));
             try
             {
                 var call = 0; var pushed = false;
-                // A: Total = 1 (source wants 2 → applicable Update). B: Total = 99 (someone changed it → drift).
                 engine.WorkspaceSnapshotHook = () => { call++; return Task.FromResult(Db(m => Measure(m, "Total", call == 1 ? "1" : "99", "tag-total"))); };
                 engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };
 
                 var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src },
                     Ws(), new[] { "measure:Sales/Total" }, commit: true, "human");
+
                 Assert.False(r.Applied);
-                Assert.False(pushed);                                   // nothing written
-                Assert.Contains("Drift guard", r.Error);
-                Assert.Contains("measure:Sales/Total", r.Error);
+                Assert.False(pushed);
+                Assert.Contains("changed while you were publishing. Nothing was written. The list is updated, press Publish again.", r.Error);
+                Assert.DoesNotContain("overrideReason", r.Error);
+                Assert.DoesNotContain("Drift guard", r.Error);
             }
             finally { File.Delete(src); }
         }
@@ -1210,6 +1224,35 @@ namespace Semanticus.Tests
                 Assert.Contains(r.FailedRefs, f => f.Contains("Sales[CustomerKey]->Customer[Id]") && f.Contains("replacement"));
             }
             finally { File.Delete(src); }
+        }
+
+        // ---- a change to a column a relationship uses (hero journey 3: Publish from the Publish tab) ----
+        // The push stages the merged model as a .bim and SyncSessionToLive reads it back with TOM's own deserializer. A
+        // relationship in that file must carry TOM's names (fromTable, fromColumn, toTable, toColumn): the live run on
+        // "Northstar Sales Working" stopped with "Unrecognized JSON property: from. Check path 'model.relationships[0].from'".
+        [Fact]
+        public async Task A_change_to_a_column_a_relationship_uses_pushes_a_model_file_whose_relationships_use_the_TOM_property_names()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            await engine.OpenAsync(TestModels.FindBim());
+            var bimText = File.ReadAllText(TestModels.FindBim());
+            var live = TOM.JsonSerializer.DeserializeDatabase(bimText, null, AS.CompatibilityMode.PowerBI);
+            // Product[ProductSubcategoryKey] is the "from" end of Product -> Product Subcategory, and the "to" end of a sales relationship.
+            live.Model.Tables["Product"].Columns["ProductSubcategoryKey"].Description = "Changed on the service since the open model was read.";
+            var liveJson = TOM.JsonSerializer.SerializeDatabase(live);
+            string pushed = null;
+            engine.WorkspaceSnapshotHook = () => Task.FromResult(TOM.JsonSerializer.DeserializeDatabase(liveJson, null, AS.CompatibilityMode.PowerBI));
+            engine.WorkspacePushHook = (bim, _) => { pushed = File.ReadAllText(bim); return OkReport(1, synced: new[] { "column:Product/ProductSubcategoryKey" }); };
+
+            var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "session" }, Ws(), new[] { "column:Product/ProductSubcategoryKey" }, commit: true, "human");
+
+            Assert.NotNull(pushed);
+            var rel = Newtonsoft.Json.Linq.JObject.Parse(pushed)["model"]["relationships"][0];
+            Assert.NotNull(rel["fromTable"]); Assert.NotNull(rel["fromColumn"]); Assert.NotNull(rel["toTable"]); Assert.NotNull(rel["toColumn"]);
+            Assert.Null(rel["from"]); Assert.Null(rel["to"]);
+            // The exact read SyncSessionToLive does with the file. It throws "Unrecognized JSON property" on a wrong name.
+            var read = TOM.JsonSerializer.DeserializeDatabase(pushed, null, AS.CompatibilityMode.PowerBI);
+            Assert.Equal(live.Model.Relationships.Count, read.Model.Relationships.Count);
         }
     }
 }

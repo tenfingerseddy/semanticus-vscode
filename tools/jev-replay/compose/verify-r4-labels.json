@@ -1,0 +1,25 @@
+{
+  "about": "The round 4 verifier's 20 new phrasings for m11/completeness F1, written, labelled and committed before any run of the engine at f5a33d29. Same shape as take-away-labels.json: each clause, cut the way DescribedSteps.Cut cuts (a full stop, semicolon, colon, new line, comma, and, and then, after that, then, but, while, whilst, finally, next), is labelled with the op it must draft ({op}) or with noAdd: any step or a placeholder, but never a template that adds (create_*, or a step named Add). Seven take-aways, five adds, four changes and four mixes, most of them said politely or indirectly, the way a person types a request. Names are fictional.",
+  "items": [
+    { "id": "vr4-01", "set": "verifier-r4-new", "kind": "take-away", "words": "Could you please get rid of the Old Sales measure?", "clauses": [ { "noAdd": true } ] },
+    { "id": "vr4-02", "set": "verifier-r4-new", "kind": "take-away", "words": "We don't use the Budget table anymore, so please drop it", "clauses": [ { "noAdd": true }, { "noAdd": true } ] },
+    { "id": "vr4-03", "set": "verifier-r4-new", "kind": "take-away", "words": "I'd like the Region Manager and Store Manager roles removed", "clauses": [ { "noAdd": true }, { "noAdd": true } ] },
+    { "id": "vr4-04", "set": "verifier-r4-new", "kind": "take-away", "words": "Please delete the sales amount and total cost measures", "clauses": [ { "noAdd": true }, { "noAdd": true } ] },
+    { "id": "vr4-05", "set": "verifier-r4-new", "kind": "take-away", "words": "The Temp Calc measure isn't needed any more, can you remove it?", "clauses": [ { "noAdd": true }, { "noAdd": true } ] },
+    { "id": "vr4-06", "set": "verifier-r4-new", "kind": "take-away", "words": "Is it possible to remove the relationship between Sales and Product?", "clauses": [ { "noAdd": true }, { "noAdd": true } ] },
+    { "id": "vr4-07", "set": "verifier-r4-new", "kind": "take-away", "words": "Kindly remove every hidden column that no report uses", "clauses": [ { "noAdd": true } ] },
+    { "id": "vr4-08", "set": "verifier-r4-new", "kind": "add", "words": "Could you please add a Gross Margin measure to the Sales table?", "clauses": [ { "op": "create_measure" } ] },
+    { "id": "vr4-09", "set": "verifier-r4-new", "kind": "add", "words": "I'd like a new role for the finance team", "clauses": [ { "op": "create_role" } ] },
+    { "id": "vr4-10", "set": "verifier-r4-new", "kind": "add", "words": "We need a relationship from Sales to Customer on Customer Key", "clauses": [ { "op": "create_relationship" } ] },
+    { "id": "vr4-11", "set": "verifier-r4-new", "kind": "add", "words": "Please create a calculation group for time intelligence", "clauses": [ { "op": "create_calculation_group" } ] },
+    { "id": "vr4-12", "set": "verifier-r4-new", "kind": "add", "words": "Could you bring in the Targets table from the source?", "clauses": [ { "op": "create_import_table" } ] },
+    { "id": "vr4-13", "set": "verifier-r4-new", "kind": "change", "words": "Could you hide the Order Key column from report view?", "clauses": [ { "op": "set_column_hidden" } ] },
+    { "id": "vr4-14", "set": "verifier-r4-new", "kind": "change", "words": "Add a description to the Sales Amount measure", "clauses": [ { "op": "set_description" } ] },
+    { "id": "vr4-15", "set": "verifier-r4-new", "kind": "change", "words": "The Sales Amount measure should be shown as currency", "clauses": [ { "op": "set_measure_format" } ] },
+    { "id": "vr4-16", "set": "verifier-r4-new", "kind": "change", "words": "Update the Total Sales formula so it leaves out returns", "clauses": [ { "op": "update_measure" } ] },
+    { "id": "vr4-17", "set": "verifier-r4-new", "kind": "mixed", "words": "Delete the Old Margin measure and then add a Margin measure that uses net sales", "clauses": [ { "noAdd": true }, { "op": "create_measure" } ] },
+    { "id": "vr4-18", "set": "verifier-r4-new", "kind": "mixed", "words": "We're done with the Legacy role, but we could use a new role for auditors", "clauses": [ { "noAdd": true }, { "op": "create_role" } ] },
+    { "id": "vr4-19", "set": "verifier-r4-new", "kind": "mixed", "words": "Add a Units Sold measure, then get rid of the old Quantity measure", "clauses": [ { "op": "create_measure" }, { "noAdd": true } ] },
+    { "id": "vr4-20", "set": "verifier-r4-new", "kind": "mixed", "words": "Could you rename Sales Amt to Sales Amount and delete the Sales Amt Old measure?", "clauses": [ { "op": "rename_object" }, { "noAdd": true } ] }
+  ]
+}

@@ -398,5 +398,108 @@ for (const [label, env, expected] of verdicts) {
     `exit=${r.code}\n        ${r.stdout.trim().split('\n').join('\n        ')}`);
 }
 
+// ---------------------------------------------------------------------------------------------------
+// PLACEMENT — which machine each job runs on (2026-09-25: Linux jobs moved to self-hosted runners).
+// ---------------------------------------------------------------------------------------------------
+// The cost story changed shape: a Linux job no longer bills minutes, but it now runs on a real machine that
+// keeps state, and ci.yml is mirrored to a PUBLIC repository where no runner of ours exists. So placement is
+// part of the cost contract and is checked here, on every non-draft ref, like the classifier:
+//   1. no `runs-on` names a self-hosted label unless it is guarded by `github.event.repository.private`,
+//      carries the CI_LINUX_RUNNER rollback switch, and falls back to a GitHub-hosted runner;
+//   2. no Linux job is left on a bare `ubuntu-latest` (minutes bought by accident), except the linux-x64
+//      packaging leg, whose execution record must name `ubuntu-latest` (verify-vsix-matrix.mjs);
+//   3. every self-hostable job that checks out calls the isolation action as its very next step;
+//   4. build-and-smoke, the job that starts engines, stops its leftovers in an always() step.
+// Each rule is then watched failing on a mutated copy, because a validator that has only passed proves nothing.
+const SELF_HOSTED = `fromJSON('["self-hosted","linux","semanticus"]')`;
+const GUARD = `github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && ${SELF_HOSTED}`;
+const PLAIN_LINUX = `\${{ ${GUARD} || 'ubuntu-latest' }}`;
+const MATRIX_LINUX = `\${{ matrix.os == 'ubuntu-latest' && ${GUARD} || matrix.os }}`;
+const ISOLATE = '- uses: ./.github/actions/self-hosted-isolate';
+
+function jobsOf(text) {
+  const lines = text.replace(/\r\n/g, '\n').split('\n');
+  const top = lines.indexOf('jobs:');
+  if (top < 0) throw new Error('no top-level jobs: key');
+  const jobs = [];
+  for (let i = top + 1; i < lines.length; i++) {
+    const m = /^  ([A-Za-z0-9_-]+):\s*$/.exec(lines[i]);
+    if (m) jobs.push({ name: m[1], lines: [] });
+    else if (jobs.length) jobs[jobs.length - 1].lines.push(lines[i]);
+  }
+  return jobs;
+}
+
+function placementProblems(text, { packagingJob = null } = {}) {
+  const problems = [];
+  const jobs = jobsOf(text);
+  if (jobs.length === 0) problems.push('no jobs were found, so nothing was checked');
+  for (const job of jobs) {
+    const runsOn = job.lines.find((l) => /^    runs-on:/.test(l));
+    if (!runsOn) { problems.push(`${job.name}: no runs-on`); continue; }
+    const value = runsOn.replace(/^    runs-on:\s*/, '').trim();
+    const selfHostable = value === PLAIN_LINUX || value === MATRIX_LINUX;
+    if (/self-hosted/.test(value) && !selfHostable) {
+      problems.push(`${job.name}: names a self-hosted runner without the private-repository guard, the rollback switch and a hosted fallback: ${value}`);
+    }
+    if (value === 'ubuntu-latest') {
+      problems.push(`${job.name}: a bare ubuntu-latest buys GitHub minutes; use the self-hosted expression with its fallback`);
+    }
+    if (job.name === packagingJob) {
+      if (!/- target: linux-x64\n\s+runner: ubuntu-latest\n/.test(job.lines.join('\n'))) {
+        problems.push(`${job.name}: the linux-x64 packaging leg must stay on ubuntu-latest (its evidence record names that runner)`);
+      }
+    }
+    if (!selfHostable) continue;
+    const checkout = job.lines.findIndex((l) => /^      - uses: actions\/checkout@/.test(l));
+    if (checkout >= 0) {
+      const next = job.lines.slice(checkout + 1).find((l) => /^      - /.test(l));
+      if (!next || next.trim() !== ISOLATE) {
+        problems.push(`${job.name}: runs on a self-hosted runner but does not isolate HOME and TMPDIR right after checkout`);
+      }
+    }
+    if (job.name === 'build-and-smoke'
+      && !/if: always\(\) && runner\.environment == 'self-hosted'\n\s+env:\n\s+SEMANTICUS_CI_JOB: ''\n/.test(job.lines.join('\n'))) {
+      problems.push(`${job.name}: starts engines on a self-hosted runner but has no always() leftover-process cleanup`);
+    }
+  }
+  return problems;
+}
+
+console.log('\nPLACEMENT — self-hosted Linux jobs, hosted fallback, isolation');
+const trPath = process.env.TASKS_REGISTER_YML
+  ? resolve(process.env.TASKS_REGISTER_YML)
+  : resolve(repo, '.github/workflows/tasks-register.yml');
+const ciText = ci.join('\n');
+const trText = readFileSync(trPath, 'utf8');
+for (const [label, text, opts] of [['ci.yml', ciText, { packagingJob: 'vsix' }], ['tasks-register.yml', trText, {}]]) {
+  const p = placementProblems(text, opts);
+  check(`${label}: every job is placed deliberately and every self-hosted job is isolated`, p.length === 0,
+    '\n        ' + p.join('\n        '));
+}
+// The fail-red half. Each mutation must apply, and must be caught for the reason it was made.
+const mutations = [
+  ['a bare self-hosted runs-on (would queue forever in the public mirror)',
+    ciText.replace(`runs-on: ${PLAIN_LINUX}`, 'runs-on: [self-hosted, linux, semanticus]'), /without the private-repository guard/],
+  ['the rollback switch removed',
+    ciText.replace(`runs-on: ${PLAIN_LINUX}`, `runs-on: \${{ github.event.repository.private && ${SELF_HOSTED} || 'ubuntu-latest' }}`),
+    /without the private-repository guard/],
+  ['a Linux job put back on bare ubuntu-latest',
+    ciText.replace(`runs-on: ${PLAIN_LINUX}`, 'runs-on: ubuntu-latest'), /bare ubuntu-latest/],
+  ['the isolation step dropped from a job that checks out',
+    ciText.replace(`      ${ISOLATE}\n`, ''), /does not isolate HOME/],
+  ['the leftover-process cleanup made conditional on success',
+    ciText.replace("if: always() && runner.environment == 'self-hosted'", "if: runner.environment == 'self-hosted'"),
+    /no always\(\) leftover-process cleanup/],
+  ['the linux-x64 packaging leg moved off ubuntu-latest',
+    ciText.replace(/(- target: linux-x64\n\s+runner: )ubuntu-latest/, '$1self-hosted'), /linux-x64 packaging leg must stay/],
+];
+for (const [label, mutated, reason] of mutations) {
+  const changed = mutated !== ciText;
+  const p = placementProblems(mutated, { packagingJob: 'vsix' });
+  check(`placement refuses: ${label}`, changed && p.some((x) => reason.test(x)),
+    changed ? `problems: ${JSON.stringify(p)}` : 'the mutation did not apply, so nothing was tested');
+}
+
 console.log(failures === 0 ? '\nAll cases hold.' : `\n${failures} case(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);

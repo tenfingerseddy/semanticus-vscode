@@ -242,12 +242,22 @@ namespace Semanticus.Tests
             Assert.Equal("prod", ConnectionRegistry.Find(precious.Id).Label);
         }
 
+        // 27 Sep: the cap evicts ONLY incidental local rows. A cloud connection is one the person connected to or
+        // remembered on purpose, so it is kept however many there are (forget_connection removes one); the local row
+        // that is evicted is the least recently used one.
         [Fact]
-        public void Retention_evicts_the_least_recently_used_unlabelled_target()
+        public void Retention_keeps_every_cloud_target_and_evicts_the_least_recently_used_local_row()
         {
-            var oldest = Remember("powerbi://x/oldest");
+            var oldestCloud = Remember("powerbi://x/oldest");
             for (var i = 0; i < ConnectionRegistry.MaxRecords + 2; i++) Remember($"powerbi://x/filler{i}");
-            Assert.Null(ConnectionRegistry.Find(oldest.Id));
+            Assert.NotNull(ConnectionRegistry.Find(oldestCloud.Id));
+            Assert.Equal(ConnectionRegistry.MaxRecords + 3, ConnectionRegistry.List().Count);
+
+            var oldestLocal = ConnectionRegistry.Remember("file", Path.Combine(_root, "oldest.bim"), null, "oldest");
+            for (var i = 0; i < ConnectionRegistry.MinRecentLocal; i++)
+                ConnectionRegistry.Remember("file", Path.Combine(_root, $"local{i}.bim"), null, $"local{i}");
+            Assert.Null(ConnectionRegistry.Find(oldestLocal.Id));
+            Assert.NotNull(ConnectionRegistry.Find(oldestCloud.Id));
         }
 
         // ---- D-173: opening 40 incidental local files must never evict a remembered published model. An unlabelled

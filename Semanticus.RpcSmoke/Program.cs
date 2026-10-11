@@ -23,6 +23,8 @@ namespace Semanticus.RpcSmoke
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("rpcsmoke");
             var pipeName = "semanticus-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 8);
             const string uiChallenge = "rpc-smoke-ui-challenge-0123456789abcdef";
             var sessions = new SessionManager();
@@ -144,6 +146,22 @@ namespace Semanticus.RpcSmoke
                 Check("model/activity carries the op's label + query", act.Label == "Profiled server timings" && (act.Query ?? "").Contains("Total Sales"));
                 Check("model/activity Seq is stamped server-side for ordering", act.Seq > 0);
 
+                // ---- ASK YOUR DATA over the wire: the Studio's askData and the history both doors read ----
+                // The measure's own table is the split, so the reach check passes; no data model is connected, so the
+                // one query shape is built and checked, not run. The agent's history read sees the UI's ask.
+                var askTable = measureRef.Substring("measure:".Length, measureRef.IndexOf('/') - "measure:".Length);
+                var askMeasure = measureRef.Substring(measureRef.IndexOf('/') + 1);
+                var askCol = (await ui.Invoke<ColumnRow[]>("listColumns")).FirstOrDefault(c => c.Table == askTable);
+                var asked = await ui.Invoke<Semanticus.Engine.Query.DataAnswer>("askData", new Semanticus.Engine.Query.DataAsk
+                {
+                    Measures = new[] { askMeasure }, GroupBy = askCol == null ? null : new[] { $"'{askTable}'[{askCol.Name}]" },
+                });
+                Check("askData over the pipe builds the one query shape and reads it back in plain words",
+                    asked.Outcome == "built" && asked.Dax != null && asked.Dax.Contains("SUMMARIZECOLUMNS") && asked.Reading != null && asked.Reading.StartsWith(askMeasure));
+                var askHistory = await agent.Invoke<Semanticus.Engine.Query.DataQuestionHistory>("listDataQuestions", 10);
+                Check("the agent's listDataQuestions reads the UI's ask from the same history",
+                    askHistory.Questions.Length >= 1 && askHistory.Questions[0].Reading == asked.Reading && askHistory.Questions[0].Origin == "human");
+
                 // ---- DOCUMENTATION NARRATIVE: dual-drive round-trip (annotation, MutateAsync broadcast, undo) ----
                 const string docCtx = "Revenue grain: one row per order line.";
                 var waitDoc = agent.Notify.WaitNextAsync(n => n.Origin == "human" && n.Label == "set doc narrative");
@@ -254,7 +272,7 @@ namespace Semanticus.RpcSmoke
                 Check("clearPlan returns an empty plan over RPC", cleared.Items.Length == 0 && cleared.Summary.Total == 0);
 
                 // ---- LSDL (Prep-for-AI) WRITERS over the RPC door -----------------------------
-                // Closes the documented dual-drive test gap: enableQna / setSynonyms / setAiInstructions /
+                // Closes the documented dual-drive test gap: createLinguisticSchema / setSynonyms / setAiInstructions /
                 // setAiDataSchema were WIRED on EngineRpcTarget but no smoke had ever driven them over the
                 // wire — their RPC path was "asserted by construction" (a recurring honest residual). This
                 // proves the args (string[] terms, the bool `included` flag, the instructions string) AND the
@@ -262,7 +280,9 @@ namespace Semanticus.RpcSmoke
                 // shared session, and the OTHER client sees it live via model/didChange (golden rule #2).
                 // LSDL is gated to CL>=1465, so this needs a modern model (AdventureWorks is 1200) — open the
                 // same AllProperties.bim the AirSmoke LSDL tests use, on the SAME live session both clients share.
-                var modern = FindTestData("AllProperties.bim");
+                // A scratch copy, never the vendored file: an edit writes the History beside the model it edits
+                // (.semanticus/history.json, Plan-heart E4), and that must not land inside the submodule.
+                var modern = ScratchCopy(FindTestData("AllProperties.bim"));
                 if (modern == null)
                 {
                     Console.WriteLine("[i] LSDL writers over RPC: AllProperties.bim not found — skipping (no modern model)");
@@ -272,10 +292,10 @@ namespace Semanticus.RpcSmoke
                     var openModern = await ui.Invoke<OpenResult>("open", modern, true);
                     Check("LSDL/RPC: opened a modern (CL>=1465) model so the linguistic schema is writable", openModern.Tables > 0);
 
-                    // enable_qna over RPC: seeds the linguistic schema; the agent must see the SYN-SCHEMA
+                    // create_linguistic_schema over RPC: seeds the linguistic schema; the agent must see the SYN-SCHEMA
                     // finding clear on its own scan (proves the write crossed the session, not just the DTO).
-                    var eq = await ui.Invoke<SetResult>("enableQna", null, "human");
-                    Check("LSDL/RPC: enableQna returns a serializable SetResult and reports a change", eq != null && eq.Changed);
+                    var eq = await ui.Invoke<SetResult>("createLinguisticSchema", null, "human");
+                    Check("LSDL/RPC: createLinguisticSchema returns a serializable SetResult and reports a change", eq != null && eq.Changed);
                     var agentScan = await agent.Invoke<Scorecard>("aiReadinessScan");
                     Check("LSDL/RPC: AGENT sees the linguistic schema seeded by the UI (SYN-SCHEMA cleared on the shared session)",
                         !agentScan.Findings.Any(f => f.RuleId == "SYN-SCHEMA"));
@@ -394,11 +414,14 @@ namespace Semanticus.RpcSmoke
 
                 // --- Number time-machine (feature #3) over the RPC door: blame_value / list_value_history marshal
                 //     their DTOs and answer HONESTLY on a model with no recorded history (inconclusive / 0 points)
-                //     — never a throw. The verdict semantics themselves are pinned in ValueBlameTests. ---
-                var blame = await ui.Invoke<BlameResult>("blameValue", measureRef, null, null, "human");
+                //     — never a throw. The verdict semantics themselves are pinned in ValueBlameTests. Re-find a
+                //     measure: the LSDL leg switched the shared session to the modern model, so the first model's
+                //     ref names no measure here, and a ref with no measure and no history is refused (UAT-S05b-1-003). ---
+                var historyRef = await FindAMeasure(ui) ?? measureRef;
+                var blame = await ui.Invoke<BlameResult>("blameValue", historyRef, null, null, "human");
                 Check("TimeMachine/RPC: blame_value round-trips and is honest with no history (ok + inconclusive)",
                     blame != null && blame.Status == "ok" && blame.Verdict == "inconclusive" && !string.IsNullOrEmpty(blame.Note));
-                var vhist = await agent.Invoke<ValueHistoryResult>("listValueHistory", measureRef, null);
+                var vhist = await agent.Invoke<ValueHistoryResult>("listValueHistory", historyRef, null);
                 Check("TimeMachine/RPC: list_value_history round-trips on the OTHER client (ok, 0 points, note says why)",
                     vhist != null && vhist.Status == "ok" && vhist.Points.Length == 0 && !string.IsNullOrEmpty(vhist.Note));
 
@@ -460,7 +483,41 @@ namespace Semanticus.RpcSmoke
                 }
                 finally { try { System.IO.Directory.Delete(scopeFolder, true); } catch { } }
 
+                await HistoryInsideThePlanAsync(ui, agent, sessions);
+                // ---- slice C: a model's SQL endpoint and clearing the publish destination, both clients ----------
+                // The UI sets the open model's SQL endpoint; the agent client reads the same link through the same
+                // connectionContext call; the agent-origin clear of a publish destination is read back as none by the UI.
+                var endpointSource = SqlSourceRegistry.Save(null, "Contoso Retail warehouse",
+                    "contoso-retail-sql.database.windows.net", "Warehouse", "interactive", null);
+                var endpointSet = await ui.Invoke<ModelSqlEndpointResult>("setModelSqlEndpoint", endpointSource.Id, null, "human");
+                var agentContext = await agent.Invoke<ConnectionContext>("connectionContext");
+                Check("SqlEndpoint/RPC: the UI links the model's SQL endpoint and the agent client reads the same one",
+                    endpointSet.SqlEndpoint?.SourceId == endpointSource.Id && agentContext.SqlEndpoint?.SourceId == endpointSource.Id
+                    && agentContext.SqlEndpoint.Server == "contoso-retail-sql.database.windows.net");
+                var agentList = await agent.Invoke<ModelSqlEndpointList>("listModelSqlEndpoints");
+                Check("SqlEndpoint/RPC: listModelSqlEndpoints shows the link to both clients",
+                    agentList.Rows.Any(r => r.SqlEndpoint?.SourceId == endpointSource.Id));
+                var refusedDelete = await agent.Invoke<SqlSourceDeleteResult>("deleteSqlSource", endpointSource.Id, "agent");
+                Check("SqlEndpoint/RPC: a source that is a model's endpoint is not removed, and the refusal names the model",
+                    !refusedDelete.Deleted && refusedDelete.LinkedModels.Length == 1);
+                var endpointCleared = await agent.Invoke<ModelSqlEndpointResult>("setModelSqlEndpoint", null, null, "agent");
+                Check("SqlEndpoint/RPC: the agent client clears it and the UI reads none",
+                    endpointCleared.SqlEndpoint == null && (await ui.Invoke<ConnectionContext>("connectionContext")).SqlEndpoint == null);
+
+                var publishTarget = ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso", "Contoso Retail", "Contoso Retail", null, "interactive");
+                var publishSet = await ui.Invoke<ConnectionContext>("setPublishDestination", publishTarget.Id, "human", false);
+                Check("PublishDestination/RPC: the UI links a publish destination", publishSet.Publishing.ConnectionId == publishTarget.Id);
+                var publishCleared = await agent.Invoke<ConnectionContext>("setPublishDestination", null, "agent", true);
+                Check("PublishDestination/RPC: the agent client clears it and the UI reads none",
+                    !publishCleared.Publishing.Available && !(await ui.Invoke<ConnectionContext>("connectionContext")).Publishing.Available);
+
                 Console.WriteLine();
+                await PlanTasksSurviveARestartAsync(uiChallenge);
+                Console.WriteLine();
+                await TheQueueDeliversAsync(uiChallenge);
+                Console.WriteLine();
+                await TheDraftRunsAsync(uiChallenge);
+
                 if (_failures == 0) { Console.WriteLine("==== M1 RPC DUAL-DRIVE: PASS ===="); return 0; }
                 Console.WriteLine($"==== M1 RPC DUAL-DRIVE: {_failures} CHECK(S) FAILED ===="); return 1;
             }
@@ -477,6 +534,289 @@ namespace Semanticus.RpcSmoke
                 cts.Cancel();
                 try { await serverTask; } catch { }
                 sessions.Dispose();
+            }
+        }
+
+        /// <summary>Plan at the heart, lane E1's finish line. A person adds two tasks with no assistant attached,
+        /// holds one and moves it up; the engine restarts; an MCP client (the attached assistant's RemoteEngine,
+        /// through the same McpTools method the MCP door serves) reads get_model_plan and sees the task with the
+        /// same id, held, first in the order, with state word paused. The same controls from an agent connection
+        /// are refused. A completed target from a pre-upgrade file migrates as a done aim with its original date.</summary>
+        private static async Task PlanTasksSurviveARestartAsync(string challenge)
+        {
+            Console.WriteLine("---- Plan tasks across an engine restart (E1) ----");
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-e1-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var bim = Path.Combine(dir, "AdventureWorks.bim");
+            File.Copy(FindVendoredTestBim(), bim);
+            var finished = new DateTimeOffset(2026, 9, 3, 17, 30, 0, TimeSpan.Zero);
+            string heldId = null, otherId = null;
+            try
+            {
+                // ---- the first engine: a person, and no assistant anywhere ----
+                {
+                    var pipe = "semanticus-smoke-e1a-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                    using var sessions = new SessionManager();
+                    using var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+                    using var server = new RpcServer(sessions, engine, pipe, challenge);
+                    using var stop = new CancellationTokenSource();
+                    var serving = server.RunAsync(stop.Token);
+                    using (var person = await Client.ConnectAsync(pipe, "human", challenge))
+                    {
+                        await person.Invoke<OpenResult>("open", bim);
+                        otherId = (await person.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Describe the sales measures" })).ItemId;
+                        heldId = (await person.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Add synonyms for Customer" })).ItemId;
+                        await person.Invoke<ModelPlanView>("holdPlanItem", heldId, true);
+                        var moved = await person.Invoke<ModelPlanView>("movePlanTaskUp", heldId);
+                        Check("E1: the person added two tasks with no assistant attached",
+                            server.AgentClientCount == 0 && moved.Items.Count(i => i.Id == heldId || i.Id == otherId) == 2);
+                        Check("E1: Up put the held task first", moved.Items.First(i => i.Id == heldId).Order == 1);
+                    }
+                    stop.Cancel();
+                    try { await serving; } catch { }
+                }
+
+                // A pre-upgrade entry, written the old way: a target the person finished on 3 September.
+                var file = Directory.GetFiles(dir, PlanMemory.FileName, SearchOption.AllDirectories).Single();
+                var whole = (System.Text.Json.Nodes.JsonObject)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(file));
+                var entry = (System.Text.Json.Nodes.JsonObject)((System.Text.Json.Nodes.JsonObject)whole["models"]).Single().Value;
+                entry["targets"] = new System.Text.Json.Nodes.JsonArray(new System.Text.Json.Nodes.JsonObject
+                {
+                    ["id"] = "a-marked-date-table", ["text"] = "A marked date table", ["section"] = "Structure",
+                    ["when"] = finished.AddDays(-2).ToString("o"), ["doneUtc"] = finished.ToString("o"),
+                });
+                File.WriteAllText(file, whole.ToJsonString());
+
+                // ---- the restarted engine: the person opens the model, the assistant attaches and reads ----
+                {
+                    var pipe = "semanticus-smoke-e1b-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                    using var sessions = new SessionManager();
+                    using var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+                    using var server = new RpcServer(sessions, engine, pipe, challenge);
+                    using var stop = new CancellationTokenSource();
+                    var serving = server.RunAsync(stop.Token);
+                    using (var person = await Client.ConnectAsync(pipe, "human", challenge))
+                    using (var agentPipe = await Client.ConnectAsync(pipe, "agent"))
+                    using (var remote = await RemoteEngine.ConnectAsync(pipe))
+                    {
+                        await person.Invoke<OpenResult>("open", bim);
+                        var plan = await McpTools.GetModelPlan(remote);
+                        var held = plan.Items.FirstOrDefault(i => i.Id == heldId);
+                        var other = plan.Items.FirstOrDefault(i => i.Id == otherId);
+                        Check("E1: after a restart the MCP read has the task under the same id", held != null && other != null);
+                        Check("E1: it is still held, with state word paused",
+                            held != null && held.Held && held.StateWord == PlanStateWords.Paused);
+                        Check("E1: the order survived: held task 1, the other 2", held?.Order == 1 && other?.Order == 2);
+                        Check("E1: a typed task's doer is your assistant", other?.Doer == PlanDoers.Assistant);
+
+                        var aim = plan.Targets.FirstOrDefault(t => t.Text == "A marked date table");
+                        var aimRow = aim == null ? null : plan.Items.FirstOrDefault(i => i.Id == aim.Id);
+                        Check("E1: a completed pre-upgrade target migrated as a done aim with its original date",
+                            aim != null && aim.Id.StartsWith(PlanTasks.IdPrefix, StringComparison.Ordinal)
+                            && aim.DoneUtc == finished && aimRow?.StateWord == PlanStateWords.Done && aimRow.Doer == PlanDoers.You);
+
+                        async Task<bool> Refused(Func<Task> call)
+                        {
+                            try { await call(); return false; }
+                            catch (Exception ex) { return ex.Message.IndexOf("method", StringComparison.OrdinalIgnoreCase) >= 0; }
+                        }
+                        Check("E1: an agent pipe cannot add, hold, switch, move, pause or note",
+                            await Refused(() => agentPipe.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Invented" }))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("holdPlanItem", heldId, false))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setPlanItemDoer", heldId, "you"))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("movePlanTaskUp", otherId))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setAssistantQueue", "paused"))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setPlanTaskNote", heldId, "x")));
+                        Check("E1: the attached assistant's engine is refused the same way",
+                            await Refused(() => remote.AddPlanTaskAsync(new PlanTaskRequest { Words = "Invented" }))
+                            && await Refused(() => remote.HoldPlanItemAsync(heldId, false)));
+                        var after = await McpTools.GetModelPlan(remote);
+                        Check("E1: nothing the agent tried landed",
+                            after.Items.All(i => i.Title != "Invented") && after.Items.First(i => i.Id == heldId).Held
+                            && after.AssistantQueue == PlanAssistantQueue.On);
+                    }
+                    stop.Cancel();
+                    try { await serving; } catch { }
+                }
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
+        /// <summary>Plan at the heart, lane E3's finish line. A person adds two tasks on separate objects and one that
+        /// waits for a Semanticus row, with no assistant attached. An MCP assistant attaches: its first call's result
+        /// carries the Plan line offering the two tasks (never as independent: a free-form task's footprint is unknown,
+        /// Sol 6 slice 7 finding 3) and naming the third as not offered yet; its second call
+        /// carries no line; it claims one, edits, and completes. The person flips the switch to Paused: the next
+        /// claim is refused with the paused sentence and the next result carries the paused line once.
+        ///
+        /// NOT HERE: "the edit is under that task in get_plan_history". get_plan_history and the Cause on a commit
+        /// are lane E4's, which had not merged; this checks the working-on pointer the cause capture will read.</summary>
+        private static async Task TheQueueDeliversAsync(string challenge)
+        {
+            Console.WriteLine("---- the queue delivers (E3) ----");
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-e3-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var bim = Path.Combine(dir, "AdventureWorks.bim");
+            File.Copy(FindVendoredTestBim(), bim);
+            var pipe = "semanticus-smoke-e3-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+            using var server = new RpcServer(sessions, engine, pipe, challenge);
+            using var stop = new CancellationTokenSource();
+            var serving = server.RunAsync(stop.Token);
+            try
+            {
+                using var person = await Client.ConnectAsync(pipe, "human", challenge);
+                await person.Invoke<OpenResult>("open", bim);
+                var before = await person.Invoke<ModelPlanView>("getModelPlan");
+                var blocker = before.Items.FirstOrDefault(i => i.Doer == PlanDoers.Semanticus && i.FootprintKnown
+                    && PlanStateWords.IsOpen(i.StateWord) && (i.Writes ?? Array.Empty<string>()).Any(w => w.Contains(':') && !w.StartsWith("model:")));
+                var blocked = blocker?.Writes.First(w => w.Contains(':') && !w.StartsWith("model:"));
+                Check("E3: the model carries a Semanticus row that changes an object", blocker != null);
+
+                var first = (await person.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest
+                    { Words = "Describe the smoke measure one", Objects = new[] { "measure:Smoke/One" } })).ItemId;
+                var second = (await person.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest
+                    { Words = "Describe the smoke measure two", Objects = new[] { "measure:Smoke/Two" } })).ItemId;
+                var third = (await person.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest
+                    { Words = "Describe what the Semanticus row changes", Objects = new[] { blocked } })).ItemId;
+                Check("E3: three tasks added with no assistant attached", server.AgentClientCount == 0 && third != null);
+
+                using var remote = await RemoteEngine.ConnectAsync(pipe);   // the MCP assistant attaches
+                async Task<string[]> Call(Func<Task> body = null)
+                {
+                    var r = await McpHealthAppender.InvokeAsync(remote, async () =>
+                    {
+                        if (body != null) await body();
+                        return new ModelContextProtocol.Protocol.CallToolResult
+                        {
+                            Content = new List<ModelContextProtocol.Protocol.ContentBlock> { new ModelContextProtocol.Protocol.TextContentBlock { Text = "ok" } },
+                        };
+                    });
+                    return r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().Select(b => b.Text).ToArray();
+                }
+                string PlanLine(string[] t) => t.SingleOrDefault(x => x.StartsWith("Plan:", StringComparison.Ordinal));
+
+                var line = PlanLine(await Call());
+                Check("E3: the first call offers two tasks and never calls free-form tasks independent",
+                    line != null && line.StartsWith("Plan: 2 tasks are ready for you.\n", StringComparison.Ordinal)
+                    && !line.Contains("They do not depend on each other")
+                    && line.Contains("(" + first + ")") && line.Contains("(" + second + ")"));
+                Check("E3: and the third as not offered yet, waiting for the Semanticus row",
+                    line != null && line.Contains("Not offered yet: Describe what the Semanticus row changes. It waits for "));
+                Check("E3: the second call carries no line", PlanLine(await Call()) == null);
+
+                var claim = await McpTools.ClaimRequest(remote, first);
+                Check("E3: the assistant claims one", claim.Ok && claim.Request?.ClaimToken != null);
+                Check("E3: while it holds the claim, its pipe's edits point at the task",
+                    Enumerable.Range(1, 32).Any(n => engine.WorkingTaskFor("rpc:" + n) == first));
+                var measure = await FindAMeasure(person);
+                await Call(() => McpTools.SetDescription(remote, measure, "Described while working the smoke task."));
+                var done = await McpTools.CompleteRequest(remote, first, claim.Request.ClaimToken, "Described.");
+                var after = await person.Invoke<ModelPlanView>("getModelPlan");
+                Check("E3: it completes, and the person sees the reply",
+                    done.Ok && after.Items.First(i => i.Id == first).StateWord == PlanStateWords.Done
+                    && after.Items.First(i => i.Id == first).Reply == "Described.");
+                // The finish line's last clause, with lane E4 merged: the edit is under that task in get_plan_history.
+                var history = await McpTools.GetPlanHistory(remote);
+                bool Touches(PlanHistoryRow r) => (r.Deltas ?? Array.Empty<ChangeDelta>()).Any(d => d.Ref == measure)
+                                                  || (r.Children ?? Array.Empty<PlanHistoryRow>()).Any(Touches);
+                var underTask = history.Rows.FirstOrDefault(r => r.Cause?.Kind == ChangeCauseKinds.Task && r.Cause.Ids.Contains(first));
+                Check("E3: the edit is under that task in get_plan_history", underTask != null && Touches(underTask));
+
+                await person.Invoke<ModelPlanView>("setAssistantQueue", "paused");
+                var refused = await McpTools.ClaimRequest(remote, second);
+                Check("E3: paused, the next claim is refused with the paused sentence",
+                    refused.Refusal == Semanticus.Engine.Jev.HandoffRefusal.QueuePaused
+                    && refused.Message == "The person has paused tasks for you. Carry on with what they ask you directly.");
+                var paused = PlanLine(await Call());
+                Check("E3: the next result carries the paused line", paused == "Plan: tasks are paused by the person. Carry on with what they ask you directly.");
+                Check("E3: once", PlanLine(await Call()) == null);
+            }
+            finally
+            {
+                stop.Cancel();
+                try { await serving; } catch { }
+                try { Directory.Delete(dir, true); } catch { }
+            }
+        }
+
+        /// <summary>Lane L4, both doors on one draft: the person composes in Studio, the attached assistant reads the
+        /// same view, writes the part through the queue, and the approved draft runs as one change that one Undo takes
+        /// back. An agent connection cannot give the person's Approve and run on a held draft.</summary>
+        private static async Task TheDraftRunsAsync(string challenge)
+        {
+            Console.WriteLine("---- a draft on both doors (L4) ----");
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-l4-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var bim = Path.Combine(dir, "AdventureWorks.bim");
+            File.Copy(FindVendoredTestBim(), bim);
+            var pipe = "semanticus-smoke-l4-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
+            using var server = new RpcServer(sessions, engine, pipe, challenge);
+            using var stop = new CancellationTokenSource();
+            var serving = server.RunAsync(stop.Token);
+            try
+            {
+                using var person = await Client.ConnectAsync(pipe, "human", challenge);
+                await person.Invoke<OpenResult>("open", bim);
+                var measure = await FindAMeasure(person);
+                var table = "table:" + measure.Substring("measure:".Length, measure.IndexOf('/') - "measure:".Length);
+                var steps = System.Text.Json.JsonSerializer.Serialize(new object[]
+                {
+                    new { id = "add", title = "Add L4 smoke count", op = "create_measure",
+                          args = new { tableRef = table, name = "L4 smoke count", expression = "{{blanks.formula}}" },
+                          blanks = new[] { new { name = "formula", kind = "dax", fills = "expression" } } },
+                    new { id = "describe", title = "Describe L4 smoke count", op = "set_description",
+                          args = new { objRef = table.Replace("table:", "measure:") + "/L4 smoke count", text = "Counts for the smoke." } },
+                });
+                var composed = await person.Invoke<Semanticus.Engine.Composer.DraftView>("composeTask", null, null, null, steps, "L4 smoke draft");
+                Check("L4: the person composes a draft in Studio and nothing changes",
+                    composed?.State == Semanticus.Engine.Composer.DraftStates.NeedsYou && composed.PlanWord == PlanStateWords.NeedsYou);
+
+                using var remote = await RemoteEngine.ConnectAsync(pipe);   // the MCP assistant attaches
+                var asAgent = await McpTools.GetDraft(remote, composed.DraftId);
+                var asPerson = await person.Invoke<Semanticus.Engine.Composer.DraftView>("getDraft", composed.DraftId);
+                Check("L4: both doors read the same draft view",
+                    System.Text.Json.JsonSerializer.Serialize(asAgent) == System.Text.Json.JsonSerializer.Serialize(asPerson));
+
+                var approved = await person.Invoke<Semanticus.Engine.Composer.DraftView>("runDraft", composed.DraftId);
+                var part = approved.Blanks.Single(b => b.Name == "formula").RequestId;
+                Check("L4: Run with your assistant records the approval and puts the part on the queue",
+                    approved.Approved && approved.State == Semanticus.Engine.Composer.DraftStates.WaitingForAssistant && part != null);
+                var claim = await McpTools.ClaimRequest(remote, part);
+                var bad = await McpTools.CompleteRequest(remote, part, claim.Request?.ClaimToken, "SUM ( Ghost[Amount] )");
+                if (bad.Refusal != Semanticus.Engine.Jev.HandoffRefusal.ChecksFailed)
+                    Console.WriteLine("    claim: " + claim.Refusal + " " + claim.Message + " | complete: " + bad.Refusal + " " + bad.Message);
+                Check("L4: a bad first try is refused, the check named, the claim kept",
+                    bad.Refusal == Semanticus.Engine.Jev.HandoffRefusal.ChecksFailed && bad.Message.Contains("Ghost") && bad.Request?.AttemptsLeft == 2);
+                var good = await McpTools.CompleteRequest(remote, part, claim.Request?.ClaimToken, "1");
+                var ran = await person.Invoke<Semanticus.Engine.Composer.DraftView>("getDraft", composed.DraftId);
+                var plan = await person.Invoke<ModelPlanView>("getModelPlan");
+                var row = plan.Items.FirstOrDefault(i => i.Id == "draft/" + composed.DraftId);
+                Check("L4: the last part passing runs the approved draft, and the Plan row agrees",
+                    good.Ok && ran.State == Semanticus.Engine.Composer.DraftStates.Done && row?.StateWord == ran.PlanWord);
+                var described = await person.Invoke<string>("getDax", table.Replace("table:", "measure:") + "/L4 smoke count");
+                Check("L4: the person reads the measure the draft made", described == "1");
+
+                await person.Invoke<UndoState>("undo");
+                string gone = null;
+                try { gone = await person.Invoke<string>("getDax", table.Replace("table:", "measure:") + "/L4 smoke count"); } catch { gone = null; }
+                Check("L4: one Undo takes the whole draft back", gone == null);
+
+                using var agentPipe = await Client.ConnectAsync(pipe, "agent");
+                string refusal = null;
+                try { await agentPipe.Invoke<Semanticus.Engine.Composer.DraftView>("approveDraft", composed.DraftId); }
+                catch (Exception ex) { refusal = ex.Message; }
+                Check("L4: an agent connection cannot give the person's Approve and run",
+                    refusal != null && refusal.IndexOf("method", StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+            finally
+            {
+                stop.Cancel();
+                try { await serving; } catch { }
+                try { Directory.Delete(dir, true); } catch { }
             }
         }
 
@@ -578,7 +918,106 @@ namespace Semanticus.RpcSmoke
             finally { try { Directory.Delete(workspace, true); } catch { } }
         }
 
-        private static string FindTestBim() => FindTestData("AdventureWorks.bim")
+
+        // THE SMOKE OPENS A COPY. Opening the vendored AdventureWorks.bim in place writes the model's sidecar (plan
+        // memory, evidence, report scope, workflow settings) into .semanticus/ beside it, which is inside the
+        // TabularEditor submodule and left it dirty after every run. The copy lives in a scratch folder whose name
+        // does NOT start with "semanticus-", because that prefix marks an ephemeral anchor (ExperienceLog).
+        private static string _testBimCopy;
+        /// <summary>Plan-heart E4 finish line, over two pipe clients on one session: the person edits, the assistant
+        /// edits, the plan applies a batch; getPlanHistory from both doors gives the same three rows by you, assistant
+        /// and semanticus, the batch nesting its edit under its items; undo to the person's edit takes all three back in
+        /// one commit and one broadcast; and a second engine on the same file shows them under the seam with no Undo.</summary>
+        private static async Task HistoryInsideThePlanAsync(Client ui, Client agent, SessionManager sessions)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-history-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                await ui.Invoke<OpenResult>("createModel", "Contoso", 1604, true);
+                await ui.Invoke<string>("createTable", "Sales");
+                await ui.Invoke<string>("createColumn", "table:Sales", "Amount", "Double");
+                await ui.Invoke<string>("createColumn", "table:Sales", "CustomerKey", "Int64");
+                await ui.Invoke<string>("createColumn", "table:Sales", "ProductKey", "Int64");
+                await ui.Invoke<string>("createTable", "Customer");
+                await ui.Invoke<string>("createColumn", "table:Customer", "CustomerKey", "Int64");
+                await ui.Invoke<string>("createTable", "Product");
+                await ui.Invoke<string>("createColumn", "table:Product", "ProductKey", "Int64");
+                await ui.Invoke<string>("createRelationship", "column:Sales/CustomerKey", "column:Customer/CustomerKey", null, true);
+                await ui.Invoke<string>("createRelationship", "column:Sales/ProductKey", "column:Product/ProductKey", null, true);
+                await ui.Invoke<SetResult>("setColumnMetadata", "column:Sales/ProductKey", null, "Sum", null, null);
+                await ui.Invoke<string>("createMeasure", "table:Sales", "Total Sales", "SUM ( Sales[Amount] )");
+                var file = Path.Combine(dir, "History.bim");
+                await ui.Invoke<SaveResult>("save", file, "bim", false);
+
+                await ui.Invoke<SetResult>("setDescription", "measure:Sales/Total Sales", "by the person");
+                await agent.Invoke<SetResult>("setDescription", "measure:Sales/Total Sales", "by the assistant");
+                var plan = await ui.Invoke<ModelPlanView>("getModelPlan");
+                var ids = plan.Items.Where(i => i.Id.StartsWith("safefix/", StringComparison.Ordinal)).Select(i => i.Id).Take(2).ToArray();
+                foreach (var id in ids) await ui.Invoke<ModelPlanActionResult>("modelPlanAction", id, "propose");
+                var ready = await ui.Invoke<ModelPlanView>("getModelPlan");
+                var batch = await ui.Invoke<ApplyPlanItemsResult>("applyPlanItems",
+                    new object[] { ids.Select(id => new PlanItemDigest { Id = id, Digest = ready.Items.First(i => i.Id == id).ChangeSet.Digest }).ToArray() });
+                Check("History/RPC: the plan applied a batch of " + ids.Length + " items", ids.Length > 0 && batch.Performed);
+
+                var fromUi = (await ui.Invoke<PlanHistoryView>("getPlanHistory")).Rows.Where(r => r.Kind != "decision").Take(3).ToArray();
+                var fromAgent = (await agent.Invoke<PlanHistoryView>("getPlanHistory")).Rows.Where(r => r.Kind != "decision").Take(3).ToArray();
+                Check("History/RPC: three rows by semanticus, assistant and you",
+                    fromUi.Select(r => r.By).SequenceEqual(new[] { "semanticus", "assistant", "you" }));
+                Check("History/RPC: both clients read the same three rows",
+                    fromUi.Select(r => r.Id).SequenceEqual(fromAgent.Select(r => r.Id)));
+                Check("History/RPC: the batch nests its edit under its items",
+                    fromUi[0].Kind == "item" && fromUi[0].Children.Length == 1 && fromUi[0].Cause.Ids.OrderBy(x => x).SequenceEqual(ids.OrderBy(x => x)));
+
+                var person = fromUi[2];
+                var before = ui.Notify.All.Count;
+                await agent.Invoke<UndoState>("undo", "agent", person.Id);
+                await Task.Delay(500);   // RpcServer broadcasts without awaiting delivery; give a second broadcast time to show
+                var walks = ui.Notify.All.Skip(before).Where(n => n.Deltas?.Length > 0).ToList();
+                Check("History/RPC: undo to the person's edit is one commit and one broadcast",
+                    walks.Count == 1 && walks[0].Label.StartsWith("Undo to ", StringComparison.Ordinal));
+                var undone = (await ui.Invoke<PlanHistoryView>("getPlanHistory")).Rows.Where(r => r.Kind != "decision").Take(3).ToArray();
+                Check("History/RPC: all three rows are undone and can be redone", undone.All(r => r.Undone && r.Redoable));
+                await ui.Invoke<UndoState>("redo", "human", fromUi[0].Children[0].Id);   // a parent row walks by its edit's id
+
+                await sessions.Ledger.FlushAsync();
+                var restarted = new SessionManager();
+                using (var second = new LocalEngine(restarted, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro()))
+                {
+                    await second.OpenAsync(file);
+                    var seam = (await second.GetPlanHistoryAsync()).Rows.Where(r => r.Kind != "decision").Take(3).ToArray();
+                    Check("History/RPC: after an engine restart the three rows are before this session, with no Undo",
+                        seam.Length == 3 && seam.All(r => r.BeforeThisSession && !r.Undoable)
+                        && seam.Select(r => r.By).SequenceEqual(new[] { "semanticus", "assistant", "you" }));
+                }
+            }
+            finally { try { Directory.Delete(dir, true); } catch { } }
+        }
+
+        private static string ScratchCopy(string source)
+        {
+            if (source == null) return null;
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return copy;
+        }
+
+        private static string FindTestBim()
+        {
+            if (_testBimCopy != null) return _testBimCopy;
+            var source = FindVendoredTestBim();
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return _testBimCopy = copy;
+        }
+
+        private static string FindVendoredTestBim() => FindTestData("AdventureWorks.bim")
             ?? throw new FileNotFoundException("Could not locate AdventureWorks.bim by walking up from " + AppContext.BaseDirectory);
 
         private static string FindTestData(string fileName)

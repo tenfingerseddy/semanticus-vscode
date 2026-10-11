@@ -121,13 +121,19 @@ namespace Semanticus.Tests
             });
             await entered.Task;
 
-            var replacing = sessions.OpenAsync(TestModels.FindBim());
-            for (var i = 0; i < 500 && !old.RetiredForTest; i++) await Task.Delay(10);
-            Assert.True(old.RetiredForTest);                 // admission is closed at the commit boundary
-            Assert.Same(old, sessions.Current);             // publication waits for the admitted read to drain
-            Assert.False(replacing.IsCompleted);
+            Task<Session> replacing;
+            try
+            {
+                replacing = sessions.OpenAsync(TestModels.FindBim());
+                // The wrapper gate (WrapperGate) makes the replacement's BUILD wait for the admitted read: a second handler
+                // may not come to life while another model's work item is part-way through, so the old session cannot even
+                // reach its retirement step until the read ends. Either way nothing publishes while the read runs.
+                await Task.Delay(300);
+                Assert.Same(old, sessions.Current);             // publication waits for the admitted read to drain
+                Assert.False(replacing.IsCompleted);
+            }
+            finally { release.TrySetResult(true); }             // a failed assert must never leave the dispatcher wedged
 
-            release.TrySetResult(true);
             Assert.True(await admitted > 0);
             var current = await replacing;
             Assert.Same(current, sessions.Current);
@@ -228,7 +234,7 @@ namespace Semanticus.Tests
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new ProFake());
             await sessions.OpenAsync(TestModels.FindBim());
-            var started = await engine.StartWorkflowAsync("new-measure", "human");
+            var started = await engine.StartWorkflowAsync("refactor-to-calculation-group", "human");
 
             await sessions.OpenAsync(TestModels.FindBim());
 
@@ -333,7 +339,7 @@ namespace Semanticus.Tests
                 await release.Task;
             };
 
-            var staleStart = engine.StartWorkflowAsync("new-measure", "test");
+            var staleStart = engine.StartWorkflowAsync("refactor-to-calculation-group", "test");
             await prepared.Task;
             await engine.OpenAsync(TestModels.FindBim());
             release.TrySetResult(true);
@@ -355,7 +361,7 @@ namespace Semanticus.Tests
                 return Task.CompletedTask;
             };
 
-            var started = await engine.StartWorkflowAsync("new-measure", "human");
+            var started = await engine.StartWorkflowAsync("refactor-to-calculation-group", "human");
 
             Assert.Equal("active", started.Status);
             Assert.Equal("endpoint-B", (await engine.ConnectionStatusAsync()).DataSource);

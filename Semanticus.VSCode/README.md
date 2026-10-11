@@ -3,13 +3,14 @@
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own assistant on one live model.**
 
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
-[Download 1.2.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.2.0)
+[Download](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest)
 
 Semanticus brings model editing, DAX and M, model quality, lineage, tests and publishing into one workbench.
 Open a local project or connect to a model. Make a change, check what it affects and review the difference before
 publishing. Work yourself, ask your assistant to help, or move between the two.
 
-Studio is grouped into five areas: **Model**, **Calculations**, **Checks**, **Changes** and **Workflows**.
+Studio opens on the **Plan**, where you start, and has five more areas: **Explore**, **Edit**, **Review**,
+**Publish** and **Workflows**.
 Pick the area by the question you start with, then the page inside it.
 
 ![Semanticus Studio model diagram](https://semanticus.com.au/assets/shots/diagram.png)
@@ -18,14 +19,15 @@ Pick the area by the question you start with, then the page inside it.
 
 You use the Model tree, Properties and Studio. Your assistant uses MCP. Both act on the same model and share
 one undo history, with every change attributed to its author. Assistant edits appear in the UI immediately;
-your edits reach the assistant in its next tool result.
+your assistant sees your edits when it next reads the model.
 
 Ask your assistant to explain measures, find unused columns, improve descriptions, investigate a failed test or
 prepare a set of proposed changes. Inspect and adjust the result in the workbench, and undo it from the same
 timeline.
 
-Semanticus runs no AI inference and holds no model-provider API keys. Bring your own MCP-compatible assistant
-and account. The [MCP reference](https://semanticus.com.au/docs/mcp-tools) documents 314 operations.
+Semanticus never holds your assistant's API key. On Free it runs no AI inference; on Pro, Jev, the Semanticus
+helper, makes small modelling choices you can check (see Free and Pro). Bring your own MCP-compatible assistant
+and account. The [MCP reference](https://semanticus.com.au/docs/mcp-tools) documents more than 340 operations.
 
 ## Help as you work
 
@@ -43,21 +45,22 @@ Copilot can load the bundled skills directly on VS Code versions supporting exte
 The same content is available as a versioned plugin pack and portable skill folders.
 
 [Install and use the skills](https://semanticus.com.au/docs/assistant-skills) ·
-[Download the skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/download/v1.2.0/semanticus-assistant-skills-1.2.0.zip)
+[Download the skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest)
 
 Skills use your existing MCP connection. **Semanticus: Connect AI Assistant** writes the connection file for clients using
 `.mcp.json`; the setup guide explains the equivalent configuration for other clients. Core orientation also
 comes from MCP, so an assistant can work without installing skills.
 
-## The five areas
+## The six areas
 
 | Area | What you do there |
 |---|---|
-| **Model** | Overview, Diagram, Lineage, Find and replace, Data, Size by table, Model Spec, Advanced Modelling, Power Query, Docs and Model notes. Tables, measures, columns, relationships, calculation groups, roles and perspectives are edited here, in DAX and M. |
-| **Calculations** | DAX Lab. Write a formula, run it, compare answers across contexts and see where they differ. |
-| **Checks** | Tests, Model quality, AI understanding and Saved reports. Model tests, SQL-to-DAX reconciliation and exported results. |
-| **Changes** | Proposed, History and Published. Review a set of changes before you keep it, see who changed what, compare against a live destination and publish after you confirm. |
-| **Workflows** | A library grouped by the everyday job, a Runs view, and Steps, Canvas and Source as three views of one definition. |
+| **Plan** | Where you start. Every piece of work on the model is a row that says who does it: Semanticus, you or your assistant. Type a task, give work to your assistant, run the ready fixes as one change you can undo, and open History to see every edit, who made it and undo back to any point. Workflow runs are rows here too. |
+| **Explore** | Data, Ask your data (Pro: type a question about your numbers and get the answer as a table; when the question can be read two ways, it says which one it shows and names the other), Diagram, Lineage and Size. |
+| **Edit** | Find and replace, Queries (write a DAX query, run it and compare answers across contexts), AI instructions with Model notes, Advanced modelling and Power Query. Tables, measures, columns, relationships, calculation groups, roles and perspectives are edited here, in DAX and M. |
+| **Review** | Model quality (BPA), AI readiness, Validation with its Reports, and Docs. |
+| **Publish** | Published: compare against a live destination, publish after you confirm, and roll back to a published version. |
+| **Workflows** | Your workflows, and Author for the one you open. Start from a starter that comes with Semanticus, or describe what you want in words. Team rules, when a team sets them, say which workflows must be used. |
 
 Connections and Settings sit in the same header. Connections names four roles: Editing, Tests and queries,
 Publish to and SQL sources.
@@ -71,8 +74,8 @@ Fabric and Azure Analysis Services. Windows x64 also supports discovering a runn
 
 1. Install the package for the operating system and architecture where VS Code runs.
 2. Open the **Semanticus** view and run **Semanticus: Open Model**.
-3. Choose a local model or supported connection, then open Studio and pick an area: Model, Calculations,
-   Checks, Changes or Workflows.
+3. Choose a local model or supported connection, then open Studio. It opens on the Plan; the other areas are
+   Explore, Edit, Review, Publish and Workflows.
 4. Run **Semanticus: Connect AI Assistant** to work with an MCP-compatible assistant.
 5. Edit and run checks. Save locally, or review what will be published before you confirm Publish.
 
@@ -89,27 +92,31 @@ reload. Every installer bundles its engine, so you do not need a separate .NET r
 | macOS Intel | Supported release package | Offline models and remote XMLA and Fabric connections |
 | macOS Apple Silicon | Supported release package | Offline models and remote XMLA and Fabric connections |
 
-Get the matching 1.2.0 installer and checksum from the
-[GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.2.0).
+Get the matching installer and checksum from the
+[latest GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest).
 Marketplace publication is separate, so the version offered there can differ.
 
-## What's new in 1.2.0
+## What's new in 1.3.0
 
-Studio is now five areas: Model, Calculations, Checks, Changes and Workflows. Every page still exists and old
-links still open the right page, and several pages have plainer names. Tests is rebuilt around one list of
-saved checks, a New check drawer with three kinds, and SQL sources saved once in Connections. Lineage is one
-page with Graph, Tree and Impact. Workflows are a top-level area with a library grouped by everyday job and one
-editor for Steps, Canvas and Source. Publishing says what is local and what is published, and never offers to
-publish without a real destination. Required workflows keep the definition a project was bound against when the
-shipped files change. The assistant is called your assistant everywhere. Read [the release notes](https://github.com/tenfingerseddy/semanticus-vscode/releases/tag/v1.2.0) for the full list.
+Studio is six areas: Plan, Explore, Edit, Review, Publish and Workflows. The Plan is where you start, and History
+lives inside it. Workflows is one page: start from a starter, or on Pro describe a workflow in words and it becomes
+steps. Connections are on one page, with a SQL endpoint for each model. On Pro, Ask your data (under Explore) answers a
+question about your numbers. When a question can fairly be read two ways, the answer says which reading it shows and names the other, for example "Showing Net Sales. You may have meant Gross Sales." And Jev makes small modelling choices you can check: column formats, base measures for
+number columns, what Copilot sees and the plan's order. What Pro decides, on the Pro page, lists
+every choice and switches each one off. Nothing goes to Jev until you agree; Free and Pro below says exactly what goes.
 
 ## Free and Pro
 
-Semanticus Pro unlocks four whole features: Create in Model (Model Spec, Advanced Modelling, Power Query,
-Docs and Model notes), Tests and Saved reports, the Advanced view under Changes and Published (source control,
-Fabric Git, automated delivery and the Data Agent), and Workflows. Everything else is free, including every
-one-click bulk fix, Model quality, AI understanding, Lineage with its published report checks, Verified Mode,
-the assistant permission matrix, Promote, Publish, compare and restore points.
+Free is the tool. Pro is the tool that works for you.
+
+Everything you can do by hand, or with your own assistant, is free. That is Model Spec, Advanced
+modelling, Power Query, Docs, Model notes, Validation, Reports, Model quality, AI readiness, Lineage,
+Pending changes, Queries, Record verified edits, every fix, the assistant permission matrix, Promote,
+Publish, and the advanced publishing tools including source control, Fabric Git, automated delivery and
+the Data Agent.
+
+Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
+order, with a jump on each one to the page where you can do it by hand.
 [Compare the current plans](https://semanticus.com.au/pro).
 
 ## Know the boundaries
@@ -118,8 +125,10 @@ Power BI Desktop discovery, local XMLA and local M preview require Windows 11 x6
 tenant, capacity, permissions and sign-in. Modern calendars require compatibility level 1701 or later. Role security
 analysis does not impersonate a user to prove dynamic RLS behaviour.
 
-Model work runs locally. Connections and publishing use the sources and targets you choose. Semanticus sends no
-product telemetry. Your assistant uses its own account and data policies.
+Model work runs locally. Pro sends the model's shape (names, types, formats, counts, relationships and some
+descriptions) and the words you type to its advice service, only after you allow it for that model, and never rows,
+values or credentials. Connections and publishing use the sources and targets you choose. Semanticus sends no product
+telemetry. Your assistant uses its own account and data policies.
 
 [Support details](https://semanticus.com.au/docs/supported-platforms) ·
 [Privacy](https://semanticus.com.au/privacy) · [Source and licence](https://github.com/tenfingerseddy/semanticus-vscode)

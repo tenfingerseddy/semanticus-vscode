@@ -37,8 +37,10 @@ namespace Semanticus.Engine
 
         private WorkflowDocumentResult ReadWorkflowDocument(string name, string userDir, string stockDir)
         {
-            if (!ResolveWorkflowLibrary(userDir, stockDir).Files.TryGetValue(name, out var resolved))
-                throw new InvalidOperationException($"Workflow '{name}' not found (list_workflows shows the library).");
+            var library = ResolveWorkflowLibrary(userDir, stockDir);
+            if (library.Unavailable.TryGetValue(name, out var unavailable)) throw new InvalidOperationException(unavailable);
+            if (!library.Files.TryGetValue(name, out var resolved))
+                throw WorkflowNotFound(name, $"Workflow '{name}' not found (list_workflows shows the library).");
             return DescribeWorkflowDocument(name, resolved.Source, resolved.Path, File.ReadAllBytes(resolved.Path));
         }
 
@@ -259,6 +261,7 @@ namespace Semanticus.Engine
         public async Task<WorkflowDocumentEditResult> EditWorkflowDocumentAsync(string name, string expectByteHash,
             string exactText, string expectPath, string origin, string sessionId = null)
         {
+            GuardOutsideWrite(origin);
             RequireProFeature();
             name = ValidateWorkflowDocumentName(name);
             var context = _sessions.CurrentContext;

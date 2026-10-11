@@ -48,18 +48,18 @@ export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode
     manyMany: graph.relationships.filter((r) => r.fromCardinality === 'Many' && r.toCardinality === 'Many').length,
   }), [graph]);
 
-  if (err) return <div className="p-4"><div className="rounded-lg px-3 py-2 text-[12px]" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
-  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading relationships…</div>;
+  if (err) return <div className="sem-page"><div className="xe-error" role="alert">{err}</div></div>;
+  if (!graph) return <div className="sem-page sem-text-meta">Loading relationships…</div>;
 
   const Th = ({ k, label }: { k: SortKey; label: string }) => (
     <th onClick={() => setSort((s) => ({ key: k, dir: s.key === k && s.dir === 1 ? -1 : 1 }))}
-      className="text-left font-semibold px-3 py-1.5 cursor-pointer select-none whitespace-nowrap"
-      style={{ color: 'var(--sem-muted)', position: 'sticky', top: 0, background: 'var(--sem-surface-2)', borderBottom: '1px solid var(--sem-border)' }}>
+      className="text-left font-semibold px-3 py-1 cursor-pointer select-none whitespace-nowrap"
+      style={{ color: 'var(--sem-muted)', position: 'sticky', top: 0, background: 'var(--sem-ground)', borderBottom: '1px solid var(--sem-rule)' }}>
       {label}{sort.key === k ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''}
     </th>
   );
   const Plain = ({ label, w }: { label: string; w?: string }) => (
-    <th className="text-left font-semibold px-3 py-1.5 whitespace-nowrap" style={{ width: w, color: 'var(--sem-muted)', position: 'sticky', top: 0, background: 'var(--sem-surface-2)', borderBottom: '1px solid var(--sem-border)' }}>{label}</th>
+    <th className="text-left font-semibold px-3 py-1 whitespace-nowrap" style={{ width: w, color: 'var(--sem-muted)', position: 'sticky', top: 0, background: 'var(--sem-ground)', borderBottom: '1px solid var(--sem-rule)' }}>{label}</th>
   );
 
   return (
@@ -69,7 +69,7 @@ export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode
         {modeSwitch ? <RowSep /> : null}
         <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter the list…" aria-label="Filter the list"
           className="sem-toolrow-input" style={{ minWidth: 180 }} />
-        <label className="flex items-center gap-1.5 cursor-pointer select-none" style={{ color: 'var(--sem-fg)' }}>
+        <label className="flex items-center gap-2 cursor-pointer select-none" style={{ color: 'var(--sem-fg)' }}>
           <input type="checkbox" checked={onlyIssues} onChange={(e) => setOnlyIssues(e.target.checked)} />
           Problems only
         </label>
@@ -82,8 +82,8 @@ export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode
           </div>
         )}
       </ToolRow>
-      <div className="flex-1 min-h-0 overflow-auto">
-        <table className="w-full text-[12px]" style={{ borderCollapse: 'collapse', color: 'var(--sem-fg)' }}>
+      <div className="flex-1 min-h-0 xe-edge-box">
+        <table className="w-full text-xs xe-edge-table" style={{ borderCollapse: 'collapse', color: 'var(--sem-fg)' }}>
           <thead>
             <tr>
               <Th k="fromTable" label="From (many)" />
@@ -97,19 +97,19 @@ export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode
             {view.map((r, i) => {
               const bidi = r.crossFilter === 'BothDirections';
               return (
-                <tr key={r.name || i} style={{ borderBottom: '1px solid var(--sem-border)', opacity: r.isActive ? 1 : 0.6 }}>
-                  <td className="px-3 py-1.5 align-top"><Endpoint table={r.fromTable} col={r.fromColumn} /></td>
-                  <td className="px-3 py-1.5 align-top"><Endpoint table={r.toTable} col={r.toColumn} /></td>
-                  <td className="px-3 py-1.5 align-top tnum">
-                    <span style={{ color: r.fromCardinality === 'Many' && r.toCardinality === 'Many' ? 'var(--sem-warn)' : 'var(--sem-fg)' }}>
+                <tr key={r.name || i} style={{ borderBottom: '1px solid var(--sem-rule)' }}>
+                  <td className="px-3 py-1 align-top"><Endpoint table={r.fromTable} col={r.fromColumn} /></td>
+                  <td className="px-3 py-1 align-top"><Endpoint table={r.toTable} col={r.toColumn} /></td>
+                  <td className="px-3 py-1 align-top tnum">
+                    <span className={r.fromCardinality === 'Many' && r.toCardinality === 'Many' ? 'xe-dot xe-dot-warn' : undefined}>
                       {card(r.fromCardinality)} : {card(r.toCardinality)}
                     </span>
                   </td>
-                  <td className="px-3 py-1.5 align-top" style={{ color: bidi ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>
+                  <td className={'px-3 py-1 align-top' + (bidi ? ' xe-dot xe-dot-warn' : '')} style={bidi ? undefined : { color: 'var(--sem-muted)' }}>
                     {bidi ? 'both ↔' : 'single →'}
                   </td>
-                  <td className="px-3 py-1.5 align-top">
-                    {r.isActive ? <span style={{ color: 'var(--sem-good)' }}>✓ active</span> : <span style={{ color: 'var(--sem-warn)', fontStyle: 'italic' }}>inactive</span>}
+                  <td className="px-3 py-1 align-top">
+                    {r.isActive ? <span title="Active" aria-label="Active">✓</span> : <span className="xe-dot xe-dot-warn" title="Switched off">off</span>}
                   </td>
                 </tr>
               );
@@ -125,8 +125,8 @@ export function RelationshipsView({ modeSwitch }: { modeSwitch?: React.ReactNode
 }
 
 function Endpoint({ table, col }: { table: string; col: string }) {
-  return <span><span className="font-medium" style={{ color: 'var(--sem-accent)' }}>{table}</span><span style={{ color: 'var(--sem-muted)' }}>[{col}]</span></span>;
+  return <span><span className="font-medium">{table}</span><span style={{ color: 'var(--sem-muted)' }}>[{col}]</span></span>;
 }
 function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
-  return <span className="flex items-baseline gap-1"><span className="font-semibold tnum" style={{ color: warn ? 'var(--sem-warn)' : 'var(--sem-fg)' }}>{value}</span>{label}</span>;
+  return <span className="flex items-baseline gap-1"><span className={'font-semibold tnum' + (warn ? ' xe-dot xe-dot-warn' : '')}>{value}</span>{label}</span>;
 }

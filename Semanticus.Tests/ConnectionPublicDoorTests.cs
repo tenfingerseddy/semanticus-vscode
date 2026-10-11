@@ -49,15 +49,26 @@ namespace Semanticus.Tests
             sessions.Bus.Activity += activities.Add;
             sessions.Bus.Changed += _ => modelChanges++;
 
-            var refused = Json(await McpTools.LabelConnection(engine, connection.Id, "dev"));
+            // label_connection is no longer an MCP tool (2026-09-24): labelling was never an agent capability. The
+            // registry's refusal is still the real guard, because a non-owner MCP process forwards over the pipe with
+            // origin "agent". Drive it through that door and through the engine directly.
+            foreach (var attempt in new Func<Task>[]
+            {
+                () => new EngineRpcTarget(engine, "agent").labelConnection(connection.Id, "dev"),
+                () => engine.LabelConnectionAsync(connection.Id, "dev", "agent"),
+            })
+            {
+                activities.Clear();
+                var refused = await Assert.ThrowsAnyAsync<Exception>(attempt);
 
-            Assert.Contains("Only a human", refused.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
-            Assert.Null(ConnectionRegistry.Find(connection.Id).Label);
-            var agentActivity = Assert.Single(activities);
-            Assert.Equal("label_connection", agentActivity.Kind);
-            Assert.Equal("agent", agentActivity.Origin);
-            Assert.False(agentActivity.Ok);
-            Assert.Equal(refused.GetProperty("error").GetString(), agentActivity.Error);
+                Assert.Contains("Only a human", refused.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(ConnectionRegistry.Find(connection.Id).Label);
+                var agentActivity = Assert.Single(activities);
+                Assert.Equal("label_connection", agentActivity.Kind);
+                Assert.Equal("agent", agentActivity.Origin);
+                Assert.False(agentActivity.Ok);
+                Assert.Equal(refused.Message, agentActivity.Error);
+            }
 
             activities.Clear();
             var labelled = await rpc.labelConnection(connection.Id, "DEV");
@@ -169,8 +180,8 @@ namespace Semanticus.Tests
                 () => McpTools.SetPublishDestination(engine, loopback.Id));
             var rpcSet = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => rpc.setPublishDestination(loopback.Id));
-            Assert.Contains("loopback", mcpSet.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("loopback", rpcSet.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ConnectionJobs.PublishLoopback, mcpSet.Message);   // the sentence the Connections page shows beside it
+            Assert.Equal(ConnectionJobs.PublishLoopback, rpcSet.Message);   // the sentence the Connections page shows beside it
             Assert.False((await engine.ConnectionContextAsync()).Publishing.Available);
 
             var parent = Path.Combine(_root, "models");
@@ -178,8 +189,8 @@ namespace Semanticus.Tests
                 () => McpTools.PrepareWorkingCopy(engine, remote.Id, parent, false, null, loopback.Id));
             var rpcPrep = await Assert.ThrowsAsync<InvalidOperationException>(
                 () => rpc.prepareWorkingCopy(remote.Id, parent, false, null, loopback.Id));
-            Assert.Contains("loopback", mcpPrep.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("loopback", rpcPrep.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(ConnectionJobs.PublishLoopback, mcpPrep.Message);   // the sentence the Connections page shows beside it
+            Assert.Equal(ConnectionJobs.PublishLoopback, rpcPrep.Message);   // the sentence the Connections page shows beside it
             Assert.False(Directory.Exists(parent));
         }
 

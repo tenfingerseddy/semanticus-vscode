@@ -1,0 +1,16 @@
+{
+ "point": "queries.chart_kind",
+ "committed": "2026-09-28",
+ "committedBeforeFirstRun": true,
+ "version": 1,
+ "labels": "labels.json",
+ "source": "docs/queries-chart-pick-bar.md, section The bar (numeric, committed now). Nothing here is new; it is that section as numbers.",
+ "rule": "Jev's chart pick is switched on for Pro only when ALL three hold on labels.json, run once: (1) beats the rules: Jev's pick is acceptable on more items than the rules' pick; (2) significant: an exact two-sided McNemar test on the discordant items (Jev acceptable and rules not, against rules acceptable and Jev not) gives p < mcnemarAlpha; (3) no more harmful picks: the count of items where Jev's pick is labelled harmful is no higher than the rules' count. Held out by whole model: northstar, mssec and smartsheets are the gate. Where Jev did not pick (off, not asked, unsure, the neutral option, a refused answer) the product shows the rules' pick, so that item is scored as the rules' pick.",
+ "conditions": {
+  "beatsRules": true,
+  "mcnemarAlpha": 0.05,
+  "harmfulNotAboveRules": true
+ },
+ "heldOutModels": ["northstar", "mssec", "smartsheets"],
+ "minItems": 150
+}

@@ -1,0 +1,30 @@
+table Campaign
+	/// campaign join key
+	column 'Campaign Key'
+		dataType: int64
+		sourceColumn: CampaignKey
+		summarizeBy: none
+
+	column 'Campaign Code'
+		dataType: int64
+		sourceColumn: CampaignCode
+		summarizeBy: none
+
+	column Channel
+		dataType: string
+		sourceColumn: Channel
+		summarizeBy: none
+
+	/// campaign spend in dollars. Cents must remain visible.
+	column Spend
+		dataType: double
+		sourceColumn: Spend
+		summarizeBy: none
+
+	partition Campaign = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [CampaignKey = Int64.Type, CampaignCode = Int64.Type, Channel = type text, Spend = type number], {})
+			in
+				Source

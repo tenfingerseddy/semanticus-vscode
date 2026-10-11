@@ -1,0 +1,210 @@
+{
+  "Server": "s15-sql.example.invalid",
+  "Database": "GrainTrading",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_trade_day",
+      "KeyColumns": [
+        "DAY_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "TRADE_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "YEAR_NO",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_crop",
+      "KeyColumns": [
+        "CROP_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "CROP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CROP_TYPE",
+          "DataType": "String"
+        },
+        {
+          "Name": "GRADE",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_market",
+      "KeyColumns": [
+        "MARKET_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "MARKET_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MARKET_REGION",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_trade",
+      "KeyColumns": [
+        "TRADE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "TRADE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CROP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "MARKET_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "TONNES",
+          "DataType": "Double"
+        },
+        {
+          "Name": "TRADE_VALUE",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_settlement",
+      "KeyColumns": [
+        "SETTLEMENT_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SETTLEMENT_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DAY_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "TRADE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "SETTLED_VALUE",
+          "DataType": "Decimal"
+        },
+        {
+          "Name": "FEE_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_forecast",
+      "KeyColumns": [
+        "FORECAST_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "FORECAST_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "CROP_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "FORECAST_AT",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "EST_TONNES",
+          "DataType": "Double"
+        },
+        {
+          "Name": "CONFIDENCE",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trade",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_trade_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trade",
+      "FromColumn": "CROP_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_crop",
+      "ToColumn": "CROP_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_trade",
+      "FromColumn": "MARKET_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_market",
+      "ToColumn": "MARKET_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_settlement",
+      "FromColumn": "DAY_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_trade_day",
+      "ToColumn": "DAY_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_settlement",
+      "FromColumn": "TRADE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "fact_trade",
+      "ToColumn": "TRADE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_forecast",
+      "FromColumn": "CROP_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_crop",
+      "ToColumn": "CROP_ID"
+    }
+  ]
+}

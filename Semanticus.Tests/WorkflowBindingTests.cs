@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -68,6 +69,10 @@ Review what you made — this step does not perform create_measure.
         private static void WriteSettings(string ws, string json) => File.WriteAllText(SettingsFile(ws), json);
         private static string ShippedWorkflow(string library, string name) =>
             Path.Combine(AppContext.BaseDirectory, library, name + ".md");
+        /// <summary>Today's definition of a shipped name: the stock file, or for a parked starter (contract 21.2) its
+        /// park freeze, which is what the resolver treats as current.</summary>
+        private static string CurrentWorkflow(string name) =>
+            File.Exists(ShippedWorkflow("workflows", name)) ? ShippedWorkflow("workflows", name) : WorkflowSeedLibraryTests.ParkedFreeze(name);
         private static string RevisionOf(string file) =>
             "sha256:" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file))).ToLowerInvariant();
         private static JsonObject ReadSettings(string ws) => JsonNode.Parse(File.ReadAllText(SettingsFile(ws))).AsObject();
@@ -119,6 +124,7 @@ Review what you made — this step does not perform create_measure.
 
         // ---- (b) WARN binding allows the edit + records the advisory (§9.6 audit posture) ----------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Warn_binding_allows_the_edit_and_publishes_the_advisory()
         {
@@ -155,6 +161,7 @@ Review what you made — this step does not perform create_measure.
 
         // ---- (c) STEP-scoped exemption (§9.10A): at the performing step it passes; off it, hard still bites -----
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Exemption_is_step_scoped_not_run_scoped()
         {
@@ -190,6 +197,7 @@ Review what you made — this step does not perform create_measure.
             finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("binding-specialist", true)]
         [InlineData("binding-composite", false)]
@@ -257,6 +265,7 @@ Review what you made — this step does not perform create_measure.
             finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Warn_enforcement_copy_does_not_claim_to_soften_a_hard_binding()
         {
@@ -272,7 +281,7 @@ Review what you made — this step does not perform create_measure.
                     var warn = await engine.SetWorkflowEnforcementAsync("warn", "human");
                     Assert.Equal("warn", warn.Mode);
                     Assert.DoesNotContain("regardless of what the workflow declares", warn.Note);
-                    Assert.Contains("must go through a playbook", warn.Note, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("Actions a team rule requires still go through their workflow", warn.Note, StringComparison.OrdinalIgnoreCase);
 
                     var ex = await Assert.ThrowsAsync<InvalidOperationException>(
                         () => engine.CreateMeasureAsync("table:Facts", "StillBound", "SUM(Facts[Amount])", "agent"));
@@ -513,13 +522,16 @@ Follow the project-specific steps.
         // A run freezes its whole closure at start (T220). The compatibility resolver feeds that freeze but must
         // not reach into it afterwards: dropping the pin moves the LIBRARY to today's definition while the
         // in-flight run keeps the v1.1.3 one it admitted against.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_running_snapshot_keeps_its_baseline_definition_after_the_pin_moves_to_current()
         {
             var ws = NewWorkspace();
-            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""new-measure""], ""mode"": ""warn"" } } }");
-            var baselineTitle = ParsedTitle(ShippedWorkflow("workflows-compat/v1.1.3", "new-measure"));
-            var currentTitle = ParsedTitle(ShippedWorkflow("workflows", "new-measure"));
+            // optimize-dax since new-measure parked (lane W3): the library must still HOLD today's definition after
+            // the pin moves, and a parked name leaves the library once nothing requires it.
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""optimize-dax""], ""mode"": ""warn"" } } }");
+            var baselineTitle = ParsedTitle(ShippedWorkflow("workflows-compat/v1.1.3", "optimize-dax"));
+            var currentTitle = ParsedTitle(ShippedWorkflow("workflows", "optimize-dax"));
             Assert.NotEqual(baselineTitle, currentTitle);
 
             var sessions = new SessionManager();
@@ -529,13 +541,13 @@ Follow the project-specific steps.
                 using (engine)
                 {
                     await OpenModelWithFactsAsync(engine);
-                    var run = await engine.StartWorkflowAsync("new-measure", "human");
+                    var run = await engine.StartWorkflowAsync("optimize-dax", "human");
                     Assert.Equal(baselineTitle, run.Title);
 
                     // Clearing the binding prunes the pin, so the library falls back to today's stock file.
                     await engine.SetWorkflowBindingAsync("create_measure", Array.Empty<string>(), "off", "human");
-                    Assert.Equal(currentTitle, (await engine.GetWorkflowAsync("new-measure")).Title);
-                    Assert.Equal(currentTitle, (await engine.GetWorkflowDocumentAsync("new-measure")).Metadata.Title);
+                    Assert.Equal(currentTitle, (await engine.GetWorkflowAsync("optimize-dax")).Title);
+                    Assert.Equal(currentTitle, (await engine.GetWorkflowDocumentAsync("optimize-dax")).Metadata.Title);
 
                     // ...and the frozen run is untouched by that move.
                     var after = await engine.GetWorkflowRunAsync(run.RunId);
@@ -549,6 +561,358 @@ Follow the project-specific steps.
         // A required name that was user-shadowed when the revision map was written is absent from that map. It
         // never chose a pre-redesign definition, so deleting the project copy must fall to today's stock file --
         // not refuse, which would take every library read down with it.
+        // Q&A was dropped from the stock make-ai-ready workflow on 2026-09-23 (Microsoft retires it in February
+        // 2027). A binding saved against the definition shipped in v1.2.0 pins that revision's bytes, so those
+        // bytes must stay shipped under workflows-compat or the pinned binding refuses to run.
+        [Fact]
+        public async Task A_binding_pinned_to_the_v1_2_0_make_ai_ready_still_resolves_after_Q_and_A_left_the_stock_file()
+        {
+            const string v120 = "sha256:b97b5e7ade8a663aad110db345f8f424fdf5a774d8dcf72b42207b84958ba7a3";
+            Assert.Equal(v120, RevisionOf(ShippedWorkflow("workflows-compat/v1.2.0", "make-ai-ready")));
+            var current = File.ReadAllText(CurrentWorkflow("make-ai-ready"));
+            Assert.DoesNotContain("Q&A", current);
+            Assert.DoesNotContain("enable_qna", current);
+            Assert.DoesNotContain("qnaPath", current);
+
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""set_description"": { ""require"": [""make-ai-ready""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { ""make-ai-ready"": """ + v120 + @""" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                var def = await engine.GetWorkflowAsync("make-ai-ready");
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows-compat/v1.2.0", "make-ai-ready")), def.FilePath);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // A saved workflow file (a project copy, or the v1.2.0 compat make-ai-ready) that still lists enable_qna
+        // must keep running after the rename to create_linguistic_schema: check_workflow does not call it an
+        // unknown op, and the running step offers the agent the op it can actually call.
+        [Fact]
+        public async Task A_saved_workflow_listing_enable_qna_still_checks_clean_and_offers_create_linguistic_schema()
+        {
+            var ws = NewWorkspace();
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "legacy-schema.md"), @"---
+name: legacy-schema
+title: Legacy schema set-up
+whenToUse: ""Set up synonyms the old way.""
+---
+## Step 1: Set up the schema
+Set up the synonym store.
+```yaml gate
+ops: [enable_qna, set_synonyms]
+```
+");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("LegacySchema", 1604);
+                var check = await engine.CheckWorkflowAsync("legacy-schema");
+                Assert.DoesNotContain(check.Findings, f => f.Message.Contains("enable_qna", StringComparison.Ordinal));
+
+                var run = await engine.StartWorkflowAsync("legacy-schema", "human");
+                Assert.Contains("create_linguistic_schema", run.CurrentStep.Ops);
+                Assert.DoesNotContain("enable_qna", run.CurrentStep.Ops);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // impact_of folded into impact_assessment(scope='model') on 2026-09-24 (the slice 6 tool merge), so the two
+        // stock workflows that named it were edited. A binding saved against the v1.2.1 definitions pins those
+        // bytes, so they ship under workflows-compat/v1.2.1, and their retired op still checks clean via OpAliases.
+        [Theory]
+        [InlineData("refactor-to-calculation-group", "sha256:a9ee421b8969e36b3825b33bb83b13f40346d7b3dff19d14eda8a34ce649017e")]
+        [InlineData("model-hygiene-pass", "sha256:4fc46931bd898350aef82ae167350566aa97948ea99565068a39f48fe5a19664")]
+        public async Task A_binding_pinned_to_a_v1_2_1_workflow_still_resolves_after_impact_of_left_the_stock_file(string name, string v121)
+        {
+            Assert.Equal(v121, RevisionOf(ShippedWorkflow("workflows-compat/v1.2.1", name)));
+            var current = File.ReadAllText(CurrentWorkflow(name));
+            Assert.DoesNotContain("impact_of", current);
+            Assert.Contains("impact_assessment", current);
+
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""" + name + @"""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { """ + name + @""": """ + v121 + @""" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("PinnedV121", 1604);
+                var def = await engine.GetWorkflowAsync(name);
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows-compat/v1.2.1", name)), def.FilePath);
+                var check = await engine.CheckWorkflowAsync(name);
+                Assert.DoesNotContain(check.Findings, f => f.Message.Contains("impact_of", StringComparison.Ordinal));
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // Contract 21.2 (lane W3): seven starters parked when the composer shipped. Each file's last shipped bytes
+        // were frozen into workflows-compat before it left the stock shelf, so a project whose binding pinned that
+        // revision still resolves it, checks it and runs it. One case per parked file, pinned by hash.
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
+        [InlineData("add-relationship", "sha256:ba2475c09d42018e398eaa19903f3b7e3460c2ffd72318dc51dc0ec9a986d634")]
+        [InlineData("calendar-setup", "sha256:954d75b19437fe78e334e2337d8a9d48263c50ef380128f2294bf342f797cbd4")]
+        [InlineData("import-table", "sha256:893f8181778fdaa223cfc4cf912dcf6afd7fdf1c95cb2534c18543b2f4a6a901")]
+        [InlineData("make-ai-ready", "sha256:b2f621a168cacd8d4d0c5c1c2affbe97df374307c53e2d1cf4b0e9859087b67f")]
+        [InlineData("model-hygiene-pass", "sha256:e561f8374b48f75813f1ac973570936a703e1ed1e1c60c541224930a8805f175")]
+        [InlineData("new-measure", "sha256:3014e8b6cd90e2fc582c3e5b5f7b098c35a6aaf93625d41d7eebfb045fcb6a38")]
+        [InlineData("time-intelligence-variants", "sha256:74ff612cfc737626aabbd9380e66fcd965866d2ccb7740c5e3240ada2942b5a2")]
+        public async Task A_binding_pinned_to_a_parked_starter_still_resolves_and_runs_from_its_freeze(string name, string pinned)
+        {
+            var frozen = ShippedWorkflow("workflows-compat/" + WorkflowSeedLibraryTests.ParkRelease, name);
+            Assert.Equal(pinned, RevisionOf(frozen));
+            Assert.False(File.Exists(ShippedWorkflow("workflows", name)), $"'{name}' is parked but still on the stock shelf");
+
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""" + name + @"""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { """ + name + @""": """ + pinned + @""" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("PinnedParked", 1702);
+                var def = await engine.GetWorkflowAsync(name);
+                Assert.Equal(Path.GetFullPath(frozen), def.FilePath);
+                Assert.Equal("stock", def.Source);
+                var doc = await McpTools.GetWorkflowDocument(engine, name);
+                Assert.Equal(pinned, doc.ByteHash);
+                var check = await engine.CheckWorkflowAsync(name);
+                Assert.Null(check.ParseError);
+
+                var run = await engine.StartWorkflowAsync(name, "human");
+                Assert.Equal(name, run.Workflow);
+                Assert.NotNull(run.CurrentStep);
+                await engine.AbortWorkflowAsync(run.RunId, "test done", "human");
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // Lane author-gaps, L9: the starters' files moved to format 3. Each file's bytes from before the conversion were
+        // frozen into workflows-compat first, so a team rule pinned to the old revision still resolves to exactly those
+        // bytes and still runs, while an unpinned read gets today's format-3 file, which runs the same guided steps.
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
+        [InlineData("verified-measure", "sha256:ddc0ac37be593465a35476755aa7e60da900a9dfc86f83a4fff9b3fbb4df8366")]
+        [InlineData("optimize-dax", "sha256:72cf353331a9dd31f30b08b378046f2d1f975b9868453cb67648408ed8d30790")]
+        [InlineData("deploy-to-production", "sha256:a7240ecfedaf67f0b12c1ba8b2d790d5d5b8d640b31e7b0816e96820d257140f")]
+        [InlineData("governed-rename", "sha256:efff0ff70dbdab1ab7fae86d7312ac5d10869d45b6b80159aec7ff1dd3435608")]
+        [InlineData("check-blast-radius", "sha256:100c3e09222a766124b2422c797e63c759adde5b870b03cde7531f7923cac0e3")]
+        [InlineData("secure-with-rls", "sha256:daa03ec64fb9fd8f60d0e36c37e315b9d7e87e935582f9f8fa76df0769d8f838")]
+        public async Task A_binding_pinned_to_a_converted_starters_old_revision_still_resolves_and_runs(string name, string pinned)
+        {
+            var frozen = ShippedWorkflow("workflows-compat/" + WorkflowSeedLibraryTests.ParkRelease, name);
+            Assert.True(File.Exists(frozen), $"'{name}' has no freeze of its bytes from before the conversion");
+            Assert.Equal(pinned, RevisionOf(frozen));
+            var today = WorkflowParser.ParseFile(ShippedWorkflow("workflows", name), "stock");
+            Assert.Null(today.Error);
+            Assert.Equal(3, today.SchemaVersion);
+            // Lane l9-finish: today's file runs as a composed draft (StarterDraftTests); the pin still gets the freeze.
+            Assert.True(WorkflowParser.IsComposed(today));
+
+            var ws = NewWorkspace();
+            WriteSettings(ws, @"{ ""bindings"": { ""create_measure"": { ""require"": [""" + name + @"""], ""mode"": ""hard"" } }, ""requiredWorkflowRevisions"": { """ + name + @""": """ + pinned + @""" } }");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("PinnedConverted", 1702);
+                var def = await engine.GetWorkflowAsync(name);
+                Assert.Equal(Path.GetFullPath(frozen), def.FilePath);
+                Assert.Equal(1, def.SchemaVersion);
+                var run = await engine.StartWorkflowAsync(name, "human");
+                Assert.Equal(name, run.Workflow);
+                Assert.NotNull(run.CurrentStep);
+                await engine.AbortWorkflowAsync(run.RunId, "test done", "human");
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // The same file, unpinned: today's format-3 file drafts (lane l9-finish), and every step of the freeze is still there,
+        // with the same title and gate; the steps Semanticus now runs itself are added after them or took over one that
+        // only named its ops.
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
+        [InlineData("verified-measure")]
+        [InlineData("optimize-dax")]
+        [InlineData("deploy-to-production")]
+        [InlineData("governed-rename")]
+        [InlineData("check-blast-radius")]
+        [InlineData("secure-with-rls")]
+        public async Task A_converted_starter_runs_the_same_guided_steps_as_its_freeze(string name)
+        {
+            var today = WorkflowParser.ParseFile(ShippedWorkflow("workflows", name), "stock");
+            var before = WorkflowParser.ParseFile(ShippedWorkflow("workflows-compat/" + WorkflowSeedLibraryTests.ParkRelease, name), "stock");
+            foreach (var b in before.Steps)
+            {
+                var t = today.Steps.Single(s => s.Id == b.Id);
+                if (t.Performer == WorkflowPerformers.Semanticus) { Assert.Null(b.Gate); continue; }   // it only named its ops
+                Assert.Equal(JsonSerializer.Serialize(b.Gate), JsonSerializer.Serialize(t.Gate));
+            }
+            var ws = NewWorkspace();
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("Converted", 1702);
+                var check = await engine.CheckWorkflowAsync(name);
+                Assert.Null(check.ParseError);
+                var draft = await engine.ComposeTaskAsync(null, name, null, null, null, "human");
+                Assert.Equal(today.Steps.Select(s => s.Id), draft.Steps.Concat(draft.After).OrderBy(s => s.Number).Select(s => s.Id));
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // Contract 21.2: an UNPINNED call to a parked name gets a sentence naming what replaced it, never "not found",
+        // on both doors and for every way of reaching a workflow by name.
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
+        [InlineData("new-measure", "Describe the task in words")]
+        [InlineData("import-table", "Describe the task in words")]
+        [InlineData("add-relationship", "Describe the task in words")]
+        [InlineData("model-hygiene-pass", "the Plan")]
+        [InlineData("make-ai-ready", "the Plan")]
+        [InlineData("calendar-setup", "define_calendar_from_template")]
+        [InlineData("time-intelligence-variants", "generate_time_intelligence")]
+        public async Task An_unpinned_call_to_a_parked_starter_teaches_its_replacement(string name, string replacement)
+        {
+            var ws = NewWorkspace();
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("UnpinnedParked", 1702);
+                var calls = new Func<Task>[]
+                {
+                    () => McpTools.StartWorkflow(engine, name),
+                    () => new EngineRpcTarget(engine).startWorkflow(name),
+                    () => engine.GetWorkflowAsync(name),
+                    () => engine.CheckWorkflowAsync(name),
+                    () => engine.GetWorkflowDocumentAsync(name),
+                    () => engine.InstantiateWorkflowTemplateAsync(name, null, null, "human"),
+                    () => engine.SetWorkflowBindingAsync("create_measure", new[] { name }, "hard", "human"),
+                };
+                foreach (var call in calls)
+                {
+                    var ex = await Assert.ThrowsAsync<InvalidOperationException>(call);
+                    Assert.Contains($"'{name}' is no longer a starter", ex.Message);
+                    Assert.Contains(replacement, ex.Message);
+                    Assert.DoesNotContain("not found", ex.Message);
+                }
+                Assert.DoesNotContain(await engine.ListWorkflowsAsync(), w => w.Name == name);
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // Gap 4 (coordinator, lane W3): a person's own workflow whose `call:` names a parked starter keeps working. The
+        // callee resolves to its park freeze, the same definition a required binding runs, so parking never silently
+        // breaks a hand-off someone already built.
+        private static string ParkedCaller(string callee) => string.Join("\n",
+            "---", "schemaVersion: 2", "name: my-caller", "title: My caller", "---", "",
+            "## Step 1: Hand off", "",
+            "```yaml step", "id: handoff", "call:", "  workflow: " + callee, "```", "",
+            "Body.", "");
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
+        [InlineData("new-measure")]
+        [InlineData("model-hygiene-pass")]
+        [InlineData("calendar-setup")]
+        public async Task A_users_workflow_that_calls_a_parked_starter_still_checks_and_runs(string callee)
+        {
+            var ws = NewWorkspace();
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "my-caller.md"), ParkedCaller(callee));
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("CallsParked", 1702);
+                var check = await engine.CheckWorkflowAsync("my-caller");
+                Assert.Null(check.ParseError);
+                Assert.DoesNotContain(check.Findings, f => f.Severity == "warn" && f.Message.Contains(callee));
+
+                var run = await engine.StartWorkflowAsync("my-caller", "human");
+                Assert.Equal("my-caller", run.Workflow);
+                await engine.AbortWorkflowAsync(run.RunId, "test done", "human");
+
+                // The callee is reachable through the hand-off only; it does not come back onto the shelf.
+                Assert.DoesNotContain(await engine.ListWorkflowsAsync(), w => w.Name == callee);
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // When a parked callee cannot resolve (its freeze is missing from the install), the hand-off finding teaches
+        // the replacement instead of calling it an unknown workflow.
+        [Fact]
+        public void An_unresolvable_call_to_a_parked_starter_teaches_its_replacement()
+        {
+            var caller = WorkflowParser.Parse(ParkedCaller("new-measure"));
+            Assert.Null(caller.Error);
+            var findings = WorkflowParser.V2Findings(caller, new[] { caller }, Array.Empty<WorkflowDef>());
+            var raw = Assert.Single(findings, f => f.Message.Contains("new-measure"));
+            Assert.Contains("is not a workflow this library holds", raw.Message);
+
+            var taught = LocalEngine.TeachParkedCallees(findings);
+            var finding = Assert.Single(taught, f => f.Message.Contains("new-measure"));
+            Assert.Contains("'new-measure' is no longer a starter workflow", finding.Message);
+            Assert.Contains("Describe the task in words", finding.Message);
+            Assert.DoesNotContain("not a workflow this library holds", finding.Message);
+            Assert.DoesNotContain("not found", finding.Message);
+        }
+
+        // Consulting delivery requires add-relationship for new relationships, and add-relationship parked. The team
+        // rule keeps working: activating the profile pins the frozen copy, which resolves and is listed as required.
+        [Fact]
+        public async Task Consulting_delivery_still_requires_the_parked_add_relationship_from_its_freeze()
+        {
+            var ws = NewWorkspace();
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.ActivateWorkflowProfileAsync("consulting-delivery", "human");
+                var frozen = ShippedWorkflow("workflows-compat/" + WorkflowSeedLibraryTests.ParkRelease, "add-relationship");
+                Assert.Equal(RevisionOf(frozen), SavedRevision(ws, "add-relationship"));
+                Assert.Equal(Path.GetFullPath(frozen), (await engine.GetWorkflowAsync("add-relationship")).FilePath);
+                var row = (await engine.ListWorkflowsAsync()).Single(w => w.Name == "add-relationship");
+                Assert.True(row.Required);
+            }
+            finally { sessions.Dispose(); try { Directory.Delete(ws, true); } catch { } }
+        }
+
+        // A saved workflow that lists tools merged on 2026-09-24 keeps checking clean, and the running step offers
+        // the agent the tool it can actually call.
+        [Fact]
+        public async Task A_saved_workflow_listing_merged_tools_still_checks_clean_and_offers_their_survivors()
+        {
+            var ws = NewWorkspace();
+            File.WriteAllText(Path.Combine(ws, ".semanticus", "workflows", "legacy-merged.md"), @"---
+name: legacy-merged
+title: Legacy merged tools
+whenToUse: ""Check the model the old way.""
+---
+## Step 1: Check the model
+Look at the graph and the findings.
+```yaml gate
+ops: [model_graph_summary, bpa_summary, bpa_fix_all, load_readiness_rules, benchmark_dax_coldwarm, impact_of]
+```
+");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
+            try
+            {
+                await engine.CreateModelAsync("LegacyMerged", 1604);
+                var check = await engine.CheckWorkflowAsync("legacy-merged");
+                foreach (var old in new[] { "model_graph_summary", "bpa_summary", "bpa_fix_all", "load_readiness_rules", "benchmark_dax_coldwarm", "impact_of" })
+                    Assert.DoesNotContain(check.Findings, f => f.Message.Contains(old, StringComparison.Ordinal));
+
+                var run = await engine.StartWorkflowAsync("legacy-merged", "human");
+                Assert.Equal(new[] { "get_model_graph", "bpa_scan", "apply_safe_fixes", "load_rules", "benchmark_dax", "impact_assessment" },
+                    run.CurrentStep.Ops);
+            }
+            finally { try { Directory.Delete(ws, true); } catch { } }
+        }
+
         [Fact]
         public async Task A_required_name_missing_from_an_existing_revision_map_falls_to_the_current_definition()
         {
@@ -559,8 +923,9 @@ Follow the project-specific steps.
             using var engine = new LocalEngine(sessions, new Fake(pro: true), ws);
             try
             {
+                // new-measure is parked (lane W3), so its current definition is its park freeze.
                 var def = await engine.GetWorkflowAsync("new-measure");
-                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "new-measure")), def.FilePath);
+                Assert.Equal(Path.GetFullPath(CurrentWorkflow("new-measure")), def.FilePath);
                 Assert.Equal(def.FilePath, (await engine.GetWorkflowDocumentAsync("new-measure")).Path);
                 Assert.Contains(await engine.ListWorkflowsAsync(), x => x.Name == "new-measure");
             }
@@ -580,10 +945,10 @@ Follow the project-specific steps.
             try
             {
                 var library = await engine.ListWorkflowsAsync();
-                Assert.Contains(library, x => x.Name == "new-measure");
+                Assert.Contains(library, x => x.Name == "optimize-dax");
                 Assert.DoesNotContain(library, x => x.Name == "deleted-project-flow");
-                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "new-measure")),
-                    (await engine.GetWorkflowDocumentAsync("new-measure")).Path);
+                Assert.Equal(Path.GetFullPath(ShippedWorkflow("workflows", "optimize-dax")),
+                    (await engine.GetWorkflowDocumentAsync("optimize-dax")).Path);
             }
             finally { try { Directory.Delete(ws, true); } catch { } }
         }
@@ -624,6 +989,7 @@ Follow the project-specific steps.
         // present-but-unreadable file fails CLOSED: bindable ops are refused until it's repaired, while a MISSING
         // file stays the normal no-bindings default. Neuter: drop the WorkflowSettingsCorrupt() guard in
         // EnforceBindingAsync and the corrupt op is allowed again — this test fails.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Corrupt_settings_fails_closed_but_a_missing_file_flows_free()
         {
@@ -711,6 +1077,7 @@ Follow the project-specific steps.
 
         // ---- (j) [D6] §9.11 ARRAY-form binding: selected by `when:` via the SHARED predicate evaluator ----------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Array_form_binding_selects_by_when_via_shared_evaluator()
         {
@@ -742,6 +1109,7 @@ Follow the project-specific steps.
 
         // ---- (k) [D6] a `target.*` op-arg fact is DEFERRED to T4: the rule never matches, and it's linted -------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Array_binding_target_fact_is_unknown_and_linted()
         {
@@ -1024,6 +1392,7 @@ id: prove
 ```
 ";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_warn_edit_on_the_setup_row_is_advised_and_never_becomes_workflow_authored()
         {

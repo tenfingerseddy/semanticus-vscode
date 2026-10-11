@@ -63,7 +63,7 @@ namespace Semanticus.Tests
             await engine.CreateImportTableAsync("Returns", PartialM, "human");
             await engine.CreateImportTableAsync("Lookup", PlainM, "human");
             await engine.CreateMeasureAsync("Sales", "Total Rows", "COUNTROWS('Sales')", "human");
-            await engine.SaveAsync(_modelDir, "TMDL");
+            await engine.SaveAsync(_modelDir, "TMDL", false, "human");
             return engine;
         }
 

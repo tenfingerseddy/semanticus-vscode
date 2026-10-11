@@ -1,0 +1,10 @@
+{
+ "point": "date.table",
+ "set": "2026-09-26",
+ "setBy": "Kane, relayed by the coordinator on 26 September, replacing the 5-point margin for every Jev decision",
+ "appliedAfterTheRun": true,
+ "note": "Received after round 3 had run, so it was not committed before that run. As instructed, the change is recorded with its date and round 3 is judged under it (score-round3.mjs, kaneVerdict). Round 3's own committed bar (round3-bar.json) and its verdict stand unchanged beside it.",
+ "rule": "A decision goes on for Pro when: the Jev-when-sure path is right on more models than the rule; an exact two-sided McNemar test gives p below maxP; and the Jev-when-sure path makes no more harmful mistakes than the rule. The size of the win does not matter.",
+ "harmful": "For the date table: a wrong existing table marked as the date table, or a new one generated when a good one exists. Counted on the table decision.",
+ "maxP": 0.05
+}

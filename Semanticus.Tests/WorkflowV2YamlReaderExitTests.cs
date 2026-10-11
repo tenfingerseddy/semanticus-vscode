@@ -320,9 +320,9 @@ namespace Semanticus.Tests
             Assert.NotNull(notFirst.Error);
             Assert.Contains("first key", notFirst.Error);
 
-            var tooNew = V2("---", "schemaVersion: 3", "name: t", "title: T", "---", "## Step 1: Go", "Body.");
+            var tooNew = V2("---", "schemaVersion: 4", "name: t", "title: T", "---", "## Step 1: Go", "Body.");
             Assert.NotNull(tooNew.Error);
-            Assert.Contains("reads up to 2", tooNew.Error);
+            Assert.Contains("reads up to 3", tooNew.Error);
         }
 
         public static readonly TheoryData<string[], string> ThingsYamlAbsorbs = new TheoryData<string[], string>

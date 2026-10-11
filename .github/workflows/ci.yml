@@ -3,7 +3,8 @@ name: CI
 # A full run buys two build-and-smoke legs plus five packaging legs, and four cheap ubuntu jobs (`decide`,
 # `battery-ok`, `packaging-ok`, `gate`) that exist to decide and report rather than to build, plus one cheap
 # ubuntu job (`ci-gate-battery`) that is the executable proof of `decide` and `gate`. It costs real
-# money, and the two macOS packaging legs bill at ten times the Linux rate. Four mechanisms keep that money
+# money (the Linux jobs no longer do: see WHERE THE LINUX JOBS RUN), and the two macOS packaging legs bill
+# at ten times the Linux rate. Four mechanisms keep that money
 # from being spent by accident, and ALL of them live inside this file on purpose:
 #   1. paths-ignore is gone and `decide` classifies instead (next comment block);
 #   2. the five-leg packaging matrix runs only at release time or on demand (see WHEN PACKAGING RUNS, on the
@@ -41,6 +42,25 @@ name: CI
 #     verified. That one fails OPEN, which is why it is the more important of the two.
 # So the honest claim is narrower than "safe by construction": it is safe by construction only because every
 # transition into or out of draft re-runs `decide`, and the gate is recomputed from the current draft flag.
+#
+# WHERE THE LINUX JOBS RUN (Kane, 2026-09-25). Every Linux job except the linux-x64 packaging leg runs on the
+# owner's own machines: repository-level self-hosted runners labelled `semanticus`, one job at a time per host.
+# Those jobs bill NO GitHub minutes. So "cheap ubuntu job" and "one ubuntu minute" below now mean machine time
+# on a spare laptop, not money; the money that is still spent is the Windows build leg and the packaging
+# matrix. The four spend mechanisms above are unchanged and still earn their keep: the Windows leg still
+# bills, and two hosts running one job each is a real capacity limit that a wasted battery run queues behind.
+# Three things keep the move safe, and each is asserted by tools/ci-gate/gate-battery.mjs:
+#   - EVERY self-hosted `runs-on` falls back to `ubuntu-latest` unless the repository is private. This file
+#     is mirrored to the PUBLIC repository, where no runner of ours is registered (a bare self-hosted label
+#     would queue there forever) and where a pull request from a stranger must never reach a real machine.
+#   - ONE-LINE ROLLBACK, no commit needed: `gh variable set CI_LINUX_RUNNER --body github-hosted` sends every
+#     one of these jobs back to `ubuntu-latest`; deleting the variable brings them home again.
+#   - A self-hosted machine keeps state between runs, so every job that checks out calls
+#     .github/actions/self-hosted-isolate first (its own HOME under RUNNER_TEMP, which the runner wipes, and
+#     a short per-runner TMPDIR it wipes itself), and build-and-smoke stops every process still carrying that
+#     job's marker when it ends.
+# The linux-x64 packaging leg stays on `ubuntu-latest` on purpose: its execution record is release evidence,
+# and Semanticus.VSCode/scripts/verify-vsix-matrix.mjs requires that record to name exactly that runner.
 on:
   push:
     # release/** exists for the packaging matrix: a release branch buys the full battery AND the five
@@ -71,7 +91,7 @@ jobs:
   # `coverage oracle` (checkout + a pwsh script) bills one ubuntu minute, and this does strictly less.
   decide:
     name: decide
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.classify.outputs.code }}
       draft: ${{ steps.classify.outputs.draft }}
@@ -307,11 +327,12 @@ jobs:
     name: finding queue
     needs: decide
     if: needs.decide.outputs.draft != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -363,22 +384,38 @@ jobs:
     name: ci-gate-battery
     needs: decide
     if: needs.decide.outputs.draft != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - name: Prove the cost classifier and the required gate verdict
         run: node tools/ci-gate/gate-battery.mjs
 
+      # THE JEV REPLAY GATE, IN RECORDED MODE ONLY. tools/jev-replay/ scores decision points against labels
+      # that are independent of the rules. `ci` imports the pilot-one development fixture from
+      # docs/redesign/jev-pilot/verdict.json, proves the harness reproduces that pilot's own published numbers
+      # exactly, and runs the harness self-test. It uses RECORDED answers only: the live oracle refuses to
+      # construct unless JEV_REPLAY_LIVE is exactly "1" with a key file outside the repository, and `ci` clears
+      # that variable before it runs anything. CI therefore never calls the vendor, which is the plan's rule 5.
+      #
+      # It rides in THIS job rather than a job of its own because it is node-only with no toolchain, this job
+      # already runs on every non-draft ref, and this job is already one of `gate`'s required needs. A separate
+      # job would mean editing `gate`'s needs list and its four-case table, which is a bigger change than the
+      # registration is worth today. Measured locally at 1.28 s, three runs: 1270, 1241, 1243 ms.
+      - name: Prove the Jev replay gate reproduces its fixture, with recorded answers and no vendor call
+        run: node tools/jev-replay/replay.mjs ci
+
   coverage-oracle:
     name: coverage oracle
     needs: decide
     if: needs.decide.outputs.code == 'true' && needs.decide.outputs.draft != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-hosted-isolate
       - name: Require the generated public-surface inventory to match tracked source
         shell: pwsh
         run: ./tools/coverage-oracle.ps1 -Check
@@ -393,11 +430,12 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || matrix.os }}
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive          # the vendored TE2 TOMWrapper donor (pinned)
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
@@ -427,10 +465,101 @@ jobs:
       - name: Extension behavioral tests
         working-directory: Semanticus.VSCode
         run: npm test
+      # THE RELAY SUITE. node:test cases over tools/relay, pure Node against fakes: no network, no dotnet,
+      # nothing platform specific. It ran in NO CI job until now, which is exactly why the FIXED-verdict
+      # substance check refused every FIXED row that named it (F-178, F-196): a test-shaped file nothing
+      # executes is documentation, the F-019 and F-024 family. ONE LEG ONLY. The suite touches no path or
+      # process behaviour that differs on Windows, so a second leg would spend minutes to re-prove the same
+      # thing; the linux leg is the one that carries it.
+      #
+      # (The check itself is named in the finding-queue job, not here. Naming it in a depth-1 job's text is
+      # what Semanticus.VSCode/test/findings-register.test.mjs refuses, and rightly: that job would look like
+      # it runs history-dependent tooling on a shallow clone.)
+      - name: 'Relay worker suite (idempotency keys, spend and concurrency limits, kill switches)'
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test tools/relay/test/*.test.mjs
+      # The compose.draft replay's self-test (composer lane L5): no network, no key. The labels against the
+      # engine's templates, the committed bar, and the scorer's arithmetic the verdict rests on.
+      - name: 'Jev compose replay self-test (labels, bar, scorer)'
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test tools/jev-replay/compose/test/*.test.mjs
+      # The ai.schema replay's self-test (M4 point 5, what Copilot sees): no network, no key.
+      - name: 'Jev AI schema replay self-test (labels, bar, scorer)'
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test tools/jev-replay/ai-schema/test/*.test.mjs
+      # The query.summarize replay's self-test (Jev question-to-DAX): no network, no key. The labels, the committed
+      # bar (Kane's switch-on bar: McNemar against the word match, and no more harmful mistakes) and the scorer.
+      - name: 'Jev query replay self-test (labels, bar, scorer)'
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test tools/jev-replay/query/test/*.test.mjs
       - name: Build the solution (hermetic — this run IS the proof of the cross-platform offline lane)
         run: dotnet build Semanticus.sln -c Release
-      - name: 'Unit tests: dual-drive / interleaved-undo / FormulaFixup invariants (xUnit)'
-        run: dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build
+      # THE FULFILLMENT WORKER SELF-TEST, INCLUDING ITS CROSS-LANGUAGE SECTION A. Section A round-trips
+      # licence tokens against the REAL .NET verifier through the Semanticus.License CLI, so it needs a
+      # checkout where that project BUILDS: this job checks out with submodules recursive (the vendored TE2
+      # donor Semanticus.Core needs) and has dotnet 8, so it does. Semanticus.License is deliberately NOT in
+      # Semanticus.sln, so the build above does not cover it and this step builds it by name; the solution
+      # build still pays off, because Semanticus.Core is already compiled in Release by the time we get here.
+      #
+      # A SKIP IS NOT A PASS, and this suite exits 0 on a skip BY DESIGN so a node-only box can still run
+      # sections B and C. That design is safe locally and dangerous here: a missing submodule or a broken
+      # build would report green while proving nothing about the token format the shipped engine verifies.
+      # The grep turns any skip into a failure, and it is the reason this step may be cited as real cover.
+      # Same leg as the relay suite, for the same minutes reason.
+      - name: 'Fulfillment worker self-test (Stripe and Paddle routes, plus the .NET token round-trip)'
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          dotnet build Semanticus.License -c Release
+          node tools/fulfillment/worker/selftest.mjs | tee "$RUNNER_TEMP/selftest.log"
+          if grep -q '^SKIP' "$RUNNER_TEMP/selftest.log"; then
+            echo "::error::the worker self-test SKIPPED a check; a skip is never reported as a pass"
+            exit 1
+          fi
+      # The gate that refuses a partial run. Nothing auto-discovers this test file, so it runs by name, and
+      # Semanticus.VSCode/test/suite-gate-wiring.test.mjs checks that this line is still here.
+      - name: 'Prove the suite gate can still fail (an aborted run must not read as green)'
+        run: node tools/suite-gate.test.mjs
+      # Run the engine suite THROUGH the gate, never bare. On 2026-09-28 a Debug run of this suite aborted on a
+      # crashed test host (cause unknown, never reproduced), executed 2,312 of 5,320 tests, and still printed
+      # `Passed!` as its summary. Its exit code was not recorded; deliberate kills since exit 1, so this step
+      # does not rest on the exit code alone. The gate compares what executed with what was discovered and fails
+      # loudly on an abort, a short count, or a count it could not measure. It never runs with --no-count-check
+      # here (suite-gate-wiring.test.mjs holds that).
+      #
+      # THE DEFAULT TIER (lean suite, Kane 8 Oct). `--filter "Cost!=sweep"` runs every test that does not carry
+      # [Trait("Cost", "sweep")]; a test with no Cost trait is in it. The sweep tier (full matrices, door and mode
+      # copies, held-out sets, the full plan commutation gate) runs nightly in .github/workflows/sweep.yml. The gate counts
+      # discovered against executed THROUGH the same filter, so each tier is complete on its own.
+      #
+      # THE BUDGET. 900 s of wall clock around the run and 10 s for any one test, measured by the gate (a trx log it
+      # adds). Enforced on the hosted Windows leg, which bills and has a quiet machine. On the self-hosted Linux leg
+      # (load average 9 to 22, measured in slowdown-cause.md) it only REPORTS: `--budget-report-only` prints the same
+      # numbers and a ::warning:: and never fails on speed. A failed, aborted or short run still fails everywhere.
+      # The command this step spawns is `dotnet test Semanticus.Tests/Semanticus.Tests.csproj`. The finding queue reads that text
+      # as the proof that the engine suite runs here, so it stays spelled out; the partition step below runs it as well.
+      # 1.3.0: lanes A and C cut after release. They were never cut, so the default tier measured 8,610 s on Linux (about
+      # 3,870 s on Windows at x0.45), far over 900 s. The budget only REPORTS on every leg until they are cut.
+      # Put the Linux-only switch back (suite-gate-wiring.test.mjs REPORT_ONLY_ON_LINUX) when they land.
+      - name: 'Unit tests (default tier, Cost!=sweep): dual-drive / interleaved-undo / FormulaFixup invariants (xUnit)'
+        run: node tools/suite-gate.mjs --project Semanticus.Tests/Semanticus.Tests.csproj --configuration Release --filter "Cost!=sweep" --max-seconds 900 --max-test-seconds 10 --budget-report-only
+      # THE TWO TIERS PARTITION THE SUITE. Every test is in exactly one: default = all minus sweep. VSTest reads a missing
+      # Cost property as "not equal", so an untraited test lands in the default tier; this step proves it with counts on the
+      # real assembly instead of trusting that reading, and it fails when the sweep tier is empty (a typo in the trait
+      # name would otherwise move nothing and say nothing). Discovery only: it runs no test. Linux leg only, because the
+      # count is the same on both and the self-hosted leg costs no minutes.
+      - name: 'Prove the default and sweep filters partition the suite (every test is in exactly one)'
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          list() { dotnet test Semanticus.Tests/Semanticus.Tests.csproj -c Release --no-build --list-tests "$@" | grep -cE '^    [^ ]' || true; }
+          all=$(list)
+          default=$(list --filter "Cost!=sweep")
+          sweep=$(list --filter "Cost=sweep")
+          echo "all=$all default=$default sweep=$sweep"
+          if [ "$all" -le 0 ] || [ "$sweep" -le 0 ] || [ $((default + sweep)) -ne "$all" ]; then
+            echo "::error::the default and sweep filters do not partition the suite: all=$all default=$default sweep=$sweep"
+            exit 1
+          fi
       # Semanticus.Dax (the Phase-A first-party DAX front-end) is deliberately OUTSIDE Semanticus.sln — it must stay
       # dependency-free for the MIT package, so it never joins the product build graph. Test it explicitly (its own
       # build, hence no --no-build) or its suite would be orphaned from CI. Running on BOTH matrix legs is the
@@ -461,7 +590,7 @@ jobs:
         env:
           # SP creds + a configured test dataset (SEMANTICUS_LIVE_XMLA = the workspace XMLA endpoint, SEMANTICUS_LIVE_DB
           # = the semantic model). When all are set, AirSmoke runs the READ-ONLY live model lane (open_live → run_dax →
-          # vertipaq_scan → ai_readiness_scan_live) against the tenant; unset → it skips (offline-green). No live writes.
+          # vertipaq_scan → ai_readiness_scan live=true) against the tenant; unset → it skips (offline-green). No live writes.
           FABRIC_CLIENT: ${{ secrets.FABRIC_CLIENT }}
           FABRIC_SECRET: ${{ secrets.FABRIC_SECRET }}
           FABRIC_TENANT: ${{ secrets.FABRIC_TENANT }}
@@ -476,6 +605,29 @@ jobs:
           FABRIC_CLIENT: ${{ secrets.FABRIC_CLIENT }}
           FABRIC_SECRET: ${{ secrets.FABRIC_SECRET }}
           FABRIC_TENANT: ${{ secrets.FABRIC_TENANT }}
+      # A SELF-HOSTED RUNNER DOES NOT REBOOT BETWEEN JOBS. The runner already reaps orphans it can trace, and this
+      # is the explicit half: every process that still carries THIS job's isolation marker is stopped, by pid. The
+      # marker is matched on the process environment, never on a command-line pattern, so it cannot reach an
+      # engine the machine's owner started in VS Code, and the step blanks the marker for itself so it cannot
+      # match its own shell. Skipped on a GitHub-hosted runner, whose VM is thrown away anyway.
+      - name: Stop anything this job left running (self-hosted only)
+        if: always() && runner.environment == 'self-hosted'
+        env:
+          SEMANTICUS_CI_JOB: ''
+        run: |
+          marker="SEMANTICUS_CI_JOB=$RUNNER_TEMP/iso"
+          stopped=0
+          for envf in /proc/[0-9]*/environ; do
+            pid="${envf#/proc/}"; pid="${pid%/environ}"
+            [ "$pid" = "$$" ] && continue
+            [ -r "$envf" ] || continue   # other users' processes are unreadable, and never ours to stop
+            if tr '\0' '\n' 2>/dev/null < "$envf" | grep -qxF "$marker"; then
+              echo "stopping pid $pid: $(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-160)"
+              kill -9 "$pid" 2>/dev/null && stopped=$((stopped + 1))
+            fi
+          done
+          echo "Stopped $stopped leftover process(es)."
+          rm -rf "/tmp/sci-$RUNNER_NAME"   # this job's TMPDIR (see .github/actions/self-hosted-isolate)
 
   vsix:
     name: package + execute (${{ matrix.target }})
@@ -515,7 +667,7 @@ jobs:
           java-version: '17'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
           cache-dependency-path: Semanticus.VSCode/package-lock.json
       - name: Install extension dependencies from the lockfile
@@ -541,9 +693,10 @@ jobs:
     name: package extension (.vsix, unsigned)
     # Skipped automatically when `vsix` is skipped, so it needs no `if:` of its own.
     needs: vsix
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -575,7 +728,7 @@ jobs:
   battery-ok:
     name: battery-ok
     needs: [coverage-oracle, build-and-smoke]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - name: Reached only when every battery job and every matrix leg succeeded
         run: echo "The whole battery is green."
@@ -588,7 +741,7 @@ jobs:
   packaging-ok:
     name: packaging-ok
     needs: [vsix, vsix-manifest]
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - name: Reached only when all five packaging legs and the manifest verification succeeded
         run: echo "The packaging matrix is green."
@@ -639,7 +792,7 @@ jobs:
     name: gate
     needs: [decide, battery-ok, packaging-ok, coverage-oracle, build-and-smoke, vsix, vsix-manifest, finding-queue, ci-gate-battery]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - name: Require every bought job to have passed, and every skipped job to have been skipped on purpose
         env:

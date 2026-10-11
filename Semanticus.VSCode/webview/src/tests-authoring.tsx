@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { rpc } from './bridge';
+import { onActivity, rpc } from './bridge';
+import { DraftMark, EditMovedBanner, sameValue, useEditBase } from './editbase';
+import { draftModel, draftStore, heldDraft } from './drafts';
 import { useConnection } from './connection';
 import { ObjectBrowser, type BrowserNode } from './objectbrowser';
 import {
@@ -7,6 +9,9 @@ import {
   type SqlSourceBinding,
 } from './tests-model';
 import { useSurfaceEscape } from './surface-escape';
+import { checkTitle } from './askdata-model';
+import { useDaxModelContext } from './daxeditor';
+import { grainWords } from './sortgrain';
 
 // ===================================================================================================
 // The New check drawer (the approved redesign, 2026-09-15).
@@ -32,6 +37,7 @@ export interface TestDefinitionW {
   // A RECORD of the Tests and queries connection the check was agreed against. The engine stamps it at save.
   // It never pins where the check runs: a run always uses whichever connection is current.
   authoredAgainst?: string; authoredAgainstLabel?: string;
+  budgetMs?: number | null;
 }
 export interface MeasureRowW { ref: string; name: string; table: string; expression?: string }
 export interface ReconcileParamsW {
@@ -54,6 +60,11 @@ interface TableMappingRowW {
 }
 interface TableMappingListW { rows: TableMappingRowW[]; note?: string }
 
+/** What a saved check's Save needs: the read that decides whether to write, the fields it started from for the write to name, and what to do when the engine refuses. */
+export interface SaveFence { before: () => Promise<boolean>; expected: () => string | null; refused: (e: unknown) => Promise<boolean> }
+/** The fields of a saved check a Save replaces, as the engine holds them. */
+const testFence = (d: TestDefinitionW | null | undefined) => d ? JSON.stringify({ title: d.title ?? null, kind: d.kind ?? null, targetRef: d.targetRef ?? null, paramsJson: d.paramsJson ?? null, enabled: d.enabled ?? true, budgetMs: d.budgetMs ?? null }) : null;
+
 const inp: CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', borderColor: 'var(--sem-border)' };
 
 // The relative tolerance is STORED as a fraction (the engine's unit) and TYPED as a percent, so the box can
@@ -61,10 +72,95 @@ const inp: CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--s
 // An UNTOUCHED field returns the exact stored fraction: percent conversion is not bit-exact both ways for a
 // value like 1e-9, and a display unit must never quietly re-round a saved contract.
 const percentText = (fraction: number) => { const percent = fraction * 100; return percent === 0 ? '0' : String(Number(percent.toPrecision(12))); };
-function useRelativePercent(stored: number): [string, (next: string) => void, number] {
-  const [start] = useState(() => ({ fraction: stored, text: percentText(stored) }));
-  const [text, setText] = useState(start.text);
-  return [text, setText, text === start.text ? start.fraction : (Number(text) || 0) / 100];
+const relativeFraction = (text: string, stored: number) => text === percentText(stored) ? stored : (Number(text) || 0) / 100;
+
+// ---------------------------------------------------------------------------------------------------
+// The drafts (join 11, drafts.ts). What a person typed into a check is THEIR work, so it lives above the
+// drawer and outlives it: the drawer closes when the Tests list or the route changes, and the whole page
+// remounts on a restarted engine. Each form's fields are one plain value (the whole set, typed or not),
+// held by the model file and a scope that names the thing: a saved check by its id, a new check by its
+// kind (offered again the next time New check of that kind opens), a table mapping by its table. A draft
+// ends on a save the engine took, on Discard draft, or on Use the new one; never on Close.
+// ---------------------------------------------------------------------------------------------------
+export type TrustedFields = {
+  measureRef: string; expected: string; filterColumn: string; filterValue: string; provenance: string;
+  filterDax: string; expressionDax: string; testExpression: boolean; abs: string; relPercent: string;
+};
+export type SqlFields = {
+  measureRef: string; picked: string | null; groupBy: string[]; sql: string; sqlGrandTotal: string;
+  filterDax: string; blankPolicy: string; abs: string; relPercent: string;
+};
+/** A check drawer's draft: the fields, and the check they were typed on (the saved definition, a hand-off, or none). */
+export type CheckDraft = { fields: TrustedFields | SqlFields; from: TestDefinitionW | null };
+type MappingFields = { sqlSourceId: string; schema: string; entity: string };
+
+export const checkDraftScope = (id: string) => `tests-authoring|check|${id}`;
+export const newCheckDraftScope = (kind: AuthorShape) => `tests-authoring|new|${kind}`;
+export const mappingDraftScope = (table: string) => `tests-authoring|mapping|${table}`;
+
+/** The fields a form shows for a check, exactly as the form used to seed itself from it. */
+function fieldsOf(kind: AuthorShape, def: TestDefinitionW | null): TrustedFields | SqlFields {
+  if (kind === 'measureReconcile') {
+    const p = parseReconcile(def);
+    return {
+      measureRef: def?.targetRef || p.measureRef || '', picked: null, groupBy: p.groupBy || [], sql: p.sql || '',
+      sqlGrandTotal: p.sqlGrandTotal || '', filterDax: p.filterDax || '', blankPolicy: p.blankPolicy || '',
+      abs: String(p.toleranceAbsolute ?? 0), relPercent: percentText(p.toleranceRelative ?? 0),
+    };
+  }
+  const p = parseValue(def);
+  const handed = p.expressionDax || '';
+  return {
+    measureRef: def?.targetRef || p.measureRef || '', expected: p.expectedValue || '', filterColumn: p.filterColumn || '',
+    filterValue: p.filterValue || '', provenance: p.provenance || '', filterDax: p.filterDax || '', expressionDax: handed,
+    // A handed-over TABLE query is never preselected (see daxReturnsOneCell).
+    testExpression: !!handed && daxReturnsOneCell(handed),
+    abs: String(p.toleranceAbsolute ?? 1e-6), relPercent: percentText(p.toleranceRelative ?? 1e-9),
+  };
+}
+const draftOf = (kind: AuthorShape, def: TestDefinitionW | null | undefined): CheckDraft => ({ fields: fieldsOf(kind, def ?? null), from: def ?? null });
+
+/** The table of a mapping draft on the open model, so New check > Table row count opens on it again. */
+function heldMappingTable(): string {
+  const m = draftModel();
+  if (!m) return '';
+  const prefix = mappingDraftScope('');
+  for (const id of draftStore.held(m, prefix)) return (JSON.parse(id) as [string, string])[0].slice(prefix.length);
+  return '';
+}
+/** Which kinds of New check hold a draft on the open model (read when the menu opens). */
+function heldNewKinds(): Set<AuthorShape> {
+  const m = draftModel(), out = new Set<AuthorShape>();
+  if (!m) return out;
+  for (const k of ['measureValue', 'measureReconcile'] as const) if (draftStore.get(m, newCheckDraftScope(k))) out.add(k);
+  if (draftStore.held(m, mappingDraftScope('')).size) out.add('tableRowCount');
+  return out;
+}
+
+/** A new check opened with something handed over, while a draft of that kind is held: the person picks, nothing is replaced. */
+function HeldDraftBanner({ onKeepMine, onUseNew, disabled }: { onKeepMine: () => void; onUseNew: () => void; disabled?: boolean }) {
+  return (
+    <div role="alert" className="sem-inset mb-3 text-(length:--sem-text-label)" style={{ borderLeft: '3px solid var(--sem-warn)' }}>
+      <div style={{ color: 'var(--sem-fg)' }}>You have a check of this kind that you started and did not save. Your words are still here, and nothing was saved yet.</div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={disabled} onClick={onKeepMine} className="sem-btn sem-btn-sm"
+          title="Keep the check you started.">Keep mine</button>
+        <button type="button" disabled={disabled} onClick={onUseNew} className="sem-btn sem-btn-sm"
+          title="Drop the check you started and use what you just sent here.">Use the new one</button>
+      </div>
+    </div>
+  );
+}
+
+/** The quiet mark and the one way to drop a draft on purpose (drawn in place, not as a component of its own). */
+function draftRow(show: boolean, onDiscard: () => void, disabled?: boolean, className = 'mb-3') {
+  if (!show) return null;
+  return (
+    <div className={className + ' flex flex-wrap items-center gap-2'}>
+      <DraftMark show />
+      <button type="button" disabled={disabled} onClick={onDiscard} className="sem-btn sem-btn-sm" title="Drop what you typed here and put the form back as it was opened.">Discard draft</button>
+    </div>
+  );
 }
 
 // Check definitions are sidecar data rather than model edits, so saveTest/deleteTest do not raise model/didChange.
@@ -179,16 +275,18 @@ export function measureFilterNote(expressionDax: string, filterText: string): { 
 
 const KINDS: { shape: AuthorShape; label: string; hint: string }[] = [
   { shape: 'measureValue', label: 'Trusted answer', hint: 'A number you know is right' },
-  { shape: 'measureReconcile', label: 'Compare with source', hint: 'The same number from SQL' },
+  { shape: 'measureReconcile', label: 'Check against SQL', hint: 'The same number from SQL' },
   { shape: 'tableRowCount', label: 'Table row count', hint: 'Model rows against source rows' },
 ];
 
 export function AuthorDrawer({
-  shape, editing, focus, table, latestSources, onClose, onSaved, onAddSqlSource,
+  shape, editing, focus, table, latestSources, onClose, onSaved, onAddSqlSource, handedFrom,
 }: {
   shape: AuthorShape; editing?: TestDefinitionW | null; focus?: AuthorFocus; table?: string;
   latestSources?: SqlSourceW[] | null;
   onClose: () => void; onSaved: () => void; onAddSqlSource?: () => void;
+  /** Where a handed expression came from, so the drawer says so. Absent means DAX Lab, as before. */
+  handedFrom?: 'askdata' | 'queries';
 }) {
   const [kind, setKind] = useState<AuthorShape>(shape);
   const [measures, setMeasures] = useState<MeasureRowW[]>([]);
@@ -205,6 +303,77 @@ export function AuthorDrawer({
   const [err, setErr] = useState<string | null>(null);
   const [tryNote, setTryNote] = useState<string | null>(null);
   const locked = !!editing?.id || table != null;
+  // A saved check is read again when its drawer opens, never trusted from the list the page last drew: the assistant
+  // can save a check (save_test) that the list has not caught up with, and Save writes the whole definition.
+  // Then it is read again on every activity, and Save reads it once more. A check that moved under an open drawer
+  // is never overwritten silently (UAT-F-S06b-2-007, same class as the mapping form).
+  const editId = editing?.id || '';
+  const [live, setLive] = useState<TestDefinitionW | null | undefined>(undefined);
+  const readLive = async () => ((await rpc<{ definitions?: TestDefinitionW[] }>('listTests')).definitions ?? []).find((d) => d.id === editId) ?? null;
+  // The forms' fields live HERE, as one plain value, so the guard compares what was typed with where it started and the draft store
+  // can hold it (see the drafts block above). The table row count form keeps its own guard and draft.
+  const draftKind = kind === 'tableRowCount' ? null : kind;
+  const scope = draftKind ? (editId ? checkDraftScope(editId) : newCheckDraftScope(draftKind)) : '';
+  // Where a NEW check of each kind starts, taken once: what it was handed (DAX Lab, Ask your data, Impact), or, opened plainly, the
+  // start of the draft it holds, so a check started and left is offered as it was and not asked about.
+  const starts = useRef<Partial<Record<AuthorShape, CheckDraft>>>({});
+  const startOf = (k: AuthorShape): CheckDraft =>
+    (starts.current[k] ??= editing ? draftOf(k, editing) : heldDraft<CheckDraft>(newCheckDraftScope(k))?.base ?? draftOf(k, null));
+  const [draft, setDraft] = useState<CheckDraft | null>(() => (!draftKind ? null : heldDraft<CheckDraft>(scope)?.value ?? (editId ? null : startOf(draftKind))));
+  useEffect(() => {
+    if (!editId) return;
+    let gone = false;
+    const load = () => readLive().then((d) => { if (!gone) setLive(d); })
+      .catch(() => { if (!gone) setDraft((x) => x ?? draftOf(kind, editing)); });
+    void load();
+    const off = onActivity(() => { void load(); });
+    return () => { gone = true; off(); };
+  }, [editId]);
+  // A saved check is compared with the live one (undefined until it is read, so a held draft keeps its starting point). A new
+  // check has nothing saved to move under it: its starting point is the only thing to compare with.
+  const current: CheckDraft | null | undefined = !draftKind ? null
+    : editId ? (live === undefined ? undefined : live ? draftOf(draftKind, live) : null)
+      : startOf(draftKind);
+  const guard = useEditBase<CheckDraft | null>({
+    current, draft: draft ?? undefined, editing: !!draftKind, scope, persist: draftKind ? { scope } : undefined,
+    readNow: editId ? async () => { const d = await readLive(); return d ? draftOf(kind, d) : null; } : undefined,
+    reseed: (v) => setDraft(v ?? draftOf(kind, editing)),
+  });
+  const onFields = (patch: object) => setDraft((d) => d && { ...d, fields: { ...d.fields, ...patch } as CheckDraft['fields'] });
+  // Keep mine keeps the typed fields and takes the rest of the newer check (its title, its on/off switch) under them.
+  const keepMine = () => { const theirs = guard.theirs; guard.keepMine(); if (theirs) setDraft((d) => d && { ...d, from: theirs.from }); };
+  const discard = () => {
+    if (!draftKind) return;
+    const v = !editId ? draftOf(draftKind, editing)
+      : current !== undefined ? (current ?? draftOf(draftKind, editing)) : (guard.baseNow() ?? draftOf(draftKind, editing));
+    if (!editId) starts.current[draftKind] = v;
+    setDraft(v); guard.rebase(v); setErr(null);
+    const m = draftModel(); if (m) draftStore.clear(m, scope);
+  };
+  // A save the engine took ends the draft. The drawer usually closes straight after, so the store is told now, not on a later render.
+  // R-B (drafts-sol F5): it ends only the words the save CARRIED (`sent`). Fields stay editable while the engine is busy, so what is held when the answer comes may be newer;
+  // then the draft stays over what was saved and this returns false, which keeps the drawer open on those words.
+  const draftRef = useRef(draft); draftRef.current = draft;
+  const ended = (sent?: CheckDraft['fields']): boolean => {
+    const now = draftRef.current;
+    if (sent !== undefined && now && !sameValue(now.fields, sent)) { guard.rebase({ ...now, fields: sent }); return false; }
+    if (now) guard.rebase(now);
+    const m = draftModel(); if (m && scope) draftStore.clear(m, scope);
+    return true;
+  };
+  const pickKind = (k: AuthorShape) => {
+    setKind(k);
+    if (k !== 'tableRowCount') setDraft(heldDraft<CheckDraft>(newCheckDraftScope(k))?.value ?? startOf(k));
+  };
+  // A second explicit hand-off (DAX Lab again, while this drawer is open) changes only the calculation. The rest of the open draft remains the person's.
+  const handed = useRef(editing?.targetRef);
+  useEffect(() => {
+    if (editing?.id || !editing?.targetRef || handed.current === editing.targetRef) return;
+    handed.current = editing.targetRef;
+    if (kind === 'measureValue') onFields({ measureRef: editing.targetRef });
+  }, [editing?.id, editing?.targetRef]);
+  // A saved check is written naming the fields the Save read, and the engine compares them inside its own write (Sol join 6, round 2).
+  const before: SaveFence | undefined = editId ? { before: guard.beforeSave, expected: () => testFence(guard.confirmed()?.from), refused: guard.refused } : undefined;
   useEffect(() => { rpc<MeasureRowW[]>('listMeasures').then(setMeasures).catch(() => undefined); }, []);
   useEffect(() => {
     rpc<SqlSourceW[]>('listSqlSources')
@@ -236,17 +405,22 @@ export function AuthorDrawer({
     <aside className="fixed top-0 right-0 z-20 flex h-full w-[440px] max-w-[100vw] flex-col border-l" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
       <div className="flex items-start justify-between gap-3 border-b px-4 py-3" style={{ borderColor: 'var(--sem-border)' }}>
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: 'var(--sem-muted)' }}>{editing?.id ? 'Edit' : table ? 'Map source' : 'New check'}</div>
-          <h2 className="m-0 mt-1 text-[14px] font-semibold">{KINDS.find((k) => k.shape === kind)?.label ?? 'New check'}</h2>
+          <div className="sem-label">{editing?.id ? 'Edit' : table ? 'Map source' : 'New check'}</div>
+          <h2 className="m-0 mt-1 text-(length:--sem-text-title) font-semibold">{KINDS.find((k) => k.shape === kind)?.label ?? 'New check'}</h2>
         </div>
-        <button type="button" onClick={onClose} className="text-[12px]" style={{ color: 'var(--sem-muted)' }}>Close</button>
+        <button type="button" onClick={onClose} className="text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Close</button>
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
-        {err && <div className="mb-3 rounded-md border px-3 py-2 text-[12px]" style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }}>{err}</div>}
-        {tryNote && <div className="mb-3 rounded-md border px-3 py-2 text-[12px]" style={{ color: 'var(--sem-muted)', borderColor: 'var(--sem-border)' }}>{tryNote}</div>}
-        {!locked && <KindChooser kind={kind} onPick={setKind} />}
-        {kind === 'measureValue' && <TrustedAnswerForm measures={measures} editing={editing} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} />}
-        {kind === 'measureReconcile' && <CompareWithSourceForm measures={measures} sources={sources} sourcesLoaded={sourcesLoaded} adopt={adopt} editing={editing} focus={focus} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} />}
+        {err && <div className="mb-3 rounded border px-3 py-2 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-bad)', borderColor: 'var(--sem-bad)' }}>{err}</div>}
+        {tryNote && <div className="sem-inset mb-3 text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>{tryNote}</div>}
+        {!locked && <KindChooser kind={kind} onPick={pickKind} />}
+        {guard.moved && (editId
+          ? <EditMovedBanner what="check" theirs={guard.theirs} onKeepMine={keepMine} onUseNew={guard.useNew} disabled={busy} />
+          : <HeldDraftBanner onKeepMine={keepMine} onUseNew={guard.useNew} disabled={busy} />)}
+        {draftRow(guard.drafted, discard, busy)}
+        {editId && !draft && <div className="sem-inset text-(length:--sem-text-meta)" style={{ color: 'var(--sem-muted)' }}>Loading the check…</div>}
+        {draft && kind === 'measureValue' && <TrustedAnswerForm measures={measures} fields={draft.fields as TrustedFields} onFields={onFields} editing={draft.from} handedFrom={handedFrom} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} before={before} onWritten={ended} />}
+        {draft && kind === 'measureReconcile' && <CompareWithSourceForm measures={measures} fields={draft.fields as SqlFields} onFields={onFields} sources={sources} sourcesLoaded={sourcesLoaded} adopt={adopt} editing={draft.from} focus={focus} busy={busy} setBusy={setBusy} setErr={setErr} setTryNote={setTryNote} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} before={before} onWritten={ended} />}
         {kind === 'tableRowCount' && <TableRowCountForm sources={sources} adopt={adopt} table={table} busy={busy} setBusy={setBusy} setErr={setErr} onSaved={onSaved} onClose={onClose} onAddSqlSource={beginAddSqlSource} />}
       </div>
     </aside>
@@ -256,14 +430,15 @@ export function AuthorDrawer({
 // The kind comes FIRST, and each one is named by what you are doing, not by the engine's word for it.
 function KindChooser({ kind, onPick }: { kind: AuthorShape; onPick: (shape: AuthorShape) => void }) {
   return (
-    <div className="mb-3.5 grid gap-1.5" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }} role="radiogroup" aria-label="What kind of check">
+    <div className="mb-4 grid gap-2" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }} role="radiogroup" aria-label="What kind of check">
       {KINDS.map((item) => {
         const on = item.shape === kind;
         return <button key={item.shape} type="button" role="radio" aria-checked={on} onClick={() => onPick(item.shape)}
-          className="rounded-lg border p-2 text-left"
+          className="rounded border p-2 text-left"
           style={{ borderColor: on ? 'var(--sem-accent)' : 'var(--sem-border)', background: on ? 'var(--sem-accent-soft)' : 'var(--sem-surface-2)' }}>
-          <span className="block text-[12px] font-semibold">{item.label}</span>
-          <span className="block text-[11px]" style={{ color: 'var(--sem-muted)' }}>{item.hint}</span>
+          <span className="block text-(length:--sem-text-meta) font-semibold">{item.label}</span>
+          {/* On the picked kind's accent tint the muted colour falls under 4.5:1 in Light, so the hint takes the text colour there. */}
+          <span className="block text-(length:--sem-text-label)" style={{ color: on ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{item.hint}</span>
         </button>;
       })}
     </div>
@@ -273,7 +448,7 @@ function KindChooser({ kind, onPick }: { kind: AuthorShape; onPick: (shape: Auth
 // The three ways to start a check. It is a menu button, and it behaves like every other menu in the app:
 // Escape closes it and hands focus back, a click outside closes it, assistive tech is told it is a menu,
 // and it hangs under the button that opened it instead of under Run next door.
-export function NewCheckMenu({ onPick }: { onPick: (shape: AuthorShape) => void }) {
+export function NewCheckMenu({ onPick, onAddSqlSource }: { onPick: (shape: AuthorShape) => void; onAddSqlSource?: () => void }) {
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -285,25 +460,28 @@ export function NewCheckMenu({ onPick }: { onPick: (shape: AuthorShape) => void 
     return () => { window.removeEventListener('mousedown', outside); window.removeEventListener('keydown', escape); };
   }, [open]);
   const choose = (shape: AuthorShape) => { onPick(shape); setOpen(false); };
+  const held = open ? heldNewKinds() : null;   // a kind with a check started and not saved says so
   return (
     <div ref={wrap} className="relative">
       <button ref={buttonRef} type="button" aria-haspopup="menu" aria-expanded={open}
-        className="inline-flex h-7 items-center rounded-md border px-3 text-[12px] font-semibold" onClick={() => setOpen((v) => !v)}
+        className="inline-flex h-7 items-center rounded border px-3 text-(length:--sem-text-meta) font-semibold" onClick={() => setOpen((v) => !v)}
         style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>New check ▾</button>
       {open && (
-        <div role="menu" aria-label="New check" className="absolute left-0 z-20 mt-1 w-[280px] rounded-md border p-1.5" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
-          {KINDS.map((item) => <Pick key={item.shape} label={item.label} hint={item.hint} onClick={() => choose(item.shape)} />)}
+        <div role="menu" aria-label="New check" className="absolute left-0 z-20 mt-1 w-[280px] rounded border p-2" style={{ background: 'var(--sem-surface)', borderColor: 'var(--sem-border)' }}>
+          {KINDS.map((item) => <Pick key={item.shape} label={item.label} hint={item.hint} drafted={!!held?.has(item.shape)} onClick={() => choose(item.shape)} />)}
+          {/* The SQL sources count and its button left the tool row; the one door is here, last, since a check compares against a source. */}
+          {onAddSqlSource && <Pick label="Add a SQL source" hint="Connect a database to compare against." onClick={() => { onAddSqlSource(); setOpen(false); }} />}
         </div>
       )}
     </div>
   );
 }
 
-function Pick({ label, hint, onClick }: { label: string; hint: string; onClick: () => void }) {
+function Pick({ label, hint, drafted, onClick }: { label: string; hint: string; drafted?: boolean; onClick: () => void }) {
   return (
-    <button type="button" role="menuitem" onClick={onClick} className="mb-1 w-full rounded-md px-2 py-1.5 text-left hover:bg-[var(--sem-surface-2)]">
-      <span className="block text-[12px] font-semibold">{label}</span>
-      <span className="block text-[11px]" style={{ color: 'var(--sem-muted)' }}>{hint}</span>
+    <button type="button" role="menuitem" onClick={onClick} className="mb-1 w-full rounded px-2 py-2 text-left hover:bg-[var(--sem-hover)]">
+      <span className="block text-(length:--sem-text-meta) font-semibold">{label}{drafted ? <DraftMark show className="ml-2" /> : null}</span>
+      <span className="block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{hint}</span>
     </button>
   );
 }
@@ -311,9 +489,9 @@ function Pick({ label, hint, onClick }: { label: string; hint: string; onClick: 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="mb-3 block">
-      <span className="mb-1 block text-[11px] font-semibold">{label}</span>
+      <span className="mb-1 block text-(length:--sem-text-label) font-semibold">{label}</span>
       {children}
-      {hint && <span className="mt-1 block text-[10px]" style={{ color: 'var(--sem-muted)' }}>{hint}</span>}
+      {hint && <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{hint}</span>}
     </label>
   );
 }
@@ -322,8 +500,8 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 // whether a verdict is reachable, is allowed in here.
 function Advanced({ children, open = false, summary = 'tolerance and a complete DAX filter' }: { children: ReactNode; open?: boolean; summary?: string }) {
   return (
-    <details open={open} className="mb-3 rounded-md border px-2.5 py-2" style={{ borderColor: 'var(--sem-border)' }}>
-      <summary className="cursor-pointer text-[11px] font-semibold">Advanced <span className="font-normal" style={{ color: 'var(--sem-muted)' }}>{summary}</span></summary>
+    <details open={open} className="sem-inset mb-3">
+      <summary className="cursor-pointer text-(length:--sem-text-label) font-semibold">Advanced <span className="font-normal" style={{ color: 'var(--sem-muted)' }}>{summary}</span></summary>
       <div className="mt-2">{children}</div>
     </details>
   );
@@ -333,7 +511,7 @@ function Advanced({ children, open = false, summary = 'tolerance and a complete 
 // only announced themselves after the person had finished the form.
 function SaveRequirement({ kind }: { kind: AuthorShape }) {
   return (
-    <div className="mt-3 rounded-md border px-2.5 py-2 text-[11px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>
+    <div className="sem-inset mt-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
       {kind === 'tableRowCount'
         ? 'The mapping is kept in a small file beside this model.'
         : 'The check is kept in a small file beside this model. Try it now saves nothing.'}
@@ -343,7 +521,7 @@ function SaveRequirement({ kind }: { kind: AuthorShape }) {
 
 function MeasureSelect({ measures, value, onChange }: { measures: MeasureRowW[]; value: string; onChange: (v: string) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-[12px]" style={inp}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} className="w-full rounded border px-2 py-2 text-(length:--sem-text-meta)" style={inp}>
       <option value="">Pick a calculation</option>
       {measures.map((m) => <option key={m.ref} value={m.ref}>{m.name}</option>)}
     </select>
@@ -359,12 +537,12 @@ function SqlSourceSelect({ sources, value, onChange, onAdd }: {
   return (
     <>
       <select value={value} onChange={(e) => { if (e.target.value === ADD) { onAdd?.(); return; } onChange(e.target.value); }}
-        aria-label="SQL source" className="w-full rounded-md border px-2 py-1.5 text-[12px]" style={inp}>
+        aria-label="SQL source" className="w-full rounded border px-2 py-2 text-(length:--sem-text-meta)" style={inp}>
         <option value="">Pick a SQL source</option>
         {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         <option value={ADD}>Add a SQL source…</option>
       </select>
-      {sources.length === 0 && <span className="mt-1 block text-[10px]" style={{ color: 'var(--sem-muted)' }}>
+      {sources.length === 0 && <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         No SQL sources are saved yet. Add one and every check and table mapping can use it.
       </span>}
     </>
@@ -381,9 +559,9 @@ function QueryTargetNote({ editing }: { editing?: TestDefinitionW | null }) {
     : 'No Tests and queries connection is selected';
   const authored = editing?.authoredAgainstLabel;
   return (
-    <div className="mb-3 rounded-md border px-3 py-2 text-[11px]" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>
+    <div className="sem-inset mb-3 text-(length:--sem-text-label)">
       <strong>Authored against {authored || current}</strong>
-      <div className="mt-0.5" style={{ color: 'var(--sem-muted)' }}>
+      <div className="mt-1" style={{ color: 'var(--sem-muted)' }}>
         {authored && authored !== current
           ? `You are now on ${current}. The check keeps the connection it was written on as a note. It still runs against whichever Tests and queries connection is current.`
           : 'This is written down with the check. It still runs against whichever Tests and queries connection is current, so you can check the same thing somewhere else.'}
@@ -406,25 +584,25 @@ function ContextFields({ value, onChange }: { value: string[]; onChange: (next: 
   const add = (refs: string[]) => onChange([...new Set([...value, ...refs.map((ref) => ref.trim()).filter(Boolean)])]);
   const addNodes = (nodes: BrowserNode[]) => add(nodes.map((node) => node.ref));
   return (
-    <div className="rounded-md border p-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-      <div className="flex flex-wrap gap-1.5">
-        {value.map((field) => <span key={field} className="inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px]" style={{ borderColor: 'var(--sem-border)', background: 'var(--sem-surface-2)' }}>
+    <div className="rounded border p-3" style={{ borderColor: 'var(--sem-border)' }}>
+      <div className="flex flex-wrap gap-2">
+        {value.map((field) => <span key={field} className="sem-chip sem-chip-outline">
           {contextLabel(field)}
           <button type="button" aria-label={`Remove ${contextLabel(field)}`} onClick={() => onChange(value.filter((item) => item !== field))} style={{ color: 'var(--sem-muted)' }}>×</button>
         </span>)}
-        {value.length === 0 && <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>No fields chosen yet.</span>}
+        {value.length === 0 && <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>No fields chosen yet.</span>}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button type="button" className="min-h-7 rounded-md border px-2.5 text-[11px] font-semibold" onClick={() => setChoosing((open) => !open)} style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>{choosing ? 'Done choosing' : 'Choose fields'}</button>
-        <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Pick Product category, Customer region, Date year, or any fields from the model.</span>
+        <button type="button" className="min-h-7 rounded border px-3 text-(length:--sem-text-label) font-semibold" onClick={() => setChoosing((open) => !open)} style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>{choosing ? 'Done choosing' : 'Choose fields'}</button>
+        <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Pick Product category, Customer region, Date year, or any fields from the model.</span>
       </div>
       {choosing && <div className="mt-2"><ObjectBrowser kinds={['column']} multiSelect dragEnabled={false} height={230}
         pickedRefs={new Set(value)} onPick={(node) => addNodes([node])} onPickMany={addNodes} emptyHint="No columns are available in this model." /></div>}
       <details className="mt-2">
-        <summary className="cursor-pointer text-[10px]" style={{ color: 'var(--sem-muted)' }}>Enter a field reference</summary>
-        <div className="mt-1.5 flex gap-2">
-          <input value={manual} onChange={(event) => setManual(event.target.value)} placeholder="'Table'[Column]" className="min-h-7 min-w-0 flex-1 rounded-md border px-2 font-mono text-[11px]" style={inp} />
-          <button type="button" disabled={!manual.trim()} className="rounded-md border px-2 text-[11px] disabled:opacity-40" onClick={() => { add([manual]); setManual(''); }} style={{ borderColor: 'var(--sem-border)' }}>Add</button>
+        <summary className="cursor-pointer text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Enter a field reference</summary>
+        <div className="mt-2 flex gap-2">
+          <input value={manual} onChange={(event) => setManual(event.target.value)} placeholder="'Table'[Column]" className="min-h-7 min-w-0 flex-1 rounded border px-2 font-mono text-(length:--sem-text-label)" style={inp} />
+          <button type="button" disabled={!manual.trim()} className="sem-btn sem-btn-sm" onClick={() => { add([manual]); setManual(''); }}>Add</button>
         </div>
       </details>
     </div>
@@ -435,11 +613,11 @@ function ContextFields({ value, onChange }: { value: string[]; onChange: (next: 
 function ToleranceInputs({ abs, onAbs, relPercent, onRelPercent }: { abs: string; onAbs: (v: string) => void; relPercent: string; onRelPercent: (v: string) => void }) {
   return (
     <div className="flex gap-2">
-      <label className="flex-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>Absolute
-        <input value={abs} onChange={(event) => onAbs(event.target.value)} aria-label="Absolute tolerance" className="mt-0.5 min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+      <label className="flex-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Absolute
+        <input value={abs} onChange={(event) => onAbs(event.target.value)} aria-label="Absolute tolerance" className="mt-1 min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </label>
-      <label className="flex-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>Relative %
-        <input value={relPercent} onChange={(event) => onRelPercent(event.target.value)} aria-label="Relative tolerance in percent" className="mt-0.5 min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+      <label className="flex-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Relative %
+        <input value={relPercent} onChange={(event) => onRelPercent(event.target.value)} aria-label="Relative tolerance in percent" className="mt-1 min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </label>
     </div>
   );
@@ -450,8 +628,8 @@ function Footer({ busy, onTry, onSave, tryLabel = 'Try it now', saveLabel = 'Sav
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      {onTry && <button type="button" disabled={busy} onClick={onTry} className="min-h-7 rounded-md border px-3 py-1 text-[12px]" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>{tryLabel}</button>}
-      <button type="button" disabled={busy} onClick={onSave} className="min-h-7 rounded-md border px-3 py-1 text-[12px] font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saveLabel}</button>
+      {onTry && <button type="button" disabled={busy} onClick={onTry} className="min-h-7 rounded border px-3 py-1 text-(length:--sem-text-meta)" style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)' }}>{tryLabel}</button>}
+      <button type="button" disabled={busy} onClick={onSave} className="min-h-7 rounded border px-3 py-1 text-(length:--sem-text-meta) font-semibold" style={{ background: 'var(--sem-accent)', borderColor: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>{saveLabel}</button>
     </div>
   );
 }
@@ -462,36 +640,58 @@ function Footer({ busy, onTry, onSave, tryLabel = 'Try it now', saveLabel = 'Sav
 // No timing budget either: the timing pass only ever receives reconcile plans, so the old field promised
 // a measurement this kind never gets (Astra, journey A).
 // ---------------------------------------------------------------------------------------------------
-function TrustedAnswerForm({ measures, editing, busy, setBusy, setErr, setTryNote, onSaved, onClose }: {
-  measures: MeasureRowW[]; editing?: TestDefinitionW | null; busy: boolean;
+export function TrustedAnswerForm({ measures, fields, onFields, editing, handedFrom, busy, setBusy, setErr, setTryNote, onSaved, onClose, before, onWritten }: {
+  measures: MeasureRowW[];
+  /** Every field of the form, held by the drawer (the draft). `editing` is the check they were typed on. */
+  fields: TrustedFields; onFields: (patch: Partial<TrustedFields>) => void;
+  editing?: TestDefinitionW | null; handedFrom?: 'askdata' | 'queries'; busy: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; setTryNote: (v: string | null) => void;
   onSaved: () => void; onClose: () => void;
+  /** Run before the write: false means the saved check moved and the person must choose first. */
+  before?: SaveFence;
+  /** The engine took the save: the draft ends. */
+  /** The engine took the write, which carried `sent`. False means the fields were edited meanwhile: they stay held and the drawer stays open (R-B). */
+  onWritten?: (sent: TrustedFields) => boolean | void;
 }) {
   const initial = parseValue(editing);
-  const [measureRef, setMeasureRef] = useState(editing?.targetRef || initial.measureRef || '');
-  const [filterColumn, setFilterColumn] = useState(initial.filterColumn || '');
-  const [filterValue, setFilterValue] = useState(initial.filterValue || '');
-  const [expected, setExpected] = useState(initial.expectedValue || '');
-  const [provenance, setProvenance] = useState(initial.provenance || '');
-  const [filterDax, setFilterDax] = useState(initial.filterDax || '');
+  const { measureRef, filterColumn, filterValue, expected, provenance, filterDax, expressionDax, testExpression, abs, relPercent } = fields;
+  const setMeasureRef = (v: string) => onFields({ measureRef: v });
+  const setFilterColumn = (v: string) => onFields({ filterColumn: v });
+  const setFilterValue = (v: string) => onFields({ filterValue: v });
+  const setExpected = (v: string) => onFields({ expected: v });
+  const setProvenance = (v: string) => onFields({ provenance: v });
+  const setFilterDax = (v: string) => onFields({ filterDax: v });
+  const setExpressionDax = (v: string) => onFields({ expressionDax: v });
+  const setTestExpression = (v: boolean) => onFields({ testExpression: v });
+  const setAbs = (v: string) => onFields({ abs: v });
+  const setRelPercent = (v: string) => onFields({ relPercent: v });
   // The DAX Lab hands over an EDITED formula when the person changed it. They choose which one this check is
   // about; picking the saved measure drops the expression rather than quietly testing text the model lacks.
   const handedExpression = initial.expressionDax || '';
-  // A handed-over TABLE query is never preselected as the formula this check asks. A measure check can only
+  // A handed-over TABLE query is never preselected as the formula this check asks (fieldsOf). A measure check can only
   // compare one number, so preselecting it staged a check that could never answer the question on screen.
   const handedIsOneCell = daxReturnsOneCell(handedExpression);
-  const [expressionDax, setExpressionDax] = useState(handedExpression);
-  const [testExpression, setTestExpression] = useState(!!handedExpression && handedIsOneCell);
-  const [abs, setAbs] = useState(String(initial.toleranceAbsolute ?? 1e-6));
-  const [relPercent, setRelPercent, relFraction] = useRelativePercent(initial.toleranceRelative ?? 1e-9);
-  // A second explicit hand-off changes only the calculation. The rest of the open draft remains the person's.
-  useEffect(() => { if (!editing?.id && editing?.targetRef) setMeasureRef(editing.targetRef); }, [editing?.id, editing?.targetRef]);
+  const relFraction = relativeFraction(relPercent, initial.toleranceRelative ?? 1e-9);
   // Say what happens to the filter BEFORE the person saves. A complete query is scoped from outside, and some
   // queries cannot be scoped at all, so saving one with a filter saves a check the engine will not run.
   const filterNote = measureFilterNote(testExpression ? expressionDax : '', filterDax || (filterColumn.trim() && filterValue.trim() ? filterColumn + ' = ' + filterValue : ''));
+  // The title is read off the check every time (checkTitle, askdata-model.ts): the calculation, every condition it
+  // asks (the formula's, Only where, the written filter) and the number. A title carried beside the check and kept
+  // while "nothing that matters" changed went false twice, each time through a field it did not watch: "Units totals
+  // 125049" for a one-row check once the number was typed (verify-askdata-r2 R2), then once Only where was added or
+  // the row in the formula was edited (verify-askdata-r3 R2). The one title kept is a SAVED check's, while it still
+  // asks exactly what it asked when it was opened, because that title may be one the assistant chose (save_test).
+  const asks = (m: string, fc: string, fv: string, fd: string, x: string, n: string) => JSON.stringify([m, fc.trim(), fv.trim(), fd.trim(), x.trim(), n.trim()]);
+  const savedAsks = asks(editing?.targetRef || initial.measureRef || '', initial.filterColumn || '', initial.filterValue || '',
+    initial.filterDax || '', handedExpression && handedIsOneCell ? handedExpression : '', String(initial.expectedValue ?? ''));
+  const title = () => {
+    const x = testExpression ? expressionDax : '';
+    if (editing?.id && editing.title?.trim() && asks(measureRef, filterColumn, filterValue, filterDax, x, expected) === savedAsks) return editing.title;
+    return checkTitle(measureRef, expected, { expressionDax: x, filterColumn, filterValue, filterDax });
+  };
   const def = (): TestDefinitionW => ({
     ...editing,
-    id: editing?.id || '', kind: 'measureValue', title: titleFor(measureRef, expected),
+    id: editing?.id || '', kind: 'measureValue', title: title(),
     targetRef: measureRef, enabled: editing?.enabled ?? true,
     paramsJson: JSON.stringify({
       measureRef, expectedValue: expected.trim(), filterColumn: filterColumn.trim() || undefined,
@@ -505,25 +705,27 @@ function TrustedAnswerForm({ measures, editing, busy, setBusy, setErr, setTryNot
     <>
       <Field label="Which calculation"><MeasureSelect measures={measures} value={measureRef} onChange={setMeasureRef} /></Field>
       <Field label="The number you trust" hint="Type BLANK if the right answer is no value.">
-        <input value={expected} onChange={(e) => setExpected(e.target.value)} className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+        <input value={expected} onChange={(e) => setExpected(e.target.value)} className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </Field>
       <Field label="Only where (optional)" hint="Example: Year is 2024.">
         <span className="flex gap-2">
-          <input value={filterColumn} onChange={(e) => setFilterColumn(e.target.value)} placeholder="Column" className="min-h-7 flex-1 rounded-md border px-2 text-[12px]" style={inp} />
-          <input value={filterValue} onChange={(e) => setFilterValue(e.target.value)} placeholder="Value" className="min-h-7 flex-1 rounded-md border px-2 text-[12px]" style={inp} />
+          <input value={filterColumn} onChange={(e) => setFilterColumn(e.target.value)} placeholder="Column" className="min-h-7 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
+          <input value={filterValue} onChange={(e) => setFilterValue(e.target.value)} placeholder="Value" className="min-h-7 flex-1 rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
         </span>
       </Field>
       <Field label="Where this number came from (optional)">
-        <input value={provenance} onChange={(e) => setProvenance(e.target.value)} placeholder="Finance month-end pack, July" className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+        <input value={provenance} onChange={(e) => setProvenance(e.target.value)} placeholder="Finance month-end pack, July" className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </Field>
       {handedExpression && (
-        <div className="mb-3 rounded-md border p-2.5" style={{ borderColor: 'var(--sem-border)' }}>
-          <div className="mb-1 text-[11px] font-semibold">Which formula is this check about?</div>
-          <label className="block text-[12px]"><input type="radio" name="whichFormula" checked={!testExpression} onChange={() => setTestExpression(false)} /> Test the measure as saved</label>
-          <label className="block text-[12px]"><input type="radio" name="whichFormula" checked={testExpression} onChange={() => setTestExpression(true)} /> Test this expression</label>
-          <div className="mt-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>You changed the formula in DAX Lab. The model still holds the saved one, so say which one this check should ask.</div>
-          {!handedIsOneCell && <div className="mt-1.5 rounded-md border px-2 py-1.5 text-[10px]" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>Your DAX Lab query returns a table, not one number. A measure check compares one number, so it cannot ask this as it stands. Leave this check on the measure as saved, or pick Test this expression and replace it with a single value.</div>}
-          {testExpression && <textarea value={expressionDax} onChange={(event) => setExpressionDax(event.target.value)} rows={4} spellCheck={false} aria-label="The expression to test" className="mt-2 w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />}
+        <div className="sem-inset mb-3">
+          <div className="mb-1 text-(length:--sem-text-label) font-semibold">Which formula is this check about?</div>
+          <label className="block text-(length:--sem-text-meta)"><input type="radio" name="whichFormula" checked={!testExpression} onChange={() => setTestExpression(false)} /> Test the measure as saved</label>
+          <label className="block text-(length:--sem-text-meta)"><input type="radio" name="whichFormula" checked={testExpression} onChange={() => setTestExpression(true)} /> Test this expression</label>
+          <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{handedFrom === 'askdata' || handedFrom === 'queries'
+            ? `This number came from ${handedFrom === 'queries' ? 'your question in Queries' : 'Ask your data'}, with its filters and its row. Test this expression to keep them, or the measure as saved to check its total.`
+            : 'You changed the formula in DAX Lab. The model still holds the saved one, so say which one this check should ask.'}</div>
+          {!handedIsOneCell && <div className="mt-2 rounded border px-2 py-2 text-(length:--sem-text-label)" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>Your DAX Lab query returns a table, not one number. A measure check compares one number, so it cannot ask this as it stands. Leave this check on the measure as saved, or pick Test this expression and replace it with a single value.</div>}
+          {testExpression && <textarea value={expressionDax} onChange={(event) => setExpressionDax(event.target.value)} rows={4} spellCheck={false} aria-label="The expression to test" className="mt-2 w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />}
         </div>
       )}
       <QueryTargetNote editing={editing} />
@@ -534,17 +736,17 @@ function TrustedAnswerForm({ measures, editing, busy, setBusy, setErr, setTryNot
           <ToleranceInputs abs={abs} onAbs={setAbs} relPercent={relPercent} onRelPercent={setRelPercent} />
         </Field>
         <Field label="Use a complete DAX filter" hint="Use this for more than one condition or fields from different tables. It takes priority over the simple Column and Value above.">
-          <textarea value={filterDax} onChange={(event) => setFilterDax(event.target.value)} rows={3} placeholder={'\'Product\'[Category] = "Bikes", \'Date\'[Year] = 2026'} spellCheck={false} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
+          <textarea value={filterDax} onChange={(event) => setFilterDax(event.target.value)} rows={3} placeholder={'\'Product\'[Category] = "Bikes", \'Date\'[Year] = 2026'} spellCheck={false} className="w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
         </Field>
-        {!!initial.filterDax && <div className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>Carried over from the filters on your visual. Change them here if this check should ask something wider.</div>}
+        {!!initial.filterDax && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Carried over from the filters on your visual. Change them here if this check should ask something wider.</div>}
       </Advanced>
       {filterNote && (
-        <div className="mb-3 rounded-md border px-2 py-1.5 text-[10px]" style={filterNote.tone === 'warn'
+        <div className="mb-3 rounded border px-2 py-2 text-(length:--sem-text-label)" style={filterNote.tone === 'warn'
           ? { borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }
           : { borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>{filterNote.text}</div>
       )}
       <SaveRequirement kind="measureValue" />
-      <Footer busy={busy} onTry={() => void tryDef(def(), setBusy, setErr, setTryNote)} onSave={() => void saveDef(def(), setBusy, setErr, onSaved, onClose)} />
+      <Footer busy={busy} onTry={() => void tryDef(def(), setBusy, setErr, setTryNote)} onSave={() => void saveDef(def(), setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields)))} />
     </>
   );
 }
@@ -553,16 +755,24 @@ function TrustedAnswerForm({ measures, editing, busy, setBusy, setErr, setTryNot
 // Compare with source. Everything the engine REQUIRES is visible, and so is the one thing that decides
 // whether a verdict is even reachable.
 // ---------------------------------------------------------------------------------------------------
-function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editing, focus, busy, setBusy, setErr, setTryNote, onSaved, onClose, onAddSqlSource }: {
-  measures: MeasureRowW[]; sources: SqlSourceW[]; sourcesLoaded: boolean; adopt?: string | null; editing?: TestDefinitionW | null; focus?: AuthorFocus; busy: boolean;
+export function CompareWithSourceForm({ measures, fields, onFields, sources, sourcesLoaded, adopt, editing, focus, busy, setBusy, setErr, setTryNote, onSaved, onClose, onAddSqlSource, before, onWritten }: {
+  measures: MeasureRowW[];
+  /** Every field of the form, held by the drawer (the draft). `editing` is the check they were typed on. */
+  fields: SqlFields; onFields: (patch: Partial<SqlFields>) => void;
+  sources: SqlSourceW[]; sourcesLoaded: boolean; adopt?: string | null; editing?: TestDefinitionW | null; focus?: AuthorFocus; busy: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; setTryNote: (v: string | null) => void;
   onSaved: () => void; onClose: () => void; onAddSqlSource?: () => void;
+  before?: SaveFence;
+  /** The engine took the write, which carried `sent`. False means the fields were edited meanwhile: they stay held and the drawer stays open (R-B). */
+  onWritten?: (sent: SqlFields) => boolean | void;
 }) {
   const initial = parseReconcile(editing);
-  const [measureRef, setMeasureRef] = useState(editing?.targetRef || initial.measureRef || '');
+  const model = useDaxModelContext();
+  const { measureRef, picked, groupBy, sql, sqlGrandTotal, filterDax, blankPolicy, abs, relPercent } = fields;
+  const setMeasureRef = (v: string) => onFields({ measureRef: v });
   // What this check is ALREADY bound to, decided by one rule rather than by whatever the list happens to
   // hold. `picked` is the person's own change; until they make one the binding stands as it was saved.
-  const [picked, setPicked] = useState<string | null>(null);
+  const setPicked = (id: string) => onFields({ picked: id });
   const binding: SqlSourceBinding = sqlSourceBinding({
     savedId: initial.sqlSourceId,
     savedName: initial.sqlSourceName,
@@ -573,17 +783,18 @@ function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editin
   });
   const sqlSourceId = picked ?? binding.select;
   const setSqlSourceId = (id: string) => setPicked(id);
-  const [groupBy, setGroupBy] = useState<string[]>(initial.groupBy || []);
-  const [sql, setSql] = useState(initial.sql || '');
-  const [sqlGrandTotal, setSqlGrandTotal] = useState(initial.sqlGrandTotal || '');
-  const [filterDax, setFilterDax] = useState(initial.filterDax || '');
-  const [blankPolicy, setBlankPolicy] = useState(initial.blankPolicy || '');
+  const setGroupBy = (v: string[]) => onFields({ groupBy: v });
+  const setSql = (v: string) => onFields({ sql: v });
+  const setSqlGrandTotal = (v: string) => onFields({ sqlGrandTotal: v });
+  const setFilterDax = (v: string) => onFields({ filterDax: v });
+  const setBlankPolicy = (v: string) => onFields({ blankPolicy: v });
   // A requirement is not a mistake until the person tries to save. Before that the blank-meaning line is a
   // neutral "still needed"; only an attempted Save turns it into the failure colour.
   const [saveAttempted, setSaveAttempted] = useState(false);
   const blankGroup = useRef<HTMLDivElement | null>(null);
-  const [abs, setAbs] = useState(String(initial.toleranceAbsolute ?? 0));
-  const [relPercent, setRelPercent, relFraction] = useRelativePercent(initial.toleranceRelative ?? 0);
+  const setAbs = (v: string) => onFields({ abs: v });
+  const setRelPercent = (v: string) => onFields({ relPercent: v });
+  const relFraction = relativeFraction(relPercent, initial.toleranceRelative ?? 0);
   // Only ever set from a baseline the Add handler captured, so this can no longer fire on a first load.
   useEffect(() => { if (adopt) setPicked(adopt); }, [adopt]);
 
@@ -600,7 +811,7 @@ function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editin
   });
   const def = (): TestDefinitionW => ({
     ...editing,
-    id: editing?.id || '', kind: 'measureReconcile', title: titleFor(measureRef, 'SQL'),
+    id: editing?.id || '', kind: 'measureReconcile', title: sqlTitleFor(measureRef),
     targetRef: measureRef, enabled: editing?.enabled ?? true, paramsJson: JSON.stringify(params()),
   });
 
@@ -625,39 +836,41 @@ function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editin
     return message;
   };
   const evidenceNote = limitedEvidenceNote(groupBy.length);
+  const grain = grainWords(groupBy, model.columns);   // a sort-ordered field is compared on its own, which can differ from the grid (join 6, J4)
   return (
     <>
       <Field label="Which calculation"><MeasureSelect measures={measures} value={measureRef} onChange={setMeasureRef} /></Field>
       <Field label="SQL source" hint="Saved once in Connections, then used by any check or table mapping.">
         <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} />
-        {binding.note && !picked && <span className="mt-1 block text-[10.5px]"
+        {binding.note && !picked && <span className="mt-1 block text-(length:--sem-text-label)"
           style={{ color: binding.needsReplacement ? 'var(--sem-warn)' : 'var(--sem-muted)' }}>{binding.note}</span>}
       </Field>
       <Field label="The SQL you accept as the truth">
-        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={5} spellCheck={false} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
+        <textarea value={sql} onChange={(e) => setSql(e.target.value)} rows={5} spellCheck={false} className="w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
       </Field>
-      <div className="mb-3 rounded-md border px-2 py-1.5 text-[10.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+      <div className="sem-inset mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         Your SQL must use the same filter as the check. Semanticus never rewrites your query, so if the two sides are
         narrowed differently they are answering different questions.
       </div>
       <Field label="Only where (optional)" hint="A complete DAX filter for the model side. Narrow your SQL the same way.">
         <textarea value={filterDax} onChange={(event) => setFilterDax(event.target.value)} rows={2} spellCheck={false} aria-label="Only where"
-          placeholder={'\'Date\'[Year] = 2026, \'Product\'[Category] = "Bikes"'} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
+          placeholder={'\'Date\'[Year] = 2026, \'Product\'[Category] = "Bikes"'} className="w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
       </Field>
-      {!!initial.filterDax && <div className="mb-3 text-[10px]" style={{ color: 'var(--sem-muted)' }}>Carried over from the filters on your visual.</div>}
+      {!!initial.filterDax && <div className="mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Carried over from the filters on your visual.</div>}
       <div className="mb-3 block">
-        <div className="mb-1 text-[11px] font-semibold">Which groups to compare</div>
+        <div className="mb-1 text-(length:--sem-text-label) font-semibold">Which groups to compare</div>
         <ContextFields value={groupBy} onChange={setGroupBy} />
         {evidenceNote
-          ? <div className="mt-1.5 rounded-md border px-2 py-1.5 text-[10.5px]" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>{evidenceNote}</div>
-          : <div className="mt-1 text-[10px]" style={{ color: 'var(--sem-muted)' }}>Fields can come from different tables. The check compares every combination both queries return.</div>}
+          ? <div className="mt-2 rounded border px-2 py-2 text-(length:--sem-text-label)" style={{ borderColor: 'var(--sem-warn)', color: 'var(--sem-warn)' }}>{evidenceNote}</div>
+          : <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Fields can come from different tables. The check compares every combination both queries return.</div>}
+        {grain && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }} data-testid="check-grain">{grain}</div>}
       </div>
       <div className="mb-3" ref={blankGroup}>
-        <div className="mb-1 text-[11px] font-semibold">A blank in the model means</div>
+        <div className="mb-1 text-(length:--sem-text-label) font-semibold">A blank in the model means</div>
         {([['zero', 'Zero'], ['null', 'No value'], ['distinct', 'Its own group']] as const).map(([v, label]) => (
-          <label key={v} className="mr-3 text-[12px]"><input type="radio" name="blank" checked={blankPolicy === v} onChange={() => { setBlankPolicy(v); setSaveAttempted(false); }} /> {label}</label>
+          <label key={v} className="mr-3 text-(length:--sem-text-meta)"><input type="radio" name="blank" checked={blankPolicy === v} onChange={() => { setBlankPolicy(v); setSaveAttempted(false); }} /> {label}</label>
         ))}
-        {!blankPolicy && <div className="mt-1 text-[11px]" style={{ color: saveAttempted ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>Pick one before you save. There is no sensible default.</div>}
+        {!blankPolicy && <div className="mt-1 text-(length:--sem-text-label)" style={{ color: saveAttempted ? 'var(--sem-bad)' : 'var(--sem-muted)' }}>Pick one before you save. There is no sensible default.</div>}
       </div>
       <QueryTargetNote editing={editing} />
       <Advanced summary="tolerance, a complete DAX filter and a separate grand total query">
@@ -665,13 +878,13 @@ function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editin
           <ToleranceInputs abs={abs} onAbs={setAbs} relPercent={relPercent} onRelPercent={setRelPercent} />
         </Field>
         <Field label="Grand total SQL (optional)" hint="Use this when the grand total needs its own query.">
-          <textarea value={sqlGrandTotal} onChange={(e) => setSqlGrandTotal(e.target.value)} rows={2} spellCheck={false} className="w-full rounded-md border px-2 py-1 font-mono text-[11px]" style={inp} />
+          <textarea value={sqlGrandTotal} onChange={(e) => setSqlGrandTotal(e.target.value)} rows={2} spellCheck={false} className="w-full rounded border px-2 py-1 font-mono text-(length:--sem-text-label)" style={inp} />
         </Field>
       </Advanced>
       <SaveRequirement kind="measureReconcile" />
       <Footer busy={busy}
         onTry={() => { if (refusal()) return; void tryDef(def(), setBusy, setErr, setTryNote); }}
-        onSave={() => { if (refusal()) return; void saveDef(def(), setBusy, setErr, onSaved, onClose); }} />
+        onSave={() => { if (refusal()) return; void saveDef(def(), setBusy, setErr, onSaved, onClose, before, onWritten && (() => onWritten(fields))); }} />
     </>
   );
 }
@@ -680,31 +893,55 @@ function CompareWithSourceForm({ measures, sources, sourcesLoaded, adopt, editin
 // Table row count. ONE identity with Map source on the page: for a table count the mapping IS the check,
 // so there is no saved-test kind to send and none is sent.
 // ---------------------------------------------------------------------------------------------------
-function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr, onSaved, onClose, onAddSqlSource }: {
+export function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr, onSaved, onClose, onAddSqlSource }: {
   sources: SqlSourceW[]; adopt?: string | null; table?: string; busy: boolean;
   setBusy: (v: boolean) => void; setErr: (v: string | null) => void; onSaved: () => void; onClose: () => void;
   onAddSqlSource?: () => void;
 }) {
   const [rows, setRows] = useState<TableMappingRowW[]>([]);
-  const [modelTable, setModelTable] = useState(table || '');
-  const [sqlSourceId, setSqlSourceId] = useState('');
-  const [schema, setSchema] = useState('');
-  const [entity, setEntity] = useState('');
+  // A mapping the person typed and did not save opens again as typed: by its table, or (New check > Table row count, no table
+  // given) on the table that holds one.
+  const [modelTable, setModelTable] = useState(() => table || heldMappingTable());
+  const [held] = useState(() => (modelTable ? heldDraft<MappingFields>(mappingDraftScope(modelTable)) : undefined));
+  const [sqlSourceId, setSqlSourceId] = useState(held?.value.sqlSourceId ?? '');
+  const [schema, setSchema] = useState(held?.value.schema ?? '');
+  const [entity, setEntity] = useState(held?.value.entity ?? '');
   const [loaded, setLoaded] = useState(false);
-  useEffect(() => {
-    rpc<TableMappingListW>('listTableMappings')
-      .then((list) => { setRows(list.rows ?? []); setLoaded(true); })
-      .catch(() => { setRows([]); setLoaded(true); });
-  }, []);
-  // Filling in what the table already has is not a guess: it is the row the engine just sent for it.
-  useEffect(() => {
-    const row = rows.find((r) => r.modelTable === modelTable);
-    if (!row) return;
-    setSqlSourceId(row.sqlSourceId || '');
-    setSchema(row.schema || '');
-    setEntity(row.entity || '');
-  }, [modelTable, rows]);
+  const loadRows = () => rpc<TableMappingListW>('listTableMappings')
+    .then((list) => { setRows(list.rows ?? []); setLoaded(true); })
+    .catch(() => { setRows([]); setLoaded(true); });
+  // The mapping can be changed from the other door (set_table_source_mapping) while this drawer is open, so the
+  // rows are read again on every activity and the editor below decides what that does to what is typed.
+  useEffect(() => { void loadRows(); return onActivity(() => { void loadRows(); }); }, []);
+  // Filling in what the table already has is not a guess: it is the row the engine just sent for it. The guard
+  // does it, on first read and whenever the table changes, and keeps it honest when the row moves under the person
+  // (UAT-F-S06b-2-007: the drawer kept the old mapping after MCP changed it, and Save wrote the old one back).
+  const mappingOf = (row?: TableMappingRowW) => ({ sqlSourceId: row?.sqlSourceId || '', schema: row?.schema || '', entity: row?.entity || '' });
+  const readRow = useRef<TableMappingRowW | undefined>(undefined);   // the row the last Save read: what the stored mapping was when it did
+  const guard = useEditBase<MappingFields>({
+    current: loaded ? mappingOf(rows.find((r) => r.modelTable === modelTable)) : undefined,
+    draft: { sqlSourceId, schema, entity }, editing: true, scope: modelTable,
+    persist: modelTable ? { scope: mappingDraftScope(modelTable) } : undefined,
+    reseed: (v) => { setSqlSourceId(v.sqlSourceId); setSchema(v.schema); setEntity(v.entity); },
+    readNow: async () => { const row = ((await rpc<TableMappingListW>('listTableMappings')).rows ?? []).find((r) => r.modelTable === modelTable); readRow.current = row; return mappingOf(row); },
+  });
   useEffect(() => { if (adopt) setSqlSourceId(adopt); }, [adopt]);
+  const putBack = (v: MappingFields) => { setSqlSourceId(v.sqlSourceId); setSchema(v.schema); setEntity(v.entity); guard.rebase(v); };
+  // The engine took the write (or the person removed the mapping): the draft for this table ends now, before the drawer closes.
+  // R-B (drafts-sol F5): it ends only the words the save CARRIED. The boxes stay editable while the engine is busy, so what is typed when the answer comes may be newer: then it stays held.
+  const nowRef = useRef({ sqlSourceId, schema, entity }); nowRef.current = { sqlSourceId, schema, entity };
+  const ended = (sent?: MappingFields): boolean => {
+    if (sent && !sameValue({ ...nowRef.current, schema: nowRef.current.schema.trim(), entity: nowRef.current.entity.trim() }, sent)) { guard.rebase(sent); return false; }
+    guard.rebase({ sqlSourceId, schema, entity });
+    const m = draftModel(); if (m && modelTable) draftStore.clear(m, mappingDraftScope(modelTable));
+    return true;
+  };
+  const discard = () => {
+    const v = loaded ? mappingOf(rows.find((r) => r.modelTable === modelTable)) : guard.baseNow();
+    if (v) putBack(v);
+    const m = draftModel(); if (m && modelTable) draftStore.clear(m, mappingDraftScope(modelTable));
+  };
+  const heldTables = draftModel() ? new Set([...draftStore.held(draftModel(), mappingDraftScope(''))].map((id) => (JSON.parse(id) as [string, string])[0].slice(mappingDraftScope('').length))) : new Set<string>();
 
   const editableRows = rows.filter((row) => row.editable);
   const chosen = rows.find((r) => r.modelTable === modelTable);
@@ -716,50 +953,59 @@ function TableRowCountForm({ sources, adopt, table, busy, setBusy, setErr, onSav
     if (!chosen?.sqlSourceId) return;
     setBusy(true); setErr(null);
     rpc<boolean>('clearTableSourceMapping', modelTable)
-      .then(() => { announceTestSuiteChanged(); onSaved(); onClose(); })
+      .then(() => { ended(); announceTestSuiteChanged(); onSaved(); onClose(); })
       .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
-  const save = () => {
+  const save = async () => {
     if (!modelTable) { setErr('Pick the table to count.'); return; }
     if (!sqlSourceId) { setErr('Pick the SQL source that holds this table, or add one.'); return; }
     if (!schema.trim() || !entity.trim()) { setErr('Say which schema and which table in the source to count.'); return; }
     setBusy(true); setErr(null);
-    rpc('setTableSourceMapping', modelTable, sqlSourceId, schema.trim(), entity.trim())
-      .then(() => { announceTestSuiteChanged(); onSaved(); onClose(); })
-      .catch((e: unknown) => setErr(e instanceof Error ? e.message : String(e)))
-      .finally(() => setBusy(false));
+    try {
+      // A Save that started from an older mapping than the live one writes nothing until the person chooses.
+      if (!(await guard.beforeSave())) return;
+      // The write names the STORED mapping the Save read (a source the model only detects is not a stored mapping, so it starts empty); the engine compares it inside its own write.
+      const was = readRow.current?.source === 'mapping' ? readRow.current : undefined;
+      const expected = JSON.stringify({ sqlSourceId: was?.sqlSourceId ?? '', schema: was?.schema ?? '', entity: was?.entity ?? '' });
+      try { await rpc('setTableSourceMapping', modelTable, sqlSourceId, schema.trim(), entity.trim(), 'human', expected); }
+      catch (e) { if (await guard.refused(e)) return; throw e; }
+      const owns = ended({ sqlSourceId, schema: schema.trim(), entity: entity.trim() } as MappingFields);   // what the write carried (the engine was given the trimmed names)
+      announceTestSuiteChanged(); onSaved(); if (owns) onClose();
+    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
   return (
     <>
       <Field label="Which table" hint="The model table whose rows you want counted.">
-        <select value={modelTable} onChange={(e) => setModelTable(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-[12px]" style={inp}>
+        <select value={modelTable} onChange={(e) => setModelTable(e.target.value)} className="w-full rounded border px-2 py-2 text-(length:--sem-text-meta)" style={inp}>
           <option value="">{loaded ? 'Pick a table' : 'Loading the tables…'}</option>
-          {editableRows.map((row) => <option key={row.modelTable} value={row.modelTable}>{row.modelTable}</option>)}
+          {editableRows.map((row) => <option key={row.modelTable} value={row.modelTable}>{heldTables.has(row.modelTable) ? `${row.modelTable} (draft not saved)` : row.modelTable}</option>)}
         </select>
       </Field>
-      {chosen && !chosen.canCount && chosen.reason && <div className="mb-3 text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>Right now, {chosen.reason}.</div>}
+      {chosen && !chosen.canCount && chosen.reason && <div className="mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Right now, {chosen.reason}.</div>}
       <Field label="SQL source" hint="Saved once in Connections, then used by any check or table mapping.">
         <SqlSourceSelect sources={sources} value={sqlSourceId} onChange={setSqlSourceId} onAdd={onAddSqlSource} />
       </Field>
       <Field label="Schema" hint="The schema in the source that holds the table.">
-        <input value={schema} onChange={(e) => setSchema(e.target.value)} placeholder="sales" className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+        <input value={schema} onChange={(e) => setSchema(e.target.value)} placeholder="sales" className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </Field>
       <Field label="Table in the source" hint="The table name to count in that schema.">
-        <input value={entity} onChange={(e) => setEntity(e.target.value)} placeholder="orders" className="min-h-7 w-full rounded-md border px-2 text-[12px]" style={inp} />
+        <input value={entity} onChange={(e) => setEntity(e.target.value)} placeholder="orders" className="min-h-7 w-full rounded border px-2 text-(length:--sem-text-meta)" style={inp} />
       </Field>
-      <div className="mb-3 rounded-md border px-2 py-1.5 text-[10.5px]" style={{ borderColor: 'var(--sem-border)', color: 'var(--sem-muted)' }}>
+      <div className="sem-inset mb-3 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
         This runs when you run everything or choose table row counts. Equal counts pass. Different counts are
         reported as Counts differ, which is not proof of missing rows on its own.
       </div>
       <SaveRequirement kind="tableRowCount" />
-      <Footer busy={busy} onSave={save} saveLabel="Save mapping" />
+      {guard.moved && <EditMovedBanner what="mapping" theirs={guard.theirs} onKeepMine={guard.keepMine} onUseNew={guard.useNew} disabled={busy} />}
+      {draftRow(guard.drafted, discard, busy, 'mt-3')}
+      <Footer busy={busy} onSave={() => void save()} saveLabel="Save mapping" />
       {chosen?.sqlSourceId && (
-        <div className="mt-2.5 border-t pt-2.5" style={{ borderColor: 'var(--sem-border)' }}>
+        <div className="mt-3 border-t pt-3" style={{ borderColor: 'var(--sem-border)' }}>
           <button type="button" disabled={busy} onClick={removeMapping}
-            className="min-h-7 rounded-md border px-3 py-1 text-[12px] disabled:opacity-40"
-            style={{ background: 'var(--sem-surface-2)', borderColor: 'var(--sem-bad)', color: 'var(--sem-bad)' }}>Remove mapping</button>
-          <span className="mt-1 block text-[10.5px]" style={{ color: 'var(--sem-muted)' }}>
+            className="sem-btn sem-btn-sm">Remove mapping</button>
+          <span className="mt-1 block text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
             Use the model&apos;s detected source if one exists.
           </span>
         </div>
@@ -780,13 +1026,16 @@ async function tryDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setEr
   } finally { setBusy(false); }
 }
 
-async function saveDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setErr: (v: string | null) => void, onSaved: () => void, onClose: () => void) {
+async function saveDef(def: TestDefinitionW, setBusy: (v: boolean) => void, setErr: (v: string | null) => void, onSaved: () => void, onClose: () => void, before?: SaveFence, onWritten?: () => boolean | void) {
   if (!def.targetRef) { setErr('Pick a calculation.'); return; }
   setBusy(true); setErr(null);
   try {
-    await rpc('saveTest', def);
+    if (before && !(await before.before())) return;
+    try { await rpc('saveTest', def, 'human', before?.expected() ?? null); }
+    catch (e) { if (before && await before.refused(e)) return; throw e; }   // the check moved after the read: the banner asks, nothing was written
+    const owns = onWritten ? onWritten() !== false : true;   // the engine took it: the draft ends, if it still holds what was sent (a refused or failed save keeps it)
     announceTestSuiteChanged();
-    onSaved(); onClose();
+    onSaved(); if (owns) onClose();
   } catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
   finally { setBusy(false); }
 }
@@ -799,7 +1048,8 @@ function parseReconcile(def?: TestDefinitionW | null): ReconcileParamsW {
   if (!def?.paramsJson) return {};
   try { return JSON.parse(def.paramsJson) as ReconcileParamsW; } catch { return {}; }
 }
-function titleFor(measureRef: string, expected: string) {
+/** A source reconcile's title. A trusted answer's comes from checkTitle, which reads the check itself. */
+function sqlTitleFor(measureRef: string) {
   const name = (measureRef || '').split('/').pop()?.replace(/^measure:/, '') || 'Calculation';
-  return expected && expected !== 'SQL' ? `${name} totals ${expected}` : `${name} ties to source SQL`;
+  return `${name} ties to source SQL`;
 }

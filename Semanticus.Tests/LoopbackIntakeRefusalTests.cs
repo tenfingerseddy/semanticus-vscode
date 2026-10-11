@@ -155,8 +155,14 @@ namespace Semanticus.Tests
             new object[] { "L17", "Data Source='localhost:51234';Initial Catalog=Sales" },
         };
 
+        public static IEnumerable<object[]> LoopbackCasesSample_Open_live_refuses_a_() { var all = LoopbackCases().ToArray(); return new[] { all[1], all[2], all[7], all[15] }; }
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(LoopbackCases))]
+        public Task Open_live_refuses_a_loopback_endpoint_before_anything_is_minted_or_built_every_form(string id, string endpoint) => Open_live_refuses_a_loopback_endpoint_before_anything_is_minted_or_built(id, endpoint);
+
+        [Theory]
+        [MemberData(nameof(LoopbackCasesSample_Open_live_refuses_a_))]
         public async Task Open_live_refuses_a_loopback_endpoint_before_anything_is_minted_or_built(string id, string endpoint)
         {
             var (sessions, engine) = await BoundAsync();
@@ -183,6 +189,12 @@ namespace Semanticus.Tests
             }
         }
 
+        public static IEnumerable<object[]> LoopbackCasesSample_Connect_xmla_refuses_a_l() { var all = LoopbackCases().ToArray(); return new[] { all[1] }; }
+        [Theory]
+        [MemberData(nameof(LoopbackCasesSample_Connect_xmla_refuses_a_l))]
+        public Task Connect_xmla_refuses_a_loopback_endpoint_before_anything_is_minted_or_built_sample(string id, string endpoint) => Connect_xmla_refuses_a_loopback_endpoint_before_anything_is_minted_or_built(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(LoopbackCases))]
         public async Task Connect_xmla_refuses_a_loopback_endpoint_before_anything_is_minted_or_built(string id, string endpoint)
@@ -208,6 +220,12 @@ namespace Semanticus.Tests
             }
         }
 
+        public static IEnumerable<object[]> LoopbackCasesSample_Remember_xmla_refuses_a_() { var all = LoopbackCases().ToArray(); return new[] { all[1] }; }
+        [Theory]
+        [MemberData(nameof(LoopbackCasesSample_Remember_xmla_refuses_a_))]
+        public Task Remember_xmla_refuses_a_loopback_endpoint_before_it_reaches_disk_sample(string id, string endpoint) => Remember_xmla_refuses_a_loopback_endpoint_before_it_reaches_disk(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(LoopbackCases))]
         public async Task Remember_xmla_refuses_a_loopback_endpoint_before_it_reaches_disk(string id, string endpoint)
@@ -253,8 +271,14 @@ namespace Semanticus.Tests
             new object[] { "R10", "Data Source=\"powerbi://api.powerbi.com/v1.0/myorg/Sales & Marketing\"" },
         };
 
+        public static IEnumerable<object[]> RemoteCasesSample_Open_live_does_not_r() { var all = RemoteCases().ToArray(); return new[] { all[0], all[1], all[7] }; }
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(RemoteCases))]
+        public Task Open_live_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel_every_form(string id, string endpoint) => Open_live_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel(id, endpoint);
+
+        [Theory]
+        [MemberData(nameof(RemoteCasesSample_Open_live_does_not_r))]
         public async Task Open_live_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel(string id, string endpoint)
         {
             var (sessions, engine) = await BoundAsync();
@@ -278,6 +302,12 @@ namespace Semanticus.Tests
             }
         }
 
+        public static IEnumerable<object[]> RemoteCasesSample_Connect_xmla_does_not_re() { var all = RemoteCases().ToArray(); return new[] { all[0] }; }
+        [Theory]
+        [MemberData(nameof(RemoteCasesSample_Connect_xmla_does_not_re))]
+        public Task Connect_xmla_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel_sample(string id, string endpoint) => Connect_xmla_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(RemoteCases))]
         public async Task Connect_xmla_does_not_refuse_a_remote_endpoint_and_stops_on_the_credential_sentinel(string id, string endpoint)
@@ -300,6 +330,12 @@ namespace Semanticus.Tests
             }
         }
 
+        public static IEnumerable<object[]> RemoteCasesSample_Remember_xmla_still_stor() { var all = RemoteCases().ToArray(); return new[] { all[0] }; }
+        [Theory]
+        [MemberData(nameof(RemoteCasesSample_Remember_xmla_still_stor))]
+        public Task Remember_xmla_still_stores_a_remote_endpoint_sample(string id, string endpoint) => Remember_xmla_still_stores_a_remote_endpoint(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(RemoteCases))]
         public async Task Remember_xmla_still_stores_a_remote_endpoint(string id, string endpoint)
@@ -442,8 +478,14 @@ namespace Semanticus.Tests
             _ = id;
         }
 
+        public static IEnumerable<object[]> AuthoritySpoofCasesSample_Open_live_refuses_a_() { var all = AuthoritySpoofCases().ToArray(); return new[] { all[0], all[5], all[16], all[19] }; }
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(AuthoritySpoofCases))]
+        public Task Open_live_refuses_a_uri_authority_spoof_before_any_credential_every_form(string id, string endpoint) => Open_live_refuses_a_uri_authority_spoof_before_any_credential(id, endpoint);
+
+        [Theory]
+        [MemberData(nameof(AuthoritySpoofCasesSample_Open_live_refuses_a_))]
         public async Task Open_live_refuses_a_uri_authority_spoof_before_any_credential(string id, string endpoint)
         {
             var (sessions, engine) = await BoundAsync();
@@ -470,6 +512,12 @@ namespace Semanticus.Tests
         }
 
 
+        public static IEnumerable<object[]> AuthoritySpoofCasesSample_Connect_xmla_refuses_a_u() { var all = AuthoritySpoofCases().ToArray(); return new[] { all[0] }; }
+        [Theory]
+        [MemberData(nameof(AuthoritySpoofCasesSample_Connect_xmla_refuses_a_u))]
+        public Task Connect_xmla_refuses_a_uri_authority_spoof_before_any_credential_sample(string id, string endpoint) => Connect_xmla_refuses_a_uri_authority_spoof_before_any_credential(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(AuthoritySpoofCases))]
         public async Task Connect_xmla_refuses_a_uri_authority_spoof_before_any_credential(string id, string endpoint)
@@ -495,6 +543,12 @@ namespace Semanticus.Tests
         }
 
 
+        public static IEnumerable<object[]> AuthoritySpoofCasesSample_Remember_xmla_refuses_a_() { var all = AuthoritySpoofCases().ToArray(); return new[] { all[0] }; }
+        [Theory]
+        [MemberData(nameof(AuthoritySpoofCasesSample_Remember_xmla_refuses_a_))]
+        public Task Remember_xmla_refuses_a_spoof_and_writes_no_coordinate_sample(string id, string endpoint) => Remember_xmla_refuses_a_spoof_and_writes_no_coordinate(id, endpoint);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(AuthoritySpoofCases))]
         public async Task Remember_xmla_refuses_a_spoof_and_writes_no_coordinate(string id, string endpoint)

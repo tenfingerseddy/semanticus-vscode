@@ -1,0 +1,2721 @@
+[
+  {
+    "id": "SalesOps|Sales|column|Order ID",
+    "what": "order identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Order Date Key",
+    "what": "YYYYMMDD date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Product Key",
+    "what": "product join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Customer Key",
+    "what": "customer join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Gross Amount",
+    "what": "gross line amount in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Discount Amount",
+    "what": "line discount in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Net Amount",
+    "what": "net line amount in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Units",
+    "what": "units sold on this line",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|column|Promotion Code",
+    "what": "six-digit promotion code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "SalesOps|Sales|measure|Revenue",
+    "what": "net sales dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|measure|Gross Sales",
+    "what": "gross sales dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|measure|Units Sold",
+    "what": "units sold",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|measure|Order Count",
+    "what": "distinct orders",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|measure|Average Selling Price",
+    "what": "dollars per unit",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Sales|measure|Discount Rate",
+    "what": "discount divided by gross sales",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ticked_then_expression_changes"
+  },
+  {
+    "id": "SalesOps|Sales|measure|Revenue Share",
+    "what": "share of total product revenue",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ratio_hidden_behind_measures"
+  },
+  {
+    "id": "SalesOps|Sales|measure|Revenue YoY",
+    "what": "year over year revenue change",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ratio_hidden_behind_measures"
+  },
+  {
+    "id": "SalesOps|Product|column|Product Key",
+    "what": "product join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Product|column|Product Code",
+    "what": "six-digit product code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "SalesOps|Product|column|Category",
+    "what": "product category",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Product|column|List Price",
+    "what": "list price in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Customer|column|Customer Key",
+    "what": "customer join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Customer|column|Segment",
+    "what": "customer segment",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Customer|column|Postal Code",
+    "what": "five-digit postal code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "00000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly five ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "SalesOps|Calendar|column|Date Key",
+    "what": "YYYYMMDD join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "date_key_integer"
+  },
+  {
+    "id": "SalesOps|Calendar|column|Date",
+    "what": "full calendar date",
+    "shipped_format": "yyyy-MM-dd",
+    "unsure": false,
+    "right": [
+      "yyyy-MM-dd",
+      "dd mmm yyyy"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "yyyy"
+    ],
+    "rule_in_words": "Show the complete calendar date, including year, month, and day, rather than a numeric serial or year alone.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "SalesOps|Calendar|column|Calendar Year",
+    "what": "calendar year stored as integer",
+    "shipped_format": "0",
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "year_integer"
+  },
+  {
+    "id": "SalesOps|Calendar|column|Fiscal Year",
+    "what": "fiscal year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "unmarked_date_table"
+  },
+  {
+    "id": "SalesOps|Calendar|column|Fiscal Period",
+    "what": "fiscal period number 1 through 12",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "unmarked_date_table"
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Entry ID",
+    "what": "journal entry identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Posting Date Key",
+    "what": "posting date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Account Key",
+    "what": "account join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Department Key",
+    "what": "department join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Amount",
+    "what": "transaction amount in the row currency",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "The model does not identify a single display unit or currency; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "Multiple display units remain possible from the model alone.",
+    "adversarial": "mixed_currency"
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Reporting USD",
+    "what": "translated amount in USD",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Currency Code",
+    "what": "ISO currency code",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Exchange Rate",
+    "what": "source currency units per USD",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0000",
+      "0.000000"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the exchange rate with four to six decimal places, unscaled and without currency or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|column|Document Number",
+    "what": "six-digit accounting document number",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Reporting Revenue",
+    "what": "reported revenue in USD",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Reporting Expense",
+    "what": "reported expense in USD",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Operating Profit",
+    "what": "operating profit in USD",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Operating Margin",
+    "what": "operating profit divided by revenue",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ratio_hidden_behind_measures"
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Expense Ratio",
+    "what": "expense divided by revenue",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Entry Count",
+    "what": "count of journal entries",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Average FX Rate",
+    "what": "average exchange rate",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0000",
+      "0.000000"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the exchange rate with four to six decimal places, unscaled and without currency or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Journal|measure|Raw Amount",
+    "what": "sum of amounts with multiple currencies",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "The model does not identify a single display unit or currency; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "Multiple display units remain possible from the model alone.",
+    "adversarial": "mixed_currency"
+  },
+  {
+    "id": "FinanceLedger|Accounts|column|Account Key",
+    "what": "account join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Accounts|column|Account Code",
+    "what": "six-digit general ledger account code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "FinanceLedger|Accounts|column|Account Type",
+    "what": "revenue or expense account type",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Accounts|column|Account Name",
+    "what": "account description",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Department|column|Department Key",
+    "what": "department join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Department|column|Cost Center",
+    "what": "five-digit cost center code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "00000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly five ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "FinanceLedger|Department|column|Department Name",
+    "what": "department description",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|FiscalCalendar|column|Date Key",
+    "what": "YYYYMMDD date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|FiscalCalendar|column|Date",
+    "what": "posting calendar date",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "yyyy-MM-dd",
+      "dd mmm yyyy"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "yyyy"
+    ],
+    "rule_in_words": "Show the complete calendar date, including year, month, and day, rather than a numeric serial or year alone.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|FiscalCalendar|column|Fiscal Year",
+    "what": "fiscal year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "year_integer"
+  },
+  {
+    "id": "FinanceLedger|FiscalCalendar|column|Fiscal Quarter",
+    "what": "fiscal quarter number 1 through 4",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Time Calc|column|Name",
+    "what": "calculation item name",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "FinanceLedger|Time Calc|column|Ordinal",
+    "what": "calculation item sort ordinal",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "calculation_group"
+  },
+  {
+    "id": "PeopleOps|Employees|column|Employee Number",
+    "what": "six-digit employee number",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "PeopleOps|Employees|column|Hire Date Key",
+    "what": "hire date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|column|Termination Date Key",
+    "what": "termination date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|column|Department Key",
+    "what": "department join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|column|Annual Salary",
+    "what": "annual salary in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|column|FTE",
+    "what": "full time equivalent fraction, such as 0.75",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00",
+      "#,##0.000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show a noncurrency quantity with two or three decimal places, optionally grouped, without percent or scaling.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|column|Birth Year",
+    "what": "birth year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "year_integer"
+  },
+  {
+    "id": "PeopleOps|Employees|column|Employment Type",
+    "what": "employment type",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Headcount",
+    "what": "people in workforce",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Total Salary",
+    "what": "sum of annual salaries in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Average Salary",
+    "what": "average annual salary in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Total FTE",
+    "what": "full time equivalents",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00",
+      "#,##0.000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show a noncurrency quantity with two or three decimal places, optionally grouped, without percent or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Leaver Count",
+    "what": "employees with a termination date",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Attrition Rate",
+    "what": "leavers divided by headcount",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ticked_then_rename"
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Absence Rate",
+    "what": "absence hours divided by scheduled hours",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Employees|measure|Absence Hours",
+    "what": "hours absent, including partial hours",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00",
+      "#,##0.000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show a noncurrency quantity with two or three decimal places, optionally grouped, without percent or scaling.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Department|column|Department Key",
+    "what": "department join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Department|column|Cost Center",
+    "what": "five-digit cost center code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "00000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly five ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "PeopleOps|Department|column|Department Name",
+    "what": "department description",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Calendar|column|Date Key",
+    "what": "YYYYMMDD date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Calendar|column|Date",
+    "what": "full calendar date",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "yyyy-MM-dd",
+      "dd mmm yyyy"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "yyyy"
+    ],
+    "rule_in_words": "Show the complete calendar date, including year, month, and day, rather than a numeric serial or year alone.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Calendar|column|Year",
+    "what": "calendar year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "unmarked_date_table"
+  },
+  {
+    "id": "PeopleOps|Calendar|column|Month Number",
+    "what": "calendar month number 1 through 12",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Absence|column|Absence ID",
+    "what": "absence record identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Absence|column|Employee Number",
+    "what": "six-digit employee number",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "PeopleOps|Absence|column|Date Key",
+    "what": "absence date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Absence|column|Hours",
+    "what": "hours absent, including partial hours",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00",
+      "#,##0.000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show a noncurrency quantity with two or three decimal places, optionally grouped, without percent or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Absence|column|Scheduled Hours",
+    "what": "scheduled hours, including partial hours",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00",
+      "#,##0.000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show a noncurrency quantity with two or three decimal places, optionally grouped, without percent or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "PeopleOps|Absence|column|Reason",
+    "what": "absence reason",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Snapshot ID",
+    "what": "snapshot row identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Date Key",
+    "what": "snapshot date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Product Key",
+    "what": "product join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Warehouse Key",
+    "what": "warehouse join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|On Hand Units",
+    "what": "units physically on hand",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Safety Stock Units",
+    "what": "target safety stock units",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Inventory Value",
+    "what": "inventory valuation in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|column|Batch Code",
+    "what": "six-digit batch code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "StockFlow|Stock|measure|On Hand",
+    "what": "units on hand",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|measure|Safety Stock",
+    "what": "safety stock units",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|measure|Inventory Value Total",
+    "what": "inventory value in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|measure|Average Unit Cost",
+    "what": "dollars per unit",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|measure|Stock to Safety Multiple",
+    "what": "on hand divided by safety stock, shown as x multiple",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00\"x\"",
+      "0.000\"x\""
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "#,##0"
+    ],
+    "rule_in_words": "Show a dimensionless multiple with two or three decimal places and an x suffix; do not turn it into a percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ratio_hidden_behind_measures"
+  },
+  {
+    "id": "StockFlow|Stock|measure|Reorder Coverage",
+    "what": "days of cover at 24 units per day",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" days\"",
+      "0.00\" days\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show days with one or two decimal places and a days suffix; no percent, currency, or scaling.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "ticked_then_expression_changes"
+  },
+  {
+    "id": "StockFlow|Stock|measure|Low Stock Product Count",
+    "what": "number of products under safety stock",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Stock|measure|Shrinkage Rate",
+    "what": "shortfall divided by safety stock",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Product|column|Product Key",
+    "what": "product join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Product|column|SKU Numeric",
+    "what": "six-digit stock keeping unit code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "ticked_then_deleted"
+  },
+  {
+    "id": "StockFlow|Product|column|Product Label",
+    "what": "product description",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Product|column|Unit Cost",
+    "what": "unit cost in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Product|column|Lead Time Days",
+    "what": "supplier lead time in days",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" days\"",
+      "0.00\" days\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show days with one or two decimal places and a days suffix; no percent, currency, or scaling.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Warehouse|column|Warehouse Key",
+    "what": "warehouse join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Warehouse|column|Location Code",
+    "what": "five-digit location code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "00000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly five ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "StockFlow|Warehouse|column|Region",
+    "what": "warehouse region",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Calendar|column|Date Key",
+    "what": "YYYYMMDD date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Calendar|column|Date",
+    "what": "full snapshot date",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "yyyy-MM-dd",
+      "dd mmm yyyy"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "yyyy"
+    ],
+    "rule_in_words": "Show the complete calendar date, including year, month, and day, rather than a numeric serial or year alone.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "StockFlow|Calendar|column|Year",
+    "what": "snapshot year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "year_integer"
+  },
+  {
+    "id": "WebPulse|Events|column|Event ID",
+    "what": "event identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Session ID",
+    "what": "session identifier",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Event Date Key",
+    "what": "event date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Campaign Key",
+    "what": "campaign join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Device Key",
+    "what": "device join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Event Type",
+    "what": "event type",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Revenue",
+    "what": "commerce revenue in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Page Load Ms",
+    "what": "page load duration in milliseconds",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" ms\"",
+      "0.00\" ms\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show milliseconds with one or two decimal places and an ms suffix; no percent, currency, or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Duration Seconds",
+    "what": "event duration in seconds",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" s\"",
+      "0.00\" s\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show seconds with one or two decimal places and an s suffix; no percent, currency, or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|column|Session Year",
+    "what": "year of session stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "year_integer"
+  },
+  {
+    "id": "WebPulse|Events|measure|Sessions",
+    "what": "distinct sessions",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Purchases",
+    "what": "purchase events",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Checkout Conversion",
+    "what": "purchases divided by sessions",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ticked_then_expression_changes"
+  },
+  {
+    "id": "WebPulse|Events|measure|Bounce Rate",
+    "what": "bounce sessions divided by sessions",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0%",
+      "0.00%"
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Average Page Load",
+    "what": "mean page load in milliseconds",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" ms\"",
+      "0.00\" ms\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show milliseconds with one or two decimal places and an ms suffix; no percent, currency, or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Average Session Duration",
+    "what": "mean session duration in seconds",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.0\" s\"",
+      "0.00\" s\""
+    ],
+    "wrong": [
+      "0",
+      "0.0%",
+      "$0.00"
+    ],
+    "rule_in_words": "Show seconds with one or two decimal places and an s suffix; no percent, currency, or scaling.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Revenue Per Session",
+    "what": "dollars per session",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Events|measure|Return on Ad Spend",
+    "what": "revenue divided by campaign spend, shown as x multiple",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0.00\"x\"",
+      "0.000\"x\""
+    ],
+    "wrong": [
+      "0",
+      "0.00",
+      "0%",
+      "#,##0"
+    ],
+    "rule_in_words": "Show a dimensionless multiple with two or three decimal places and an x suffix; do not turn it into a percent.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "ratio_hidden_behind_measures"
+  },
+  {
+    "id": "WebPulse|Campaign|column|Campaign Key",
+    "what": "campaign join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Campaign|column|Campaign Code",
+    "what": "six-digit campaign code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "000000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "00000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly six ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "WebPulse|Campaign|column|Channel",
+    "what": "marketing channel",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Campaign|column|Spend",
+    "what": "campaign spend in dollars",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "$0.00",
+      "$#,##0.00"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0.00",
+      "0.0%"
+    ],
+    "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Calendar|column|Date Key",
+    "what": "YYYYMMDD date join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Calendar|column|Date",
+    "what": "full event date",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "yyyy-MM-dd",
+      "dd mmm yyyy"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "yyyy"
+    ],
+    "rule_in_words": "Show the complete calendar date, including year, month, and day, rather than a numeric serial or year alone.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Calendar|column|Year",
+    "what": "event year stored as integer",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "0000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.00",
+      "0%"
+    ],
+    "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": "unmarked_date_table"
+  },
+  {
+    "id": "WebPulse|Calendar|column|Week Number",
+    "what": "week number 1 through 53",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "#,0",
+      "#,##0"
+    ],
+    "wrong": [
+      "0.00",
+      "0%",
+      "$#,##0.00"
+    ],
+    "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Device|column|Device Key",
+    "what": "device join key",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "0",
+      "000000"
+    ],
+    "wrong": [
+      "#,0",
+      "#,##0",
+      "0.0",
+      "$0"
+    ],
+    "rule_in_words": "Show this numeric identifier as ungrouped integer digits; never group, round, scale, or add a unit.",
+    "provable_from_model": true,
+    "why": "The expression, name, data type, and model relationships identify the unit.",
+    "adversarial": null
+  },
+  {
+    "id": "WebPulse|Device|column|Device Code",
+    "what": "five-digit device code",
+    "shipped_format": null,
+    "unsure": false,
+    "right": [
+      "00000"
+    ],
+    "wrong": [
+      "0",
+      "#,##0",
+      "0000",
+      "0.00"
+    ],
+    "rule_in_words": "Show exactly five ungrouped integer digits, retaining leading zeroes; no decimals, scale, currency, or percent.",
+    "provable_from_model": false,
+    "why": "The model alone does not establish the complete business meaning or display convention.",
+    "adversarial": "integer_code"
+  },
+  {
+    "id": "WebPulse|Device|column|Device Name",
+    "what": "device class name",
+    "shipped_format": null,
+    "unsure": true,
+    "right": [],
+    "wrong": [],
+    "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+    "provable_from_model": false,
+    "why": "A numeric format cannot be determined for this text field.",
+    "adversarial": null
+  }
+]

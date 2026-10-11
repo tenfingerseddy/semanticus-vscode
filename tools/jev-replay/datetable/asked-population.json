@@ -1,0 +1,16 @@
+{
+  "about": "The labelled models the shipped product asks Jev the date table question about (DateTableFamily.Prepare returns an ask), over labels.json and heldout-labels.json with key.json's declared data as facts. The switch is decided on this set. JevDateTableReplay.The_models_the_product_asks_about_are_the_population_written_beside_the_scorer reads it off the engine and fails, printing the new set, when it changes.",
+  "ids": [
+    "ns-1",
+    "ns-2",
+    "ns-8",
+    "cm-6",
+    "aw-1",
+    "aw-2",
+    "aw-3",
+    "aw-4",
+    "s-8",
+    "h-9",
+    "h-17"
+  ]
+}

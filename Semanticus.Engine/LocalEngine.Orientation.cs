@@ -49,9 +49,10 @@ namespace Semanticus.Engine
                 },
                 Readiness = readiness,
                 Graph = graph,
-                // Model notes are Pro, so a free orientation does not carry the Primer. Reading it here would
-                // hand a free agent the whole document that get_model_primer refuses, at every session start.
-                Primer = hasSession && Entitlement.FeatureGrants.Grants(_entitlement, Entitlement.ProFeature.ModelCreate)
+                // Model notes became free on 22 September, so every orientation carries the Primer. It used to
+                // be withheld here because get_model_primer refused a free read of the same document, and that
+                // refusal is gone.
+                Primer = hasSession
                     ? PrimerBrief.From(await GetPrimerCoreAsync(_sessions.CurrentContext, PrimerLocusFor(_sessions.CurrentContext)))
                     : null,
                 ActiveWork = await BuildActiveWorkAsync(),
@@ -60,9 +61,84 @@ namespace Semanticus.Engine
                        "ai_readiness_scan (findings) · get_model_graph (full ER) · get_workflow_run · get_plan · " +
                        "get_spec · list_calendars. Deliberately omits the full findings list, per-object detail, and DAX bodies.",
             };
-            var actions = SuggestNextActions(summary, hasSession, calTiNoCalendars, graph, readiness);
+            // The suggestions ARE the plan's top three now (Jev M2). The field keeps its name and shape for one
+            // release so nothing reading it breaks, but what fills it is get_next_actions, which is the top of
+            // the same plan the Plan page shows. Two lists of "what to do next" that could disagree is exactly
+            // the thing section 2a set out to kill.
+            //
+            // It falls back to the old fixed ladder when the plan could not be composed. That is not a hedge: a
+            // plan needs a readiness scan, a cleanup sweep and a sidecar read, and orientation must still answer
+            // on a session where one of those cannot run. The fallback is the same four hints this file has
+            // always produced.
+            NextAction[] actions;
+            ModelPlanView plan = null;
+            try
+            {
+                plan = hasSession ? await GetModelPlanAsync().ConfigureAwait(false) : null;
+                actions = plan != null ? TopThree(plan) : Array.Empty<NextAction>();
+            }
+            catch
+            {
+                actions = Array.Empty<NextAction>();
+            }
+
+            if (actions.Length == 0)
+                actions = SuggestNextActions(summary, hasSession, calTiNoCalendars, graph, readiness);
+
+            // The tasks the person gave the assistant (Plan at the heart, contract 6.2), read off the same plan, so
+            // the summary, the fold line and the Plan page cannot disagree. Omitted when there are none.
+            var tasks = TasksBrief(plan);
+            if (tasks != null)
+            {
+                summary.ActiveWork ??= new ActiveWorkBrief();
+                summary.ActiveWork.Tasks = tasks;
+                // A draft that needs the person says so first (composer contract 5.2), then the parts waiting.
+                foreach (var d in (tasks.Drafts ?? Array.Empty<Jev.ActiveDraftRef>()).Where(d => d.State == PlanStateWords.NeedsYou).Reverse())
+                    actions = new[]
+                    {
+                        new NextAction { Op = "get_draft", Args = "draftId: " + d.DraftId, Reason = "'" + d.Title + "' needs the person: " + d.Note },
+                    }.Concat(actions).ToArray();
+                if (tasks.Ready is { Length: > 0 } ready)
+                    actions = new[]
+                    {
+                        new NextAction
+                        {
+                            Op = "list_assistant_requests",
+                            Reason = "Your person has " + ready.Length + (ready.Length == 1 ? " task" : " tasks")
+                                   + " ready for you on the Plan. Call list_assistant_requests.",
+                        },
+                    }.Concat(actions).ToArray();
+            }
+
             summary.SuggestedNextActions = actions.Length == 0 ? null : actions;   // omit when terminal (§1: no busywork)
             return summary;
+        }
+
+        /// <summary>ActiveWork.Tasks (contract 6.2): the switch, the Ready tasks for the assistant with whether each
+        /// is independent, how many wait, and which are held. Null when there is nothing to say.</summary>
+        internal static Jev.ActiveTasksBrief TasksBrief(ModelPlanView plan)
+        {
+            if (plan == null) return null;
+            var offer = Jev.PlanOffer.From(plan);
+            var paused = offer.Switch == PlanAssistantQueue.Paused;
+            var open = (plan.Items ?? Array.Empty<ModelPlanItem>())
+                .Count(i => PlanTasks.IsTaskId(i.Id) && i.Doer == PlanDoers.Assistant && PlanStateWords.IsOpen(i.StateWord));
+            var listed = offer.Listed();
+            var drafts = DraftBriefs(plan);
+            if (listed.Count == 0 && offer.Waiting.Count == 0 && offer.Claimed.Count == 0 && !(paused && open > 0) && drafts.Length == 0) return null;
+            return new Jev.ActiveTasksBrief
+            {
+                Switch = offer.Switch,
+                Ready = listed.Count == 0 ? null : listed.Select(r => new Jev.ActiveTaskRef
+                {
+                    Id = r.Id, Title = r.Title, Independent = offer.IsIndependent(r.Id),
+                    Draft = r.OriginLink?.Kind == PlanOriginKinds.Draft ? r.OriginLink.Ref : null,
+                }).ToArray(),
+                Drafts = drafts.Length == 0 ? null : drafts,
+                Waiting = offer.Waiting.Count,
+                Claimed = offer.Claimed.Count == 0 ? null : offer.Claimed.Select(r => new Jev.ActiveTaskRef { Id = r.Id, Title = r.Title }).ToArray(),
+                Note = paused ? "Tasks are paused by the person." : null,
+            };
         }
 
         /// <summary>Active workflow runs + a loaded change-plan's size + a loaded spec's name — each omitted
@@ -116,7 +192,7 @@ namespace Semanticus.Engine
         /// <summary>The current session's experience-log file, mirroring ExperienceTee's placement rule: beside
         /// the model for a durable file-backed session; the workspace fallback for a live/unsaved (ephemeral)
         /// anchor, or the GLOBAL store when there's no workspace either — so orientation/harness_report read back
-        /// exactly where the tee wrote (an ephemeral-no-workspace session's log now lands in %USERPROFILE%, not /dev/null).</summary>
+        /// exactly where the tee wrote (an ephemeral-no-workspace session's log now lands in the per-user Semanticus home, not /dev/null).</summary>
         private string CurrentExperienceFile()
         {
             var workspaceFallback = _workspaceDir == null

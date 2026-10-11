@@ -37,6 +37,7 @@ namespace Semanticus.Tests
             {
                 using var engine = new LocalEngine(new SessionManager(), new Pro());
                 await engine.OpenAsync(bim);
+                await FrozenStarter.UseAsync(engine, "governed-rename");   // lane l9-finish: the guided gates, from the frozen guided file
                 var admission = await engine.CheckWorkflowAsync("governed-rename");
                 Assert.True(admission.Ok, string.Join(" | ", admission.Findings.Select(x => x.Message)));
                 var def = await engine.GetWorkflowAsync("governed-rename");

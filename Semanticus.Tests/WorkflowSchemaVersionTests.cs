@@ -34,9 +34,9 @@ namespace Semanticus.Tests
         [Fact]
         public void A_future_schema_version_is_refused_with_the_verbatim_reason()
         {
-            var def = WorkflowParser.Parse(File(3));
+            var def = WorkflowParser.Parse(File(4));
             Assert.Equal(
-                "this workflow file says schemaVersion: 3. This Semanticus reads up to 2. Update Semanticus, "
+                "this workflow file says schemaVersion: 4. This Semanticus reads up to 3. Update Semanticus, "
                 + "or open the file with the version that wrote it. Nothing was run.",
                 def.Error);
             // and it must NOT have been quietly absorbed as provenance, which is what happens today
@@ -280,6 +280,19 @@ namespace Semanticus.Tests
             var data = new TheoryData<string, string>();
             foreach (var (scope, key) in ExpectedReservations) data.Add(scope, key);
             return data;
+        }
+
+        // Honesty lane: format 3 reads a step's 'instructions:' (as its brief), so a version 2 file that uses it is
+        // told to upgrade, never that the key is not built.
+        [Fact]
+        public void V2_step_instructions_points_at_version_3_and_never_says_not_built()
+        {
+            var def = WorkflowParser.Parse(FileWithKeyIn("step", "instructions"));
+            Assert.NotNull(def.Error);
+            Assert.Contains("'instructions:' is reserved", def.Error);
+            Assert.Contains("version 3", def.Error);
+            Assert.DoesNotContain("not built", def.Error);
+            // That version 3 does read it is WorkflowV3FormatTests.Instructions_is_claimed_in_v3_and_still_refused_in_v2.
         }
 
         [Fact]

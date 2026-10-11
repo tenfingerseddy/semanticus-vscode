@@ -12,7 +12,9 @@ namespace Semanticus.Engine.Evidence
         public string Note { get; set; }
         public string Error { get; set; }
 
-        public static EvidenceArtifact Seal(EvidenceDoc doc)
+        public static EvidenceArtifact Seal(EvidenceDoc doc) => Seal(doc, null);
+
+        public static EvidenceArtifact Seal(EvidenceDoc doc, TimeZoneInfo zone)
         {
             if (doc == null) throw new ArgumentNullException(nameof(doc));
             doc.Validate();
@@ -20,7 +22,7 @@ namespace Semanticus.Engine.Evidence
             return new EvidenceArtifact
             {
                 Json = EvidenceHash.CanonicalJson(doc),
-                Html = EvidenceRenderer.Render(doc),
+                Html = EvidenceRenderer.Render(doc, zone),
                 ContentHash = doc.ContentHash,
             };
         }

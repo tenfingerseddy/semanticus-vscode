@@ -11,6 +11,16 @@ namespace Semanticus.Engine.Entitlement
     {
         [JsonPropertyName("sub")] public string Sub { get; set; }         // licensed to (email/name) — display only
         [JsonPropertyName("tier")] public string Tier { get; set; }       // "pro" (anything else is treated as free)
+
+        /// <summary>The stable subscription id this token belongs to, when the minter had one (Stripe's
+        /// subscription id today). OPTIONAL by design: every token issued before the subscription slice carries
+        /// no such claim and must keep verifying exactly as it did, so it is null there and is left OUT of the
+        /// signed payload rather than written as null. It exists because a display email is not a key: a
+        /// renewal, a reissue and a replaced card each produce a fresh token, and only a stable id maps those
+        /// onto one subscription for eligibility and for the customer-portal link. The engine reads it and
+        /// exposes it and nothing more; no engine path calls out with it.</summary>
+        [JsonPropertyName("sid")] public string Sid { get; set; }
+
         [JsonPropertyName("iat")] public long Iat { get; set; }           // issued-at (unix seconds)
         [JsonPropertyName("exp")] public long Exp { get; set; }           // expiry (unix seconds; 0 = perpetual)
         [JsonPropertyName("features")] public string[] Features { get; set; }

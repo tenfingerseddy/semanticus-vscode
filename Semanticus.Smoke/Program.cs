@@ -154,7 +154,25 @@ namespace Semanticus.Smoke
             if (!ok) _failures++;
         }
 
+
+        // THE SMOKE OPENS A COPY. Opening the vendored AdventureWorks.bim in place writes the model's sidecar (plan
+        // memory, evidence, report scope, workflow settings) into .semanticus/ beside it, which is inside the
+        // TabularEditor submodule and left it dirty after every run. The copy lives in a scratch folder whose name
+        // does NOT start with "semanticus-", because that prefix marks an ephemeral anchor (ExperienceLog).
+        private static string _testBimCopy;
         private static string FindTestBim()
+        {
+            if (_testBimCopy != null) return _testBimCopy;
+            var source = FindVendoredTestBim();
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return _testBimCopy = copy;
+        }
+
+        private static string FindVendoredTestBim()
         {
             // Walk up from the executable until we find the sibling TabularEditor donor clone.
             var dir = new DirectoryInfo(AppContext.BaseDirectory);

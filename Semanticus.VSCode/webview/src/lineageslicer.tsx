@@ -48,26 +48,26 @@ export function MultiSelect({ label, options, selected, onChange, width = 240, t
         <span aria-hidden style={{ opacity: 0.7 }}>▾</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>
-          <div className="p-1.5 border-b" style={{ borderColor: 'var(--sem-border)' }}>
+        <div className="absolute z-20 mt-1 rounded-(--sem-radius-control) overflow-hidden" style={{ width, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>
+          <div className="p-2 border-b" style={{ borderColor: 'var(--sem-border)' }}>
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${label.toLowerCase()}…`} spellCheck={false}
-              className="w-full text-[12px] px-2 py-1 rounded outline-none" style={{ background: 'var(--sem-bg)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-            <div className="flex items-center justify-between mt-1 px-0.5">
-              <button onMouseDown={(e) => { e.preventDefault(); selectAllFiltered(); }} className="text-[10px] hover:underline" style={{ color: 'var(--sem-accent)' }}>Select all{ql ? ' shown' : ''}</button>
-              <span className="text-[10px] tnum" style={{ color: 'var(--sem-muted)' }}>{count} selected</span>
-              <button onMouseDown={(e) => { e.preventDefault(); onChange(new Set()); }} className="text-[10px] hover:underline" style={{ color: 'var(--sem-muted)' }}>Clear</button>
+              className="w-full text-xs px-2 py-1 rounded outline-none" style={{ background: 'var(--sem-ground)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+            <div className="flex items-center justify-between mt-1 px-1">
+              <button onMouseDown={(e) => { e.preventDefault(); selectAllFiltered(); }} className="sem-btn sem-btn-sm sem-btn-quiet">Select all{ql ? ' shown' : ''}</button>
+              <span className="text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>{count} selected</span>
+              <button onMouseDown={(e) => { e.preventDefault(); onChange(new Set()); }} className="text-(length:--sem-text-label) hover:underline" style={{ color: 'var(--sem-muted)' }}>Clear</button>
             </div>
           </div>
           <div className="overflow-auto" style={{ maxHeight: 260 }}>
-            {filtered.length === 0 && <div className="text-[11px] px-2 py-3 text-center" style={{ color: 'var(--sem-muted)' }}>No matches</div>}
+            {filtered.length === 0 && <div className="text-(length:--sem-text-label) px-2 py-3 text-center" style={{ color: 'var(--sem-muted)' }}>No matches</div>}
             {filtered.map((o) => {
               const on = selected.has(o.value);
               return (
-                <label key={o.value} className="flex items-center gap-2 px-2 py-1 text-[12px] cursor-pointer hover:bg-[var(--sem-surface-2)]" style={{ color: 'var(--sem-fg)' }}>
+                <label key={o.value} className="flex items-center gap-2 px-2 py-1 text-xs cursor-pointer hover:bg-[var(--sem-hover)]" style={{ color: 'var(--sem-fg)' }}>
                   <input type="checkbox" checked={on} onChange={() => toggle(o.value)} style={{ accentColor: 'var(--sem-accent)' }} />
-                  {o.kind && <span className="shrink-0" style={{ color: resolveColor(KIND_COLOR[o.kind], '#9aa0aa') }}>{KIND_GLYPH[o.kind] ?? '•'}</span>}
+                  {o.kind && <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[o.kind] ?? '•'}</span>}
                   <span className="truncate flex-1">{o.label}</span>
-                  {o.sub && <span className="shrink-0 text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{o.sub}</span>}
+                  {o.sub && <span className="shrink-0 text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)', maxWidth: 90 }}>{o.sub}</span>}
                 </label>
               );
             })}

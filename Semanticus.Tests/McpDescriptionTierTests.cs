@@ -100,13 +100,41 @@ namespace Semanticus.Tests
             Assert.True(bad.Length == 0, "these Pro descriptions use an em dash: " + string.Join(", ", bad));
         }
 
-        /// <summary>get_entitlement is the agent's own map of what it may call, so it names the four wire ids.</summary>
+        /// <summary>get_entitlement is the agent's own map of what it may call, so it names every wire id it can
+        /// report, and it names the paid things that have no wire id rather than leaving an agent to find out by
+        /// being refused.</summary>
         [Fact]
-        public void get_entitlement_describes_the_four_features()
+        public void get_entitlement_describes_every_wire_id_and_what_has_none()
         {
             var d = ToolDescriptions().Single(x => x.Tool == "get_entitlement").Description;
-            foreach (var f in ProFeatures.All) Assert.Contains(ProFeatures.WireId(f), d, StringComparison.Ordinal);
+            foreach (var f in ProFeatures.TabFeatures)
+                Assert.Contains(ProFeatures.WireId(f), d, StringComparison.Ordinal);
+            Assert.Contains("route_ask", d, StringComparison.Ordinal);
+            Assert.Contains("no wire id", d, StringComparison.Ordinal);
             Assert.DoesNotContain("Pro unlocks the one-click BULK apply", d, StringComparison.Ordinal);
+            Assert.DoesNotContain("modelCreate", d, StringComparison.Ordinal);
+            Assert.DoesNotContain("publishedAdvanced", d, StringComparison.Ordinal);
+        }
+
+        /// <summary>The eight tabs Kane freed on 22 September, checked at the agent door rather than only on the
+        /// map: an agent that still reads "Tests is a Semanticus Pro feature" will keep telling people to buy
+        /// something they already have. One operation per freed tab, plus the phrase sweep above for the rest.</summary>
+        [Theory]
+        [InlineData("get_spec")] [InlineData("build_model_from_spec")]
+        [InlineData("list_calendars")] [InlineData("daxlib_install")]
+        [InlineData("get_partition_m")] [InlineData("set_partition_m")]
+        [InlineData("get_doc_outline")] [InlineData("set_doc_section")]
+        [InlineData("list_insights")] [InlineData("get_model_primer")]
+        [InlineData("run_tests")] [InlineData("save_test")] [InlineData("delete_test")]
+        [InlineData("save_evidence")] [InlineData("list_evidence")]
+        [InlineData("git_push")] [InlineData("fabric_git_status")]
+        [InlineData("cicd_publish")] [InlineData("create_data_agent")]
+        public void A_tab_that_became_free_no_longer_sells_itself(string operation)
+        {
+            var d = ToolDescriptions().Single(x => x.Tool == operation).Description;
+            Assert.DoesNotContain(Phrase, d, StringComparison.Ordinal);
+            foreach (var retired in new[] { "Create in Model is", "Tests is a", "Saved reports is a", "Advanced publishing is a" })
+                Assert.DoesNotContain(retired, d, StringComparison.Ordinal);
         }
 
         /// <summary>The new shared free projection tells the agent it is the free way to see source usage.</summary>

@@ -42,12 +42,18 @@ namespace Semanticus.Engine
         /// restart. Null for cloud XMLA, real SSAS, and uncapturable — those keep the endpoint|database identity.
         /// Set once at open.</summary>
         public string LocalName { get; }
-        /// <summary>The full .pbix PATH behind this LOCAL open, when the owning Desktop's command line exposed it
-        /// (double-click/shell opens do; Desktop's own open dialog does not). Stronger than <see cref="LocalName"/>:
-        /// distinct across same-named files. Null for cloud XMLA, real SSAS, and uncapturable. Set once at open.</summary>
+        /// <summary>A .pbix path for this LOCAL open. NEVER set by open_local or connect_local (the join's ruling, 30 Sep):
+        /// Desktop's command line names the file Desktop was started with, which the window may no longer show, so it is
+        /// never a model's identity (LocalDesktop's class comment). The decision switches ignore it; the Primer still
+        /// honours one only so its tests can reach the path claims a Primer stamp written by an earlier build carries.</summary>
         public string LocalPath { get; }
-        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null, string account = null, string localName = null, string localPath = null, string homeAccountId = null)
-        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; Account = account; LocalName = localName; LocalPath = localPath; HomeAccountId = homeAccountId; }
+        /// <summary>This model was opened through the Power BI Desktop door (open_local), whether or not Desktop gave its
+        /// title. Its port and database change every time Desktop starts, so with neither captured nothing says
+        /// which model it is after a restart, and a decision switch keeps its offs where every such model reads them
+        /// (LocalEngine.Decisions.cs). Set once at open.</summary>
+        public bool LocalDesktop { get; }
+        public LiveOrigin(string endpoint, string database, string tenantId, string authMode = null, string account = null, string localName = null, string localPath = null, string homeAccountId = null, bool localDesktop = false)
+        { Endpoint = endpoint; Database = database; TenantId = tenantId; AuthMode = authMode; Account = account; LocalName = localName; LocalPath = localPath; HomeAccountId = homeAccountId; LocalDesktop = localDesktop || localName != null || localPath != null; }
     }
 
     public sealed class TreeNode
@@ -74,6 +80,12 @@ namespace Semanticus.Engine
         public string Kind { get; set; }      // "update" | "add" | "remove" | "structure"
         public string Ref { get; set; }
         public string[] Props { get; set; }
+        /// <summary>The value before the change, as text: capped at 2000 characters with "(cut)", "(hidden)" for a
+        /// secret, and a stand-in for Power Query text (<see cref="ChangeValues"/>). Null on an add, and when TOM
+        /// gave no value.</summary>
+        public string Before { get; set; }
+        /// <summary>The value after the change, under the same rules. Null on a remove.</summary>
+        public string After { get; set; }
     }
 
     public sealed class UndoState
@@ -81,6 +93,31 @@ namespace Semanticus.Engine
         public bool CanUndo { get; set; }
         public bool CanRedo { get; set; }
         public bool AtCheckpoint { get; set; }
+        /// <summary>How many steps TE2's undo stack holds now (<c>UndoManager.UndoSteps</c>). The edit ledger lines
+        /// its entries up against this count (contract 8.5), and a client can too.</summary>
+        public int Steps { get; set; }
+        /// <summary>How many steps TE2's redo stack holds now (<c>UndoManager.RedoSteps</c>).</summary>
+        public int RedoSteps { get; set; }
+    }
+
+    /// <summary>A different model became the open one (open, create, a unified live or local open, a working copy, a
+    /// restore). Rides <c>session/didChange</c>, not <c>model/didChange</c>: no object moved and no undo step was taken,
+    /// the whole model was replaced. Sent once the op is complete (after a unified open's query connection is bound),
+    /// so a client that re-reads the session on receipt sees the finished state.</summary>
+    public sealed class SessionChangeNotification
+    {
+        public string SessionId { get; set; }
+        public long Revision { get; set; }
+        public string ModelName { get; set; }
+        public string Source { get; set; }
+        public int Tables { get; set; }
+        public int Measures { get; set; }
+        public bool LiveConnected { get; set; }
+        /// <summary>"open" | "create" | "open_live" | "open_local" | "working_copy" | "restore".</summary>
+        public string Reason { get; set; }
+        /// <summary>The pipe connection that asked for the swap (see <see cref="ChangeWriter"/>); null from the in-process
+        /// MCP door or the engine itself. That connection already has the answer, so it is not sent this. Internal.</summary>
+        internal string Writer { get; set; }
     }
 
     public sealed class ChangeNotification
@@ -89,12 +126,56 @@ namespace Semanticus.Engine
         public long Revision { get; set; }
         public string Origin { get; set; }    // "human" | "agent" | "system"
         public string Label { get; set; }
+        /// <summary>Who made the edit, in the words the History shows (contract 8.2): "you" | "assistant" |
+        /// "semanticus" | "workflow". From the <see cref="Cause"/> first, then the origin. <see cref="Origin"/>
+        /// stays exactly as it was, so every existing reader keeps working.</summary>
+        public string By { get; set; }
+        /// <summary>The plan item, workflow run, draft or task the commit served, stamped inside the same call that
+        /// wrote it (contract 8.4). Null for an edit that served none of them.</summary>
+        public ChangeCauseInfo Cause { get; set; }
         public ChangeDelta[] Deltas { get; set; }
         public UndoState Undo { get; set; }
         /// <summary>The health movement THIS commit caused (grade letter, net-new findings on touched objects,
         /// blast-radius count). Pro-only and threshold-suppressed: null on the free tier and below threshold —
         /// additive, so pre-feature clients simply never see it (see <see cref="HealthDelta"/>).</summary>
         public HealthDelta Health { get; set; }
+        /// <summary>F-246: who sent this commit (a pipe connection id, or <see cref="ChangeJournal.InProcessReader"/>
+        /// for this process's MCP door); null from inside the engine. Internal, so it never reaches either wire.</summary>
+        internal string Writer { get; set; }
+        /// <summary>True only for a tracked commit. A save or a scope change rides the bus too but moves no object.</summary>
+        internal bool IsCommit { get; set; }
+        /// <summary>True for the news that another model is open now (LocalEngine.PublishModelSwapped). It moves nothing
+        /// and is not an edit, so the experience log leaves it out. Internal: never on either wire.</summary>
+        internal bool IsSwap { get; set; }
+        /// <summary>TE2's undo step count just before this commit ran. With <see cref="UndoState.Steps"/> after it,
+        /// the edit ledger knows whether the commit added a step and which one. Internal: never on either wire.</summary>
+        internal int StepsBefore { get; set; }
+        /// <summary>"undo" or "redo" when the commit only walked the history (one step or to a point); null for an
+        /// edit. The ledger writes no entry for a walk, it flips the entries the walk crossed. On the wire so a reader
+        /// (the status bar's health chip) knows a walk from an edit without reading the label's words.</summary>
+        public string Replay { get; set; }
+    }
+
+    /// <summary>F-246, the user-edit fold: what other writers committed since an assistant's previous tool call.
+    /// <see cref="McpHealthAppender"/> turns it into one terse line on the next tool result.</summary>
+    public sealed class ForeignChanges
+    {
+        /// <summary>Object refs in commit order (and "undo" or "redo" where a person stepped the history), capped.</summary>
+        public string[] Items { get; set; }
+        /// <summary>How many more items there were past the cap.</summary>
+        public int More { get; set; }
+        /// <summary>The reader fell so far behind that the oldest of these changes are no longer listed.</summary>
+        public bool Truncated { get; set; }
+        /// <summary>A person made at least one of them (in Studio).</summary>
+        public bool Studio { get; set; }
+        /// <summary>Another assistant made at least one of them.</summary>
+        public bool Assistant { get; set; }
+        /// <summary>The model revision after the newest of them.</summary>
+        public long Revision { get; set; }
+        /// <summary>The spec-first start plan moved since this reader's previous call and somebody else moved it: one
+        /// whole sentence, ready to append (built by Semanticus.Engine.StartPlan.StartPlanDoors.FoldClause). Null when it did not. Additive:
+        /// a reader built before the start plan ignores it, and a model change and a plan change can arrive together.</summary>
+        public string StartPlan { get; set; }
     }
 
     /// <summary>Incremental progress for a long-running read op. Broadcast separately from model changes because
@@ -423,7 +504,7 @@ namespace Semanticus.Engine
         public int FunctionCount { get; set; }
     }
 
-    /// <summary>Result of daxlib_install (Advanced Modelling, Pro). One atomic, undoable transaction installs the
+    /// <summary>Result of daxlib_install (Advanced modelling). One atomic, undoable transaction installs the
     /// package's UDFs (and any dependencies, deps-first); <see cref="Skipped"/> are functions that already existed
     /// (when replaceExisting=false). <see cref="Warning"/> surfaces non-fatal notes (version conflict / cycle break).</summary>
     public sealed class DaxLibInstallResult
@@ -591,6 +672,14 @@ namespace Semanticus.Engine
         public long Revision { get; set; }
         public string[] Applied { get; set; }
         public string[] Skipped { get; set; }
+        /// <summary>Refs of scripted blocks the person never edited whose object changed after the script was made: nothing
+        /// of theirs to write, so they stay as they are now (they are not failures, and not in Skipped).</summary>
+        public string[] LeftAsIs { get; set; } = System.Array.Empty<string>();
+        /// <summary>Refs of blocks the person edited whose object ALSO changed after the script was made. Nothing was written
+        /// for them. Pass them back as applyAnyway to write the person's version of exactly those blocks, as written.</summary>
+        public string[] Conflicts { get; set; } = System.Array.Empty<string>();
+        /// <summary>Plain sentences about blocks left as they are and conflicts held back (always true of what was written).</summary>
+        public string[] Notes { get; set; } = System.Array.Empty<string>();
     }
 
     /// <summary>One editable property of a model object, reflected from the TOM wrapper's ComponentModel metadata —
@@ -649,6 +738,9 @@ namespace Semanticus.Engine
         public string Path { get; set; }
         public string Format { get; set; }
         public int FileCount { get; set; }
+        /// <summary>Set when a first save went somewhere other than where it was aimed: one plain sentence saying where it went and
+        /// why ("Saved to ..., next to 'Northstar', so that model is left as it was."). Null when the save went where it was asked.</summary>
+        public string Note { get; set; }
     }
 
     /// <summary>Result of a metadata-only deploy of the open session to a live XMLA model (deploy_live).</summary>
@@ -744,22 +836,6 @@ namespace Semanticus.Engine
         public string Error { get; set; }          // set when a commit fails (nothing was executed); never carries a secret
     }
 
-    /// <summary>Result of validate_dax: a syntactic/reference check of a DAX expression against the open model.
-    /// Valid=false only when there is a structural ERROR (unbalanced brackets); unknown refs are warnings.</summary>
-    public sealed class DaxValidation
-    {
-        public bool Valid { get; set; }
-        public DaxDiagnostic[] Diagnostics { get; set; } = System.Array.Empty<DaxDiagnostic>();
-    }
-
-    public sealed class DaxDiagnostic
-    {
-        public string Severity { get; set; }   // "error" | "warning"
-        public string Message { get; set; }
-        public int Line { get; set; }           // 1-based
-        public int Column { get; set; }         // 1-based
-    }
-
     // ---- Verified Edits: optimize_measure (the enforced author→prove→benchmark→apply workflow) ----------
     // The engine RACES >=2 candidate rewrites: proves each equivalent to the current body over a filter-context
     // matrix, benchmarks ONLY the proven-equivalent ones (correctness gates speed), and applies the fastest that
@@ -848,8 +924,8 @@ namespace Semanticus.Engine
         public int[] NonAdditiveScenarios { get; set; } = System.Array.Empty<int>();
     }
 
-    /// <summary>Verified Mode (Pro) — the human-controlled runtime toggle. When Enabled, mutating DAX edits are
-    /// verified before they commit (v1: validated — invalid DAX refused). Available = the tier may turn it on (Pro).</summary>
+    /// <summary>Record verified edits: the human-controlled audit switch. Every DAX write is checked whatever it says;
+    /// when Enabled, each single-object DAX write that passes also gets a Verified Edits record. Available is always true.</summary>
     public sealed class VerifiedModeState
     {
         public bool Enabled { get; set; }
@@ -872,6 +948,9 @@ namespace Semanticus.Engine
         public string ModelName { get; set; }
         public string Source { get; set; }
         public bool HasUnsavedChanges { get; set; }
+        /// <summary>The person's own unsaved work: <see cref="HasUnsavedChanges"/> without the marker that records Jev's permission. The window
+        /// warns about this one (the status line, the close question); a model whose only unsaved change is that marker has lost nothing of theirs.</summary>
+        public bool HasUnsavedEdits { get; set; }
         public bool DiskDiverged { get; set; }
         public int Tables { get; set; }
         public int Measures { get; set; }
@@ -890,6 +969,13 @@ namespace Semanticus.Engine
         public string QueryConnectionId { get; set; } // stable id in the shared connection/permissions registry
         public string CurrentAccount { get; set; } // the account (UPN) the live-bound/queried model is signed in as — for the status bar's identity chip; null = unknown
         public string CurrentTenant { get; set; }  // the tenant that account/connection belongs to, when known
+        /// <summary>Which MODEL this session is, as one string that survives an engine restart, a cold start and a re-open from a new snapshot
+        /// folder, and that two different models never share: <c>desktop:&lt;stem&gt;</c>, <c>live:&lt;endpoint&gt;|&lt;database&gt;</c>, <c>file:&lt;path&gt;</c>
+        /// or <c>unsaved:&lt;guid&gt;</c> (LocalEngine.ModelIdentityOf). The key a person's held, unsaved words are filed under. Null when no model is open.
+        /// Never a session id, which is a per-launch handle and names no model.</summary>
+        public string ModelIdentity { get; set; }
+        /// <summary>A name for that model a person can read (the dataset, the Desktop window's stem, the file's name), for a list of held words. Display only.</summary>
+        public string ModelLabel { get; set; }
     }
 
     // ---- Model graph (powers the ER/relationship diagram + structure overview) -----------------
@@ -930,7 +1016,8 @@ namespace Semanticus.Engine
     /// <summary>One table's position on the diagram canvas. The engine-authoritative key is <see cref="LineageTag"/>
     /// (stable across renames; null on CL&lt;1540 models, where <see cref="Name"/> is the fallback key). <see cref="Ref"/>
     /// is set by get_layout so the UI can map a position back to the live object; it is not persisted. Width/Height are
-    /// 0 when unsized (the UI uses its default node box). Persisted to the <c>.semanticus/layout.json</c> sidecar.</summary>
+    /// 0 when unsized (the UI uses its default node box). On save_layout a 0 means "not sent", so the stored size is
+    /// kept (a position-only save never clears a box). Persisted to the <c>.semanticus/layout.json</c> sidecar.</summary>
     public sealed class LayoutNode
     {
         public string Ref { get; set; }
@@ -940,6 +1027,12 @@ namespace Semanticus.Engine
         public double Y { get; set; }
         public double Width { get; set; }
         public double Height { get; set; }
+        /// <summary>True: the Diagram leaves this table where it is when it moves tables apart to make room for the
+        /// lines (the person put it back with Undo, or the assistant asked for exactly this spot). Null is not kept. A
+        /// save of the table without it clears it, since the table was moved.</summary>
+        [Newtonsoft.Json.JsonProperty(NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public bool? Keep { get; set; }
     }
 
     /// <summary>The reconciled diagram layout for the open model: a position for every table that has a stored one
@@ -1161,7 +1254,7 @@ namespace Semanticus.Engine
         public int Remaining { get; set; }            // = Unfixed.Length, so a token-light caller can see it
     }
 
-    /// <summary>One auto-fixable finding a bpa_fix_all press could not clear, and why.</summary>
+    /// <summary>One auto-fixable finding an apply_safe_fixes press (system='bpa') could not clear, and why.</summary>
     public sealed class BpaUnfixed
     {
         public string RuleId { get; set; }
@@ -1171,20 +1264,20 @@ namespace Semanticus.Engine
         public string Reason { get; set; }
     }
 
-    /// <summary>Result of load_bpa_rules / reset_bpa_rules: how the active BPA rule set changed.</summary>
+    /// <summary>Result of load_rules / reset_rules with system='bpa': how the active BPA rule set changed.</summary>
     public sealed class BpaRulesInfo
     {
         public long Revision { get; set; }
         public string Source { get; set; }        // "file" | "url" | "inline" | "reset"
         public int Loaded { get; set; }           // rules parsed from this load (0 for reset)
-        public int StandardRules { get; set; }    // the bundled standard base count
+        public int StandardRules { get; set; }    // the base every scan runs: the bundled standard set plus the engine's own built-in rules (join 9, J3)
         public int ModelRules { get; set; }       // custom rules now embedded on the model annotation
         public int ActiveRules { get; set; }      // effective rules a scan will use (standard + model, de-duped)
         public string Note { get; set; }
         public string Warning { get; set; }       // e.g. the model's prior custom rules were unparseable and not preserved
     }
 
-    /// <summary>Result of load_readiness_rules / reset_readiness_rules: how the custom readiness rule set changed.
+    /// <summary>Result of load_rules / reset_rules with system='air': how the custom readiness rule set changed.
     /// Custom rules are ADDITIVE (a built-in rule id can never be overridden), so Active = Builtin + Model.</summary>
     public sealed class ReadinessRulesInfo
     {

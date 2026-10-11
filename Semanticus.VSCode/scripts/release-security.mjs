@@ -39,12 +39,85 @@ const SECRET_ASSIGNMENT_RULES = [
   ['hardcoded-generic-secret', /\b(?:password|pwd|client[_-]?secret|clientSecret|api[_-]?key|apiKey)\b["']?\s*[:=]\s*(?:"(?![^"\r\n]*\$\{)[^"\r\n]{12,}"|'(?![^'\r\n]*\$\{)[^'\r\n]{12,}'|(?!(?:\/)?(?:password|pwd|access[_-]?token)\s*=)(?!\$?\{[A-Za-z_][A-Za-z0-9_.]*\}(?=$|[\s"'<>;,]))[^\s"'<>;,=]{12,}={0,2})/i],
 ];
 
+// Real personal identity that must never ship or be published: the owner's work address, its local part, its
+// employer domain, and the first-name placeholder that stood in for it. They are held as SHA-256 digests so this
+// file, which is itself public, does not print what it forbids. Only fictional Contoso-style names belong in
+// source, tests, fixtures and docs. Every address, bare local part and dot-suffix of every domain-shaped token
+// is hashed and compared, so a subdomain or a URL host that carries the domain is caught too.
+const PERSONAL_IDENTITY_SHA256 = new Set([
+  '2ae1c2dc923fc203a4d2067844440a3d322aa1d8c5d803553e3ed4247c4bfa5d', // the work domain
+  'a1dc98d9c3e971a3b249f573b13f3ed452a1e93c4ef79b3ed8c1824c64e49cce', // the work address's local part
+  '91dcc1fa5262276e4dd907c69f4a322e530499681d299daaa420ebf6449a5876', // the first-name Contoso placeholder
+]);
+
+const identityDigestCache = new Map();
+function identityDigest(candidate) {
+  let digest = identityDigestCache.get(candidate);
+  if (digest === undefined) {
+    digest = createHash('sha256').update(candidate).digest('hex');
+    if (identityDigestCache.size < 200000) identityDigestCache.set(candidate, digest);
+  }
+  return digest;
+}
+
+function identityCandidates(token) {
+  const candidates = [token];
+  const at = token.indexOf('@');
+  const local = at >= 0 ? token.slice(0, at) : token;
+  const domain = at >= 0 ? token.slice(at + 1) : token;
+  if (at >= 0 && local) candidates.push(local);
+  const labels = domain.split('.');
+  for (let i = 1; i < labels.length - 1; i++) candidates.push(labels.slice(i).join('.'));
+  if (at >= 0 && domain) candidates.push(domain);
+  return candidates;
+}
+
+// Returns 'personal-identity' when any view carries one of the forbidden identity strings, else null. The digest
+// set is injectable so the test can prove the mechanism on a fictional value without naming the real one.
+export function personalIdentityFinding(content, digests = PERSONAL_IDENTITY_SHA256) {
+  const views = Array.isArray(content) ? content : assignmentViews(content);
+  for (const view of views) {
+    for (const match of view.matchAll(/[A-Za-z0-9._%+-]+(?:@[A-Za-z0-9.-]+)?/g)) {
+      const token = match[0].toLowerCase().replace(/^\.+|\.+$/g, '');
+      if (token.length < 6 || token.length > 254 || !token.includes('.')) continue;
+      for (const candidate of identityCandidates(token)) {
+        if (digests.has(identityDigest(candidate))) return 'personal-identity';
+      }
+    }
+  }
+  return null;
+}
+
 const ENGINE_INFERENCE_RULES = [
   ['model-provider-credential', /\b(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|AZURE_OPENAI_API_KEY|GOOGLE_API_KEY|GEMINI_API_KEY|COHERE_API_KEY|MISTRAL_API_KEY|DEEPSEEK_API_KEY|GROQ_API_KEY|TOGETHER_API_KEY|XAI_API_KEY|PERPLEXITY_API_KEY|HF_TOKEN|HUGGING_FACE_HUB_TOKEN|HUGGINGFACEHUB_API_TOKEN|AWS_ACCESS_KEY_ID|AWS_ACCESS_KEY|AWS_SECRET_ACCESS_KEY|AWS_SECRET_KEY|AWS_SESSION_TOKEN|AWS_SECURITY_TOKEN|AWS_BEARER_TOKEN_BEDROCK|AMAZON_ACCESS_KEY_ID|AMAZON_SECRET_ACCESS_KEY|AMAZON_SECURITY_TOKEN|AWS_PROFILE|AWS_DEFAULT_PROFILE|AWS_SHARED_CREDENTIALS_FILE|AWS_CONFIG_FILE|AWS_WEB_IDENTITY_TOKEN_FILE|AWS_ROLE_ARN|AWS_ROLE_SESSION_NAME|AWS_CONTAINER_CREDENTIALS_RELATIVE_URI|AWS_CONTAINER_CREDENTIALS_FULL_URI|AWS_CONTAINER_AUTHORIZATION_TOKEN|AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE)\b/i],
   ['model-provider-endpoint', /\b(?:api\.anthropic\.com|api\.openai\.com|[a-z0-9.-]+\.openai\.azure\.com|[a-z0-9.-]+\.services\.ai\.azure\.com|[a-z0-9.-]+\.inference\.ai\.azure\.com|generativelanguage\.googleapis\.com|[a-z0-9-]+-aiplatform\.googleapis\.com|bedrock-runtime\.[a-z0-9-]+\.amazonaws\.com|AWS_ENDPOINT_URL(?:_[A-Z0-9_]+)?|AWS_BEDROCK_RUNTIME_ENDPOINT|api\.mistral\.ai|api\.groq\.com|api\.deepseek\.com|api\.together\.(?:xyz|ai)|api\.cohere\.(?:ai|com)|api\.x\.ai|api\.perplexity\.ai|models\.github\.ai|(?:api-inference|router)\.huggingface\.co|[a-z0-9.-]+\.endpoints\.huggingface\.cloud|localhost:11434)\b/i],
   ['model-provider-package', /<(?:PackageReference|PackageVersion)\b[^>]*\bInclude\s*=\s*["'](?:Anthropic(?:\.SDK)?|OpenAI|Azure\.AI\.(?:Inference|OpenAI)|Microsoft\.Extensions\.AI\.(?!Abstractions["'])[^"']+|Microsoft\.SemanticKernel|AWSSDK\.BedrockRuntime|Google\.GenerativeAI|OllamaSharp|LangChain[^"']*)["']/i],
   ['model-provider-sdk', /\b(?:AnthropicClient|Anthropic\.SDK|OpenAIClient|OpenAI\.(?:Assistants|Audio|Chat|Embeddings|Files|FineTuning|Images|Models|Realtime|Responses|VectorStores)|Azure\.AI\.(?:Inference|OpenAI)|Microsoft\.Extensions\.AI\.(?:AzureAIInference|Ollama|OpenAI)|(?:AzureAIInference|Ollama|OpenAI)ChatClient|AzureAIInferenceExtensions|Microsoft\.SemanticKernel|AmazonBedrockRuntimeClient|Amazon\.BedrockRuntime|Google\.GenerativeAI|OllamaSharp|LangChain)\b/i],
 ];
+
+// Hosts the ENGINE may call that are neither Microsoft's nor our own site, each one approved DELIBERATELY
+// and with its reason recorded here rather than in a review thread nobody can read from CI. A host reaches
+// this map only by someone writing the sentence that says why it is allowed and how long for; the test
+// asserts the sentence, so a silent addition is not possible and an approval cannot lose its reason.
+const ENGINE_APPROVED_ENDPOINT_REASONS = new Map([
+  ['relay.semanticus.com.au',
+    'the hosted decision relay, the only route a shipped build takes for Jev typed decisions: Pro only, '
+    + 'behind the decision registry and consent, authenticated with the licence token, and holding no '
+    + 'vendor key anywhere in the engine'],
+  ['api.typesafe.ai',
+    'the Jev vendor, reached directly in development only, behind SEMANTICUS_JEV_KEY; no shipped path sets '
+    + 'that variable and a licensed session goes through the relay instead'],
+]);
+
+// The reason one host is an approved engine endpoint, or null when it is not approved.
+export function engineEndpointApprovalReason(host) {
+  if (typeof host !== 'string') return null;
+  return ENGINE_APPROVED_ENDPOINT_REASONS.get(host.toLowerCase()) ?? null;
+}
+
+export function approvedEngineEndpointHosts() {
+  return [...ENGINE_APPROVED_ENDPOINT_REASONS.keys()];
+}
 
 const ENGINE_ALLOWED_HTTP_HOSTS = new Set([
   '0.0.0.2',
@@ -219,12 +292,15 @@ const PACKAGED_HASHED_BINARY_ENDPOINT_EXCEPTIONS = new Map([
   )],
 ]);
 
+// The dictionary is the same bytes in every .NET 8 runtime, but servicing releases move it inside the native
+// file (8.0.30 to 8.0.31 moved it 512 bytes on Windows). So it is found by its first bytes, never by offset,
+// and only a block whose full length hashes to the pin is ignored.
 const DOTNET_BROTLI_DICTIONARY = Object.freeze({
+  find: Buffer.from('timedownlifeleftbackcodedata', 'latin1'),
   length: 122784,
   sha256: '20e42eb1b511c21806d4d227d07e5dd06877d8ce7b3a817f378f313653f35c70',
-  purpose: '.NET 8.0.28 Brotli static dictionary',
+  purpose: '.NET Brotli static dictionary',
 });
-const brotliDictionaryAt = (offset) => ({ offset, ...DOTNET_BROTLI_DICTIONARY });
 const MSAL_NATIVE_PASSWORD_PERSISTENCE = Object.freeze({
   length: 21,
   sha256: 'a9d23cd4ce2f419524a8f554b9bd036bef7cef068ccff97d63ca69fca6818b05',
@@ -239,15 +315,13 @@ const nativeSymbolAt = (offset, symbol) => ({ offset, ...symbol });
 
 const PACKAGED_BINARY_IGNORED_RANGES = new Map([
   ['extension/engine/system.io.compression.native.dll', [
-    brotliDictionaryAt(345488), // Windows x64
-    brotliDictionaryAt(311824), // Windows ARM64
+    DOTNET_BROTLI_DICTIONARY,
   ]],
   ['extension/engine/libsystem.io.compression.native.so', [
-    brotliDictionaryAt(7664), // Linux x64
+    DOTNET_BROTLI_DICTIONARY,
   ]],
   ['extension/engine/libsystem.io.compression.native.dylib', [
-    brotliDictionaryAt(384800), // macOS Intel
-    brotliDictionaryAt(313640), // macOS Apple Silicon
+    DOTNET_BROTLI_DICTIONARY,
   ]],
   ['extension/engine/msalruntime.dylib', [
     nativeSymbolAt(3497291, MSAL_NATIVE_PASSWORD_PERSISTENCE),
@@ -301,13 +375,20 @@ function withoutPeCertificateTable(content) {
 function withoutKnownInertBinaryRanges(content, ranges) {
   if (!Buffer.isBuffer(content) || ranges.length === 0) return content;
   let sanitized;
-  for (const range of ranges) {
-    if (range.offset > content.length - range.length) continue;
-    const candidate = content.subarray(range.offset, range.offset + range.length);
-    const actual = createHash('sha256').update(candidate).digest('hex');
-    if (actual !== range.sha256) continue;
+  const ignoreIfPinned = (range, offset) => {
+    if (offset < 0 || offset > content.length - range.length) return;
+    const actual = createHash('sha256').update(content.subarray(offset, offset + range.length)).digest('hex');
+    if (actual !== range.sha256) return;
     sanitized ??= Buffer.from(content);
-    sanitized.fill(0, range.offset, range.offset + range.length);
+    sanitized.fill(0, offset, offset + range.length);
+  };
+  for (const range of ranges) {
+    if (range.find) {
+      // Found by content: every occurrence of the start marker is hashed in full, none is trusted by itself.
+      for (let at = content.indexOf(range.find); at !== -1; at = content.indexOf(range.find, at + 1)) ignoreIfPinned(range, at);
+    } else {
+      ignoreIfPinned(range, range.offset);
+    }
   }
   return sanitized ?? content;
 }
@@ -388,6 +469,9 @@ function engineSourceEndpointFinding(content, {
       }
       if (endpoint.username || endpoint.password) return 'credentialed-engine-endpoint';
       if (ENGINE_ALLOWED_HTTP_HOSTS.has(host)) continue;
+      // An approval is exact-host and carries its reason. A subdomain of an approved host is a different
+      // host and is not approved by it.
+      if (engineEndpointApprovalReason(host)) continue;
       if (!isPlausibleEndpointHost(host)) {
         if (tolerateBinaryFragments && isIncompleteBinaryEndpoint(match[0])) continue;
         if (tolerateBinaryFragments) return 'unapproved-engine-endpoint';
@@ -422,6 +506,7 @@ export function releaseContentFinding(content, {
   return findRule(scannableContent, SECRET_TOKEN_RULES)
     || findRuleInViews(printable, SECRET_TOKEN_RULES)
     || findRuleInViews(printable, SECRET_ASSIGNMENT_RULES)
+    || personalIdentityFinding(printable)
     || (engineBoundary
       ? findRule(scannableContent, ENGINE_INFERENCE_RULES) || findRuleInViews(printable, ENGINE_INFERENCE_RULES)
       : null)

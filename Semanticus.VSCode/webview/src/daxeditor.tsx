@@ -6,7 +6,7 @@ import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } 
 import { syntaxHighlighting, HighlightStyle, bracketMatching } from '@codemirror/language';
 import { linter, type Diagnostic as CmDiagnostic } from '@codemirror/lint';
 import { tags as t } from '@lezer/highlight';
-import { rpc, onDidChange, copyText } from './bridge';
+import { rpc, onDidChange } from './bridge';
 import { daxLanguage, daxCompletionSource, EMPTY_MODEL, type DaxModel, type DaxScope } from './dax';
 import { validityCanReveal, validityLabel } from './daxValidity';
 
@@ -20,14 +20,14 @@ export function useDaxModel(): DaxModel {
       try {
         const [graph, ms, cs] = await Promise.all([
           rpc<{ tables: { name: string }[] }>('getModelGraph'),
-          rpc<{ name: string; table: string }[]>('listMeasures'),
-          rpc<{ table: string; name: string }[]>('listColumns'),
+          rpc<{ name: string; table: string; formatString?: string }[]>('listMeasures'),
+          rpc<{ table: string; name: string; sortByColumn?: string }[]>('listColumns'),
         ]);
         if (!alive) return;
         setModel({
           tables: graph.tables.map((x) => x.name),
-          measures: ms.map((x) => ({ name: x.name, table: x.table })),
-          columns: cs.map((c) => ({ table: c.table, name: c.name })),
+          measures: ms.map((x) => ({ name: x.name, table: x.table, formatString: x.formatString })),
+          columns: cs.map((c) => ({ table: c.table, name: c.name, ...(c.sortByColumn ? { sortByColumn: c.sortByColumn } : {}) })),
           functions: [],
         });
       } catch { /* no model open yet — built-in functions still complete */ }
@@ -48,13 +48,14 @@ export function DaxModelProvider({ children }: { children: React.ReactNode }) {
 }
 export function useDaxModelContext() { return useContext(DaxModelContext); }
 
+// The shared code palette (--xe-code-* in styles.css; see mlang.ts): readable in all three themes, no accent.
 const daxHighlight = HighlightStyle.define([
-  { tag: t.keyword, color: 'var(--sem-accent)' },
-  { tag: t.string, color: 'var(--sem-good)' },
+  { tag: t.keyword, color: 'var(--sem-fg)', fontWeight: '600' },
+  { tag: t.string, color: 'var(--xe-code-string)' },
   { tag: t.comment, color: 'var(--sem-muted)', fontStyle: 'italic' },
-  { tag: t.number, color: 'var(--sem-warn)' },
-  { tag: t.typeName, color: '#4ec9b0' },       // 'Table'
-  { tag: t.propertyName, color: '#9cdcfe' },    // [Column] / [Measure]
+  { tag: t.number, color: 'var(--xe-code-number)' },
+  { tag: t.typeName, color: 'var(--xe-code-type)' },       // 'Table'
+  { tag: t.propertyName, color: 'var(--xe-code-name)' },    // [Column] / [Measure]
   { tag: t.operator, color: 'var(--sem-fg)' },
 ]);
 
@@ -66,21 +67,23 @@ const DAX_FONT =
   "'Cascadia Code', 'JetBrains Mono', 'SF Mono', 'Fira Code', 'DejaVu Sans Mono', var(--vscode-editor-font-family), Consolas, 'Courier New', monospace";
 
 const daxTheme = EditorView.theme({
-  '&': { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: '8px', fontSize: '13.5px', lineHeight: '1.55' },
-  '&.cm-focused': { outline: '1px solid var(--sem-accent)' },
+  '&': { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)', fontSize: 'var(--sem-text-body)', lineHeight: 'var(--sem-lh-body)' },
+  '&.cm-focused': { outline: '1px solid var(--sem-focus)' },
+  // The muted text colour measures 4.4:1 on the editor's own fill in Light Modern, so the hint sits a step darker.
+  '.cm-placeholder': { color: 'color-mix(in srgb, var(--sem-fg) 82%, var(--sem-bg))' },
   '.cm-content': { fontFamily: DAX_FONT, fontVariantLigatures: 'contextual', caretColor: 'var(--sem-fg)' },
   '.cm-gutters': { fontFamily: DAX_FONT, background: 'transparent', color: 'var(--sem-muted)', border: 'none' },
   '.cm-activeLine': { background: 'color-mix(in srgb, var(--sem-fg) 5%, transparent)' },
   '.cm-activeLineGutter': { background: 'transparent', color: 'var(--sem-fg)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': { background: 'var(--sem-accent-soft)' },
-  '.cm-tooltip': { background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', borderRadius: '6px', color: 'var(--sem-fg)' },
+  '.cm-tooltip': { background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)', color: 'var(--sem-fg)' },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' },
   '.cm-tooltip.cm-tooltip-autocomplete > ul > li': { fontFamily: DAX_FONT },
-  '.cm-completionDetail': { color: 'var(--sem-muted)', fontStyle: 'normal', marginLeft: '0.6em' },
+  '.cm-completionDetail': { color: 'var(--sem-muted)', fontStyle: 'normal', marginLeft: 'var(--sem-space-2)' },
   // Themed chrome for the lint (diagnostic) tooltip + the editor font on its text (mirrors meditor.tsx) — inert
   // for editors without the linter, so DAX Lab's query editor is unaffected.
-  '.cm-tooltip.cm-tooltip-lint': { background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', borderRadius: '8px', boxShadow: '0 6px 20px rgba(0,0,0,0.35)', overflow: 'hidden' },
-  '.cm-diagnostic': { fontFamily: DAX_FONT, fontSize: '12px', padding: '3px 8px' },
+  '.cm-tooltip.cm-tooltip-lint': { background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)', boxShadow: '0 6px 20px rgba(0,0,0,0.35)', overflow: 'hidden' },
+  '.cm-diagnostic': { fontFamily: DAX_FONT, fontSize: 'var(--sem-text-meta)', padding: 'var(--sem-space-1) var(--sem-space-2)' },
 }, { dark: true });
 
 // Offline DAX validation as a CodeMirror linter (squiggles + hover messages). Calls the engine's validate_dax
@@ -111,6 +114,9 @@ export interface DaxEditorHandle { insert: (text: string) => void; focus: () => 
 
 interface DaxEditorProps {
   value: string; onChange: (v: string) => void; model: DaxModel; minHeight?: number; placeholder?: string; lineNumbers?: boolean;
+  // Fill the box it is given and scroll inside it, instead of growing with its text. Queries' editor card has a set
+  // height, and a 14-line question drew over the result below it (verify-queries-redesign D3).
+  fill?: boolean;
   // Backbone A: opt-in live validate_dax markers (default off, so DAX Lab's query editor is unchanged) + scope-tuned
   // completion (calc-item / format-string / RLS). onDiagnostics reports the current marker list for a validity pill.
   lint?: boolean; scope?: DaxScope; scopeTable?: string; onDiagnostics?: (diags: CmDiagnostic[]) => void;
@@ -118,7 +124,7 @@ interface DaxEditorProps {
 
 // A CodeMirror DAX editor: syntax highlighting + model-aware autocomplete + bracket close/match + drop-to-insert
 // (a Fields-panel item or any text/plain drag). Imperative handle exposes insert() for the Fields panel.
-export const DaxEditor = forwardRef<DaxEditorHandle, DaxEditorProps>(function DaxEditor({ value, onChange, model, minHeight = 120, placeholder, lineNumbers: showLineNumbers = true, lint = false, scope, scopeTable, onDiagnostics }, ref) {
+export const DaxEditor = forwardRef<DaxEditorHandle, DaxEditorProps>(function DaxEditor({ value, onChange, model, minHeight = 120, placeholder, lineNumbers: showLineNumbers = true, lint = false, scope, scopeTable, onDiagnostics, fill = false }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -148,6 +154,7 @@ export const DaxEditor = forwardRef<DaxEditorHandle, DaxEditorProps>(function Da
         lint ? makeDaxLinter(() => (d) => onDiagRef.current?.(d)) : [],
         daxTheme,
         EditorView.theme({ '.cm-scroller': { minHeight: minHeight + 'px' } }),
+        fill ? EditorView.theme({ '&': { height: '100%' }, '.cm-scroller': { overflow: 'auto' } }) : [],
         placeholder ? cmPlaceholder(placeholder) : [],
         EditorView.updateListener.of((u) => { if (u.docChanged) onChangeRef.current(u.state.doc.toString()); }),
         EditorView.domEventHandlers({
@@ -177,21 +184,21 @@ export const DaxEditor = forwardRef<DaxEditorHandle, DaxEditorProps>(function Da
     }
   }, [value]);
 
-  return <div ref={host} className="cm-dax" />;
+  return <div ref={host} className="cm-dax" style={fill ? { height: '100%', minHeight: 0 } : undefined} />;
 });
 
 // ===================================================================================================
 // <DaxField> — Backbone A. The one DAX-editing surface reused across calc-item expressions, calc-item
 // format-string expressions, and RLS row-filters. Wraps DaxEditor with the shared model, live validate_dax
-// markers, a scope-tuned autocomplete, a validity pill, and an [Ask AI] escape hatch. It's a controlled
+// markers, a scope-tuned autocomplete, and a validity pill that shows only on a problem. It's a controlled
 // value/onChange field (survives the host's draft-vs-server reconciliation), and inherits DaxEditor's
 // drop-to-insert — so a drag from the object browser lands at the cursor for free.
 // ===================================================================================================
-export function DaxField({ value, onChange, scope, table, minHeight = 92, placeholder, onValidity, ariaLabel, askContext, model: modelOverride }: {
+export function DaxField({ value, onChange, scope, table, minHeight = 92, placeholder, onValidity, ariaLabel, model: modelOverride }: {
   value: string; onChange: (v: string) => void;
   scope?: DaxScope; table?: string; minHeight?: number; placeholder?: string;
   onValidity?: (valid: boolean, issues: number) => void; ariaLabel?: string;
-  askContext?: string;   // a human phrase for the [Ask AI] prompt, e.g. "a calculation-item expression"
+  askContext?: string;   // kept for callers that still pass it; the per-field assistant link is gone
   // Optional completion model. Defaults to the shared LIVE-model context; the Spec tab passes a model built from
   // the SPEC's own tables/columns/measures so IntelliSense works BEFORE the model is built (those symbols exist
   // only in the draft spec, not yet in any live model).
@@ -200,31 +207,22 @@ export function DaxField({ value, onChange, scope, table, minHeight = 92, placeh
   const ctxModel = useDaxModelContext();
   const model = modelOverride ?? ctxModel;
   const [diags, setDiags] = useState<CmDiagnostic[] | null>(null);   // null = not yet validated
-  const [copied, setCopied] = useState(false);
   const errors = (diags ?? []).filter((d) => d.severity === 'error').length;
   const warns = (diags ?? []).filter((d) => d.severity === 'warning').length;
   const valid = errors === 0;
   const validRef = useRef(onValidity); validRef.current = onValidity;
   useEffect(() => { validRef.current?.(valid, errors + warns); }, [valid, errors, warns]);
 
-  const ask = async () => {
-    const prompt = `Help me with ${askContext ?? 'this DAX expression'}${table ? ` on the '${table}' table` : ''}.\n\nCurrent expression:\n${value || '(empty)'}\n\n`
-      + (diags && diags.length ? `Validation issues:\n${diags.map((d) => `- ${d.severity}: ${d.message}`).join('\n')}\n` : '');
-    if (await copyText(prompt)) { setCopied(true); window.setTimeout(() => setCopied(false), 1600); }
-  };
-
   return (
     <div className="flex flex-col gap-1" aria-label={ariaLabel}>
       <DaxEditor value={value} onChange={onChange} model={model} minHeight={minHeight} placeholder={placeholder}
         lineNumbers={false} lint scope={scope} scopeTable={table} onDiagnostics={setDiags} />
-      <div className="flex items-center gap-2">
-        <ValidityPill checked={diags !== null} empty={!value.trim()} errors={errors} warns={warns}
+      {/* The state shows only when there is something to say: a clean or empty field shows nothing. The assistant door is
+          one "Give to your assistant" on each page that uses this field, not one link under every field. */}
+      {diags !== null && value.trim() && (errors > 0 || warns > 0) && (
+        <ValidityPill checked empty={false} errors={errors} warns={warns}
           messages={(diags ?? []).map((d) => d.message)} />
-        <button onClick={() => void ask()} title="Copy a grounded prompt for your assistant"
-          className="text-[10px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
-          {copied ? 'Copied ✓' : 'Ask AI'}
-        </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -244,11 +242,11 @@ function ValidityPill({ checked, empty, errors, warns, messages }: {
   else color = 'var(--sem-good)';
   const canReveal = validityCanReveal(empty, checked, errors, warns) && (messages?.length ?? 0) > 0;
   const chip = (
-    <span className="text-[10px] px-1.5 py-0.5 rounded-md tnum"
-      style={{ color, background: 'color-mix(in srgb,' + color + ' 12%, transparent)' }}>{text}</span>
+    // Instrument: the state is a word with a dot in its colour, not a tinted pill.
+    <span className="text-(length:--sem-text-label) sem-num xe-dot" style={{ '--xe-dot': color } as React.CSSProperties}>{text}</span>
   );
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
       {canReveal ? (
         <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open}
           aria-label={text + '. Show details'}
@@ -257,7 +255,7 @@ function ValidityPill({ checked, empty, errors, warns, messages }: {
         </button>
       ) : chip}
       {open && canReveal && (
-        <ul className="m-0 pl-4 text-[10px]" style={{ color: 'var(--sem-muted)' }}>
+        <ul className="m-0 pl-4 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
           {messages!.map((m, i) => <li key={i}>{m}</li>)}
         </ul>
       )}

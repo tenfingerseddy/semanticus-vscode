@@ -281,6 +281,68 @@ namespace Semanticus.Tests
             finally { RestorePointStore.RootOverride = saved; File.Delete(src); try { File.Delete(blocker); } catch { } }
         }
 
+        // UAT-J9-S10b-002: Studio's Preview rollback sends no auth mode. The engine read that as azcli, azcli found no
+        // sign-in, and the human fallback opened a browser sign-in for a connection that uses a service principal.
+        [Fact]
+        public async Task Rollback_preview_uses_the_remembered_connections_own_auth_and_never_opens_a_browser_for_a_service_principal()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            const string endpoint = "powerbi://api.powerbi.com/v1.0/myorg/SPWS";
+            ConnectionRegistry.Remember("xmla", endpoint, "SPDS", "SPDS", null, "serviceprincipal");
+            var rp = RestorePointStore.Write(endpoint, "SPDS",
+                TOM.JsonSerializer.SerializeDatabase(Db(m => Measure(m, "Total", "1", "tag-total"))),
+                "apply_model_diff", "1 change(s), 0 delete(s)", new[] { "measure:Sales/Total" }, Array.Empty<string>());
+            var modes = new System.Collections.Generic.List<string>();
+            engine.WorkspaceTokenExportForTests = mode => { modes.Add(mode); throw new InvalidOperationException("401 Unauthorized"); };
+
+            var r = await engine.RollbackPushAsync(rp.Id, commit: false, authMode: null, origin: "human");
+
+            Assert.Equal(new[] { "serviceprincipal" }, modes);   // its own mode, once; no azcli guess, no interactive fallback
+            Assert.NotNull(r.Error);
+            Assert.DoesNotContain("compare", r.Error, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("\u2014", r.Error);
+        }
+
+        // verify (v-s10fix, B1): Confirm rollback (the push) on a service principal also signs in only as the service
+        // principal, so the write half can never open a browser either.
+        [Fact]
+        public async Task Verify_rollback_push_on_a_service_principal_never_tries_another_sign_in()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            const string endpoint = "powerbi://api.powerbi.com/v1.0/myorg/SPWS2";
+            ConnectionRegistry.Remember("xmla", endpoint, "SPDS2", "SPDS2", null, "serviceprincipal");
+            var rp = RestorePointStore.Write(endpoint, "SPDS2",
+                TOM.JsonSerializer.SerializeDatabase(Db(m => Measure(m, "Total", "1", "tag-total"))),
+                "apply_model_diff", "1 change(s), 0 delete(s)", new[] { "measure:Sales/Total" }, Array.Empty<string>());
+            var modes = new System.Collections.Generic.List<string>();
+            engine.WorkspaceTokenExportForTests = mode => { modes.Add(mode); throw new InvalidOperationException("401 Unauthorized"); };
+
+            var r = await engine.RollbackPushAsync(rp.Id, commit: true, authMode: null, origin: "human");
+
+            Assert.Equal(new[] { "serviceprincipal" }, modes);
+            Assert.NotNull(r.Error);
+        }
+
+        // UAT-J9-S10d-003: the Compare page shows the preview note as it comes. A person was told "Pass commit=true to push",
+        // which is an instruction to the assistant. The person has a button; the assistant keeps the instruction.
+        [Fact]
+        public async Task A_published_push_preview_speaks_product_words_to_a_person_and_keeps_the_instruction_for_the_assistant()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var src = WriteBim(Db(m => Measure(m, "Total", "2", "tag-total")));
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(Db(m => Measure(m, "Total", "1", "tag-total")));
+                var person = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: false, "human");
+                var assistant = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: false, "agent");
+
+                Assert.DoesNotContain("commit=true", person.Note);
+                Assert.Contains("would be pushed", person.Note);
+                Assert.Contains("commit=true", assistant.Note);
+            }
+            finally { File.Delete(src); }
+        }
+
         // ---- rollback dry run names what it would DELETE, including work added by someone else since the push. ----
         [Fact]
         public async Task Rollback_dry_run_reports_removals_and_writes_nothing()

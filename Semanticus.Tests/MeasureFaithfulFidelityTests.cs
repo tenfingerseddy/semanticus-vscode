@@ -416,6 +416,7 @@ verify:
             Assert.False(report.Distillable);                              // a plan with an impossible edit is no recipe
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Apply_plan_circular_rejection_is_immune_to_overrideIds()
         {

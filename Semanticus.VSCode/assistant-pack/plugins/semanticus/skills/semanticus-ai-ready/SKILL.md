@@ -1,28 +1,30 @@
 ---
 name: semanticus-ai-ready
-description: Improve a Semanticus model's AI-readiness findings, descriptions and metadata. Use when preparing a model for Copilot, Q&A or data agents, or raising its readiness grade.
+description: Improve a Semanticus model's AI readiness findings, descriptions and metadata. Use when preparing a model for Copilot or data agents, or raising its readiness grade.
 ---
 
 # Improve AI readiness
 
-Start with `get_model_summary` and `ai_readiness_summary`. Read `get_model_primer` for business
-definitions. Pull relevant findings with `ai_readiness_scan` filters. When live cardinality matters
-and a query connection is available, `ai_readiness_scan_live` adds live evidence.
+Start with `get_model_summary` and `ai_readiness_scan` with `detail='summary'`. Read `get_model_primer`
+for business definitions. Pull the findings you need with `ai_readiness_scan` filters. When live
+cardinality matters and a query connection is open, `live=true` adds live measurements.
 
-Use `propose_plan` for the requested scope. It provides grounded content requests and deterministic
-changes without applying them. Author descriptions, synonyms and instructions from actual business
-meaning. Fill content with `set_plan_item`; inspect `get_plan` for before and after values and
-approval state. Do not invent definitions to increase a grade.
+AI readiness is part of the Plan from the start. Semanticus does the rows it can (formats, hidden
+keys, folders). The words are yours: descriptions, business names, synonyms and AI instructions.
+When the person presses Give the rest to your assistant, or a words row is on the Plan, they arrive
+as tasks (see `list_assistant_requests`). Either way, `get_words_queue` lists every open words
+finding, best lift first, with the tool to use and the grounding (DAX, table and sibling names).
 
-Apply the requested approved changes with `apply_plan`, read applied, skipped and failed items,
-then recheck `ai_readiness_summary`. A higher grade is a metadata improvement, not proof that
-an assistant answers every business question correctly. Use interviews or expected-answer tests
-when the user wants evidence about answers.
+Author each word from the real business meaning, then write it with the tool the queue names
+(`set_description`, `rename_object`, `set_synonyms`, `set_ai_instructions`, `set_measure_format`).
+Do not invent definitions to raise a grade. For a scoped set of changes, `propose_plan` with
+`set_plan_item` and `apply_plan` works too; read the applied, skipped and failed items.
 
-The user can inspect the same proposed changes in Studio under Checks and Changes. Model edits
-share one undo history. The VS Code view updates at once; your assistant sees an edit on its
-next call.
-Reuse the existing account for a deployed model; service-principal authentication is an option,
-not a universal requirement. `save_model` saves local files. For a requested remote update,
-preview `deploy_live`, review its actual changes and destination, then commit within the user's
-authorization. Report the grade and any checks or changes that remain incomplete.
+Recheck with `ai_readiness_scan` and `detail='summary'`, and report the grade. Studio shows it as one
+coloured letter and a bar for each category (green from 80, amber from 60, red below 60). A higher
+grade is better metadata, not proof that every business answer is right. For that proof use
+`save_test` with an expected answer, or `ask_data` and compare with a known figure.
+
+Model edits share one undo history. Studio updates at once; you see a person's edit on your next
+call. `save_model` writes local files. A live model changes only through `deploy_live`: preview it,
+read the destination and changes, then commit within the user's authorization.

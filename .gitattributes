@@ -20,3 +20,9 @@ Semanticus.Engine/workflows/** text eol=lf
 Semanticus.Engine/workflows-compat/** text eol=lf
 # The frozen v7 fixture is compared byte-wise with its own rename; keep it LF like the shipped workflows.
 Semanticus.Tests/fixtures/verified-measure-frozen/** text eol=lf
+# The uishot driver reads the Plan fold fixtures byte for byte; keep them LF on a Windows checkout too.
+Semanticus.VSCode/tools/uishot/fixtures/plan-heart-fold-*.txt text eol=lf
+# The template compat freezes are pinned by a SHA-256 of their bytes (TemplateV3Tests), and the parked starters are compared byte for
+# byte with their compat freezes (WorkflowSeedLibraryTests). A CRLF checkout changed both on Windows. Neither folder ships.
+Semanticus.Engine/workflow-templates-compat/** text eol=lf
+Semanticus.Engine/workflows-parked/** text eol=lf

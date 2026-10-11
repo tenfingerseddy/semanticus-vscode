@@ -71,10 +71,15 @@ async function drive(browser, port) {
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
   await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
-  const url = `http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&state=${encodeURIComponent(JSON.stringify(STATE))}#${encodeURIComponent('DAX Lab')}`;
+  // The DAX Lab is Edit > Queries now, and Studio opens on the Plan, so the page is reached by its stable id through
+  // the harness deep link (the host's own navigate message) rather than by a tab label that has been renamed twice.
+  const url = `http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&tab=daxlab&state=${encodeURIComponent(JSON.stringify(STATE))}`;
   await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 30000 });
   await page.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => (b.textContent || '').includes('Save measure check')), { timeout: 30000, polling: 250 });
+  // The deep link is re-sent a few times while the session lands (harness.html); let the last one arrive before
+  // the drawer opens, or it would navigate back over it.
+  await new Promise((r) => setTimeout(r, 2600));
 
   const clickByText = (needle) => page.evaluate((text) => {
     const hit = [...document.querySelectorAll('button')].find((b) => (b.textContent || '').includes(text));
@@ -85,7 +90,7 @@ async function drive(browser, port) {
   const results = [];
   for (const { name, choice, label } of [
     { name: 'handoff-expected-total.png', choice: 'Check a trusted answer', label: 'expected total' },
-    { name: 'handoff-source-sql.png', choice: 'Compare with source SQL', label: 'source SQL' },
+    { name: 'handoff-source-sql.png', choice: 'Check against source SQL', label: 'source SQL' },
   ]) {
     await clickByText('Save measure check');
     await new Promise((r) => setTimeout(r, 250));

@@ -162,6 +162,11 @@ namespace Semanticus.Tests
             Assert.True(File.Exists(path), "stock verified-measure seed was not copied beside the test binary: " + path);
             var def = WorkflowParser.Parse(File.ReadAllText(path));
             Assert.Null(def.Error);
+            // Lane l9-finish: the file drafts now, and its gated steps run in the draft's guided sub-run, which holds
+            // exactly the assistant's gated steps (Composer/DraftGuided.cs). The replays run that same shape: the four
+            // gated steps, without the save Semanticus runs after them.
+            Assert.Equal(5, def.Steps.Length);
+            def.Steps = def.Steps.Where(s => s.Performer == WorkflowPerformers.Assistant && s.Gate != null).ToArray();
             Assert.Equal(4, def.Steps.Length);
             Assert.Equal("hard", def.Strictness);
             return def;
@@ -776,6 +781,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Step7_revalidates_locked_witness_purity_against_model_drift_before_full_or_receipt_paths()
         {
@@ -949,6 +955,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Step7_measure_rename_follows_the_run_alias_and_lineage_receipt_but_a_renamed_expression_change_reproves()
         {

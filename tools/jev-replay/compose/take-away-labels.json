@@ -1,0 +1,997 @@
+{
+ "about": "Labelled phrasings for m11/completeness round 4 (F1), labelled and committed before any run. Each clause is labelled with the op it must draft ({op}) or with noAdd: any step or a placeholder, but never a template that adds (create_*, or a step named Add). verifier-deletes are the round 3 verifier's 32 take-away asks (evidence deletes.txt), verifier-notdeletes its 21 steps that hold a removing word and ask for another action (notdeletes.txt; an op is what the lane's base 568435d3 drafted with Jev off), and new-r4 30 new phrasings of adds, take-aways, changes and mixes. Clauses follow the engine's cut (DescribedSteps.Cut). Relabelled in round 5 by THE ADDING RULE version 2 (the coordinator, 28 Sep 17:30): vn-15, vn-20 and vn-21 carry a take-away sign (deleted, dropped, removed), which version 2 makes a veto, so each is noAdd now (they were create_measure).",
+ "items": [
+  {
+   "id": "vd-01",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "clear the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-02",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "cut the unused measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-03",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "lose the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-04",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "dump the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-05",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "bin the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-06",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "get the old measures out of the model",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-07",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "the old measures have to go",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-08",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "we no longer need the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-09",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "I don't need the old measures anymore",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-10",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "clean up the model by removing the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-11",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "start by deleting the unused measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-12",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "tidy the model by deleting the unused measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-13",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "slim down the model by removing unused measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-14",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "select the unused measures and delete them",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-15",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "Unused measures - delete",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-16",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "Old measures: delete them",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-17",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "Delete: the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-18",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "for the old measures, delete them",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-19",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "rid the model of the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-20",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "make the old measures go away",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-21",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "exclude the old measures from the model",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-22",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "remoev the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-23",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "deleat the old measures",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-24",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "DELETE THE OLD MEASURES",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-25",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "delete the old measures and the old role",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-26",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "delete the replaced measures, the old role and the unused columns",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-27",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "remove the Sales Manager and Region Manager roles",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-28",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "drop the relationship between Sales and Date",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-29",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "remove the Sales and Date relationship",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-30",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "get rid of the old measures and the unused columns",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-31",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "retire the old role and its measures",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vd-32",
+   "set": "verifier-deletes",
+   "kind": "take-away",
+   "words": "eliminate the relationship between Sales and Date",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vn-01",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "remove the prefix from the table names",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    }
+   ]
+  },
+  {
+   "id": "vn-02",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "remove spaces from the column names",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    }
+   ]
+  },
+  {
+   "id": "vn-03",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "strip the Dim prefix from the table names",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    }
+   ]
+  },
+  {
+   "id": "vn-04",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "drop the Fact prefix from the table names",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    }
+   ]
+  },
+  {
+   "id": "vn-05",
+   "set": "verifier-notdeletes-r3-test",
+   "kind": "not-delete",
+   "words": "remove the summarization from the Year column",
+   "clauses": [
+    {
+     "op": "set_summarize_by"
+    }
+   ]
+  },
+  {
+   "id": "vn-06",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "remove the hidden flag from the Customer Key column",
+   "clauses": [
+    {
+     "op": "set_column_hidden"
+    }
+   ]
+  },
+  {
+   "id": "vn-07",
+   "set": "verifier-notdeletes-r3-test",
+   "kind": "not-delete",
+   "words": "remove the format from the Margin measure",
+   "clauses": [
+    {
+     "op": "set_measure_format"
+    }
+   ]
+  },
+  {
+   "id": "vn-08",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "clear the description of the Sales measure",
+   "clauses": [
+    {
+     "op": "set_description"
+    }
+   ]
+  },
+  {
+   "id": "vn-09",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "drop the time part from the Order Date column",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    }
+   ]
+  },
+  {
+   "id": "vn-10",
+   "set": "verifier-notdeletes-r3-test",
+   "kind": "not-delete",
+   "words": "remove the display folder from the Sales measures",
+   "clauses": [
+    {
+     "op": "set_display_folder"
+    }
+   ]
+  },
+  {
+   "id": "vn-11",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "Removal Date column: describe it",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    },
+    {
+     "op": "set_description"
+    }
+   ]
+  },
+  {
+   "id": "vn-12",
+   "set": "verifier-notdeletes-r3-test",
+   "kind": "not-delete",
+   "words": "Drop Off Location should be a geography column",
+   "clauses": [
+    {
+     "op": "set_data_category"
+    }
+   ]
+  },
+  {
+   "id": "vn-13",
+   "set": "verifier-notdeletes-r3-test",
+   "kind": "not-delete",
+   "words": "Deletion Flag should be hidden",
+   "clauses": [
+    {
+     "op": "set_column_hidden"
+    }
+   ]
+  },
+  {
+   "id": "vn-14",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "Purge Date: set the format to a date",
+   "clauses": [
+    {
+     "noAdd": true,
+     "note": "a placeholder at the lane's base 568435d3"
+    },
+    {
+     "op": "set_measure_format"
+    }
+   ]
+  },
+  {
+   "id": "vn-15",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "add a measure that counts deleted orders",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vn-16",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "hide the Deleted Date column",
+   "clauses": [
+    {
+     "op": "set_column_hidden"
+    }
+   ]
+  },
+  {
+   "id": "vn-17",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "rename the Removed Flag column to Is Removed",
+   "clauses": [
+    {
+     "op": "rename_object"
+    }
+   ]
+  },
+  {
+   "id": "vn-18",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "describe the Deleted Orders measure",
+   "clauses": [
+    {
+     "op": "set_description"
+    }
+   ]
+  },
+  {
+   "id": "vn-19",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "format the Removal Rate measure as a percent",
+   "clauses": [
+    {
+     "op": "set_measure_format"
+    }
+   ]
+  },
+  {
+   "id": "vn-20",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "count the dropped calls",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "vn-21",
+   "set": "verifier-notdeletes",
+   "kind": "not-delete",
+   "words": "total the removed quantity",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-01",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "add a Margin measure to Sales",
+   "clauses": [
+    {
+     "op": "create_measure"
+    }
+   ]
+  },
+  {
+   "id": "new-02",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "create a role for the finance team",
+   "clauses": [
+    {
+     "op": "create_role"
+    }
+   ]
+  },
+  {
+   "id": "new-03",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "build a time intelligence calculation group",
+   "clauses": [
+    {
+     "op": "create_calculation_group"
+    }
+   ]
+  },
+  {
+   "id": "new-04",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "count the orders per customer",
+   "clauses": [
+    {
+     "op": "create_measure"
+    }
+   ]
+  },
+  {
+   "id": "new-05",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "relate Sales to Date on the Order Date column",
+   "clauses": [
+    {
+     "op": "create_relationship"
+    }
+   ]
+  },
+  {
+   "id": "new-06",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "import the Budget table",
+   "clauses": [
+    {
+     "op": "create_import_table"
+    }
+   ]
+  },
+  {
+   "id": "new-07",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "a new measure for average order value",
+   "clauses": [
+    {
+     "op": "create_measure"
+    }
+   ]
+  },
+  {
+   "id": "new-08",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "make a column for the order year",
+   "clauses": [
+    {
+     "op": "create_column"
+    }
+   ]
+  },
+  {
+   "id": "new-09",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "delete the Sales YTD measure",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-10",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "remove the Region Manager role",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-11",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "drop the Budget table",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-12",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "get rid of the calculation group",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-13",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "the Returns table can go",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-14",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "we don't want the Margin measure any more",
+   "clauses": [
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-15",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "take the relationship between Sales and Date out",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-16",
+   "set": "new-r4",
+   "kind": "take-away",
+   "words": "strip out the unused columns and the old roles",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-17",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "hide the Customer Key column",
+   "clauses": [
+    {
+     "op": "set_column_hidden"
+    }
+   ]
+  },
+  {
+   "id": "new-18",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "rename Total Sales to Revenue",
+   "clauses": [
+    {
+     "op": "rename_object"
+    }
+   ]
+  },
+  {
+   "id": "new-19",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "remove the description from the Margin measure",
+   "clauses": [
+    {
+     "op": "set_description"
+    }
+   ]
+  },
+  {
+   "id": "new-20",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "clear the display folder of the Sales measures",
+   "clauses": [
+    {
+     "op": "set_display_folder"
+    }
+   ]
+  },
+  {
+   "id": "new-21",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "format the Margin measure as a percent",
+   "clauses": [
+    {
+     "op": "set_measure_format"
+    }
+   ]
+  },
+  {
+   "id": "new-22",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "Order Date should not sum up",
+   "clauses": [
+    {
+     "op": "set_summarize_by"
+    }
+   ]
+  },
+  {
+   "id": "new-23",
+   "set": "new-r4",
+   "kind": "change",
+   "words": "sort Month Name by Month Number",
+   "clauses": [
+    {
+     "op": "set_sort_by_column"
+    }
+   ]
+  },
+  {
+   "id": "new-24",
+   "set": "new-r4",
+   "kind": "add",
+   "words": "add a Units measure and Returns measure",
+   "clauses": [
+    {
+     "op": "create_measure"
+    },
+    {
+     "op": "create_measure"
+    }
+   ]
+  },
+  {
+   "id": "new-25",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "delete the old Margin measure and add a new Margin measure",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "op": "create_measure"
+    }
+   ]
+  },
+  {
+   "id": "new-26",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "remove the Region Manager role, then create a role for regional managers",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "op": "create_role"
+    }
+   ]
+  },
+  {
+   "id": "new-27",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "hide the Customer Key column and delete the Sales YTD measure",
+   "clauses": [
+    {
+     "op": "set_column_hidden"
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-28",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "add a Profit measure, then remove the old Profit measure",
+   "clauses": [
+    {
+     "op": "create_measure"
+    },
+    {
+     "noAdd": true
+    }
+   ]
+  },
+  {
+   "id": "new-29",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "drop the Budget table, import the Targets table",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "op": "create_import_table"
+    }
+   ]
+  },
+  {
+   "id": "new-30",
+   "set": "new-r4",
+   "kind": "mixed",
+   "words": "get rid of the old roles and format Total Sales as currency",
+   "clauses": [
+    {
+     "noAdd": true
+    },
+    {
+     "op": "set_measure_format"
+    }
+   ]
+  }
+ ]
+}

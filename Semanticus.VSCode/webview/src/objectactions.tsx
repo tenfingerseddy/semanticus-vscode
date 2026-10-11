@@ -45,10 +45,10 @@ export function rowKeyProps(activate: () => void, focusSelect?: () => void) {
 export function RevealBtn({ objRef, className = '' }: { objRef: string; className?: string }) {
   return (
     <button
-      className={'text-[10px] shrink-0 ' + className}
+      className={'text-(length:--sem-text-label) shrink-0 ' + className}
       title="Reveal in Model tree"
       onClick={(e) => { e.stopPropagation(); revealInTree(objRef); }}
-      style={{ color: 'var(--sem-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px' }}>
+      style={{ color: 'var(--sem-muted)', background: 'none', border: 'none', cursor: 'pointer', padding: '0 var(--sem-space-1)' }}>
       ⤢
     </button>
   );

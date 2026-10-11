@@ -1,0 +1,583 @@
+{
+ "_about": "A small Contoso-style model in the fair replay facts format (gather-fair.py), for the equivalence of the product question and the replay question. The node test builds the replay payload from it with build-calls-fair.mjs and maps it to the product payload by the stated mapping; the C# test builds the same model in the engine and must produce exactly that payload. Measures: Total Amount = SUM('Sales'[Amount]), Average Price = AVERAGE(Sales [Unit Price]); Sales[CustomerKey] is the many side of a relationship to Customer[CustomerKey]; Sales[Region] sorts by Sales[Region Order].",
+ "kind": "jev-columns-facts",
+ "version": 1,
+ "models": [
+  {
+   "model": "fx0",
+   "data": "local",
+   "tables": [
+    {
+     "name": "Customer",
+     "measures": 0,
+     "rows": 250,
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "int64",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": true,
+       "relationshipRole": "one",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 250,
+        "blankShare": 0,
+        "wholeNumbers": true,
+        "uniqueOnEveryRow": true,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [
+         "Customer Name"
+        ],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 250,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": true,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "none",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Customer Name",
+       "dataType": "string",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 250,
+        "blankShare": 0,
+        "wholeNumbers": false,
+        "uniqueOnEveryRow": true,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [
+         "CustomerKey"
+        ],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 250,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "City",
+       "dataType": "string",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 40,
+        "blankShare": 0.012,
+        "wholeNumbers": false,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0.025,
+         "city": 0.85,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 40,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "City",
+         "why": "fixture"
+        }
+       }
+      }
+     ]
+    },
+    {
+     "name": "Sales",
+     "measures": 2,
+     "rows": 81234,
+     "columns": [
+      {
+       "name": "CustomerKey",
+       "dataType": "int64",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "many",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 250,
+        "blankShare": 0,
+        "wholeNumbers": true,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 250,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": true,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "none",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Amount",
+       "dataType": "double",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 1,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 5123,
+        "blankShare": 0.002,
+        "wholeNumbers": false,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 5123,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "sum",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Unit Price",
+       "dataType": "double",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 1,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 180,
+        "blankShare": 0,
+        "wholeNumbers": false,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 180,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "average",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Month Number",
+       "dataType": "int64",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 12,
+        "blankShare": 0,
+        "wholeNumbers": true,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": true,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 12,
+        "sampled": false,
+        "looksLikePeriodNumber": true
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "none",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Order Line",
+       "dataType": "int64",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 9,
+        "blankShare": 0,
+        "wholeNumbers": true,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 9,
+        "sampled": false,
+        "looksLikePeriodNumber": true
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "none",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Region",
+       "dataType": "string",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": "Region Order",
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": false,
+       "measured": {
+        "distinct": 4,
+        "blankShare": 0,
+        "wholeNumbers": false,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": false,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [
+         "Region Order"
+        ],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 4,
+        "sampled": false,
+        "looksLikePeriodNumber": false
+       },
+       "key": {
+        "hidden": {
+         "label": false,
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      },
+      {
+       "name": "Region Order",
+       "dataType": "int64",
+       "isCalculated": false,
+       "isHidden": false,
+       "summarizeBy": "default",
+       "dataCategory": null,
+       "sortByColumn": null,
+       "formatString": null,
+       "isAvailableInMdx": true,
+       "isKey": false,
+       "relationshipRole": "none",
+       "usedByMeasures": 0,
+       "usedInReports": null,
+       "usedAsSortTarget": true,
+       "measured": {
+        "distinct": 4,
+        "blankShare": 0,
+        "wholeNumbers": true,
+        "uniqueOnEveryRow": false,
+        "looksLikeYear": false,
+        "looksLikeMonthName": false,
+        "looksLikeMonthNumber": false,
+        "looksLikeDayName": false,
+        "looksLikeQuarter": true,
+        "placeShare": {
+         "country": 0,
+         "region": 0,
+         "city": 0,
+         "postcode": 0
+        },
+        "urlShare": 0,
+        "imageUrlShare": 0,
+        "emailShare": 0,
+        "oneToOneWith": [
+         "Region"
+        ],
+        "dictionaryBytes": null,
+        "dataBytes": null,
+        "cardinality": 4,
+        "sampled": false,
+        "looksLikePeriodNumber": true
+       },
+       "key": {
+        "hidden": {
+         "label": true,
+         "why": "fixture"
+        },
+        "summarize_by": {
+         "label": "none",
+         "why": "fixture"
+        },
+        "data_category": {
+         "label": "none",
+         "why": "fixture"
+        }
+       }
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

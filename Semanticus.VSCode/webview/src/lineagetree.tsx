@@ -83,7 +83,7 @@ function dagreLayout(ids: string[], edges: [string, string][], rankdir: 'LR' | '
   return m;
 }
 
-const VERDICT_COLOR: Record<string, string> = { safe: '#36c98b', usedByUnusedOnly: '#e0b341', caution: '#e0654b' };
+const VERDICT_COLOR: Record<string, string> = { safe: '#36c98b', usedByUnusedOnly: '#e0b341', caution: '#e0654b', visibleAttribute: '#6b9bd2' };
 
 // Edge styling for the current selection — emphasise the selected node's incident edges, dim the rest. Shared by the
 // layout build (so a rebuilt graph already reflects selection) and the decoration effect (so a click restyles without
@@ -109,11 +109,11 @@ function handles(orient: 'LR' | 'TB') {
 function MoreNode({ data }: NodeProps<Node<MoreData>>) {
   const h = handles(data.orient);
   return (
-    <div className="rounded-lg border flex items-center justify-center nodrag" onClick={(e) => { e.stopPropagation(); data.cb.expandMore(data.parent); }}
+    <div className="rounded-(--sem-radius-card) border flex items-center justify-center nodrag" onClick={(e) => { e.stopPropagation(); data.cb.expandMore(data.parent); }}
       title={`Show ${data.count} more`} style={{
-        width: NODE_W, minHeight: 30, padding: '4px 8px', cursor: 'pointer',
+        width: NODE_W, minHeight: 30, padding: 'var(--sem-space-1) var(--sem-space-2)', cursor: 'pointer',
         background: 'var(--sem-surface-2)', borderColor: 'var(--sem-border)', borderStyle: 'dashed',
-        color: 'var(--sem-accent)', fontSize: 11, fontWeight: 600,
+        color: 'var(--sem-fg)', fontSize: 'var(--sem-text-label)', fontWeight: 'var(--sem-weight-strong)',
       }}>
       <Handle type="target" position={h.tgt} isConnectable={false} style={{ opacity: 0 }} />
       +{data.count} more…
@@ -123,35 +123,37 @@ function MoreNode({ data }: NodeProps<Node<MoreData>>) {
 
 function TreeNode({ data }: NodeProps<Node<CardData>>) {
   const { node, hasChildren, isExpanded, isRoot, selected, childCount, verdict, orient, cb } = data;
-  const color = resolveColor(KIND_COLOR[node.kind], '#9aa0aa');
   const h = handles(orient);
   return (
-    <div className="rounded-lg border flex flex-col justify-center" style={{
-      width: NODE_W, minHeight: NODE_H, padding: '6px 8px', background: 'var(--sem-surface)',
-      borderColor: selected || isRoot ? 'var(--sem-accent)' : 'var(--sem-border)',
-      boxShadow: selected ? '0 0 0 1px var(--sem-accent)' : isRoot ? '0 0 0 1px var(--sem-accent)' : '0 1px 3px rgba(0,0,0,0.25)',
+    <div className="rounded-(--sem-radius-card) border flex flex-col justify-center" style={{
+      width: NODE_W, minHeight: NODE_H, padding: 'var(--sem-space-2) var(--sem-space-2)', background: 'var(--sem-surface)',
+      // Instrument: the root and the picked card are drawn with a stronger edge, not the accent.
+      borderColor: selected || isRoot ? 'var(--sem-strong-border)' : 'var(--sem-border)',
+      boxShadow: selected || isRoot ? '0 0 0 1px var(--sem-fg)' : 'var(--sem-elev)',
       opacity: node.isHidden ? 0.6 : 1,
     }}>
       <Handle type="target" position={h.tgt} isConnectable={false} style={{ opacity: 0 }} />
       <Handle type="source" position={h.src} isConnectable={false} style={{ opacity: 0 }} />
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
         {hasChildren ? (
           <button className="nodrag" onClick={(e) => { e.stopPropagation(); cb.toggle(node.ref); }} title={isExpanded ? 'Collapse' : `Expand (${childCount})`}
-            style={{ background: 'transparent', border: 'none', color: 'var(--sem-muted)', cursor: 'pointer', padding: 0, width: 12, fontSize: 10 }}>
+            aria-label={isExpanded ? `Collapse ${node.name}` : `Expand ${node.name}`}
+            style={{ background: 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer', padding: 0, width: 12, fontSize: 'var(--sem-text-label)' }}>
             {isExpanded ? '▾' : '▸'}
           </button>
         ) : <span style={{ width: 12 }} />}
-        <span className="shrink-0 text-[12px]" style={{ color }}>{KIND_GLYPH[node.kind] ?? '•'}</span>
-        <span className="truncate text-[12px] font-medium" style={{ color: 'var(--sem-fg)' }} title={node.name}>{node.name}</span>
+        {/* The glyph's shape says the kind; it is drawn in the muted text colour, not a kind colour (Instrument). */}
+        <span className="shrink-0 text-xs" style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[node.kind] ?? '•'}</span>
+        <span className="truncate text-xs font-medium" style={{ color: 'var(--sem-fg)' }} title={node.name}>{node.name}</span>
         {verdict && <span className="shrink-0 w-1.5 h-1.5 rounded-full" title={'safe-to-remove: ' + verdict} style={{ background: VERDICT_COLOR[verdict] ?? 'var(--sem-muted)' }} />}
-        {hasChildren && !isExpanded && <span className="ml-auto shrink-0 text-[9px] tnum px-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>+{childCount}</span>}
+        {hasChildren && !isExpanded && <span className="ml-auto shrink-0 text-(length:--sem-text-label) sem-num" style={{ color: 'var(--sem-muted)' }}>+{childCount}</span>}
       </div>
-      <div className="flex items-center gap-1.5 mt-0.5 pl-[18px]">
-        <span className="truncate text-[10px]" style={{ color: 'var(--sem-muted)' }}>{node.table ? node.table + ' · ' : ''}{KIND_LABEL[node.kind] ?? uiLabel(node.kind)}</span>
+      <div className="flex items-center gap-2 mt-1 pl-4">
+        <span className="truncate text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{node.table ? node.table + ' · ' : ''}{KIND_LABEL[node.kind] ?? uiLabel(node.kind)}</span>
         {selected && (
           <span className="ml-auto flex gap-1">
-            <button className="nodrag text-[9px] px-1 rounded" onClick={(e) => { e.stopPropagation(); cb.reroot(node.ref); }} title="Make this the root" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>root</button>
-            <button className="nodrag text-[9px] px-1 rounded" onClick={(e) => { e.stopPropagation(); cb.impact(node.ref); }} title="Assess this change" style={{ background: 'var(--sem-accent)', color: 'var(--sem-on-accent)' }}>assess</button>
+            <button className="nodrag text-(length:--sem-text-label) px-1 rounded-(--sem-radius-control)" onClick={(e) => { e.stopPropagation(); cb.reroot(node.ref); }} title="Make this the root" style={{ background: 'transparent', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>root</button>
+            <button className="nodrag text-(length:--sem-text-label) px-1 rounded-(--sem-radius-control)" onClick={(e) => { e.stopPropagation(); cb.impact(node.ref); }} title="Assess this change" style={{ background: 'transparent', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}>assess</button>
           </span>
         )}
       </div>
@@ -160,9 +162,11 @@ function TreeNode({ data }: NodeProps<Node<CardData>>) {
 }
 
 const nodeTypes = { lin: TreeNode, more: MoreNode };
+// React Flow's fit margin: a fraction of the viewport left around the fitted graph, not a CSS length.
+const FIT_MARGIN = 0.2;
 const FANOUT_CAP = 10;   // max children shown per node before a "+N more" tail — keeps any rank readable
 
-function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts, caveat, error }: TreeViewProps) {
+function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts, caveat, error, onCheckReports }: TreeViewProps) {
   const [root, setRoot] = useState<string | null>(null);
   const [dir, setDir] = useState<Dir>('downstream');
   const [orient, setOrient] = useState<'LR' | 'TB'>('LR');   // horizontal (left→right) or vertical (top→bottom)
@@ -177,15 +181,14 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
   const [edges, setEdges] = useEdgesState<Edge>([]);
   const rf = useReactFlow();
   const [fillRef, treeH] = useFillHeight(440);   // the canvas fills the viewport height (dynamic to the window)
-  // The row folds in priority order when it runs out of room: slicers first, then the direction and layout
-  // pair, and only then the view switcher. Expand all, Collapse and Fit never fold - Fit is the control a
-  // person reaches for the moment a resize leaves the tree looking wrong.
-  const row = useToolRow(3);
+  // The row holds the view switcher, the search, one direction switch and two menus (Layout, Filter). Only the view
+  // switcher folds, when the row runs out of room.
+  const row = useToolRow(1);
   // True once the person has panned/zoomed since the LAST fit — a resize-triggered auto-fit checks this so it never
   // fights a manual view the person set up on purpose (see doFit / the canvas callback ref below).
   const interactedSinceFit = useRef(false);
   const doFit = useCallback((opts?: Parameters<typeof rf.fitView>[0]) => {
-    try { rf.fitView(opts ?? { padding: 0.2, duration: 300 }); } catch { /* not mounted */ }
+    try { rf.fitView(opts ?? { padding: FIT_MARGIN, duration: 300 }); } catch { /* not mounted */ }
     interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
   }, [rf]);
   // Fit only once React Flow has MEASURED the cards. `node.measured` is filled on a render pass after the nodes are
@@ -241,7 +244,7 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
     const ro = new ResizeObserver(() => {
       measure();
       if (roTimer.current != null) window.clearTimeout(roTimer.current);
-      roTimer.current = window.setTimeout(() => { roTimer.current = null; if (!interactedSinceFit.current) fitLive.current({ padding: 0.2, duration: 200 }); }, 150);
+      roTimer.current = window.setTimeout(() => { roTimer.current = null; if (!interactedSinceFit.current) fitLive.current({ padding: FIT_MARGIN, duration: 200 }); }, 150);
     });
     ro.observe(el);
     roRef.current = ro;
@@ -255,7 +258,11 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
   // 76% of its height, sitting on the Margin card even after a correct Fit. Hide it once it stops being a corner —
   // when its own box is more than ~12% of the pane's area. Measured either side of that line with room to spare: 6.2%
   // of the pane at 1440x900 (shown), 15.9% at 1000x800 (hidden). The graph, the zoom Controls and Fit all stay.
-  const showMiniMap = paneBox.w > 0 && paneBox.h > 0 && (MINIMAP_BOX / (paneBox.w * paneBox.h)) <= 0.12;
+  // It is also an overview of something too big to see at once, so a tree that fits the pane at full size has nothing to
+  // overview: two cards with two dots on a map is noise (Kane's minimalism pass, 8 Oct). It returns as soon as the tree is larger.
+  const treeBounds = nodes.length > 0 ? rf.getNodesBounds(nodes) : null;
+  const treeFitsPane = !!treeBounds && treeBounds.width <= paneBox.w && treeBounds.height <= paneBox.h;
+  const showMiniMap = paneBox.w > 0 && paneBox.h > 0 && (MINIMAP_BOX / (paneBox.w * paneBox.h)) <= 0.12 && !treeFitsPane;
 
   const nodeByRef = useMemo(() => new Map((graph?.nodes ?? []).map((n) => [n.ref, n])), [graph]);
   // Kinds present, ordered coarse→fine for the granularity filter (tables → columns → measures → reports → …).
@@ -388,8 +395,8 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
 
   const rootNode = root ? nodeByRef.get(root) : null;
 
-  if (!graph) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Loading the lineage tree…</div>;
-  if ((graph.nodes?.length ?? 0) === 0) return <div className="p-6 text-[12px]" style={{ color: 'var(--sem-muted)' }}>Nothing to trace yet. Open a model first.</div>;
+  if (!graph) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Loading the lineage tree…</div>;
+  if ((graph.nodes?.length ?? 0) === 0) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Nothing to trace yet. Open a model first.</div>;
 
   const searchBox = (
     <div className="relative">
@@ -398,25 +405,33 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
         onKeyDown={(e) => { if (e.key === 'Enter' && matches[0]) { cb.reroot(matches[0].ref); setSearch(''); } else if (e.key === 'Escape') setSearch(''); }}
         className="sem-toolrow-input" style={{ width: 168, borderColor: 'var(--sem-accent)' }} />
       {matches.length > 0 && (
-        <div className="absolute z-20 mt-1 rounded-md overflow-hidden" style={{ width: 240, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
+        <div className="absolute z-20 mt-1 rounded-(--sem-radius-control) overflow-hidden" style={{ width: 240, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 6px 20px rgba(0,0,0,0.4)' }}>
           {matches.map((m) => (
             <button key={m.ref} onMouseDown={(e) => { e.preventDefault(); cb.reroot(m.ref); setSearch(''); }}
-              className="flex items-center gap-2 w-full text-left px-2 py-1 text-[12px] hover:bg-[var(--sem-surface-2)]">
-              <span style={{ color: resolveColor(KIND_COLOR[m.kind], '#9aa0aa') }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
+              className="flex items-center gap-2 w-full text-left px-2 py-1 text-xs hover:bg-[var(--sem-hover)]">
+              <span style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[m.kind] ?? '•'}</span>
               <span className="truncate flex-1">{m.name}</span>
-              {m.table && <span className="text-[10px] truncate" style={{ color: 'var(--sem-muted)', maxWidth: 80 }}>{m.table}</span>}
+              {m.table && <span className="text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)', maxWidth: 80 }}>{m.table}</span>}
             </button>
           ))}
         </div>
       )}
     </div>
   );
+  // Direction is one switch, in the words the chip on the canvas already uses. Layout (and the open/close all pair) fold
+  // behind one menu; Fit is the zoom stack's own button at the canvas corner.
   const directionControls = (
+    <div className="sem-seg" role="group" aria-label="Direction">
+      <button className="sem-seg-item" aria-pressed={dir === 'upstream'} onClick={() => setDir('upstream')} title="Follow what this is built from (upstream)">Built from</button>
+      <button className="sem-seg-item" aria-pressed={dir === 'downstream'} onClick={() => setDir('downstream')} title="Follow what relies on this (downstream)">Used by</button>
+    </div>
+  );
+  const layoutControls = (
     <>
-      <ToolBtn active={dir === 'upstream'} onClick={() => setDir('upstream')} title="What this is built from">↑ Upstream</ToolBtn>
-      <ToolBtn active={dir === 'downstream'} onClick={() => setDir('downstream')} title="What relies on this">↓ Downstream</ToolBtn>
-      <ToolBtn active={orient === 'LR'} onClick={() => setOrient('LR')} title="Lay the steps out left to right">⇄ Horizontal</ToolBtn>
-      <ToolBtn active={orient === 'TB'} onClick={() => setOrient('TB')} title="Lay the steps out top to bottom">⇅ Vertical</ToolBtn>
+      <ToolBtn active={orient === 'LR'} onClick={() => setOrient('LR')} title="Lay the steps out left to right">Horizontal</ToolBtn>
+      <ToolBtn active={orient === 'TB'} onClick={() => setOrient('TB')} title="Lay the steps out top to bottom">Vertical</ToolBtn>
+      <ToolBtn onClick={expandAll} title="Open the whole chain from the starting point">Expand all</ToolBtn>
+      <ToolBtn onClick={collapseAll} title="Close everything back to the starting point">Collapse</ToolBtn>
     </>
   );
   const sliceControls = (
@@ -426,21 +441,20 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
       {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }} title="Show everything again">Clear</ToolBtn>}
     </>
   );
-  // The kinds are a list a model decides the length of, so they are ALWAYS one menu. Spelling eight of them out
-  // is what used to push the tree's controls onto a second row.
-  const kindMenu = kindsPresent.length > 1 ? (
-    <RowMenu label="Show" align="end" badge={hiddenKinds.size || undefined} title="Choose which kinds of thing the tree shows">
+  // The kinds are a list a model decides the length of, so they sit inside the one Filter menu with the slicers.
+  const kindControls = kindsPresent.length > 1 ? (
+    <>
       {kindsPresent.map((k) => {
         const on = !hiddenKinds.has(k);
         return (
           <button key={k} className="sem-btn sem-btn-sm" aria-pressed={on} onClick={() => toggleKind(k)}
-            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)} style={{ opacity: on ? 1 : 0.55 }}>
-            <span style={{ color: resolveColor(KIND_COLOR[k], '#9aa0aa') }}>{KIND_GLYPH[k] ?? '•'}</span>
+            title={(on ? 'Hide ' : 'Show ') + (KIND_LABEL[k] ?? k)}>
+            <span style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[k] ?? '•'}</span>
             {KIND_LABEL[k] ?? k}
           </button>
         );
       })}
-    </RowMenu>
+    </>
   ) : null;
 
   return (
@@ -449,32 +463,23 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
           and a "slice / show" strip under it. The root, the counts and the model-only caveat are chips inside
           the canvas now, and the groups fold into menus in priority order before anything can wrap. */}
       <ToolRow rowRef={row.ref}>
-        {row.level >= 3
+        {row.level >= 1
           ? <RowMenu label="Tree" title="Switch to another view of lineage">{modeSwitch}</RowMenu>
           : modeSwitch}
         <RowSep />
         {searchBox}
         <RowSep />
-        {row.level >= 2
-          ? <RowMenu label="Direction" title="Which way to follow the chain, and how to lay it out">{directionControls}</RowMenu>
-          : directionControls}
-        <RowSep />
-        <ToolBtn onClick={expandAll} title="Open the whole chain from the starting point">Expand all</ToolBtn>
-        <ToolBtn onClick={collapseAll} title="Close everything back to the starting point">Collapse</ToolBtn>
-        <ToolBtn onClick={() => doFit()} title="Fit the whole tree in view">Fit</ToolBtn>
-        <RowSep />
-        {row.level >= 1
-          ? <RowMenu label="Slice" align="end" badge={(selTables.size + selFields.size) || undefined} title="Cut the tree down to part of the model">{sliceControls}</RowMenu>
-          : sliceControls}
-        {kindMenu}
+        {directionControls}
+        <RowMenu label="Layout" title="Lay the tree out, and open or close all of it">{layoutControls}</RowMenu>
+        <RowMenu label="Filter" align="end" badge={(selTables.size + selFields.size + hiddenKinds.size) || undefined} title="Cut the tree down to part of the model">{sliceControls}{kindControls}</RowMenu>
       </ToolRow>
 
-      <div ref={canvasRef} style={{ height: treeH, position: 'relative', ...canvasInsetStyle(paneBox.inset) }}>
-        <ReactFlow
+      <div ref={canvasRef} className="xe-canvas" style={{ height: treeH, position: 'relative', ...canvasInsetStyle(paneBox.inset) }}>
+        <ReactFlow className="xe-flow"
           nodes={nodes} edges={edges} onNodesChange={onNodesChange} nodeTypes={nodeTypes}
           onNodeClick={(_, n) => setSelected(n.id)} onPaneClick={() => setSelected(null)}
           onMove={(evt) => { if (evt) interactedSinceFit.current = true; }}   // evt is null for our own programmatic fitView calls, non-null for a real user drag/wheel
-          fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.2} maxZoom={2} proOptions={{ hideAttribution: true }}
+          fitView fitViewOptions={{ padding: FIT_MARGIN }} minZoom={0.2} maxZoom={2} proOptions={{ hideAttribution: true }}
           defaultEdgeOptions={{ type: 'default' }} nodesConnectable={false} elementsSelectable>
           <Background gap={20} color="rgba(140,140,160,0.12)" />
           <Controls showInteractive={false} />
@@ -483,16 +488,21 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
         {/* The honesty caveat keeps its own words and its own room. Truncating a warning into a tooltip would
             hide the very thing it exists to say, so this is the one chip allowed to run to several lines. */}
         {error && <CanvasChip at="top" tone="bad" note>{error}</CanvasChip>}
-        {!error && caveat && <CanvasChip at="top" tone="warn" note>{caveat}</CanvasChip>}
+        {!error && caveat && (
+          <CanvasChip at="top" tone="warn" note>
+            <span>{caveat}</span>
+            {onCheckReports && <button className="sem-btn sem-btn-sm" onClick={onCheckReports}>Check reports</button>}
+          </CanvasChip>
+        )}
         {/* Status and counts, which used to be a label and a chip on the row above. */}
         <CanvasChip at="start" title={paneBox.h >= CANVAS_CHIP_MIN_H ? undefined : (counts ?? undefined)}>
           {rootNode
-            ? <span>Starting from <span style={{ color: resolveColor(KIND_COLOR[rootNode.kind], '#9aa0aa') }}>{KIND_GLYPH[rootNode.kind] ?? '•'}</span> <b>{rootNode.name}</b></span>
+            ? <span>Starting from <span style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[rootNode.kind] ?? '•'}</span> <b>{rootNode.name}</b></span>
             : <span>No starting point picked yet</span>}
           <span>{dir === 'upstream' ? 'what it is built from' : 'what relies on it'}</span>
         </CanvasChip>
         {counts && paneBox.h >= CANVAS_CHIP_MIN_H && !showMiniMap && <CanvasChip at="end">{counts}</CanvasChip>}
-        {nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-[12px]" style={{ color: 'var(--sem-muted)' }}>Search for a field above, or pick one, to trace it.</div>}
+        {nodes.length === 0 && <div className="absolute inset-0 flex items-center justify-center text-xs" style={{ color: 'var(--sem-muted)' }}>Search for a field above, or pick one, to trace it.</div>}
       </div>
     </div>
   );
@@ -506,6 +516,8 @@ export interface TreeViewProps {
   modeSwitch?: React.ReactNode;
   counts?: string | null;
   caveat?: string | null;
+  /** Opens Impact with the Choose reports drawer, the one fix for the caveat above. */
+  onCheckReports?: () => void;
   error?: string | null;
 }
 

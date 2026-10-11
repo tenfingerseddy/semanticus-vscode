@@ -229,7 +229,7 @@ namespace Semanticus.Tests
             Assert.Null(store.Get(null));
             var valid = CallerRun();
             var started = store.Start(valid.OwnerClosure, initialize: WorkflowRunner.InitializeCalls);
-            Assert.Equal("wfr-1", started.RunId);
+            Assert.Matches("^wfr-[0-9a-f]{8}$", started.RunId);   // random since Plan-heart E4 (contract 1.3)
             Assert.Equal(4, started.Plan.Count);
         }
 

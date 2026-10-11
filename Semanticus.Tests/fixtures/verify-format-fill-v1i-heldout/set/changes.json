@@ -1,0 +1,293 @@
+[
+  {
+    "id": "P1",
+    "model": "PeopleOps",
+    "when": "before the person ticks",
+    "target": "PeopleOps|Employees|measure|Attrition Rate",
+    "change": "Rename Attrition Rate to Leaver Share, keeping the expression.",
+    "tmdl_after": "\tmeasure 'Leaver Share' = DIVIDE([Leaver Count], [Headcount])\n\t\tdescription: leavers divided by headcount after rename. Report to at least a tenth of a percentage point.",
+    "labels_after": [
+      {
+        "id": "PeopleOps|Employees|measure|Leaver Share",
+        "what": "leavers divided by headcount after rename",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0.0%",
+          "0.00%"
+        ],
+        "wrong": [
+          "0",
+          "0.00",
+          "0%",
+          "$0.00"
+        ],
+        "rule_in_words": "Show the fractional value as a percent with one or two decimal places, not as an unscaled decimal or rounded whole percent.",
+        "provable_from_model": true,
+        "why": "The current expression and metadata establish the unit and precision; the earlier suggestion is stale.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ],
+    "new_id": "PeopleOps|Employees|measure|Leaver Share"
+  },
+  {
+    "id": "F2",
+    "model": "FinanceLedger",
+    "when": "before the person ticks",
+    "target": "FinanceLedger|Journal|measure|Operating Margin",
+    "change": "Replace profit divided by revenue with operating profit dollars.",
+    "tmdl_after": "\tmeasure 'Operating Margin' = [Operating Profit]\n\t\tdescription: operating profit dollars after expression edit. Cents must remain visible.",
+    "labels_after": [
+      {
+        "id": "FinanceLedger|Journal|measure|Operating Margin",
+        "what": "operating profit dollars after expression edit",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "$0.00",
+          "$#,##0.00"
+        ],
+        "wrong": [
+          "0",
+          "#,##0",
+          "0.00",
+          "0.0%"
+        ],
+        "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+        "provable_from_model": true,
+        "why": "The current expression and metadata establish the unit and precision; the earlier suggestion is stale.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "W2",
+    "model": "WebPulse",
+    "when": "before the person ticks",
+    "target": "WebPulse|Events|column|Page Load Ms",
+    "change": "Source switches from milliseconds to seconds while retaining the column name temporarily; replace PageLoadMs with PageLoadSeconds in the Events partition schema and source. The Average Page Load measure now also returns seconds, despite its stale description.",
+    "tmdl_after": "\tcolumn 'Page Load Ms'\n\t\tdataType: double\n\t\tsourceColumn: PageLoadSeconds\n\t\tsummarizeBy: none",
+    "labels_after": [
+      {
+        "id": "WebPulse|Events|column|Page Load Ms",
+        "what": "page load time in seconds after source substitution",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0.0\" s\"",
+          "0.00\" s\""
+        ],
+        "wrong": [
+          "0",
+          "0.0%",
+          "$0.00"
+        ],
+        "rule_in_words": "Show seconds with one or two decimal places and an s suffix; no percent, currency, or scaling.",
+        "provable_from_model": false,
+        "why": "The changed meaning is supplied by the change script; current metadata alone does not establish a safe display.",
+        "adversarial": "changed_after_suggestion"
+      },
+      {
+        "id": "WebPulse|Events|measure|Average Page Load",
+        "what": "mean page load in seconds after source substitution",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0.0\" s\"",
+          "0.00\" s\""
+        ],
+        "wrong": [
+          "0",
+          "0.0%",
+          "$0.00"
+        ],
+        "rule_in_words": "Show seconds with one or two decimal places and an s suffix; no percent, currency, or scaling.",
+        "provable_from_model": false,
+        "why": "The changed meaning is supplied by the change script; current metadata alone does not establish a safe display.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "S1",
+    "model": "SalesOps",
+    "when": "after the person ticks, before the write",
+    "target": "SalesOps|Sales|measure|Discount Rate",
+    "change": "Replace the percentage expression with total discount dollars; a ticked percent format is now wrong.",
+    "tmdl_after": "\tmeasure 'Discount Rate' = SUM(Sales[Discount Amount])\n\t\tdescription: total discount dollars after expression edit. Cents must remain visible.",
+    "labels_after": [
+      {
+        "id": "SalesOps|Sales|measure|Discount Rate",
+        "what": "total discount dollars after expression edit",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "$0.00",
+          "$#,##0.00"
+        ],
+        "wrong": [
+          "0",
+          "#,##0",
+          "0.00",
+          "0.0%"
+        ],
+        "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+        "provable_from_model": true,
+        "why": "The current expression and metadata establish the unit and precision; the earlier suggestion is stale.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "F1",
+    "model": "FinanceLedger",
+    "when": "after the person ticks, before the write",
+    "target": "FinanceLedger|FiscalCalendar|column|Fiscal Year",
+    "change": "Change the fiscal year column from integer to text in the source and model; update the FiscalCalendar partition schema to type text.",
+    "tmdl_after": "\tcolumn 'Fiscal Year'\n\t\tdataType: string\n\t\tsourceColumn: FiscalYear\n\t\tsummarizeBy: none",
+    "labels_after": [
+      {
+        "id": "FinanceLedger|FiscalCalendar|column|Fiscal Year",
+        "what": "fiscal year now stored as text",
+        "shipped_format": null,
+        "unsure": true,
+        "right": [],
+        "wrong": [],
+        "rule_in_words": "This is text, so numeric format suitability cannot be judged; classify every proposed format U.",
+        "provable_from_model": false,
+        "why": "The changed object no longer has a determinate numeric display format.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "I1",
+    "model": "StockFlow",
+    "when": "after the person ticks, before the write",
+    "target": "StockFlow|Product|column|SKU Numeric",
+    "change": "Delete the SKU Numeric column after a format was ticked.",
+    "tmdl_after": "deleted",
+    "labels_after": []
+  },
+  {
+    "id": "W1",
+    "model": "WebPulse",
+    "when": "after the person ticks, before the write",
+    "target": "WebPulse|Events|measure|Checkout Conversion",
+    "change": "Replace conversion with purchase event count.",
+    "tmdl_after": "\tmeasure 'Checkout Conversion' = [Purchases]\n\t\tdescription: purchase event count after expression edit",
+    "labels_after": [
+      {
+        "id": "WebPulse|Events|measure|Checkout Conversion",
+        "what": "purchase event count after expression edit",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0",
+          "#,0",
+          "#,##0"
+        ],
+        "wrong": [
+          "0.00",
+          "0%",
+          "$#,##0.00"
+        ],
+        "rule_in_words": "Show a whole-number count, optionally with thousands grouping, and no decimals, currency, percent, or scale.",
+        "provable_from_model": true,
+        "why": "The current expression and metadata establish the unit and precision; the earlier suggestion is stale.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "I2",
+    "model": "StockFlow",
+    "when": "after the person ticks, before the write",
+    "target": "StockFlow|Stock|measure|Reorder Coverage",
+    "change": "Replace days of cover with on-hand-to-safety-stock multiple.",
+    "tmdl_after": "\tmeasure 'Reorder Coverage' = DIVIDE([On Hand], [Safety Stock])",
+    "labels_after": [
+      {
+        "id": "StockFlow|Stock|measure|Reorder Coverage",
+        "what": "on hand divided by safety stock after expression edit",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0.00\"x\"",
+          "0.000\"x\""
+        ],
+        "wrong": [
+          "0",
+          "0.00",
+          "0%",
+          "#,##0"
+        ],
+        "rule_in_words": "Show a dimensionless multiple with two or three decimal places and an x suffix; do not turn it into a percent.",
+        "provable_from_model": false,
+        "why": "The changed meaning is supplied by the change script; current metadata alone does not establish a safe display.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  },
+  {
+    "id": "P2",
+    "model": "PeopleOps",
+    "when": "after the person ticks, before the write",
+    "target": "PeopleOps|Employees|column|Birth Year",
+    "change": "Rename Birth Year to Year of Birth without changing the integer year values.",
+    "tmdl_after": "\tcolumn 'Year of Birth'\n\t\tdataType: int64\n\t\tsourceColumn: BirthYear\n\t\tsummarizeBy: none\n\t\tdescription: birth year stored as integer after rename",
+    "labels_after": [
+      {
+        "id": "PeopleOps|Employees|column|Year of Birth",
+        "what": "birth year stored as integer after rename",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "0",
+          "0000"
+        ],
+        "wrong": [
+          "#,0",
+          "#,##0",
+          "0.00",
+          "0%"
+        ],
+        "rule_in_words": "Show the four-digit calendar or fiscal year as ungrouped digits, with no decimals, currency, percent, or scale.",
+        "provable_from_model": true,
+        "why": "The current expression and metadata establish the unit and precision; the earlier suggestion is stale.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ],
+    "new_id": "PeopleOps|Employees|column|Year of Birth"
+  },
+  {
+    "id": "S2",
+    "model": "SalesOps",
+    "when": "after the person ticks, before the write",
+    "target": "SalesOps|Sales|column|Promotion Code",
+    "change": "Change the six-digit promotion code to a dollar discount value; replace PromotionCode with PromotionDiscountDollars in the Sales partition schema and source.",
+    "tmdl_after": "\tcolumn 'Promotion Code'\n\t\tdataType: double\n\t\tsourceColumn: PromotionDiscountDollars\n\t\tsummarizeBy: none",
+    "labels_after": [
+      {
+        "id": "SalesOps|Sales|column|Promotion Code",
+        "what": "promotion discount dollars after source substitution",
+        "shipped_format": null,
+        "unsure": false,
+        "right": [
+          "$0.00",
+          "$#,##0.00"
+        ],
+        "wrong": [
+          "0",
+          "#,##0",
+          "0.00",
+          "0.0%"
+        ],
+        "rule_in_words": "Show a dollar amount with exactly two decimal places; grouping and negative parentheses are allowed, but percent or scaling is not.",
+        "provable_from_model": false,
+        "why": "The changed meaning is supplied by the change script; current metadata alone does not establish a safe display.",
+        "adversarial": "changed_after_suggestion"
+      }
+    ]
+  }
+]

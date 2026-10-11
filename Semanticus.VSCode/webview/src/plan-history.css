@@ -1,0 +1,132 @@
+/* History inside the Plan (plan-history.tsx). Tokens only: every size, gap and colour is a --sem-* name from
+   tokens.css, and the doer marks are the colour level B hues through .sem-doer. Layout follows the approved mockup
+   (plan-heart.html section 4): a who filter, one list of hairline rows, and a details panel beside it. */
+
+.ph { position: relative; display: flex; flex-direction: column; gap: var(--sem-stack); min-width: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+
+/* The bar on top: the who filter on the left; the record's state, Save a version and the menu on the right. */
+/* The list is a card, and a card stands one gap (12) from what is above it, not the stack's 8. */
+.ph > .ph-rows, .ph-list > .ph-rows { margin-top: calc(var(--sem-gap) - var(--sem-stack)); }
+.ph-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack) var(--sem-space-4); min-height: var(--sem-bar-h); box-shadow: inset 0 -1px 0 var(--sem-rule); }
+.ph-top-r { margin-left: auto; display: flex; align-items: center; gap: var(--sem-space-3); font-size: var(--sem-text-meta); }
+.ph-intact { display: inline-flex; align-items: center; gap: var(--sem-space-1); color: var(--sem-muted); }
+.ph-menu-wrap { position: relative; }
+/* The menu wears Studio's shared .compact-menu (styles.css): this only places it under its button. */
+.ph-menu { position: absolute; top: calc(100% + var(--sem-space-1)); right: 0; z-index: 4; min-width: calc(var(--sem-space-8) * 8); }
+.ph-menu button { display: flex; align-items: center; height: var(--sem-row); padding: 0 var(--sem-space-2); border: 0; border-radius: var(--sem-radius-inner); background: transparent; color: var(--sem-fg); font: inherit; font-size: var(--sem-text-meta); text-align: left; cursor: pointer; }
+.ph-menu button:hover, .ph-menu button:focus-visible { background: var(--sem-hover); }
+.ph-menu .ph-menu-quiet { color: var(--sem-muted); }
+.ph-menu-sep { height: 1px; margin: var(--sem-space-1) 0; background: var(--sem-rule); }
+
+/* One-line notes, the undone bar, the broken-record warning and the save form. */
+.ph-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.ph-note b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+/* A restore's answer with a tone: the same inset as the broken-record warning, in the tone's colour. */
+.ph-note-warn, .ph-note-bad { padding: var(--sem-inset-pad); border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); color: var(--sem-fg); }
+.ph-note-warn { box-shadow: inset 2px 0 0 var(--sem-warn); }
+.ph-note-bad { box-shadow: inset 2px 0 0 var(--sem-bad); }
+.ph-bar { display: flex; align-items: center; gap: var(--sem-space-3); min-height: var(--sem-bar-h); padding: 0 var(--sem-space-3); border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); font-size: var(--sem-text-meta); }
+.ph-bar > button { margin-left: auto; }
+.ph-broken { padding: var(--sem-inset-pad); border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); box-shadow: inset 2px 0 0 var(--sem-bad); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.ph-broken b { color: var(--sem-bad); font-weight: var(--sem-weight-strong); }
+.ph-save { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack); }
+.ph-save input { flex: 0 1 calc(var(--sem-space-8) * 10); min-width: 0; }
+
+/* The body: on the 12-column grid, the list alone, or the list on 7 columns and the details on 5. */
+.ph-body { display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); column-gap: var(--sem-gap); align-items: start; }
+.ph-list { grid-column: 1 / -1; min-width: 0; display: flex; flex-direction: column; gap: var(--sem-stack); container: ph-list / inline-size; }
+.ph-split .ph-list { grid-column: span 7; }
+.ph-split .ph-detail { grid-column: span 5; }
+.ph-older { align-self: flex-start; }
+.ph-empty { padding: var(--sem-space-3); color: var(--sem-muted); font-size: var(--sem-text-meta); }
+
+/* A row: time, who, what, the Verified word, the action. The last two are sized by what they hold, so the title
+   takes every pixel the row has left (journey m11 F15: two fixed columns of 96 and 176px left titles cut at half
+   the row with the rest standing empty, and in a split list they took the title's whole width and then some). */
+.ph-row { position: relative; display: grid; grid-template-columns: calc(var(--sem-space-8) * 2) calc(var(--sem-space-8) * 4) minmax(0, 1fr) auto auto;
+  column-gap: var(--sem-gap); align-items: center; min-height: var(--sem-row-2); padding: var(--sem-space-1) var(--sem-space-3); box-sizing: border-box; box-shadow: inset 0 -1px 0 var(--sem-rule); cursor: pointer; }
+/* A narrow list (the split list, or a narrow Studio): time over who in one column, the title beside them with the
+   Verified word, and the action on a line of its own under the title, so nothing crosses into the details. */
+@container ph-list (max-width: 600px) {
+  .ph-row { grid-template-columns: calc(var(--sem-space-8) * 3 + var(--sem-space-4)) minmax(0, 1fr) auto;
+    grid-template-areas: "time what ver" "who what ver" ". act act"; }
+  .ph-row > .ph-time { grid-area: time; }
+  .ph-row > .ph-who { grid-area: who; }
+  .ph-row > .ph-what { grid-area: what; }
+  .ph-row > .ph-ver { grid-area: ver; }
+  /* Indented past the caret column inside .ph-what, so the action starts where the title does. */
+  .ph-row > .ph-act { grid-area: act; justify-content: flex-start; padding-left: calc(var(--sem-space-4) + var(--sem-space-1)); }
+}
+.ph-row:hover { background: var(--sem-hover); }
+.ph-row.ph-sel { background: var(--sem-tint-select); }
+.ph-row.ph-sel::before { content: ""; position: absolute; left: 0; top: var(--sem-space-2); bottom: var(--sem-space-2); width: 2px; background: var(--sem-accent); }
+body.vscode-high-contrast .ph-row.ph-sel, body.vscode-high-contrast-light .ph-row.ph-sel { outline: 1px solid var(--sem-strong-border); outline-offset: -1px; }
+.ph-time { font-family: var(--sem-font-num); font-size: var(--sem-text-meta); color: var(--sem-muted); white-space: nowrap; }
+.ph-who { min-width: 0; font-size: var(--sem-text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-flag { display: inline-flex; align-items: center; gap: var(--sem-space-1); color: var(--sem-fg); }
+.ph-doer-workflow { color: var(--sem-fg); }
+.ph-doer-workflow::before { background: transparent; box-shadow: inset 0 0 0 1px currentColor; transform: rotate(45deg) scale(.8); }
+.ph-what { min-width: 0; display: grid; grid-template-columns: var(--sem-space-4) minmax(0, 1fr); column-gap: var(--sem-space-1); align-items: center; }
+.ph-title { min-width: 0; font-weight: var(--sem-weight-strong); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-meta { grid-column: 2; min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-caret { display: flex; align-items: center; justify-content: center; width: var(--sem-space-4); height: var(--sem-space-4); padding: 0; border: 0; background: transparent; color: var(--sem-muted); cursor: pointer; }
+.ph-caret:hover { color: var(--sem-fg); }
+.ph-saved .ph-title { font-weight: var(--sem-weight-strong); }
+.ph-ver { min-width: 0; font-size: var(--sem-text-meta); white-space: nowrap; }
+.ph-word { display: inline-flex; align-items: center; gap: var(--sem-space-1); }
+.ph-act { display: flex; align-items: center; justify-content: flex-end; gap: var(--sem-space-2); font-size: var(--sem-text-meta); white-space: nowrap; }
+.ph-later { color: var(--sem-muted); font-size: var(--sem-text-label); }
+
+/* An edit nested under its item or run: no time or who of its own, the object and the change in the number face. */
+.ph-kid { min-height: var(--sem-row); }
+.ph-kid .ph-what { grid-template-columns: minmax(0, 1fr); padding-left: var(--sem-space-6); }
+.ph-kidtitle { position: relative; min-width: 0; font-family: var(--sem-font-num); font-size: var(--sem-text-meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* An undone row is struck through (mockup: it replaces the "undone" chip). */
+.ph-undone .ph-title, .ph-undone .ph-kidtitle { text-decoration: line-through; text-decoration-color: var(--sem-faint); color: var(--sem-muted); }
+.ph-notsaved .ph-title, .ph-notsaved .ph-kidtitle { font-style: italic; }
+.ph-undone .ph-who, .ph-undone .ph-time, .ph-undone .ph-who .sem-doer { color: var(--sem-muted); }
+
+/* The two seams. */
+.ph-seam { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); min-height: var(--sem-bar-h); padding: 0 var(--sem-space-3); font-size: var(--sem-text-meta); color: var(--sem-muted); box-shadow: inset 0 -1px 0 var(--sem-rule); }
+.ph-seam b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+
+/* The one restore question, under the version it is about. */
+.ph-confirm { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sem-space-4); align-items: center; padding: var(--sem-space-3) var(--sem-card-pad); background: var(--sem-surface-2); box-shadow: inset 0 -1px 0 var(--sem-rule); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.ph-confirm b { font-weight: var(--sem-weight-strong); }
+.ph-confirm-acts { display: flex; gap: var(--sem-stack); }
+
+/* The details panel. */
+.ph-detail { min-width: 0; display: grid; gap: var(--sem-space-3); align-content: start; padding: var(--sem-space-3) 0 var(--sem-space-3) var(--sem-space-6); box-shadow: inset 1px 0 0 var(--sem-rule); }
+.ph-dhead { display: flex; align-items: center; gap: var(--sem-space-2); font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.ph-close { margin-left: auto; }
+.ph-num { font-family: var(--sem-font-num); }
+.ph-dtitle { margin: 0; font-size: var(--sem-text-title); font-weight: var(--sem-weight-strong); overflow-wrap: anywhere; }
+.ph-dmeta { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.ph-wrap { overflow-wrap: anywhere; }
+.ph-chg { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.ph-c-obj { width: 26%; }
+.ph-c-chg { width: 18%; }
+.ph-c-val { width: 28%; }
+.ph-chg th { padding: 0 var(--sem-space-2) var(--sem-space-1) 0; text-align: left; font-weight: var(--sem-weight); font-size: var(--sem-text-label); color: var(--sem-muted); box-shadow: inset 0 -1px 0 var(--sem-rule); }
+.ph-chg td { padding: var(--sem-space-2) var(--sem-space-2) var(--sem-space-2) 0; vertical-align: top; overflow-wrap: anywhere; box-shadow: inset 0 -1px 0 var(--sem-rule); }
+.ph-v { font-family: var(--sem-font-num); white-space: pre-wrap; }
+.ph-before { color: var(--sem-muted); }
+.ph-obj { padding: 0; border: 0; background: transparent; color: var(--sem-fg); font: inherit; text-align: left; overflow-wrap: anywhere; text-decoration: underline; text-decoration-color: var(--sem-faint); text-underline-offset: 3px; cursor: pointer; }
+.ph-obj:hover { text-decoration-color: var(--sem-fg); }
+.ph-steps { margin: 0; padding-left: var(--sem-space-4); display: grid; gap: var(--sem-space-1); font-size: var(--sem-text-meta); }
+.ph-steps li { display: flex; flex-wrap: wrap; gap: var(--sem-space-2); }
+.ph-verline { display: grid; grid-template-columns: var(--sem-space-3) minmax(0, 1fr); gap: var(--sem-space-2); align-items: start; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.ph-verline b { font-weight: var(--sem-weight-strong); }
+.ph-inline { height: auto; padding: 0; }
+.ph-evidence { min-width: 0; }
+.ph-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-3); }
+.ph-conseq { font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.ph-foot { font-family: var(--sem-font-num); font-size: var(--sem-text-label); color: var(--sem-muted); }
+
+/* Marks. */
+.ph-ico { flex: none; width: var(--sem-space-3); height: var(--sem-space-3); }
+.ph-dot { flex: none; display: inline-block; width: var(--sem-space-2); height: var(--sem-space-2); border-radius: 50%; background: currentColor; }
+.ph-good { color: var(--sem-fg); }
+.ph-word.ph-warn .ph-dot, .ph-dot.ph-warn { background: var(--sem-warn); }
+.ph-word.ph-bad .ph-dot, .ph-dot.ph-bad { background: var(--sem-bad); }

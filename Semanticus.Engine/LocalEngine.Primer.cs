@@ -20,7 +20,11 @@ namespace Semanticus.Engine
         // (localhost:port) AND the database (a per-session GUID) BOTH rotate every Desktop restart, so an
         // endpoint|database key computes a NEW filename each reload and orphans the primer (the reported bug).
         // A local model's identity is PROVENANCE captured ONCE at open_local/connect_local, a ladder:
-        //   1. the full .pbix PATH (LiveOrigin.LocalPath) — strongest, distinct across same-named files;
+        //   1. the full .pbix PATH (LiveOrigin.LocalPath) — NO LONGER STAMPED (the join's ruling, 30 Sep: Desktop's
+        //      command line names the file Desktop was started with, not the one the window shows). The honest cost:
+        //      a Primer an earlier build saved under a path key is no longer found (the key is the path's hash, which
+        //      nothing now supplies), and one whose stamp claims a path refuses (this session cannot prove the same
+        //      file) until it is saved again under the title. The path branches below stay for those older stamps;
         //   2. the window-title STEM (LiveOrigin.LocalName) — same-stem files collide, so writes stamp provenance
         //      beside the artifact and reads FAIL CLOSED on a proven mismatch (blank template + honest note, never
         //      another model's content); two same-stem models with NO recoverable path on either side remain a
@@ -157,12 +161,12 @@ namespace Semanticus.Engine
         /// temp-write BOTH, move the md, move the stamp. Returns a WARNING string when the stamp could not be
         /// written (never swallowed — the caller surfaces it so the user knows provenance is stale), null on
         /// success. A reader landing between the two moves sees old-stamp/new-md = a hash mismatch = Unprovable.</summary>
-        private static async Task<string> WritePrimerWithStampAsync(string file, string markdown, PrimerLocus locus)
+        private static string WritePrimerWithStamp(string file, string markdown, PrimerLocus locus)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(file));
             var md = markdown.Replace("\r\n", "\n");
             var mdTemp = file + ".tmp-" + Guid.NewGuid().ToString("N");
-            await File.WriteAllTextAsync(mdTemp, md, new System.Text.UTF8Encoding(false));
+            File.WriteAllText(mdTemp, md, new System.Text.UTF8Encoding(false));
             string warning = null, stampTemp = null, stampFile = null;
             if (locus.IsLocal)   // cloud/disk keys carry their identity in the key itself — no stamp
             {
@@ -177,7 +181,7 @@ namespace Semanticus.Engine
                         ContentHash = Sha256Hex(md),
                     };
                     stampTemp = stampFile + ".tmp-" + Guid.NewGuid().ToString("N");
-                    await File.WriteAllTextAsync(stampTemp, JsonSerializer.Serialize(stamp, new JsonSerializerOptions { WriteIndented = true }), new System.Text.UTF8Encoding(false));
+                    File.WriteAllText(stampTemp, JsonSerializer.Serialize(stamp, new JsonSerializerOptions { WriteIndented = true }), new System.Text.UTF8Encoding(false));
                 }
                 catch (Exception ex) { stampTemp = null; warning = StampWriteWarning(ex); }
             }
@@ -191,6 +195,125 @@ namespace Semanticus.Engine
             // have just written a VALID pair (its stamp is its claim; deleting it would destroy a success it
             // already reported). The stale-stamp torn pair this leaves behind reads as Invalid — refused safely.
             return warning;
+        }
+
+        /// <summary>Write the Primer as a TRACKED change (F-353): one step on the model's undo timeline and one History
+        /// entry with its real author and a before and after per changed section, from either door. Undo puts back the
+        /// exact files that were there (or none), stamp included; redo puts the written pair back. The model itself
+        /// is not edited, so a saved model stays saved. <paramref name="shown"/> is the Primer the writer was looking
+        /// at (the served starter when there was no file), so the History compares what they saw with what they wrote.
+        /// A write that changes nothing is written untracked: a History row saying nothing happened is noise.</summary>
+        /// <param name="sideFile">The suggestion list, when this step also decides one suggestion in it: the step owns
+        /// that ONE entry, <paramref name="sideId"/> set to <paramref name="sideDecision"/>, so undoing an accepted
+        /// suggestion puts it back to waiting and redo accepts it again, and another suggestion rejected meanwhile (written
+        /// off the timeline) stays rejected and does not lock Undo (verifier on m11/sol-fixes-1, D1).</param>
+        private static async Task<string> CommitPrimerAsync(Session session, string file, string markdown, string shown, PrimerLocus locus, string origin, string label,
+                                                            string sideFile = null, string sideId = null, string sideDecision = null)
+        {
+            var after = markdown.Replace("\r\n", "\n");
+            var before = (shown ?? "").Replace("\r\n", "\n");
+            if (sideFile == null && File.Exists(file) && string.Equals(before, after, StringComparison.Ordinal)) return WritePrimerWithStamp(file, after, locus);
+            var stampFile = locus.IsLocal ? StampFileFor(file) : null;
+            string warning = null;
+            await session.MutateBesideModelAsync(string.IsNullOrWhiteSpace(origin) ? "human" : origin, label, m =>
+            {
+                var oldMd = ReadOrNull(file);
+                var oldStamp = stampFile == null ? null : ReadOrNull(stampFile);
+                var oldDecision = sideFile == null ? null : ReadSuggestionDecision(sideFile, sideId);
+                warning = WritePrimerWithStamp(file, after, locus);
+                if (sideFile != null) PutSuggestionDecision(sideFile, sideId, sideDecision);
+                // Every file this step touched, with what it held before and after, so undo and redo refuse instead of
+                // overwriting one that was edited on disk since (Sol on m11/integration 568435d3, finding 2). The after
+                // text is read back, so it is what is on disk, not what was meant to be. Each is named by its path at
+                // undo time, which a Save As carrying it to the new model's name moves (SidecarUndo.Rebase).
+                var touched = new System.Collections.Generic.List<TabularEditor.TOMWrapper.Utils.SidecarFile>
+                {
+                    new TabularEditor.TOMWrapper.Utils.SidecarFile("The Primer file", file, oldMd, ReadOrNull(file), ReadOrNull, PutBack),
+                };
+                if (stampFile != null)
+                    touched.Add(new TabularEditor.TOMWrapper.Utils.SidecarFile("The Primer's identity file", stampFile, oldStamp, ReadOrNull(stampFile), ReadOrNull, PutBack));
+                if (sideFile != null)
+                    touched.Add(new TabularEditor.TOMWrapper.Utils.SidecarFile("The Primer's suggestion list", sideFile, sideId, oldDecision,
+                        ReadSuggestionDecision(sideFile, sideId), path => ReadSuggestionDecision(path, sideId), (path, value) => PutSuggestionDecision(path, sideId, value)));
+                TabularEditor.TOMWrapper.Utils.SidecarUndo.Register(m, label, touched);
+                foreach (var d in PrimerDeltas(before, after)) session.RecordDelta(d);
+            });
+            return warning;
+        }
+
+        /// <summary>One suggestion's decision in the suggestion list ("accepted|when"), or null when it has none. A list that
+        /// is there but cannot be read gives <see cref="UnreadableList"/>, which no decision equals, so an undo that would
+        /// rewrite it is refused rather than guessing.</summary>
+        private static string ReadSuggestionDecision(string file, string id)
+        {
+            if (!File.Exists(file)) return null;
+            try
+            {
+                var state = JsonSerializer.Deserialize<PrimerSuggestionState>(File.ReadAllText(file), new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return state?.Decisions != null && state.Decisions.TryGetValue(id, out var v) ? v : null;
+            }
+            catch (Exception) { return UnreadableList; }
+        }
+
+        private const string UnreadableList = "(the suggestion list could not be read)";
+
+        /// <summary>Set one suggestion's decision (null takes it away, so the suggestion waits again), leaving every other
+        /// entry as it is on disk now. A list left with no decisions is removed, as it was before the first one.</summary>
+        private static void PutSuggestionDecision(string file, string id, string decision)
+        {
+            var state = ReadSuggestionState(file);
+            if (decision == null) state.Decisions.Remove(id);
+            else state.Decisions[id] = decision;
+            PutBack(file, state.Decisions.Count == 0 ? null : JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        }
+
+        private static string ReadOrNull(string file) => File.Exists(file) ? File.ReadAllText(file) : null;
+
+        // Undo and redo restore a file exactly: its text, or its absence. Temp-then-move, like the forward write.
+        private static void PutBack(string file, string text)
+        {
+            if (text == null) { if (File.Exists(file)) File.Delete(file); return; }
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            var temp = file + ".tmp-" + Guid.NewGuid().ToString("N");
+            File.WriteAllText(temp, text, new System.Text.UTF8Encoding(false));
+            File.Move(temp, file, true);
+        }
+
+        /// <summary>The History's before and after for a Primer write: one delta per part that changed (the title,
+        /// then each of the six sections), so a one-line edit at the bottom is not hidden behind a capped whole file.</summary>
+        internal static System.Collections.Generic.IEnumerable<ChangeDelta> PrimerDeltas(string before, string after)
+        {
+            var was = PrimerParts(before);
+            var now = PrimerParts(after);
+            foreach (var part in new[] { "Title" }.Concat(PrimerContract.Sections))
+            {
+                was.TryGetValue(part, out var b);
+                now.TryGetValue(part, out var a);
+                if (string.Equals(b, a, StringComparison.Ordinal)) continue;
+                yield return new ChangeDelta
+                {
+                    Kind = "update", Ref = PrimerRef, Props = new[] { part },
+                    Before = ChangeValues.Cap(b, ChangeValues.WireCap), After = ChangeValues.Cap(a, ChangeValues.WireCap),
+                };
+            }
+        }
+
+        /// <summary>The ref a Primer change carries in History and on the wire (get_plan_history objectRef="primer").</summary>
+        public const string PrimerRef = "primer";
+
+        private static System.Collections.Generic.Dictionary<string, string> PrimerParts(string markdown)
+        {
+            var parts = new System.Collections.Generic.Dictionary<string, string>(StringComparer.Ordinal);
+            string current = "Title";
+            var body = new System.Text.StringBuilder();
+            void Flush() { parts[current] = body.ToString().Trim(); body.Clear(); }
+            foreach (var line in (markdown ?? "").Replace("\r\n", "\n").Split('\n'))
+            {
+                if (line.StartsWith("## ", StringComparison.Ordinal)) { Flush(); current = line.Substring(3).Trim(); continue; }
+                body.Append(line).Append('\n');
+            }
+            Flush();
+            return parts;
         }
 
         // Fixed text across the door — an exception message can carry absolute sidecar/temp paths, which must not
@@ -235,7 +358,6 @@ namespace Semanticus.Engine
 
         public Task<PrimerDocument> GetPrimerAsync()
         {
-            RequireProFeature();
             var context = _sessions.CurrentContext;   // ONE capture: identity, sidecar and the name read agree on the model
             return GetPrimerCoreAsync(context, PrimerLocusFor(context));
         }
@@ -310,7 +432,7 @@ namespace Semanticus.Engine
                         {
                             ModelName = modelName, ModelIdentity = identity, FilePath = file,
                             Markdown = PrimerContract.Template(modelName), Exists = false,
-                            Note = "A Primer for \"" + Path.GetFileName(stamp.PbixPath) + "\" exists under this model's display name, but this session cannot prove it is the same file. Open the .pbix file directly (double-click it) once, or save the Primer again, to claim it.",
+                            Note = "A Primer for \"" + Path.GetFileName(stamp.PbixPath) + "\" exists under this model's display name, but this session cannot prove it is the same file. If it is this model's, save the Primer again to claim it.",
                         };
                     if (!SamePbix(stamp.PbixPath, locus.LocalPath))
                         return new PrimerDocument
@@ -335,9 +457,9 @@ namespace Semanticus.Engine
             };
         }
 
-        public async Task<PrimerDocument> SetPrimerAsync(string markdown, string origin)
+        public async Task<PrimerDocument> SetPrimerAsync(string markdown, string origin, string expectedMarkdown = null)
         {
-            RequireProFeature();
+            GuardOutsideWrite(origin);
             PrimerContract.Validate(markdown);
             var context = _sessions.CurrentContext;
             var session = context.Session ?? throw new InvalidOperationException("Open a model before writing its Primer.");
@@ -353,7 +475,11 @@ namespace Semanticus.Engine
                 // the context (session swap) and the connection the identity may have derived from (a concurrent
                 // connect_local swaps context.Live without replacing the context).
                 EnsureContextCurrent(context, locus.Live, "Primer save");
-                warning = await WritePrimerWithStampAsync(file, markdown, locus);
+                var shown = (await GetPrimerCoreAsync(context, locus)).Markdown;
+                // the Primer the person was asked about replacing: words they wrote since are theirs
+                RequireApprovedBasis(nameof(SetPrimerAsync), GateHash(shown), "Primer");
+                GuardExpectedValue("Primer", expectedMarkdown, shown, markdown);   // the editor's starting point against the Primer as it stands inside this write
+                warning = await CommitPrimerAsync(session, file, markdown, shown, locus, origin, "Update the model Primer");
             }
             finally { _primerGate.Release(); }
             _sessions.Bus.PublishActivity(new ActivityEvent
@@ -386,7 +512,7 @@ namespace Semanticus.Engine
             foreach (var scope in new[] { "project", "global" })
             {
                 var (live, _) = KnowledgeStore.Materialize(ScopeFile(scope), scope);
-                records.AddRange(live.Where(x => string.Equals(x.Status, "approved", StringComparison.Ordinal)
+                records.AddRange(live.Where(x => KnowledgeStore.Recallable(x)
                     && string.Equals(x.Fingerprint, fp, StringComparison.Ordinal)));
             }
             var suggestions = records
@@ -405,15 +531,21 @@ namespace Semanticus.Engine
                     SuggestedAdditions = suggestions.Count(x => x.Section == section),
                     PrimerUpdatedUtc = primer.UpdatedUtc,
                 }).ToArray(),
-                Note = suggestions.Length == 0 ? "No reviewed learning is waiting to update this model's Primer." : null,
+                Note = suggestions.Length == 0 ? "No learning is waiting to update this model's Primer." : null,
             };
         }
 
         public Task<PrimerSuggestionDecision> AcceptPrimerSuggestionAsync(string id, string origin)
-            => DecidePrimerSuggestionAsync(id, true, origin);
+        {
+            GuardOutsideWrite(origin);
+            return DecidePrimerSuggestionAsync(id, true, origin);
+        }
 
         public Task<PrimerSuggestionDecision> RejectPrimerSuggestionAsync(string id, string origin)
-            => DecidePrimerSuggestionAsync(id, false, origin);
+        {
+            GuardOutsideWrite(origin);
+            return DecidePrimerSuggestionAsync(id, false, origin);
+        }
 
         private async Task<PrimerSuggestionDecision> DecidePrimerSuggestionAsync(string id, bool accept, string origin)
         {
@@ -433,6 +565,11 @@ namespace Semanticus.Engine
             var list = await ListPrimerSuggestionsCoreAsync(context, locus);
             var suggestion = list.Suggestions.FirstOrDefault(x => x.Id == id)
                 ?? throw new InvalidOperationException("This Primer suggestion is no longer waiting. Refresh the Primer and choose a current suggestion.");
+            // UAT-S06a-1-002: the assistant cannot put its own unreviewed lesson into the Primer. A person's Accept is
+            // the review, so the UI door stays one click; rejecting stays open to both doors.
+            var byPerson = KnowledgeStore.ByPerson(string.IsNullOrWhiteSpace(origin) ? "human" : origin);
+            if (accept && suggestion.NeedsReview && !byPerson)
+                throw new InvalidOperationException("Your assistant wrote this lesson and no person has approved it yet, so only a person can add it to the Primer. Ask them to accept it in Model notes.");
 
             PrimerDocument primer = null;
             string warning = null;
@@ -441,24 +578,36 @@ namespace Semanticus.Engine
             {
                 // Both captured references verified (see SetPrimerAsync): a session OR connection swap aborts.
                 EnsureContextCurrent(context, locus.Live, "Primer suggestion decision");
+                var state = ReadSuggestionState(suggestionFile);
+                if (!accept) RequireApprovedBasis(nameof(RejectPrimerSuggestionAsync), SuggestionBasis(suggestion), "suggestion");
+                state.Decisions[id] = (accept ? "accepted" : "rejected") + "|" + DateTime.UtcNow.ToString("o");
                 if (accept)
                 {
                     // The SERVED read, not the raw file: a same-key file the rule table refuses (foreign or
                     // unprovable) must not be adopted as the base — the suggestion then lands on the template.
+                    // The decision rides the same undo step as the words, so undoing the accept puts the suggestion
+                    // back to waiting and redo accepts it again (F-353).
+                    if (suggestionFile == null) throw new InvalidOperationException("This model has no project location for Primer suggestions.");
                     var current = (await GetPrimerCoreAsync(context, locus)).Markdown;
-                    warning = await WritePrimerWithStampAsync(file, PrimerContract.ApplySuggestion(current, suggestion), locus);
+                    RequireApprovedBasis(nameof(AcceptPrimerSuggestionAsync), GateHash(SuggestionBasis(suggestion), GateHash(current)), "suggestion or Primer");
+                    warning = await CommitPrimerAsync(context.Session, file, PrimerContract.ApplySuggestion(current, suggestion), current, locus, origin,
+                        "Add a suggestion to the Primer's " + suggestion.Section,
+                        suggestionFile, id, state.Decisions[id]);
                 }
-                var state = ReadSuggestionState(suggestionFile);
-                state.Decisions[id] = (accept ? "accepted" : "rejected") + "|" + DateTime.UtcNow.ToString("o");
-                await WriteSuggestionStateAsync(state, suggestionFile);
+                else await WriteSuggestionStateAsync(state, suggestionFile);
             }
             finally { _primerGate.Release(); }
-            // Deciding a suggestion is FREE and stays free: the queue is the free half of Model notes. The
-            // document itself is the PAID half, and get_model_primer refuses a free read of this exact file, so
-            // returning it here was that same read through a side entrance (Astra B1, reproduced on the real RPC
-            // pipe and on MCP stdio). The decision and its note are the whole free answer; the Primer rides along
-            // only where Model notes is actually granted.
-            if (accept && Entitlement.FeatureGrants.Grants(_entitlement, Entitlement.ProFeature.ModelCreate))
+            // The person just read and accepted the lesson, so recall stops calling it unreviewed too.
+            if (accept && suggestion.NeedsReview && byPerson)
+            {
+                try { await ApproveInsightAsync(id, "human"); }
+                catch (InvalidOperationException) { /* the lesson left the store meanwhile; the Primer already has the words */ }
+            }
+            // The whole of Model notes is free since 22 September, the queue and the document alike, so an
+            // accepted suggestion returns the Primer it just changed. This used to be gated because
+            // get_model_primer refused a free read of this exact file and returning it here was that same read
+            // through a side entrance (Astra B1); neither half refuses now, so there is no side entrance left.
+            if (accept)
                 primer = await GetPrimerCoreAsync(context, locus);
             _sessions.Bus.PublishActivity(new ActivityEvent
             {
@@ -496,6 +645,7 @@ namespace Semanticus.Engine
                 SourceRunIds = runs,
                 EvidenceCount = evidenceCount,
                 Provenance = provenance,
+                NeedsReview = insight.Status != KnowledgeStore.Approved,   // no person has approved these words yet
             };
         }
 

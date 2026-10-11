@@ -1,9 +1,10 @@
-// The Connections HUB contract (TASKS.md [T160]/[T161]/[T164]). The hub REPLACED the drawer as the single manager
-// surface, then the simplification round (T164) made it ONE shared floating dialog for both doors, a one-verb model
-// row, and a self-explaining three-outcome detail. These static assertions pin that ratified structure so a regression
-// is caught without a running VS Code: the hub sections, the only-typed-endpoint rule, the shared floating frame, the
-// one-verb row with its slimmed overflow, the three-outcome detail with visible microcopy, and the honest Phase 2
-// account wording (a real per-open choice + an explicit, quantified make-default).
+// The Connections HUB contract (TASKS.md [T160]/[T161]/[T164]; slice C lane C2, 24 Sep 2026). The hub REPLACED the
+// drawer as the single manager surface, the simplification round (T164) made it ONE shared floating dialog for both
+// doors, and slice C made it ONE page: one list of saved models, one account button, and the Now strip with its
+// Change panel. These static assertions pin what still holds across all three: the shared floating frame, the
+// one-verb row, the typed address kept to one form, the honest Phase 2 account wording (a real per-open choice and
+// an explicit, counted make-default), the naming helpers, and the extension host. The one-page rules themselves are
+// run in connections-one-page.test.mjs.
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -30,25 +31,21 @@ assert.match(app, /<ConnectionsHub open=\{connectionsOpen\} onClose=\{closeConne
   'App must mount the hub on the shared connectionsOpen channel (so the footer, ConnectBar and every publish path open it)');
 assert.doesNotMatch(app, /ConnectionsDrawer/, 'App must not retain the retired drawer');
 
-// ---- the four hub sections (sol's left nav) --------------------------------------------------------------------
-assert.match(hub, /navBtn\('open',[\s\S]*?'Open a model'\)/, 'nav must offer Open a model');
-assert.match(hub, /navBtn\('setup',[\s\S]*?'Current setup'\)/, 'nav must offer Current setup');
-assert.match(hub, /navBtn\('accounts',[\s\S]*?'Accounts'\)/, 'nav must offer Accounts');
-assert.match(hub, /navBtn\('history',[\s\S]*?'History'\)/, 'nav must offer History');
-// Inner function components remount on every parent setState (D-004): typing in Add a published model kept only
-// the first letter because <AddView/> was a new component type each keystroke. Views are called as functions so
-// React reconciles the inputs instead of tearing them down.
-for (const v of ['OpenView', 'SetupView', 'AccountsView', 'HistoryView', 'AddView', 'WorkView']) {
+// ---- one page: no section rail, and the views are called as functions (D-004) ----------------------------------
+assert.doesNotMatch(hub, /navBtn\(|className="hub-nav"/, 'the five-section rail is gone: one page');
+// Inner function components remount on every parent setState (D-004): typing in the address form kept only the
+// first letter because <AddView/> was a new component type each keystroke. Views are called as functions so React
+// reconciles the inputs instead of tearing them down.
+for (const v of ['ListView', 'HistoryView', 'AddView', 'WorkView', 'JobsPanel', 'AccountMenu']) {
   assert.doesNotMatch(hub, new RegExp(`<${v}\\s*/>`), `${v} must not remount as an inner component`);
   assert.match(hub, new RegExp(`${v}\\(\\)`), `${v} is invoked as a function so typed input survives a re-render`);
 }
-// Current setup keeps three explicit role cards. Reference left on 2026-09-14 with the footer's Reference slot:
-// it was not a role of the session the way editing, testing and publishing are, and it read as a fourth thing to
-// configure before you could start. The engine keeps its reference slot; the way in becomes an action.
-for (const label of ['"Editing"', '"Tests and queries"', '"Publish to"']) {
-  assert.match(hub, new RegExp(`label=${label}`), `Current setup must keep the ${label} role card`);
+// The three jobs keep their names. Reference left on 2026-09-14 and does not come back: the engine keeps its slot.
+const hubModelSrc = read('webview', 'src', 'connectionshub-model.ts');
+for (const label of ["'Editing'", "'Tests and queries'", "'Publish to'"]) {
+  assert.ok(hubModelSrc.includes(`label: ${label}`), `the Change panel keeps the ${label} job`);
 }
-assert.doesNotMatch(hub, /label="Reference model"/, 'the Reference role card is gone from Current setup');
+assert.doesNotMatch(hub, /Reference model/, 'no Reference job on the page');
 
 // ---- ONE shared FLOATING frame for both doors (T164 P1) -------------------------------------------------------
 // A single return renders the hub as a centered floating dialog in BOTH hosting modes; only the close callback differs.
@@ -58,99 +55,67 @@ assert.doesNotMatch(hub, /role="region" aria-label="Connections"/,
 assert.match(hub, /inset: '36px 0 23px'/, "the floating backdrop must reclaim sol's inset geometry (36px 0 23px)");
 assert.match(hub, /rgba\(8,10,13,\.66\)/, 'the backdrop must dim at the ratified opacity');
 assert.match(hub, /backdropFilter: 'blur\(2px\)'/, 'the backdrop must blur');
-assert.match(hub, /width: 'min\(1130px, 96vw\)'/, 'the dialog must reclaim the ratified width');
-assert.match(hub, /height: 'min\(790px, calc\(100vh - 84px\)\)'/, 'the dialog must reclaim the ratified height');
+// The space rule (Kane, 27 September 2026) replaced the fixed 1130 x 790 frame: it is sized from the window.
+assert.match(hub, /width: 'min\(1760px, 92vw\)'/, 'the dialog grows with the window, up to a wide limit');
+assert.match(hub, /height: 'calc\(100vh - 84px\)'/, 'the dialog takes the full height less a margin');
 assert.match(hub, /if \(e\.target === e\.currentTarget\) onClose\(\)/, 'a backdrop click must dismiss');
 // CHANGED 2026-09-15 (Astra, finding 2): Escape still dismisses the hub, but ONLY while the hub is the
 // topmost surface. The hub opens over the Tests drawer, and both used to close on the same key, throwing
 // away a half-finished check to save a SQL source for it. surface-stack.ts owns the rule; its behaviour is
 // run in tests-fixes.test.mjs, and the two lines below pin that this file takes part in it.
-assert.match(hub, /useSurfaceEscape\(\(\) => \{ if \(menuIdRef\.current\) setMenuId\(null\); else onClose\(\); \}, shown\);/,
-  'Escape must dismiss (the dialog, after any open row menu), and only while the hub is the surface on top');
+assert.match(hub, /useSurfaceEscape\(\(\) => \{ if \(menuIdRef\.current\) setMenuId\(null\); else if \(panelOpenRef\.current\) \{ setPanel\('none'\); setJobPick\(null\); \} else onClose\(\); \}, shown\);/,
+  'Escape must dismiss (an open row menu, then an open panel, then the dialog), and only while the hub is the surface on top');
 assert.match(hub, /window\.addEventListener\('keydown', onKey\);\s*\n\s*return \(\) => \{ window\.removeEventListener\('keydown', onKey\); restoreRef\.current\?\.focus\(\); \};\s*\n\s*\}, \[shown, onClose\]\);/,
   'the focus-trap effect must run in BOTH modes (guarded on shown, not overlay-only)');
 
 // ---- "Add a published model" is the ONLY place an endpoint is typed --------------------------------------------
 assert.equal(count(hub, 'data-testid="hub-endpoint-input"'), 1,
   'there must be exactly one endpoint input in the whole hub');
-assert.match(hub, />XMLA endpoint/, 'the single endpoint input must carry the XMLA endpoint label');
+assert.match(hub, />Workspace address/, 'the single address input says what it is in plain words');
 assert.equal(count(hub, 'type="search"') + count(hub, 'placeholder="powerbi'), 2,
   'the only endpoint-shaped inputs are the search box and the single Add-view endpoint field');
-assert.match(hub, /remembers it so you can reopen the model without entering the address again/, 'the Add view explains that the connection address is remembered');
+assert.match(hub, /For a model the workspace list cannot show\./, 'the Add view says in one line what it is for');
+assert.match(hub, />Connect and remember</, 'and the button still says the address is remembered');
 assert.ok(hub.indexOf('function AddView') < hub.indexOf('data-testid="hub-endpoint-input"')
   && hub.indexOf('data-testid="hub-endpoint-input"') < hub.indexOf('Connect and remember'),
   'the endpoint input must live inside the Add view');
 
-// ---- row density: ONE primary verb (Open) + a slimmed overflow (T164 P3, Kane ratified ONE) --------------------
+// ---- row density: ONE primary verb (Open) and the ⋯ menu that holds everything else (design, Kane 24 Sep) --------
 assert.equal(count(hub, 'data-testid="hub-row-open"'), 1, 'a model row has exactly one primary Open verb');
 assert.equal(count(hub, 'data-testid="hub-row-overflow"'), 1, 'a model row has exactly one overflow trigger');
-assert.equal(count(hub, 'data-testid="hub-row-tests"'), 0, 'the second row verb ("Use for tests") is gone');
+assert.equal(count(hub, 'data-testid="hub-row-tests"'), 0, 'there is no second row verb');
 assert.match(hub, /data-testid="hub-row-open"[\s\S]{0,280}>Open</,
   'the single primary verb is literally "Open" (never a stale-mutated "Sign in and open")');
-// The overflow carries ONLY: choose account, view history, forget. Publish/reference/work-locally left the row.
-const menu = slice('data-testid="hub-row-overflow"', 'function DetailPane');
-assert.match(menu, /role="menu"/, 'the overflow opens a menu');
-for (const item of ['Choose account for this open', 'View connection history', 'Forget remembered model']) {
-  assert.ok(menu.includes(item), `the overflow menu must carry "${item}"`);
+const menu = slice('role="menu" data-hub-menu', '{envEditId === r.id');
+for (const item of ['Use for tests and queries', 'Publish here', 'Work on a local copy', 'Add SQL endpoint', 'Open as another account', 'Environment label', 'History', 'Forget']) {
+  assert.ok(menu.includes(item), `the row menu must carry "${item}"`);
 }
-for (const gone of ['Set as publish destination', 'Use as reference', 'Work locally', 'Open local copy']) {
-  assert.ok(!menu.includes(gone), `the overflow menu must NOT carry "${gone}" (it left the Open view)`);
-}
-// No purged testing-role copy anywhere in the hub (rows, detail, quick cards, notes).
-for (const gone of ['Use for tests', 'Used for tests', 'Use for tests and queries']) {
-  assert.ok(!hub.includes(gone), `no hub copy may contain "${gone}"`);
-}
+assert.doesNotMatch(menu, /Use as reference/, 'the row menu does not set a reference model');
+// The copy rules keep "tests" to its role sense, so the job reads "tests and queries" everywhere on the page.
+assert.ok(!/>Use for tests</.test(hub) && !/'Use for tests'/.test(hub), 'no hub copy may say "Use for tests" on its own');
+// A job the model cannot do stays in the menu, greyed, with the engine's reason.
+assert.match(menu, /disabled=\{!!testsWhy\} why=\{testsWhy\}/, 'Use for tests and queries is greyed with the engine reason');
+assert.match(menu, /disabled=\{!!publishWhy\} why=\{publishWhy\}/, 'Publish here is greyed with the engine reason');
+// The environment label is set from the row menu, behind an explicit item, and only by a person.
+assert.match(hub, /data-testid="hub-env-select"/, 'the env-label editor (a select) still exists, behind the Environment label item');
 
-// ---- the detail pane earns the decision: three self-explaining outcomes + text statuses (T164 P3) --------------
-assert.equal(count(hub, '<OutcomeButton'), 3, 'the detail presents exactly three opening outcomes');
-assert.match(hub, /data-testid="hub-outcome"/, 'each outcome is a self-explaining OutcomeButton with visible microcopy');
-assert.match(hub, /Open live[\s\S]{0,160}Edit and query the published model directly\. No local files are created\./,
-  'outcome: Open live carries its exact one-line explanation');
-assert.match(hub, /Query this model[\s\S]{0,160}Run queries and tests against this model\. The model you are editing stays open\./,
-  'outcome: Query this model carries its exact one-line explanation');
-assert.match(hub, /Work locally[\s\S]{0,160}Work on a saved copy on this computer\. Publish separately when you want to update the live model\./,
-  'outcome: Work locally carries its exact one-line explanation');
-for (const status of ['Currently open', 'Queries run here', 'Local copy exists', 'Sign-in required']) {
-  assert.ok(hub.includes(status), `statuses are TEXT: "${status}" must be a plain status, never a mutated button label`);
-}
-// The environment badge stays visible; editing the label is behind an explicit control.
-assert.match(hub, /Change environment label/, 'the detail must gate the env-label editor behind an explicit control');
-assert.match(hub, /data-testid="hub-env-select"/, 'the env-label editor (a select) must still exist behind that control');
-
-// ---- publish + reference LEFT the Open view; they live on Current setup role cards (T164 P3) -------------------
-const setup = slice('function SetupView', 'function AccountsView');
-assert.match(setup, /Set as publish destination/, 'Publish is chosen on its Current setup role card');
-assert.match(setup, /setPublish/, 'the publish role card drives setPublishDestination');
-assert.doesNotMatch(setup, /useAsReference/, 'Current setup no longer assigns a reference model');
-// The Setup verbs note is the ratified taxonomy, not the retired "Use for tests and queries" phrasing.
-assert.match(setup, /Open live[\s\S]{0,120}No local files are created/, 'the Setup note uses the Open live taxonomy');
-assert.match(setup, /Query this model[\s\S]{0,120}The model you are editing stays open/, 'the Setup note uses the Query this model taxonomy');
-
-// ---- the Open view earns its height (T164 P2) -----------------------------------------------------------------
-const openView = slice('function OpenView', 'function SetupView');
-assert.ok(!openView.includes('max-h-[336px]'), 'the model list must no longer be capped at 336px');
-assert.ok(!openView.includes('hub-add-open'), 'the duplicate header-level "+ Add published model" button is removed (the card is the single route)');
-assert.match(openView, /min-\[900px\]:flex-1 min-\[900px\]:overflow-auto/,
-  'the list fills the remaining height and only scrolls when the collection exceeds the column');
-assert.match(openView, /grid-cols-\[minmax\(0,1\.6fr\)_minmax\(320px,1fr\)\]/, 'the wide grid is ~62% list / 38% detail');
-// (T164 fix round) "Open a new model" is a full-width strip ABOVE the remembered list (Kane: opening a new model is
-// the most frequent action; sol: a top strip also relieves the old right-column overflow that cut off the cards).
-assert.match(openView, /Open a new model<\/h3>/, 'the new-model sources sit under an "Open a new model" heading');
-assert.match(openView, /grid-cols-2 gap-1\.5 min-\[720px\]:grid-cols-4/, 'the strip is a full-width 2-up / 4-up card row, not a cramped 2x2 in the right column');
-assert.ok(openView.indexOf('Open a new model</h3>') < openView.indexOf('Recent and remembered'), 'the new-model strip sits ABOVE the remembered list');
-assert.match(openView, /title="Create blank model"/, 'the create card is "Create blank model" (distinct from the section title)');
-assert.match(openView, /Discover a running local model and query it\./, 'the Running desktop model card uses taxonomy-consistent copy');
-assert.ok(!openView.includes('use it for tests and queries'), 'the over-promising running-model copy is gone');
-// (B3) BOTH the remembered list and the detail pane own their scroll at >=900px, so a tall detail can never push the
-// dialog past its fixed height (the cut-off + outer scrollbar Kane saw). "Other ways to open" left the right column.
-assert.equal(count(openView, 'min-[900px]:min-h-0 min-[900px]:flex-1 min-[900px]:overflow-auto'), 2,
-  'the list AND the detail each own their scroll at >=900px (neither overflows the dialog)');
-assert.ok(!openView.includes('Other ways to open'), 'the old "Other ways to open" right-column group is gone (it is the top strip now)');
+// ---- the page: three ways to add, one list, the not-linked sources -------------------------------------------------
+const listView = slice('function ListView', 'function HistoryView');
+assert.match(listView, /data-testid="hub-add-file" onClick=\{\(\) => openLocalModel\(\)\}/, 'Open file or folder uses the native picker');
+assert.match(listView, /data-testid="hub-add-desktop"[\s\S]{0,120}setView\('desktop'\)/, 'Power BI Desktop opens the instance picker');
+assert.match(listView, /data-testid="hub-add-workspace"[\s\S]{0,120}setView\('workspace'\)/, 'Workspace model opens the workspace then model picker');
+assert.match(listView, /data-testid="hub-add-blank" onClick=\{\(\) => openCreate\(\)\}/, 'New blank model is a quiet link to the guarded create');
+// Since the M11 wiring step From a SQL source opens the start plan's own form, with no blank-model name step first
+// (test/startplan-wiring.test.mjs holds the rest).
+assert.match(listView, /data-testid="hub-add-sql" onClick=\{\(\) => openStartFromSql\(\)\}/, 'From a SQL source opens the start form');
+assert.match(listView, /records\.length >= SEARCH_FROM && <input ref=\{searchRef\}/, 'the search shows once the list is long enough to need it');
+assert.match(listView, /Open your first model/, 'the first visit shows one sentence and the three ways in');
+assert.doesNotMatch(listView, /max-h-\[336px\]/, 'the list is never capped at a fixed height');
 
 // ---- honest identity + fail-closed governance -----------------------------------------------------------------
 assert.match(hub, /as \$\{account\} \(was \$\{was\}\)/, 'per-row identity must show "as bob@ (was alice@)" provenance');
 assert.match(hub, /account unknown/, 'an unknown next-open account must read honestly as "account unknown"');
-assert.match(hub, /text: 'Production safeguards'/, 'an unlabelled cloud model must read "Production safeguards", never "prod"');
+assert.match(hub, /text: 'No label \(Production settings\)'/, 'an unlabelled cloud model must read "No label (Production settings)", never "Production"');
 
 // ---- honest friendly naming for local running models (T164 P5) ------------------------------------------------
 assert.match(hub, /isGuidName/, 'the hub must detect a bare-GUID local database name');
@@ -161,14 +126,10 @@ assert.match(extension, /isGuidName\(r\.database\)/, 'the friendly name must nev
 // ---- Phase 2 accounts: a REAL per-open choice from saved profiles; make-default is explicit + quantified ---------
 assert.match(hub, /data-testid="hub-account-dialog"/, 'the shared Phase 2 account dialog must render');
 assert.match(hub, /data-purpose=\{purpose\}/, 'the account dialog must retain whether the user is opening or querying');
-assert.match(hub, /Saved accounts are remembered identities\.[\s\S]{0,240}currently authorized for this model/,
-  'the account dialog must distinguish a saved identity from the currently authorized connection');
-assert.match(hub, /authRequired \? 'may have expired\.' : 'is separate from these saved identities\.'/,
-  'the account dialog must keep recovery copy truthful for auth versus ordinary failures');
-assert.match(hub, /This choice applies to this \{purpose\} only/,
+assert.match(hub, /For this \{purpose\} only\./,
   'the account dialog must retain the open/query purpose');
-assert.match(hub, /data-testid="hub-use-for-open"[\s\S]{0,320}>Use for this \{purpose\}</,
-  'Phase 2 must render a real per-purpose saved-profile retry control');
+assert.doesNotMatch(hub, /data-testid="hub-use-for-open"/, 'no per-row Use button: a row is selected and the one footer button acts on it (C6)');
+assert.match(hub, /`Use \$\{picked\.username\} for this \$\{purpose\}`/, 'the footer button names the chosen account and the purpose');
 assert.match(hub, /data-testid="hub-sign-in-another"[\s\S]{0,800}>Sign in another account</,
   'the dialog must render "Sign in another account" (adds a saved profile via the real Microsoft picker)');
 assert.match(hub, /data-testid="hub-signin-and-use"[\s\S]{0,260}>Sign in and use</,
@@ -179,20 +140,19 @@ assert.match(hub, /markFailedAuthAttempt = \(r: ConnectionRecord, purpose: 'open
   'a failed forced sign-in must retain the hinted profile identity when marking attempt-local recovery');
 assert.match(hub, /p\.username\.toLowerCase\(\) === loginHint\.toLowerCase\(\)/,
   'attempt-local recovery matches a login hint to the saved profile without changing its global signed-in state');
-assert.match(hub, /Who should authorize {role} for {nameOf\(r\)\}\?/, 'the account dialog title must name the repaired role');
-assert.match(hub, /const role = purpose === 'query' \? 'Tests and queries' : 'Open for editing'/,
+assert.match(hub, /Which account should \{nameOf\(r\)\} use for \{role\}\?/, 'the account dialog title names the model and the job (one line, design)');
+assert.match(hub, /const role = purpose === 'query' \? 'tests and queries' : 'opening'/,
   'the account dialog must distinguish the query role from editing');
-assert.match(hub, /The saved endpoint stays the same whichever account you pick/,
-  'the dialog must promise the saved endpoint is unchanged whichever account is picked');
+assert.match(hub, /For this \{purpose\} only\./,
+  'the dialog says the choice moves nothing else');
 assert.match(hub, /data-testid="hub-account-recovery"/, 'a failed XMLA action must explain the saved-account recovery state');
-assert.match(hub, /would open with it from now on/,
-  'make-default must quantify its blast radius (N remembered models on the tenant would open with it)');
+assert.match(hubModelSrc, /will open with it from now on/,
+  'make-default must quantify its blast radius (N saved models on the tenant will open with it) before it moves anything');
 assert.match(hub, /data-testid="hub-make-default"[\s\S]{0,220}>Make default</,
   'the dialog must render an explicit "Make default" control, distinct from the per-open choice');
-assert.match(hub, /Make an account the default instead/,
-  'the make-default affordance states its blast radius (distinct from the per-open choice)');
-// The per-open account choice is reached from the row overflow + the detail account note.
-assert.match(hub, /Choose account for this open/, 'the per-open account choice keeps its exact ratified label');
+assert.match(hub, /\{panel !== 'account' && defaultConfirm\}/, 'a Make default pressed in the account choice shows the same counted confirmation');
+// The per-open account choice is one row-menu item (design: "one menu item instead of three buttons").
+assert.equal(count(hub, '>Open as another account<'), 1, 'the per-open account choice is one menu item');
 
 // XMLA failures from either direct remembered action return to the existing account chooser. The test seam below
 // drives the real hub, fails Query once, and checks the retry args + unchanged default/session in shot.mjs.
@@ -224,8 +184,11 @@ assert.match(hub, /data-testid="hub-account-details"[\s\S]{0,220}>Show details</
 assert.ok(hub.indexOf('data-testid="hub-account-recovery"') > hub.indexOf('data-testid="hub-account-error"')
   && hub.indexOf('data-testid="hub-account-recovery"') < hub.indexOf('data-testid="hub-account-details"'),
   'the recovery instruction must sit INSIDE the one failure notice, between the cause line and the disclosure');
-assert.equal(count(hub, "className=\"mt-2 rounded-md border px-2.5 py-2 text-[10px] leading-4 break-words\" style={{ borderColor: tone"), 1,
-  'the red cause notice and the amber instruction notice must be one bordered notice with one honest tone');
+// Instrument (23 September 2026): the one notice is a flat inset, and its tone is the dot on the cause line
+// (amber while a sign-in here can repair it, red when it cannot), not a coloured border.
+assert.equal(count(hub, 'data-testid="hub-account-error" className="sem-inset'), 1,
+  'the red cause notice and the amber instruction notice must be one notice');
+assert.match(hub, /note-line \$\{authRequired \? 'note-warn' : 'note-bad'\}/, 'with one honest tone');
 assert.match(hub, /sign-in needed for this connection/, 'the attempt-local row wording is kept');
 assert.match(hub, /Sign in needed for this connection as \{failedProfile\.username\}/,
   'the instruction keeps the attempt-local sign-in-needed wording');
@@ -240,7 +203,7 @@ assert.match(hub, /: `Use \$\{picked\.username\} for this \$\{purpose\}`/,
   'a selected signed-in row makes the primary read "Use <account> for this open/query"');
 assert.match(hub, /if \(needsSignIn\) \{ void applyAccount\(r, \{ forceReauth: true, loginHint: picked\.username \}\); return; \}/,
   'the primary repairs a sign-in-needed row with a forced, identity-pinned sign-in, never a silent retry');
-assert.match(hub, /data-testid="hub-open-default" disabled=\{busyId != null \|\| \(!picked && list\.length > 0\)\}/,
+assert.match(hub, /data-testid="hub-open-default" disabled=\{busy \|\| \(!picked && list\.length > 0\)\}/,
   'the primary is disabled when no usable account row is selected');
 assert.match(hub, /onClick=\{runPrimary\}/, 'the primary action follows the selection, not a fixed default open');
 assert.match(harness, /The local model at localhost:51000 is not ready\./, 'the harness must model an ordinary local failure');
@@ -250,7 +213,7 @@ assert.match(shot, /assert\.equal\(await page\.\$\('\[data-testid="hub-account-d
 // ---- every existing capability still reaches an existing engine op (dual-drive intact) -------------------------
 for (const op of ['listConnections', 'probeConnectionAccounts', 'listConnectionHistory', 'prepareWorkingCopy',
   'setPublishDestination', 'labelConnection', 'forgetConnection', "'openLive'", "'openLocal'",
-  'listAccountProfiles', 'setDefaultAccountProfile']) {
+  'listAccountProfiles', 'setDefaultAccountProfile', 'listModelSqlEndpoints', 'setModelSqlEndpoint', 'disconnect']) {
   assert.ok(hub.includes(op), `the hub must drive the engine op ${op}`);
 }
 assert.doesNotMatch(hub, /useAsReference/, 'the hub offers no way to set a reference model any more');
@@ -261,6 +224,21 @@ assert.match(main, /initialView === 'connections' \? <ConnectionsStandalone init
   'the same bundle must mount only the hub (with its initial section) when the host asks for the connections view');
 assert.match(hub, /export function ConnectionsStandalone/, 'the hub must export the standalone host');
 assert.match(hub, /<ConnectionsHub open standalone initialView=\{initialSection\}/, 'the standalone host must render the SAME hub component (with its section)');
+// ---- Astra 4: the standalone door must be able to HONOUR the control it offers (F-207) -------------------------
+//
+// With Studio closed, Current setup still offered Turn on, and the card that press raises was mounted only
+// inside App. The press moved a store nothing was listening to, so that door could not grant permission at
+// all. A door that offers a control it cannot honour is worse than no door.
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT, stated rather than implied: this pins the MOUNT in the source, which
+// is the half a browserless run can hold. The press itself is driven in a real browser by
+// tools/uishot/consent-drive.mjs, scene conn-turn-on, which is not a CI suite. Same shape as the F-186 row:
+// the order is pinned in the source, the race is not run.
+assert.match(hub, /export function ConnectionsStandalone[\s\S]*<ConsentCard \/>/,
+  'the standalone Connections host does not mount ConsentCard, so Turn on there raises nothing (F-207)');
+assert.match(hub, /import \{ ConsentCard \} from '\.\/consent'/,
+  'the standalone host cannot mount a permission card it never imported');
+
 assert.match(bridge, /export function closeConnectionsPanel[\s\S]*type: 'closePanel'/,
   'the standalone close button must ask the host to dispose the panel');
 assert.match(bridge, /onOpenConnections\(fn: \(section\?: string\) => void\)/, 'the open-connections channel must carry an optional section');
@@ -272,19 +250,19 @@ assert.match(extension, /window\.__semanticusInitialView=/, 'studioHtml must inj
 assert.match(extension, /window\.__semanticusInitialSection=/, 'studioHtml must inject the initial-section flag');
 assert.match(extension, /function openConnectionsPanel\(context: vscode\.ExtensionContext, section: string = 'open'\)/, 'the standalone panel host must accept a section');
 assert.match(extension, /studioHtml\(panel\.webview, context, 'connections', section\)/, 'the standalone panel must reuse the studio bundle in connections mode with its section');
-assert.match(extension, /panel\.webview\.onDidReceiveMessage\(studioRelayHandler\(panel, true\)\)/, 'the standalone panel must register the shared host relay');
+assert.match(extension, /panel\.webview\.onDidReceiveMessage\(pageScoped\(studioRelayHandler\(panel, true\)\)\)/, 'the standalone panel must register the shared host relay');
 assert.match(extension, /if \(studioPanel\) \{[\s\S]*flushOpenConnections\(\);[\s\S]*return;[\s\S]*\}\s*openConnectionsPanel\(extCtx, section\);/,
   'openConnectionsManager must open the overlay when Studio is up and the standalone panel (with the section) when it is closed');
 assert.match(extension, /msg\?\.type === 'closePanel'\) \{ panel\.dispose\(\)/, 'the relay must dispose a panel on closePanel');
 
 // ---- T164 P4: the tree Open Model opens the hub; the native picker survives as Quick Open Model -----------------
-assert.match(extension, /registerCommand\('semanticus\.openModel', \(\) => openConnectionsManager\('open'\)\)/,
+assert.match(extension, /registerPersonCommand\('semanticus\.openModel', \(\) => openConnectionsManager\('open'\)\)/,
   'the tree primary Open Model must now open the shared floating hub on Open a model');
-assert.match(extension, /registerCommand\('semanticus\.quickOpenModel', \(\) => quickOpenModelCommand\(tree\)\)/,
+assert.match(extension, /registerPersonCommand\('semanticus\.quickOpenModel', \(\) => quickOpenModelCommand\(tree\)\)/,
   'the old native picker survives as the separately named Quick Open Model');
-assert.match(extension, /registerCommand\('semanticus\.manageConnections', \(\) => openConnectionsManager\('setup'\)\)/,
+assert.match(extension, /registerPersonCommand\('semanticus\.manageConnections', \(\) => openConnectionsManager\('setup'\)\)/,
   'Manage Connections opens the hub on Current setup');
-assert.ok(manifest.contributes.commands.some((c) => c.command === 'semanticus.quickOpenModel' && c.title === 'Semanticus: Find a remembered model'),
+assert.ok(manifest.contributes.commands.some((c) => c.command === 'semanticus.quickOpenModel' && c.title === 'Semanticus: Open Recent Model…'),
   'the remembered-model picker is a separately named palette command that does not collide with Open Model');
 assert.ok(manifest.contributes.commands.some((c) => c.command === 'semanticus.manageConnections' && c.title === 'Semanticus: Manage Connections' && c.icon === '$(gear)'),
   'Manage Connections is a contributed palette command with a gear icon');
@@ -314,12 +292,16 @@ assert.match(hub, /openConfirm/, 'opening another model must share the unsaved-w
 assert.match(hub, /Opening another model throws those changes away unless you save first/, 'the open confirm must say unsaved work would be thrown away');
 assert.match(hub, /data-testid="hub-open-unsaved"/, 'the open confirm is a visible overlay');
 assert.match(hub, /createModel', name, 1604, !!s\?\.hasUnsavedChanges/, 'create after confirm must tell the engine to discard unsaved work');
-assert.match(hub, /const openCreate = \(\)/, 'the card opens the guarded surface, it does not create directly');
+assert.match(hub, /const openCreate = \(\) => \{ setCreateName\(''\)/, 'the card opens the guarded surface, it does not create directly');
 
-// ---- the Accounts view lists the saved profiles (no dead-end); the unlabelled env option never truncates --------
-assert.match(hub, /Saved accounts on this device/, 'the Accounts view must list the saved profiles (no dead-end)');
+// ---- the account menu lists the saved profiles (no dead-end); the unlabelled env option never truncates ----------
+const accountMenu = slice('function AccountMenu', 'function AccountDialog');
+assert.match(accountMenu, /profiles\.map\(\(p\) =>/, 'the account menu lists the saved profiles, signed in or not');
+assert.match(accountMenu, /No saved accounts yet\. Pick a workspace model to sign in\./, 'an empty menu says where a sign-in happens');
+assert.doesNotMatch(accountMenu, /Kept on this device/, 'the account menu does not repeat the History line (C10)');
+assert.match(hub, /Models and sign-ins, kept on this device/, 'the one "kept on this device" note lives in History');
 assert.doesNotMatch(hub, /No switchable live model/, 'the "No switchable live model" dead-end must be retired');
-assert.match(hub, /Not labelled \(Production safeguards\)/, 'the unlabelled env option must be short enough not to truncate');
+assert.match(read('webview', 'src', 'connectpickers-model.ts'), /No label \(Production settings\)/, 'the unlabelled env option must be short enough not to truncate');
 
 // ---- connection-relevant notifications broadcast to BOTH panels (the standalone hub is not deaf) ----------------
 assert.match(extension, /function postToPanels\(msg: unknown\)/, 'a multi-panel broadcast helper must exist');
@@ -336,10 +318,11 @@ assert.doesNotMatch(extension, /drawer/i, 'extension comments must say hub/manag
 // T164 fix round (sol closure review) - strengthened pins
 // ================================================================================================================
 
-// (6a) the row has EXACTLY three raw <button> elements: the row selector, the one Open verb, and the overflow. Any
-// second row action verb (or a resurrected "Use for tests") would push this above three.
-const modelRow = slice('function ModelRow', 'function DetailPane');
-assert.equal(count(modelRow, '<button'), 3, 'a model row is exactly three buttons: select + Open + overflow');
+// (6a) the row's line has EXACTLY two raw <button> elements: the one Open verb and the overflow. Any second row
+// action verb would push this above two; everything else about a model sits in its menu.
+const modelRow = slice('function ModelRow', 'function EndpointForm');
+const rowLine = modelRow.slice(modelRow.indexOf('<div className="sem-list-row sem-list-row-2">'), modelRow.indexOf('{menuId === r.id &&'));
+assert.equal(count(rowLine, '<button'), 2, 'a model row line is exactly two buttons: Open + overflow');
 
 // (6b) ONE dialog shell for both doors, with NO standalone ternary inside the frame return.
 assert.equal(count(hub, 'role="dialog"'), 1, 'there is exactly one dialog shell (both doors share it)');
@@ -379,31 +362,24 @@ assert.match(picker, /const item = qp\.selectedItems\[0\]; qp\.hide\(\); done\(\
 
 // (7) the overflow menu supports keyboard navigation (focus-in on open + Arrow/Home/End); Escape closes the menu
 // (menu-aware modal handler), then the dialog.
-assert.match(hub, /\[data-hub-menu\] \[role="menuitem"\]'\)\?\.focus\(\)/, 'opening the overflow menu moves focus into it');
+assert.match(hub, /\[data-hub-menu\] \[role="menuitem"\]:not\(:disabled\)'\)\?\.focus\(\)/, 'opening the overflow menu moves focus into its first usable item');
 // CHANGED 2026-09-15 (Astra, finding 2): Escape moved out of the focus-trap effect and onto the shared
 // surface hook, so the hub acts on it only while it is on top. Menu before dialog is unchanged.
-assert.match(hub, /if \(menuIdRef\.current\) setMenuId\(null\); else onClose\(\);/,
-  'Escape closes an open row menu first, then the dialog');
+assert.match(hub, /if \(menuIdRef\.current\) setMenuId\(null\); else if \(panelOpenRef\.current\)/,
+  'Escape closes an open row menu first, then an open panel, then the dialog');
 assert.match(modelRow, /e\.key === 'ArrowDown'[\s\S]{0,400}e\.key === 'End'/, 'the overflow menu handles Arrow/Home/End');
 
 // ================================================================================================================
 // T164 closure round (sol) - the three remaining seams
 // ================================================================================================================
 
-// (8a) the close contract holds for the quick cards too: a successful query-attach must route through the closing
-// helper (connectRunningLocal), never a bare connect that skips onClose. Catch any direct connect in the quick cards.
-const quickCards = slice('Open a new model', 'Recent and remembered');
-assert.ok(!/rpc\('connectLocal'/.test(quickCards),
-  'no quick card may attach via a bare rpc(connectLocal) - that skips the close contract');
-assert.ok(!/\bconnectXmla\(/.test(quickCards) && !/\bconnectLocal\(/.test(quickCards),
-  'a successful query-attach must route through the closing helper, never a direct connect call in the quick cards');
-assert.match(quickCards, /title="Running desktop model"[\s\S]{0,180}onClick=\{\(\) => void connectRunningLocal\(\)\}/,
-  'the Running desktop model card routes through the closing helper (connectRunningLocal), not a direct rpc');
-// the helper mirrors queryWith: await the attach + refresh, THEN onClose (the close cannot race the refresh).
-const runningLocalHelper = slice('const connectRunningLocal', 'const setPublish');
-assert.match(runningLocalHelper, /const res = await connectLocal\(null\)/, 'the helper awaits the running-local attach (result carries the engine message)');
-assert.match(runningLocalHelper, /await load\(\); await reloadHistory\(\); setBusyId\(null\);\s*\n\s*if \(res\.ok\) onClose\(\)/,
-  'the helper closes only AFTER the attach + refresh complete (mirrors queryWith ordering; no race)');
+// (8a) no add button attaches anything by itself: Power BI Desktop and Workspace model open pickers that list, and
+// every attach goes through a helper that owns the close contract. The old card took the FIRST running copy silently.
+assert.ok(!/\bconnectXmla\(|\bconnectLocal\(|rpc\('connectLocal'/.test(slice('<div className="hub-adds">', '{notice &&')),
+  'no add button attaches a model directly');
+assert.doesNotMatch(hub, /connectRunningLocal|connectLocal\(null\)/, 'nothing takes the first running copy any more');
+assert.match(slice('const useDesktopForTests', 'const openDesktop'), /const res = await connectLocal\(dataSource\);\s*\n\s*await load\(\); await reloadHistory\(\);[\s\S]{0,160}onClose\(\);/,
+  'the picker attach closes only AFTER the attach + refresh complete (no race)');
 
 // (8b) a host "open" request while ALREADY shown re-focuses search: the [shown, onClose] focus effect will not re-run,
 // so an "open" request bumps a token and a dedicated effect keyed on it focuses searchRef when the Open view is up.
@@ -424,35 +400,27 @@ assert.match(hub, /if \(menuTriggerRef\.current\) \{ menuTriggerRef\.current\.fo
 // T164 fix round (Kane's F5 findings: Query dead, Accounts dead-end, cutoff, service-identity config) - sol reviewed
 // ================================================================================================================
 
-// (B1) Query this model carries the SAME signed-out guard as Open live, an explicit already-used state, and visible
-// progress - the three ways it used to read as "nothing happens".
-assert.match(hub, /function OutcomeButton\(\{ label, micro, onClick, disabled, primary, busy \}/, 'OutcomeButton supports a busy/progress state');
-assert.match(hub, /\{busy \? 'Connecting\.\.\.' : micro\}/, 'a busy outcome shows visible "Connecting..." progress in the microcopy slot');
-assert.match(hub, /label=\{activeQuery \? 'Already used for queries' : 'Query this model'\}/, 'Query shows an explicit "Already used for queries" state, not a silent grey');
-assert.match(hub, /if \(stale\) openAccountChoice\(r, 'query'\); else void queryWith\(r\)/, 'Query routes a signed-out model to the account picker carrying QUERY intent');
-assert.match(hub, /busy=\{busyId === 'query:' \+ r\.id\}/, 'Query shows progress while its connect runs');
+// (B1) Use for tests and queries carries the SAME signed-out guard as Open, and says what changed when it worked.
 // HIGH (sol): the account picker preserves the initiating verb; applyAccount routes by that EXPLICIT intent, never by
 // re-inferring the pre-op role (a stale model is neither the editing nor the query connection, which used to fall to open).
-assert.match(hub, /const openAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query' \| null = null\) => \{ setError\(null\); setFailedAuthAttempt\(null\); setSwitchPurpose\(purpose\); setSwitchTarget\(r\); \}/, 'a stale account choice carries explicit Open/Query intent and clears prior attempt-local failure');
+assert.match(hub, /if \(stale\) openAccountChoice\(r, 'query'\); else void attachTests\(r\)/, 'a signed-out model goes to the account picker carrying QUERY intent');
+assert.match(hub, /const openAccountChoice = \(r: ConnectionRecord, purpose: 'open' \| 'query' \| null = null\) => \{ setError\(null\);[^\n]*setSwitchPurpose\(purpose\); setSwitchTarget\(r\); \}/, 'a stale Open or tests-and-queries carries its purpose into the account choice');
 assert.match(hub, /const asQuery = switchPurpose \? switchPurpose === 'query' : isQueryRole\(r\)/, 'applyAccount routes by explicit intent when set, else by role');
-assert.match(hub, /if \(stale\) openAccountChoice\(r, 'open'\); else void openModel\(r\)/, 'a stale Open (row + Open live outcome) carries OPEN intent');
+assert.match(hub, /if \(stale\) openAccountChoice\(r, 'open'\); else void openModel\(r\)/, 'a stale Open carries OPEN intent');
+assert.match(hub, /setNotice\(`Tests and queries now run on \$\{nameOf\(r\)\}\.`\)/, 'a changed tests-and-queries model is said out loud');
 
 // (B4 + error surfacing) the hook returns the engine's own message; the hub shows it instead of a generic line.
 assert.match(connection, /export interface ConnectResult \{ ok: boolean; message\?: string \}/, 'connect returns a result carrying the engine message');
 assert.match(connection, /async function connectXmla\([\s\S]{0,220}Promise<ConnectResult>/, 'connectXmla returns a ConnectResult');
 assert.match(connection, /async function connectLocal\([\s\S]{0,120}Promise<ConnectResult>/, 'connectLocal returns a ConnectResult');
 assert.match(hub, /res\.message \|\| 'The connection did not complete/, 'the Add flow shows the engine message (e.g. the service-principal env-var help), not just a generic line');
-assert.match(hub, /res\.message \|\| 'That model could not be connected for queries/, 'Query surfaces the engine message');
+assert.match(hub, /res\.message \|\| 'That model could not be connected for tests and queries/, 'Use for tests and queries surfaces the engine message');
 
-// (B2) the Accounts view is never a dead end: a Sign in CTA when nothing is signed in, an actionable empty state, and
-// the not-signed-in Open-view banner routes to Add (where a sign-in happens), never into the Accounts view.
-assert.match(hub, /if \(signedInAccount\) setView\('accounts'\); else openAddView\(\)/, 'the not-signed-in banner routes to Add via openAddView, not the Accounts dead-end');
+// (B2) the account menu is never a dead end: Sign in another account routes to where a sign-in happens (the live
+// model's account choice, else the workspace picker), and Other ways to sign in opens the address form.
 assert.match(hub, /const signedInAccount = currentAccount/, 'the hub draws one signed-in identity from the live session or the saved profiles, never a second guess');
-assert.match(hub, /data-testid="hub-accounts-signin"[\s\S]{0,160}openAddView\(\)/, 'the Accounts view offers a primary Sign in CTA when nothing is signed in');
-assert.match(hub, /data-testid="hub-accounts-empty-add"[\s\S]{0,120}openAddView\(\)/, 'the empty saved-accounts state is actionable (Add a published model)');
-// the two "other authentication methods" are real buttons that open Add with the method preselected (not dead cards).
-assert.match(hub, /data-testid="hub-authmethod-azcli"[\s\S]{0,200}openAddView\('azcli'\)/, 'the command-line method card opens Add with azcli preselected');
-assert.match(hub, /data-testid="hub-authmethod-sp"[\s\S]{0,200}openAddView\('serviceprincipal'\)/, 'the service-identity method card opens Add with serviceprincipal preselected');
+assert.match(hub, /data-testid="hub-sign-in-another-top"[\s\S]{0,140}if \(switchable\) signInAnother\(switchable\); else setView\('workspace'\)/, 'Sign in another account always leads to a sign-in');
+assert.match(hub, /data-testid="hub-other-sign-in" onClick=\{\(\) => openAddView\(\)\}/, 'Other ways to sign in opens the address form with its setup check');
 // openAddView resets the method + clears any stale tenant, so a browser Sign in never lands on a prior advanced method (MED, sol).
 assert.match(hub, /const openAddView = \(mode: string = 'interactive'\) => \{ setAuthMode\(mode\); setNewTenant\(''\);[\s\S]{0,40}setView\('add'\); \}/, 'openAddView resets the sign-in method and clears the tenant');
 assert.match(hub, /data-testid="hub-profile-resignin"/, 'a signed-out saved profile has a Sign in recovery route (not a dead badge)');
@@ -466,11 +434,13 @@ assert.match(hub, /data-testid="hub-auth-preflight"/, 'an advanced-auth prerequi
 assert.match(hub, /rpc<AuthPrerequisites>\('probeAuthPrerequisites', authMode, newTenant\.trim\(\) \|\| null\)/, 'the preflight probes the dual-drive engine op for what it can see');
 assert.match(hub, /data-testid="hub-tenant-input"/, 'advanced modes expose a tenant field (fixes the CLI tenantId=null bug)');
 assert.match(hub, /const advanced = authMode === 'azcli' \|\| authMode === 'serviceprincipal';\s*\n\s*const res = await connectXmla\(endpoint\.trim\(\), database\.trim\(\), authMode, advanced \? \(newTenant\.trim\(\) \|\| null\) : null\)/, 'the add threads the tenant ONLY for advanced modes (a browser connect never carries a hidden stale tenant)');
-assert.match(hub, /Direct Key Vault references are not supported/, 'the preflight states plainly that Key Vault is not resolved in-app');
+assert.match(hub, /Key Vault references are not supported here/, 'the preflight states plainly that Key Vault is not resolved in-app');
 assert.match(hub, /never stores the secret/, 'the preflight states the secret is not stored by Semanticus');
+assert.match(hub, /data-testid="hub-auth-names"[\s\S]{0,160}Show the variable names/, 'the environment variable names sit behind one disclosure, not in the copy (C4)');
+assert.doesNotMatch(hub.slice(hub.indexOf('function AuthPreflight'), hub.indexOf('function AddView')), /sem-inset/, 'the setup check is not a box inside the form card');
 assert.ok(!hub.includes('<article className="rounded-lg border p-3"'), 'the static (unclickable) auth-method article cards are gone (now buttons)');
 // (MED, sol) the dialog min-height is responsive so a short viewport can't clip the frame now that panes scroll internally.
-assert.match(hub, /minHeight: 'min\(590px, calc\(100vh - 84px\)\)'/, 'the dialog min-height is responsive (no short-viewport clipping)');
+assert.doesNotMatch(hub, /minHeight: 'min\(590px/, 'the full-height frame needs no separate min-height (no short-viewport clipping)');
 
 // ================================================================================================================
 // C3.1 UAT: Add form keeps typing (D-004), local files in Recent (D-143), path on screen (D-144),
@@ -491,24 +461,27 @@ assert.match(hub, /if \(r\.kind === 'localDesktop' \|\| r\.kind === 'file' \|\| 
 assert.match(extension, /record\.kind === 'file'/, 'the native picker can reopen a remembered local file');
 
 // D-144: the open file or folder is named on screen, not only as a hover title.
-assert.match(hub, /data-testid="hub-open-now-path"/, 'Connections names the open file or folder');
-assert.match(extension, /sourceTail\(info\.source\)/, 'the status bar includes the open file or folder');
-assert.match(extension, /if \(info\.source\) tip\.push\(info\.source\)[\s\S]{0,220}status\.tooltip/,
-  'the status bar tooltip carries the full source path');
-assert.match(connection, /session\?\.source/, 'the connect bar names the open file or folder');
+assert.match(hub, /if \(r\.kind === 'file'\) return endpointText\(r\.endpoint\);/, 'Connections names the open file or folder on its row');
+// r1 min4 (V1): the status bar names the model only; the open file or folder, in full, is the item's tooltip.
+assert.match(readFileSync(resolve(root, 'src', 'statusBarText.ts'), 'utf8'), /if \(info\.source\) lines\.push\(sourceTail\(info\.source, 200\)\)/, 'the status bar tooltip carries the source path');
+assert.match(extension, /status\.tooltip = item\.tooltip/, 'and the model item shows that tooltip');
 
-// D-145: a rejected typed path keeps the dialog and returns keyboard focus to the path field.
-assert.match(hub, /data-testid="hub-local-path"/, 'Open a model has a typed-path field');
-assert.match(hub, /Please enter a path that exists\./, 'a missing path is rejected in those exact words');
-assert.match(hub, /localPathRef\.current\?\.focus\(\)/, 'a rejected path returns focus to the path field');
+// D-145, retired 23 September 2026 (Kane): "remove the file path box, not required because there are options above
+// it to open a file or folder". Open a model no longer carries a typed-path field; Local file or project opens the
+// native picker, which takes a file or a folder. The host's own typed-path prompt is a separate door and keeps
+// its rejection wording.
+assert.doesNotMatch(hub, /data-testid="hub-local-path"/, 'Open a model has no typed-path field any more');
+assert.doesNotMatch(hub, /openTypedLocal|localPathRef|Or type a path/, 'and nothing of the typed path is left behind it');
+assert.match(slice('function ListView', 'function HistoryView'), />Open file or folder</,
+  'the way to a file or folder is the Open file or folder action above the list');
 assert.match(extension, /validateInput: \(v\) =>[\s\S]{0,320}Please enter a path that exists\./,
   'the host typed-path prompt stays open and focused with that rejection');
 
 // D-162: Semanticus: Open Model always opens the hub. The picker is a different command whose title does not
 // contain "Open Model", so the palette cannot land the keyboard route on a remembered live entry.
-assert.match(extension, /registerCommand\('semanticus\.openModel', \(\) => openConnectionsManager\('open'\)\)/,
+assert.match(extension, /registerPersonCommand\('semanticus\.openModel', \(\) => openConnectionsManager\('open'\)\)/,
   'Open Model always opens the Connections hub');
-assert.equal(count(extension, "registerCommand('semanticus.openModel'"), 1, 'Open Model is registered once');
+assert.equal(count(extension, "registerPersonCommand('semanticus.openModel'"), 1, 'Open Model is registered once');
 assert.ok(!manifest.contributes.commands.some((c) => c.command === 'semanticus.openModel' && /quick/i.test(c.title)),
   'Open Model is not the quick picker');
 const openModelTitle = manifest.contributes.commands.find((c) => c.command === 'semanticus.openModel')?.title || '';
@@ -518,9 +491,9 @@ assert.ok(!/Open Model/i.test(findTitle), 'the remembered-model picker title mus
 
 // D-143 follow-through: a remembered local file cannot answer queries, so Work locally must not offer it
 // as a test-and-query target (and must never label it 'published').
-const workView = slice('function WorkView', 'const navBtn');
-assert.match(workView, /records\.filter\(\(r\) => r\.kind !== 'file'\)/,
-  'Work locally does not offer a local file as a query target');
+const workView = slice('function WorkView', 'const body =');
+assert.match(workView, /records\.filter\(\(r\) => !r\.testsRefusal\)/,
+  'Work on a local copy offers only models the engine did not refuse for tests and queries (a file is refused)');
 
 // Dual-drive: list_connections is the same remembered list, including local files.
 const mcpTools = readFileSync(resolve(root, '..', 'Semanticus.Engine', 'McpTools.cs'), 'utf8');
@@ -537,8 +510,10 @@ const deploySrc = read('webview', 'src', 'deploy.tsx');
 assert.match(hub, /export function openConnectionsOnView/, 'the hub must export a request-open-on-view setter');
 assert.match(hub, /if \(!shown \|\| !nextView\) return;/, 'the hub must consume the pending view only once shown');
 assert.match(hub, /nextView = null;/, 'the hub must clear the pending view after consuming it');
-assert.match(deploySrc, /onClick=\{\(\) => \{ openConnectionsOnView\('setup'\); openConnections\(\); \}\}/,
-  'Change publish destination must request Current setup, then open the hub');
+assert.match(deploySrc, /const chooseDestination = \(\) => \{ openConnectionsOnView\('setup'\); openConnections\(\); \};/,
+  'Change (the destination) must request the Change panel, then open the hub');
+assert.match(deploySrc, /onClick=\{chooseDestination\}/, 'and the header Change link uses it');
+assert.match(hubModelSrc, /case 'setup': return \{ view: 'open', panel: 'change' \};/, "'setup' lands on the Change panel, where Publish to is chosen");
 
 // ================================================================================================================
 // A remembered connection reads as WORDS, never as an address (Kane, live test on the Yoga, 2026-09-15). His list
@@ -550,7 +525,7 @@ assert.match(deploySrc, /onClick=\{\(\) => \{ openConnectionsOnView\('setup'\); 
 // functions in connectionshub.tsx so they remain statically extractable AND runnable here.
 // ================================================================================================================
 const { default: tsc } = await import('typescript');
-const HELPERS = ['short', 'isGuidName', 'decodeSegment', 'workspaceNameFromEndpoint', 'isWorkspaceOnly', 'nameOf', 'subtitleOf', 'modelRowText', 'endpointText'];
+const HELPERS = ['short', 'isGuidName', 'decodeSegment', 'workspaceNameFromEndpoint', 'isWorkspaceOnly', 'nameOf', 'whereOf', 'endpointText'];
 const helperSource = HELPERS.map((name) => {
   const m = hub.match(new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n\\}`));
   assert.ok(m, `${name} must stay a statically extractable top-level function in connectionshub.tsx`);
@@ -581,24 +556,20 @@ assert.equal(H.decodeSegment(undefined), '');
 const workspaceOnly = { id: 'w', kind: 'xmla', endpoint: 'powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring' };
 assert.equal(H.nameOf(workspaceOnly), 'Contoso Fabric Monitoring');
 assert.ok(H.isWorkspaceOnly(workspaceOnly), 'an xmla record with no dataset is a workspace, not a model');
-assert.equal(H.subtitleOf(workspaceOnly, 'as megan@contoso.com'), 'Workspace · you pick the model when you open it');
-assert.equal(H.modelRowText(workspaceOnly), 'You pick the model when you open this workspace',
-  'the detail Model row must not repeat the workspace name as if a model had been chosen');
+assert.equal(H.whereOf(workspaceOnly), 'Workspace, you pick the model when you open it');
 
 // Once a model has been opened from that workspace the engine records the dataset, and the row flips: the model
 // name is the title and the workspace becomes the subtitle, alongside who the next open signs in as.
 const opened = { ...workspaceOnly, id: 'm', database: 'Fabric Monitoring', modelName: 'Fabric Monitoring' };
 assert.equal(H.nameOf(opened), 'Fabric Monitoring');
 assert.ok(!H.isWorkspaceOnly(opened));
-assert.equal(H.subtitleOf(opened, 'as megan@contoso.com'), 'In Contoso Fabric Monitoring · as megan@contoso.com');
-assert.equal(H.modelRowText(opened), 'Fabric Monitoring');
+assert.equal(H.whereOf(opened), 'In Contoso Fabric Monitoring');
 
-// The subtitle stays ONE line for every kind — the row height is what the nine-models-without-a-scrollbar check
-// measures — and the two local kinds keep the words they already had, now decoded.
-assert.equal(H.subtitleOf({ id: 'f', kind: 'file', endpoint: 'C:\\Models\\B%20Edit.SemanticModel' }, 'x'), 'C:\\Models\\B Edit.SemanticModel');
-assert.equal(H.subtitleOf({ id: 'g', kind: 'localDesktop', endpoint: 'localhost:52100' }, 'x'), 'localhost:52100');
+// Where a model lives stays ONE line for every kind, and the two local kinds say what they are, decoded.
+assert.equal(H.whereOf({ id: 'f', kind: 'file', endpoint: 'C:\\Models\\B%20Edit.SemanticModel' }), 'C:\\Models\\B Edit.SemanticModel');
+assert.equal(H.whereOf({ id: 'g', kind: 'localDesktop', endpoint: 'localhost:52100' }), 'Power BI Desktop, localhost:52100');
 for (const r of [workspaceOnly, opened, { id: 'f', kind: 'file', endpoint: 'C:\\M\\a.bim' }]) {
-  assert.ok(!H.subtitleOf(r, 'as megan@contoso.com').includes('\n'), 'the row subtitle must stay one line');
+  assert.ok(!H.whereOf(r).includes('\n'), 'where a model lives must stay one line');
 }
 
 // Encoded text never survives into a name, whichever field it came from, and the non-cloud kinds keep the
@@ -612,19 +583,15 @@ assert.equal(H.nameOf({ id: 'n', kind: 'xmla', endpoint: '' }), 'Model');
 assert.equal(H.endpointText('powerbi://api.powerbi.com/v1.0/myorg/Contoso%20Fabric%20Monitoring'),
   'powerbi://api.powerbi.com/v1.0/myorg/Contoso Fabric Monitoring');
 
-// ---- and the four surfaces must actually USE them, so a name is one string everywhere ----
-const rowBlock = slice('function ModelRow', 'function DetailPane');
+// ---- and the surfaces must actually USE them, so a name is one string everywhere ----
+const rowBlock = slice('function ModelRow', 'function EndpointForm');
 assert.match(rowBlock, /\{nameOf\(r\)\}/, 'the row title is the shared name');
-assert.match(rowBlock, /\{subtitleOf\(r, identity\)\}/, 'the row subtitle names the workspace (or says it is one)');
+assert.match(rowBlock, /const where = \[whereOf\(r\), who\]/, 'the row second line starts with where the model lives');
+assert.match(rowBlock, /rowSecondLine\(where, jobs, ep\?\.name \|\| null\)/, 'then its jobs and its SQL endpoint');
 assert.doesNotMatch(rowBlock, /short\(/, 'no surface may show a raw endpoint segment as text');
 assert.doesNotMatch(rowBlock, /\{r\.endpoint\}/, 'the row must not print a raw endpoint anywhere, tooltip included');
-const detailBlock = slice('function DetailPane', 'function AccountDialog');
-assert.match(detailBlock, /\{endpointText\(r\.endpoint\)\}/, 'the detail card shows the endpoint decoded');
-assert.match(detailBlock, /\{modelRowText\(r\)\}/, 'the detail Model row uses the shared name, not the raw segment');
-assert.doesNotMatch(detailBlock, /short\(r\.endpoint\)/, 'the detail card must not fall back to a raw endpoint segment');
-assert.match(hub, /endpointText\(editing\.source\)/, 'the Open now panel shows its path decoded');
 assert.match(hub, /return side\?\.available \? \(side\.modelName \|\| side\.database \|\| workspaceNameFromEndpoint\(side\.source\) \|\| decodeSegment\(short\(side\.source\)\) \|\| fallback\) : fallback;/,
-  'Open now falls back through the shared helpers, never a raw segment');
+  'the Now strip falls back through the shared helpers, never a raw segment');
 
 // The harness must carry the shape Kane hit, or the screenshots prove nothing.
 assert.match(harness, /powerbi:\/\/api\.powerbi\.com\/v1\.0\/myorg\/Contoso%20Fabric%20Monitoring/,
@@ -649,171 +616,72 @@ assert.equal(shortEndpoint(''), '');
 
 
 // ================================================================================================================
-// THE FOURTH ROLE: named SQL sources (Kane's Tests redesign, 2026-09-15; the Connections half).
-//
-// A check used to carry its own server, database and sign-in. Astra's UAT found the same warehouse typed again for
-// every check, and a check authored with no sign-in mode reached the token helper, which reads an absent mode as the
-// Azure command line, so a person on a browser sign-in got a failure about a command line they had never run. The
-// fix is a saved, named, tested record in Connections that checks and table mappings point at by id.
-//
-// Engine surface (cp/tests-engine-b, commit 31f8ef98, EngineRpcTarget.cs:337-343): listSqlSources / saveSqlSource /
-// deleteSqlSource / testSqlSource, plus listTableMappings for the table half. A refused delete returns both the
-// counts (checksUsing / tableMappingsUsing) and the names (checkTitles / mappedTables); the hub shows the names.
+// SQL endpoints: one per model, set from its row (contract 19.3, slice C). The SQL sources section is gone; the saved
+// record underneath is the same record, shared when several models use it, and it still holds NO credential.
 // ================================================================================================================
-const sqlView = slice("function SqlSourcesView", "const navBtn");
-
-// ---- the role exists, in the rail and in Current setup ----------------------------------------------------------
-assert.match(hub, /export type HubView = [^\n]*'sqlsources'/, "HubView must carry the SQL sources section");
-assert.match(hub, /navBtn\('sqlsources',[\s\S]*?'SQL sources'\)/, 'nav must offer SQL sources');
-assert.match(hub, /view === 'sqlsources' && SqlSourcesView\(\)/, 'the hub must render the SQL sources view');
-assert.doesNotMatch(hub, /<SqlSourcesView\s*\/>/, 'SqlSourcesView must not remount as an inner component (D-004)');
-assert.match(hub, /SqlSourcesView\(\)/, 'SqlSourcesView is invoked as a function so typed input survives a re-render');
-assert.match(hub, /label="SQL sources"/, 'Current setup must carry the fourth role card beside Editing, Tests and Publish to');
-
-// ---- the named actions -----------------------------------------------------------------------------------------
-for (const [testid, label] of [
-  ['hub-sql-add', 'Add SQL source'],
-  ['hub-sql-edit', 'Edit'],
-  ['hub-sql-test', 'Test connection'],
-  ['hub-sql-remove', 'Remove'],
-]) {
-  assert.ok(sqlView.includes(`data-testid="${testid}"`), `the SQL sources list needs the ${label} action (${testid})`);
-  // The label reaches the button as element text, or as the idle half of a busy/idle expression.
-  assert.ok(sqlView.includes(`>${label}<`) || sqlView.includes(`: '${label}'`), `the ${testid} action must read "${label}"`);
-}
-// Every action goes through the engine ops the engine lane shipped, by their RPC names.
-//
-// listTableMappings and listTests are NOT in this list any more (2026-09-15). Both belong to Tests, which
-// is one whole Pro feature now, and both return far more than a use count: check definitions with their
-// expected values, and saved verdicts with row counts. Neither may become free to keep a label working, so
-// the hub reads the free usage projection instead and this list follows it.
-for (const op of ['listSqlSources', 'saveSqlSource', 'deleteSqlSource', 'testSqlSource', 'listSqlSourceUsage']) {
+const endpointForm = slice('function EndpointForm', 'const defaultConfirm');
+assert.doesNotMatch(hub, /function SqlSourcesView|>SQL sources</, 'no screen shows a separate SQL sources section');
+assert.match(hub, /export type HubView = [^\n]*'sqlsources'/, "HubView keeps 'sqlsources' so the Tests page's way in still lands");
+assert.match(endpointForm, /SQL endpoint for \{nameOf\(r\)\}/, 'the form opens under its row and names the model');
+assert.match(endpointForm, /Checks compare this model's numbers against it\. One per model, optional\./);
+assert.match(endpointForm, /Found in this model's sources:/, "the engine's suggestion is offered first");
+for (const op of ['listSqlSources', 'saveSqlSource', 'deleteSqlSource', 'testSqlSource', 'listModelSqlEndpoints']) {
   assert.match(hub, new RegExp(`rpc<[^>]*>\\('${op}'`), `the hub must call ${op} on the engine, not keep its own store`);
 }
-for (const gone of ['listTests', 'listTableMappings']) {
-  assert.doesNotMatch(hub, new RegExp(`rpc<[^>]*>\\('${gone}'`),
-    `${gone} is a Pro Tests read; Connections must not call it to count what uses a source`);
+for (const gone of ['listTests', 'listTableMappings', 'listSqlSourceUsage']) {
+  assert.doesNotMatch(hub, new RegExp(`'${gone}'`), `${gone} is not needed to count what uses a source; the endpoint listing carries it`);
 }
-// ---- and it reads the shape the engine actually returns --------------------------------------------------------
-// Astra, 2026-09-15: the hub asked for `{ sources }` while the engine returns a bare array, so every SUCCESSFUL
-// usage read produced an empty list and every source on the page read "not counted". The engine's own method
-// signature is the fixture here, so the page and the door cannot drift apart again without this failing.
-const engineTarget = readFileSync(resolve(root, '..', 'Semanticus.Engine', 'EngineRpcTarget.cs'), 'utf8');
-const usageReturn = /public Task<([^>]+)> listSqlSourceUsage\(\)/.exec(engineTarget);
-assert.ok(usageReturn, 'EngineRpcTarget must still expose listSqlSourceUsage for the hub to read');
-assert.equal(usageReturn[1], 'SqlSourceUsage[]',
-  'the engine door returns a bare array; the assertions below are written against that shape');
-assert.match(hub, /rpc<SqlSourceUsage\[\]>\('listSqlSourceUsage'\)/,
-  'the hub must ask for the array the engine returns, not a wrapper object that is never sent');
-assert.doesNotMatch(hub, /\{ sources\?: SqlSourceUsage\[\] \}/,
-  'the wrapper shape never existed on the wire: reading it made every count "not counted"');
-assert.match(hub, /Array\.isArray\(rows\) \? rows : null/,
-  'a shape the page does not recognise is not counted, never zero use');
-assert.match(harness, /RESPONSES\.listSqlSourceUsage = cfg\.listSqlSourceUsage \|\| SQL_SOURCES\.map/,
-  'the screenshot harness must mock the same array, or the scene proves the wrong shape');
-// A source holds NO credential: the hub must never offer a password or a token box.
-assert.doesNotMatch(sqlView, /type="password"/, 'a SQL source never takes a password');
-assert.doesNotMatch(sqlView, /placeholder="[^"]*token/i, 'a SQL source never takes a token');
+// A source holds NO credential: the form never offers a password or a token box.
+assert.doesNotMatch(endpointForm, /type="password"/, 'a SQL endpoint never takes a password');
+assert.doesNotMatch(endpointForm, /placeholder="[^"]*token/i, 'a SQL endpoint never takes a token');
 // It reuses the ONE shared account picker rather than growing a second sign-in control.
 assert.match(hub, /import \{ AccountPicker \} from '\.\/accountpicker'/, 'the form must reuse the shared account picker');
-assert.match(sqlView, /<AccountPicker/, 'the SQL source form signs in through the shared picker');
-// The picker's tenant box says "where the MODEL lives", which is the wrong noun on a SQL source: the thing that
-// lives somewhere here is a database. The shared control takes the words as a prop rather than being forked.
+assert.match(endpointForm, /<AccountPicker/, 'the endpoint form signs in through the shared picker');
 const pickerSrc = read('webview', 'src', 'accountpicker.tsx');
 assert.match(pickerSrc, /tenantLabel\?: string/, 'the shared picker must let a page name what the tenant box is for');
-assert.match(pickerSrc, /tenantLabel \?\? 'where the model lives \(optional\)'/,
-  'the default words are unchanged, so no other page moves');
-assert.match(sqlView, /tenantLabel="where the database lives \(optional\)"/,
-  'a SQL source asks where the DATABASE lives, not where a model lives');
-
-// ---- the four states -------------------------------------------------------------------------------------------
-// The words live in copy.ts, so the hub and the Tests page cannot drift into saying two things about one feature.
-const copyTs = read('webview', 'src', 'copy.ts');
-assert.ok(copyTs.includes("empty: 'No SQL sources yet. Save a server and database once, then choose it from any check.'"),
-  'the empty state must be the ratified sentence, and it must live in copy.ts');
-assert.ok(sqlView.includes('SQL_SOURCE_COPY.empty'), 'the empty state must render the shared sentence, not its own copy of it');
-assert.ok(sqlView.includes('data-testid="hub-sql-loading"'), 'the list must have a loading state');
-assert.ok(sqlView.includes('data-testid="hub-sql-error"'), 'the list must show a load failure rather than an empty list');
-assert.ok(sqlView.includes('data-testid="hub-sql-failed"'), 'a source whose last test failed must be marked in the row');
+assert.match(pickerSrc, /tenantLabel \?\? 'where the model lives \(optional\)'/, 'the default words are unchanged, so no other page moves');
+assert.match(endpointForm, /tenantLabel="where the database lives \(optional\)"/, 'a SQL endpoint asks where the DATABASE lives');
 
 // ---- the direct-open route the Tests page uses -------------------------------------------------------------------
 assert.match(hub, /export function openSqlSources\(/, 'the Tests page needs a named way in');
 assert.match(hub, /export function listSqlSources\(/, "a check's source picker needs the saved sources");
-assert.match(hub, /openConnectionsOnView\('sqlsources'\)/, 'the way in must land the hub on the SQL sources section');
+assert.match(hub, /openConnectionsOnView\('sqlsources'\)/, "the way in asks for 'sqlsources'");
+assert.match(hubModelSrc, /case 'sqlsources': return \{ view: 'open', panel: 'sql' \};/, "which lands on the open model's SQL endpoint");
+assert.match(hub, /if \(r\) openEndpointForm\(r\);\s*\n\s*else setNotice\('Open a model first\./, 'with no open model it says where the endpoint is set');
 assert.match(hub, /export interface SqlSourceRecord/, 'the record shape is shared with the Tests lane');
-assert.match(hub, /section === 'sqlsources'/, 'a host-driven open must be able to land on SQL sources too');
 
 // ---- behavioural: the pure helpers, extracted and RUN --------------------------------------------------------
-const SQL_HELPERS = ['sqlSourceFormError', 'sqlSourceTestLine', 'sqlSourceUsageLine', 'sqlSourceUsedByNames'];
+const SQL_HELPERS = ['sqlSourceFormError', 'sqlSourceTestLine', 'sqlSourceUsedByNames'];
 const sqlHelperSource = SQL_HELPERS.map((name) => {
   const m = hub.match(new RegExp(`\\nfunction ${name}\\([\\s\\S]*?\\n\\}`));
   assert.ok(m, `${name} must stay a statically extractable top-level function in connectionshub.tsx`);
   return m[0];
 }).join('\n');
 const S = Function(`"use strict"; ${tsc.transpileModule(sqlHelperSource, { compilerOptions: { target: tsc.ScriptTarget.ES2020 } }).outputText}; return { ${SQL_HELPERS.join(', ')} };`)();
-
-// Save validates the obvious BEFORE the engine is called, and says which box in plain words. Order matters: the
-// person is told about the first empty box, not handed three complaints at once.
 const full = { id: null, name: 'Contoso warehouse', server: 'contoso-sql.database.windows.net', database: 'Warehouse', authMode: 'interactive', tenantId: '' };
 assert.equal(S.sqlSourceFormError(full), null, 'a complete form has nothing to complain about');
 assert.match(S.sqlSourceFormError({ ...full, name: '   ' }), /name/i, 'a missing name is refused in the form');
 assert.match(S.sqlSourceFormError({ ...full, server: '' }), /server address/i, 'a missing server is refused in the form');
 assert.match(S.sqlSourceFormError({ ...full, database: '' }), /database/i, 'a missing database is refused in the form');
-assert.ok(!/^\s|\s$/.test(S.sqlSourceFormError({ ...full, name: '' })), 'the message is a sentence, not padding');
 // FAIL CLOSED on the only shape a pasted password arrives in, the same rule the engine applies at the boundary.
 assert.match(S.sqlSourceFormError({ ...full, server: 'Server=x;User Id=sa;Password=hunter2' }), /connection string/i,
   'a pasted connection string is refused in the form, never sent to the engine');
 assert.match(S.sqlSourceFormError({ ...full, database: 'Initial Catalog=Warehouse;' }), /connection string/i);
-
 // "Never tested" is a THIRD state, distinct from "the last test failed". Rounding it into "ok" would be a lie.
 assert.equal(S.sqlSourceTestLine(undefined, '15 Sep, 04:12 PM'), 'Not tested yet');
-assert.equal(S.sqlSourceTestLine(null, ''), 'Not tested yet');
 assert.equal(S.sqlSourceTestLine(true, '15 Sep, 04:12 PM'), 'Last test worked on 15 Sep, 04:12 PM');
 assert.equal(S.sqlSourceTestLine(false, '15 Sep, 04:12 PM'), 'Last test failed on 15 Sep, 04:12 PM');
-assert.equal(S.sqlSourceTestLine(true, ''), 'Last test worked', 'a result with no date still states the result');
-
-// "Used by N checks and M table mappings" is only said when it was really counted, and the THIRD argument is
-// what makes that honest from 2026-09-15. There are now three different ways a count can be missing and they
-// must not print the same sentence: no usage reading at all (no model to ask), a reading that came back
-// without this source, and a reading that carried the source but not one of its counts. Only the first is
-// "open a model". The other two are a partial answer, and a partial answer is NOT zero use, because zero is
-// the one sentence a person deletes a source on.
-assert.equal(S.sqlSourceUsageLine(3, 4), 'Used by 3 checks · 4 table mappings');
-assert.equal(S.sqlSourceUsageLine(1, 1), 'Used by 1 check · 1 table mapping', 'one of a thing is singular');
-assert.equal(S.sqlSourceUsageLine(0, 0), 'Nothing in this model uses it yet.');
-assert.equal(S.sqlSourceUsageLine(null, null, false), 'Open a model to see what uses this source.',
-  'no usage reading at all means there is no model to ask');
-assert.equal(S.sqlSourceUsageLine(null, null), 'What uses this source was not counted.',
-  'a reading that did not mention this source is uncounted, never zero');
-assert.equal(S.sqlSourceUsageLine(null, 4), 'Checks were not counted. Used by 4 table mappings.',
-  'and a missing half says which half it lost');
-assert.equal(S.sqlSourceUsageLine(2, null), 'Used by 2 checks. Table mappings were not counted.',
-  'an uncounted half is said out loud, never rounded to zero');
-
-// The refusal names what still points at the source. Where the hub knows fewer names than the engine counted, it
-// says how many are missing from the list instead of quietly showing a short list as if it were complete.
-assert.equal(S.sqlSourceUsedByNames(['Sales total vs finance', 'Orders by month'], 2), 'Sales total vs finance, Orders by month');
+// The refusal names what still points at the source, and says how many it could not name.
 assert.equal(S.sqlSourceUsedByNames(['Sales total vs finance'], 3), 'Sales total vs finance, and 2 more');
 assert.equal(S.sqlSourceUsedByNames([], 2), '2 not named here');
-assert.equal(S.sqlSourceUsedByNames([], 0), '');
 assert.equal(S.sqlSourceUsedByNames(['  ', 'Sales'], 2), 'Sales, and 1 more', 'a blank title is not a name');
 
-// ---- the refused Remove renders those names ---------------------------------------------------------------------
-assert.ok(sqlView.includes('data-testid="hub-sql-refused"'), 'a refused Remove needs its own block, not a toast');
-assert.ok(sqlView.includes('sqlSourceUsedByNames('), 'the refusal must render the names, not only the engine counts');
-assert.ok(sqlView.includes('sqlRefused.checkTitles'), "the refusal must read the engine's own check titles");
-assert.ok(sqlView.includes('sqlRefused.mappedTables'), "the refusal must read the engine's own mapped tables");
-assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedChecks'), 'the refusal must label the check list');
-assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedTables'), 'the refusal must label the table-mapping list');
-assert.ok(sqlView.includes('SQL_SOURCE_COPY.refusedNext'), 'the refusal must say what to do next, not only that it was refused');
-assert.ok(copyTs.includes("refusedChecks: 'Checks that use it'"), 'the check list keeps its ratified label');
-assert.ok(copyTs.includes("refusedTables: 'Table mappings that use it'"), 'the table-mapping list keeps its ratified label');
-assert.ok(copyTs.includes("refusedNext: 'Point those at another source, or remove them, then remove this source.'"),
-  'the next step is a real instruction, not a restatement of the refusal');
-// The engine's own refusal note is only shown when it counted NOTHING (a missing id, a store that would not answer).
-// Printing it beside the lists as well would make one refusal read as two, which is the Promote defect (D-166).
-assert.ok(/checksUsing \?\? 0\) === 0 && \(sqlRefused\.tableMappingsUsing \?\? 0\) === 0 && sqlRefused\.note/.test(sqlView),
-  "the engine's note is a fallback for an uncounted refusal, never a second copy of the same sentence");
+// ---- a refused Remove of a not-linked source renders the engine's names --------------------------------------------
+const listViewSrc = slice('function ListView', 'function HistoryView');
+assert.ok(listViewSrc.includes('data-testid="hub-sql-refused"'), 'a refused Remove needs its own block, not a toast');
+assert.ok(listViewSrc.includes('nlRefused.checkTitles') && listViewSrc.includes('nlRefused.mappedTables'), "the refusal renders the engine's own names");
+assert.ok(/checksUsing \?\? 0\) === 0 && \(nlRefused\.tableMappingsUsing \?\? 0\) === 0 && !\(nlRefused\.linkedModels \?\? \[\]\)\.length && nlRefused\.note/.test(listViewSrc),
+  "the engine's note is a fallback for a refusal that named nothing, never a second copy of the same sentence (D-166)");
 
 // ---- the harness must carry the fixtures, or the screenshots prove nothing ---------------------------------------
 assert.match(harness, /listSqlSources:/, 'the uishot harness must answer listSqlSources');

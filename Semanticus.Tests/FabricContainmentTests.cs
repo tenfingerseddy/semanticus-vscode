@@ -241,7 +241,7 @@ namespace Semanticus.Tests
                 await Task.Delay(Timeout.InfiniteTimeSpan, ct);
                 throw new InvalidOperationException("unreachable");
             });
-            var pipe = "semanticus-fabric-cancel-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipe = TestPipe.Mint("semanticus-fabric-cancel-");
             var sessions = new SessionManager();
             using var owner = new LocalEngine(sessions, TestEntitlements.Pro);
             using var server = new RpcServer(sessions, owner, pipe);

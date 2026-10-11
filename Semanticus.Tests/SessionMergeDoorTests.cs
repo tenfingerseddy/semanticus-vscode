@@ -12,24 +12,46 @@ namespace Semanticus.Tests
     /// D-128: the undoable merge into the open model exists in the engine, but the public agent tool
     /// could not name that target. C1.7 also puts the C1.2 review fence on that merge.
     /// </summary>
-    public sealed class SessionMergeDoorTests
+    public sealed class SessionMergeDoorTests : IClassFixture<DirTemplate>
     {
+        private readonly DirTemplate _tpl;
+        public SessionMergeDoorTests(DirTemplate tpl) => _tpl = tpl;
+
         private sealed class Pro : IEntitlement
         {
             public bool IsPro => true;
             public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "pro" };
         }
 
-        private static async Task<(LocalEngine engine, SessionManager sessions, string sourceDir, string mergeRef)> OpenWithSourceAsync()
+        private static void CopyTree(string from, string to)
         {
+            Directory.CreateDirectory(to);
+            foreach (var d in Directory.EnumerateDirectories(from, "*", SearchOption.AllDirectories)) Directory.CreateDirectory(Path.Combine(to, Path.GetRelativePath(from, d)));
+            foreach (var f in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories)) File.Copy(f, Path.Combine(to, Path.GetRelativePath(from, f)));
+        }
+
+        /// <summary>Lean suite: the model is a few-table model (the merge fence asks about the review token and the session, not about
+        /// AdventureWorks), and the source it merges from (the same model with one extra measure, written as TMDL) is built once for the class
+        /// and copied for each test, because each test removes its own copy.</summary>
+        private async Task<(LocalEngine engine, SessionManager sessions, string sourceDir, string mergeRef)> OpenWithSourceAsync()
+        {
+            var built = await _tpl.GetAsync(async root =>
+            {
+                using var e0 = new LocalEngine(new SessionManager(), new Pro());
+                await e0.OpenAsync(TinyBim.Write(Path.Combine(root, "src", "Tiny.bim")));
+                var t0 = (await e0.ListMeasuresAsync()).First().Table;
+                await e0.CreateMeasureAsync("table:" + t0, "Door Merge Probe", "1", "human");
+                await e0.SaveAsync(Path.Combine(root, "source"), "TMDL", false, "human");
+                File.WriteAllText(Path.Combine(root, "table.txt"), t0);
+                return root;
+            });
+            var table = File.ReadAllText(Path.Combine(built, "table.txt"));
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
-            var table = (await engine.ListMeasuresAsync()).First().Table;
-            await engine.CreateMeasureAsync("table:" + table, "Door Merge Probe", "1", "human");
-            var sourceDir = Path.Combine(Path.GetTempPath(), "sem-session-merge-" + Guid.NewGuid().ToString("N").Substring(0, 8));
-            await engine.SaveAsync(sourceDir, "TMDL");
-            await engine.OpenAsync(TestModels.FindBim());
+            var work = Path.Combine(Path.GetTempPath(), "sem-session-merge-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            var sourceDir = Path.Combine(work, "source");
+            CopyTree(Path.Combine(built, "source"), sourceDir);
+            await engine.OpenAsync(TinyBim.Write(Path.Combine(work, "open", "Tiny.bim")));
             return (engine, sessions, sourceDir, "measure:" + table + "/Door Merge Probe");
         }
 
@@ -51,7 +73,7 @@ namespace Semanticus.Tests
                     Assert.False(string.IsNullOrEmpty(r.ConfirmToken));
                     Assert.DoesNotContain((await engine.ListMeasuresAsync()).Select(m => m.Name), n => n == "Door Merge Probe");
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
 
@@ -77,7 +99,7 @@ namespace Semanticus.Tests
                     Assert.Equal(before, sessions.Current.Revision);
                     Assert.DoesNotContain((await engine.ListMeasuresAsync()).Select(m => m.Name), n => n == "Door Merge Probe");
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
 
@@ -101,7 +123,7 @@ namespace Semanticus.Tests
                     await engine.UndoAsync("human");
                     Assert.DoesNotContain((await engine.ListMeasuresAsync()).Select(m => m.Name), n => n == "Door Merge Probe");
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
 
@@ -128,7 +150,7 @@ namespace Semanticus.Tests
                     Assert.Equal(before, sessions.Current.Revision);
                     Assert.DoesNotContain((await engine.ListMeasuresAsync()).Select(m => m.Name), n => n == "Door Merge Probe");
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
 
@@ -152,7 +174,7 @@ namespace Semanticus.Tests
                     Assert.Contains("nothing to write", r.Note, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal(before, sessions.Current.Revision);
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
 
@@ -177,7 +199,7 @@ namespace Semanticus.Tests
                     Assert.Contains("review", r.Error, StringComparison.OrdinalIgnoreCase);
                     Assert.Equal(before, sessions.Current.Revision);
                 }
-                finally { try { Directory.Delete(sourceDir, true); } catch { } }
+                finally { try { Directory.Delete(Path.GetDirectoryName(sourceDir), true); } catch { } }
             }
         }
     }

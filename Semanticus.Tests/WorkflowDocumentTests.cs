@@ -1288,7 +1288,7 @@ namespace Semanticus.Tests
         public async Task Stock_is_read_only_and_copy_creation_never_replaces_a_newer_project_copy()
         {
             using var f = new Fixture();
-            var stock = await f.Engine.GetWorkflowDocumentAsync("new-measure");
+            var stock = await f.Engine.GetWorkflowDocumentAsync("optimize-dax");
             Assert.Equal("stock", stock.Library);
             var stockEdit = JsonSerializer.Serialize(new[] { new
             {
@@ -1414,7 +1414,7 @@ namespace Semanticus.Tests
         {
             using var f = new Fixture();
             f.Write(Markdown);
-            var pipe = "semanticus-document-" + Guid.NewGuid().ToString("N");
+            var pipe = TestPipe.Mint("semanticus-document-");
             using var server = new RpcServer(f.Sessions, f.Engine, pipe);
             using var cts = new CancellationTokenSource();
             var running = server.RunAsync(cts.Token);
@@ -1461,7 +1461,7 @@ namespace Semanticus.Tests
             var firstRoot = Path.Combine(f.Workspace, "first-project");
             var first = await f.Sessions.CreateAsync("First model", 1600);
             first.SourcePath = Path.Combine(firstRoot, "model.bim");
-            var pipe = "semanticus-document-save-" + Guid.NewGuid().ToString("N");
+            var pipe = TestPipe.Mint("semanticus-document-save-");
             using var server = new RpcServer(f.Sessions, f.Engine, pipe);
             using var cts = new CancellationTokenSource();
             var running = server.RunAsync(cts.Token);

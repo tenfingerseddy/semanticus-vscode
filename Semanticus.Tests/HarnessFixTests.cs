@@ -171,8 +171,8 @@ namespace Semanticus.Tests
         {
             var ws = Path.Combine(Path.GetTempPath(), "semanticus-reattach-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(ws);
-            var pipe1 = "semanticus-reat1-" + Guid.NewGuid().ToString("N").Substring(0, 8);
-            var pipe2 = "semanticus-reat2-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipe1 = TestPipe.Mint("semanticus-reat1-");
+            var pipe2 = TestPipe.Mint("semanticus-reat2-");
             static EngineInfo Info(string pipe, string ws) => new EngineInfo
             { PipeName = pipe, Pid = Environment.ProcessId, StartedUtc = DateTime.UtcNow.ToString("o"), Workspace = ws };
 

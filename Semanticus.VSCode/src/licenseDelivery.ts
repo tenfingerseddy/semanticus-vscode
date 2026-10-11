@@ -17,6 +17,13 @@ export function ownerServeArgs(workspace: string): string[] {
     return ['serve', '--workspace', workspace, '--ui-challenge-stdin', '--license-stdin'];
 }
 
+/// The engine opens the system browser for a person's sign-in only when its command line says so (the engine's
+/// InteractiveSignIn). A real window says so; the extension's own test runs (ExtensionMode.Test) never do, so no test
+/// can raise a sign-in page on the desktop of whoever runs it.
+export function ownerSignInArgs(isTestRun: boolean): string[] {
+    return isTestRun ? [] : ['--interactive-signin'];
+}
+
 export function ownerStdinPayload(uiChallenge: string, licenseToken: string): string {
     return `${uiChallenge}\n${licenseToken || ''}\n`;
 }

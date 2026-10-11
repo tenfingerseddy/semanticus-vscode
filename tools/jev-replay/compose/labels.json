@@ -1,0 +1,488 @@
+{
+ "version": 1,
+ "note": "Reviewer-written labels for the compose.draft replay (composer lane L5). Each item is one description; 'clauses' lists, per step the describe splitter cuts, the ops that step asks for ([] means none of Semanticus's step templates fits). 'alsoOk' lists ops that may appear without making the step wrong. Words come from Kane's UAT (uat), composer examples (composer) and the shipped starters' own step headings (starter). No model or person names.",
+ "items": [
+  {
+   "id": "uat-1",
+   "source": "uat",
+   "words": "create a meaure and test its performance",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "benchmark_dax"
+    ]
+   ],
+   "alsoOk": [
+    [],
+    [
+     "profile_dax"
+    ]
+   ]
+  },
+  {
+   "id": "uat-2",
+   "source": "uat",
+   "words": "refresh the sales model and check its correct",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "uat-3",
+   "source": "uat",
+   "words": "Every month, refresh Sales, run the saved checks and publish the model",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "uat-4",
+   "source": "uat",
+   "words": "Every month, refresh Sales, run the saved checks and email finance.",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ],
+    []
+   ]
+  },
+  {
+   "id": "uat-5",
+   "source": "uat",
+   "words": "Hide the key columns, then describe the Sales measures",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ],
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "uat-6",
+   "source": "uat",
+   "words": "Email the finance team; add a Total Returns measure",
+   "clauses": [
+    [],
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "uat-7",
+   "source": "uat",
+   "words": "import the Returns table, create the relationship and set data types",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "create_relationship"
+    ],
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-1",
+   "source": "composer",
+   "words": "Add a Total Sales measure, then format it as currency",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-2",
+   "source": "composer",
+   "words": "Mark the Date table as the date table",
+   "clauses": [
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-3",
+   "source": "composer",
+   "words": "rename Cust Key to Customer Key",
+   "clauses": [
+    [
+     "rename_object"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-4",
+   "source": "composer",
+   "words": "put all the sales measures in a Sales folder",
+   "clauses": [
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-5",
+   "source": "composer",
+   "words": "add synonyms so Copilot understands revenue",
+   "clauses": [
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-6",
+   "source": "composer",
+   "words": "sort Month Name by Month Number",
+   "clauses": [
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-7",
+   "source": "composer",
+   "words": "set the City column's category to city",
+   "clauses": [
+    [
+     "set_data_category"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-8",
+   "source": "composer",
+   "words": "stop the Year column from summing up",
+   "clauses": [
+    [
+     "set_summarize_by"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-9",
+   "source": "composer",
+   "words": "add a role for the sales team",
+   "clauses": [
+    [
+     "create_role"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-10",
+   "source": "composer",
+   "words": "create a calculation group for time intelligence",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-11",
+   "source": "composer",
+   "words": "fix the formula of the Margin measure",
+   "clauses": [
+    [
+     "update_measure"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-12",
+   "source": "composer",
+   "words": "add a new column for the order year",
+   "clauses": [
+    [
+     "create_column"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-13",
+   "source": "composer",
+   "words": "save the model, then publish it to test",
+   "clauses": [
+    [
+     "save_model"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-14",
+   "source": "composer",
+   "words": "relate Sales to Customer on CustomerKey",
+   "clauses": [
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-15",
+   "source": "composer",
+   "words": "describe every table for Copilot",
+   "clauses": [
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-16",
+   "source": "composer",
+   "words": "reload the Product table, then run the tests",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-17",
+   "source": "composer",
+   "words": "benchmark the Total Sales measure",
+   "clauses": [
+    [
+     "benchmark_dax"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "profile_dax"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-18",
+   "source": "composer",
+   "words": "find out why the Margin measure is slow",
+   "clauses": [
+    [
+     "profile_dax"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "benchmark_dax"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-19",
+   "source": "composer",
+   "words": "add a measure for average order value, format it as currency, then put it in the KPI folder",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ],
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-20",
+   "source": "composer",
+   "words": "bring in the Budget table from the source",
+   "clauses": [
+    [
+     "create_import_table"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-21",
+   "source": "composer",
+   "words": "make Quantity a whole number",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-22",
+   "source": "composer",
+   "words": "document the Returns table",
+   "clauses": [
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-23",
+   "source": "composer",
+   "words": "tidy up the measures into folders",
+   "clauses": [
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-24",
+   "source": "composer",
+   "words": "send the finance team a report",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "cmp-25",
+   "source": "composer",
+   "words": "Every Monday, refresh Returns and save the model",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "cmp-26",
+   "source": "composer",
+   "words": "hide the ID columns, then change their data type to whole number",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ],
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "str-1",
+   "source": "starter",
+   "words": "Build the calculation group, then save",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "str-2",
+   "source": "starter",
+   "words": "Create the role, then check an allowed case",
+   "clauses": [
+    [
+     "create_role"
+    ],
+    []
+   ],
+   "alsoOk": [
+    [],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "str-3",
+   "source": "starter",
+   "words": "Preview the relevant checks, then publish with the configured permission",
+   "clauses": [
+    [],
+    [
+     "deploy_stage"
+    ]
+   ],
+   "alsoOk": [
+    [
+     "run_tests"
+    ],
+    []
+   ]
+  },
+  {
+   "id": "str-4",
+   "source": "starter",
+   "words": "Rename the measure and replay the saved checks",
+   "clauses": [
+    [
+     "rename_object"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "str-5",
+   "source": "starter",
+   "words": "Choose the fact table and the rolling window",
+   "clauses": [
+    [],
+    []
+   ]
+  },
+  {
+   "id": "str-6",
+   "source": "starter",
+   "words": "Write one candidate formula, then keep the supported result",
+   "clauses": [
+    [
+     "update_measure"
+    ],
+    []
+   ],
+   "alsoOk": [
+    [
+     "create_measure"
+    ],
+    []
+   ]
+  }
+ ]
+}

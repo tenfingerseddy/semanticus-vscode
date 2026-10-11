@@ -26,13 +26,13 @@ These work while the Studio panel is the active editor — including when your c
 | `Ctrl+Shift+P` (`⌘⇧P`) | Command palette | Forwarded out of Studio and Properties so the palette still opens with focus inside the webview. |
 | `Ctrl+Shift+1…5` | Jump to an intent: Understand · Change · Improve · Prove · Ship | Returns to the tab you last used in that intent |
 | `Ctrl+Alt+←` / `Ctrl+Alt+→` | Previous / next Studio tab | Cycles all tabs, wrapping at the ends |
-| `Ctrl+Alt+Z` / `Ctrl+Alt+Shift+Z` | Undo / redo the last **model change** | The shared you-and-AI timeline (Edit History) — not text undo |
+| `Ctrl+Alt+Z` / `Ctrl+Alt+Shift+Z` | Undo / redo the last **model change** | The shared you-and-AI timeline (History, on the Plan), not text undo |
 | `Ctrl+Alt+D` | Diagram | |
 | `Ctrl+Alt+M` | M Code | |
 | `Ctrl+Alt+L` | DAX Lab | |
 | `Ctrl+Alt+R` | AI Readiness | Also re-runs the scan |
 | `Ctrl+Alt+B` | BPA | Scans on open |
-| `Ctrl+Alt+H` | Edit History | |
+| `Ctrl+Alt+H` | History, on the Plan | |
 | `Ctrl+Alt+W` | Workflows | |
 | `Ctrl+Alt+K` | Knowledge | |
 | `Ctrl+Alt+T` | Focus the Model tree (side bar) | The reverse of `Ctrl+Alt+S` below |
@@ -63,7 +63,7 @@ in-page handler checks the key target and stands down in any input, textarea, or
 | `Ctrl+Alt+N` | New measure | On the selected table (any selected child resolves its table); a selected display folder prefills it. Otherwise offers a table picker |
 | `Ctrl+Alt+S` | Open Semanticus Studio | |
 | `Ctrl+C` (`⌘C`) | Copy the selected object | Measures, columns, hierarchies, tables, calculation groups, calculation items |
-| `Ctrl+V` (`⌘V`) | Paste: duplicate the copied object | Same container = a copy beside the original (collision-safe name); a measure pasted onto another table lands there, and onto a display folder lands on that folder's table filed into it. Undoable, visible in Edit History |
+| `Ctrl+V` (`⌘V`) | Paste: duplicate the copied object | Same container = a copy beside the original (collision-safe name); a measure pasted onto another table lands there, and onto a display folder lands on that folder's table filed into it. Undoable, visible in the Plan's History |
 
 ## DAX / TMDL editors
 

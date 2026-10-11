@@ -15,8 +15,11 @@ namespace Semanticus.Tests
     /// always-pass 100); advisory rules (Applicable=0) surface a finding but never score. Built through the LocalEngine
     /// (the dual-drive path) and scanned with ai_readiness_scan.
     /// </summary>
-    public sealed class ReadinessCatalogBatch2Tests
+    public sealed class ReadinessCatalogBatch2Tests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public ReadinessCatalogBatch2Tests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro { get; }
@@ -26,16 +29,19 @@ namespace Semanticus.Tests
 
         // A clean base model: one fact table, clean well-typed business-named columns, one measure, no hierarchies /
         // perspectives / field parameters / date columns — trips NONE of the batch.
-        private static async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
+        private async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake(true));
+            return (await _copies.OpenAsync("base", BuildBaseModelAsync, new Fake(true), sessions), sessions);
+        }
+
+        private static async Task BuildBaseModelAsync(LocalEngine engine)
+        {
             await engine.CreateModelAsync("Batch2", 1604);
             var t = await engine.CreateTableAsync("Sales", "human");
             await engine.CreateColumnAsync(t, "Sales Amount", "Decimal", "Sales Amount", "human");
             await engine.CreateColumnAsync(t, "Customer Name", "String", "Customer Name", "human");
             await engine.CreateMeasureAsync(t, "Total Sales", "SUM ( Sales[Sales Amount] )", "human");
-            return (engine, sessions);
         }
 
         private static bool Fires(Scorecard c, string ruleId) => c.Findings.Any(f => f.RuleId == ruleId);

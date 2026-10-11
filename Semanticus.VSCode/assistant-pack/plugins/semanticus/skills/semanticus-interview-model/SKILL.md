@@ -1,29 +1,31 @@
 ---
 name: semanticus-interview-model
-description: Test business questions against a Semanticus model using known answers, paraphrases and questions it should decline. Use for model interviews, Copilot rehearsals or checks of answer reliability.
+description: Check business questions against a Semanticus model using known answers, paraphrases and questions it should decline. Use when the user asks for a model interview, a Copilot rehearsal, or a deeper check of answer reliability.
 ---
 
 # Interview a model
 
-Orient with `get_model_summary` and `get_model_primer`. Use `list_interview_questions` for the
-open model's saved questions and `list_interview_seeds` for candidates that fit its schema.
-Seeds are not trusted answers. Questions from another model are not evidence for this one.
+This is your own check. Studio does not show interviews, so report the results in the chat. For a
+quick check of one number, `ask_data` or `save_test` is shorter. Use an interview when the user wants
+many questions asked in several ways.
 
-Choose questions that reflect the user's business and likely calculation mistakes: distinct
-counts, totals, shares, closing balances, inactive relationships and date boundaries.
-Use a known report, approved figure or independently checked source as the expected answer.
-A number from the query under test does not independently validate that same query.
+Orient with `get_model_summary` and `get_model_primer`. `list_interview_questions` has the open
+model's saved questions and `list_interview_seeds` has candidates that fit its schema. Seeds are not
+trusted answers, and questions from another model prove nothing about this one.
+
+Choose questions that reflect the user's business and likely calculation mistakes: distinct counts,
+totals, shares, closing balances, inactive relationships and date boundaries. Take the expected answer
+from a known report, an approved figure or an independent source. A number from the query being
+checked does not validate that same query.
 
 - Value questions compare against an independently known value.
-- Paraphrase questions check agreement between two ways of asking the same question.
-- Refusal questions check whether an unanswerable question is honestly declined.
+- Paraphrase questions check that two ways of asking agree.
+- Unanswerable questions check that the model declines honestly.
 
-Run `run_interview` with a saved `questionId` or an `inlineJson` question. Value and paraphrase
-checks need the intended live connection. An inline question without an oracle can explore an
-answer, but remains Unverified until an independent answer is supplied. Save reusable questions
-with `add_interview_question` when requested, retaining the source of the expected answer.
+Run `run_interview` with a saved `questionId` or an `inlineJson` question. Value and paraphrase checks
+need the intended live connection. An inline question with no expected answer stays Unverified. Save a
+reusable question with `add_interview_question` and keep where its answer came from. For an
+unanswerable question, set `abstained` when declining or give `attemptDax` for the attempt.
 
-For refusal questions, set `abstained` when declining or provide `attemptDax` for the attempt.
 Report Correct, Refused, SilentlyWrong and Unverified as returned. Errors, truncation and missing
-oracles are not passes. Investigate returned readiness fix hints and rerun affected questions
-after a requested repair.
+expected answers are not passes. Follow the readiness fix hints, then rerun the affected questions.

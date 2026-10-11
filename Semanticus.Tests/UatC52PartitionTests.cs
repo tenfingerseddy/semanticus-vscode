@@ -31,7 +31,7 @@ namespace Semanticus.Tests
                 {
                     await created.CreateModelAsync("B Edit", 1604);
                     await created.CreateCalculatedTableAsync("Existing Calc", "{1}", "human");
-                    await created.SaveAsync(dir, "TMDL");
+                    await created.SaveAsync(dir, "TMDL", false, "human");
                 }
 
                 var sessions = new SessionManager();

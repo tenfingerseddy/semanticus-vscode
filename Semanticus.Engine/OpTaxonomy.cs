@@ -35,7 +35,7 @@ namespace Semanticus.Engine
         private static readonly Dictionary<string, (string Question, string Shelf)> Map =
             new Dictionary<string, (string, string)>(System.StringComparer.Ordinal)
         {
-            // Open a model and connect > Connections and targets (25)
+            // Open a model and connect > Connections and targets (24)
             { "connect_local", ("Open a model and connect", "Connections and targets") },
             { "connect_xmla", ("Open a model and connect", "Connections and targets") },
             { "connection_context", ("Open a model and connect", "Connections and targets") },
@@ -44,13 +44,13 @@ namespace Semanticus.Engine
             { "delete_sql_source", ("Open a model and connect", "Connections and targets") },
             { "disconnect", ("Open a model and connect", "Connections and targets") },
             { "forget_connection", ("Open a model and connect", "Connections and targets") },
-            { "label_connection", ("Open a model and connect", "Connections and targets") },
             { "list_account_profiles", ("Open a model and connect", "Connections and targets") },
             { "list_connection_history", ("Open a model and connect", "Connections and targets") },
             { "list_connections", ("Open a model and connect", "Connections and targets") },
             { "list_sql_source_usage", ("Open a model and connect", "Connections and targets") },
             { "list_sql_sources", ("Open a model and connect", "Connections and targets") },
             { "list_local_instances", ("Open a model and connect", "Connections and targets") },
+            { "list_workspace_models", ("Open a model and connect", "Connections and targets") },
             { "open_live", ("Open a model and connect", "Connections and targets") },
             { "open_local", ("Open a model and connect", "Connections and targets") },
             { "open_model", ("Open a model and connect", "Connections and targets") },
@@ -60,6 +60,10 @@ namespace Semanticus.Engine
             { "remember_xmla_connection", ("Open a model and connect", "Connections and targets") },
             { "save_sql_source", ("Open a model and connect", "Connections and targets") },
             { "set_publish_destination", ("Open a model and connect", "Connections and targets") },
+            // Slice C (contract 19.3), placement flagged for Kane: a model's SQL endpoint sits with the other
+            // Connections jobs, beside the saved SQL sources it points at.
+            { "set_model_sql_endpoint", ("Open a model and connect", "Connections and targets") },
+            { "list_model_sql_endpoints", ("Open a model and connect", "Connections and targets") },
             { "test_sql_source", ("Open a model and connect", "Connections and targets") },
             // See what is in the model > Measures, DAX and queries (7)
             { "evaluate_and_log", ("See what is in the model", "Measures, DAX and queries") },
@@ -68,21 +72,22 @@ namespace Semanticus.Engine
             { "list_measures", ("See what is in the model", "Measures, DAX and queries") },
             { "pivot_measure", ("See what is in the model", "Measures, DAX and queries") },
             { "run_dax", ("See what is in the model", "Measures, DAX and queries") },
+            { "ask_data", ("See what is in the model", "Measures, DAX and queries") },
+            { "list_data_questions", ("See what is in the model", "Measures, DAX and queries") },
+            { "pick_chart_kind", ("See what is in the model", "Measures, DAX and queries") },
             { "run_dmv", ("See what is in the model", "Measures, DAX and queries") },
-            // See what is in the model > Reports and what uses this model (10)
+            // See what is in the model > Reports and what uses this model (9)
             { "analyze_cloud_reports", ("See what is in the model", "Reports and what uses this model") },
             { "analyze_reports", ("See what is in the model", "Reports and what uses this model") },
             { "check_reports", ("See what is in the model", "Reports and what uses this model") },
             { "get_lineage", ("See what is in the model", "Reports and what uses this model") },
             { "impact_assessment", ("See what is in the model", "Reports and what uses this model") },
-            { "impact_of", ("See what is in the model", "Reports and what uses this model") },
             { "list_report_scope", ("See what is in the model", "Reports and what uses this model") },
             { "list_reports", ("See what is in the model", "Reports and what uses this model") },
             { "set_report_scope", ("See what is in the model", "Reports and what uses this model") },
             { "unused_objects", ("See what is in the model", "Reports and what uses this model") },
-            // See what is in the model > Speed and size (7)
+            // See what is in the model > Speed and size (6)
             { "benchmark_dax", ("See what is in the model", "Speed and size") },
-            { "benchmark_dax_coldwarm", ("See what is in the model", "Speed and size") },
             { "capture_query_plan", ("See what is in the model", "Speed and size") },
             { "clear_cache", ("See what is in the model", "Speed and size") },
             { "export_vpax", ("See what is in the model", "Speed and size") },
@@ -94,16 +99,16 @@ namespace Semanticus.Engine
             { "list_columns", ("See what is in the model", "Tables, columns and hierarchies") },
             { "list_objects", ("See what is in the model", "Tables, columns and hierarchies") },
             { "preview_table", ("See what is in the model", "Tables, columns and hierarchies") },
-            // See what is in the model > The model as a whole (5)
+            // See what is in the model > The model as a whole (6)
+            { "get_model_facts", ("See what is in the model", "The model as a whole") },
             { "get_model_fingerprint", ("See what is in the model", "The model as a whole") },
             { "get_model_summary", ("See what is in the model", "The model as a whole") },
             { "model_overview", ("See what is in the model", "The model as a whole") },
             { "script_objects", ("See what is in the model", "The model as a whole") },
             { "search_model", ("See what is in the model", "The model as a whole") },
-            // See what is in the model > Relationships and the diagram (4)
+            // See what is in the model > Relationships and the diagram (3)
             { "get_layout", ("See what is in the model", "Relationships and the diagram") },
             { "get_model_graph", ("See what is in the model", "Relationships and the diagram") },
-            { "model_graph_summary", ("See what is in the model", "Relationships and the diagram") },
             { "save_layout", ("See what is in the model", "Relationships and the diagram") },
             // See what is in the model > Tests, numbers and evidence (3)
             { "blame_value", ("See what is in the model", "Tests, numbers and evidence") },
@@ -187,7 +192,7 @@ namespace Semanticus.Engine
             { "set_perspective_member", ("Change the model", "How the model looks and reads") },
             { "set_properties", ("Change the model", "How the model looks and reads") },
             { "set_property", ("Change the model", "How the model looks and reads") },
-            // Change the model > The model spec (8)
+            // Change the model > The model spec (16)
             { "autogenerate_spec_from_fabric", ("Change the model", "The model spec") },
             { "autogenerate_spec_from_model", ("Change the model", "The model spec") },
             { "build_model_from_spec", ("Change the model", "The model spec") },
@@ -196,6 +201,16 @@ namespace Semanticus.Engine
             { "load_spec", ("Change the model", "The model spec") },
             { "save_spec", ("Change the model", "The model spec") },
             { "set_spec", ("Change the model", "The model spec") },
+            // The spec-first start (M11, lane sf-doors): a new model made from a SQL source through one start plan. Filed beside
+            // the spec because it is the same journey (a plan first, then one build); placement flagged for ratification.
+            { "start_model_from_sql", ("Change the model", "The model spec") },
+            { "get_start_plan", ("Change the model", "The model spec") },
+            { "edit_start_plan", ("Change the model", "The model spec") },
+            { "grant_start_disclosure", ("Change the model", "The model spec") },
+            { "get_start_words", ("Change the model", "The model spec") },
+            { "write_start_words", ("Change the model", "The model spec") },
+            { "build_start_plan", ("Change the model", "The model spec") },
+            { "discard_start_plan", ("Change the model", "The model spec") },
             // Change the model > Dates and time (8)
             { "define_calendar", ("Change the model", "Dates and time") },
             { "define_calendar_from_template", ("Change the model", "Dates and time") },
@@ -210,22 +225,46 @@ namespace Semanticus.Engine
             { "set_relationship_active", ("Change the model", "Relationships and the diagram") },
             { "set_relationship_cardinality", ("Change the model", "Relationships and the diagram") },
             { "set_relationship_crossfilter", ("Change the model", "Relationships and the diagram") },
-            // Make it better > Findings and fixes (15)
+            // Make it better > Findings and fixes (22)
             { "apply_fix", ("Make it better", "Findings and fixes") },
             { "apply_safe_fixes", ("Make it better", "Findings and fixes") },
-            { "bpa_fix", ("Make it better", "Findings and fixes") },
-            { "bpa_fix_all", ("Make it better", "Findings and fixes") },
             { "bpa_scan", ("Make it better", "Findings and fixes") },
-            { "bpa_summary", ("Make it better", "Findings and fixes") },
             { "get_custom_rules", ("Make it better", "Findings and fixes") },
+            { "load_rules", ("Make it better", "Findings and fixes") },
+            { "reset_rules", ("Make it better", "Findings and fixes") },
             { "lint_dax", ("Make it better", "Findings and fixes") },
             { "list_waivers", ("Make it better", "Findings and fixes") },
-            { "load_bpa_rules", ("Make it better", "Findings and fixes") },
             { "optimize_measure", ("Make it better", "Findings and fixes") },
-            { "reset_bpa_rules", ("Make it better", "Findings and fixes") },
             { "unwaive_finding", ("Make it better", "Findings and fixes") },
             { "validate_rule", ("Make it better", "Findings and fixes") },
             { "waive_finding", ("Make it better", "Findings and fixes") },
+            // The journey starts at "this measure could be set up better", which is this shelf's question.
+            // PLACEMENT NOT YET RATIFIED BY KANE: see the M0a report.
+            { "propose_measure_defaults", ("Make it better", "Findings and fixes") },
+            // The living plan (Jev M2). Filed here because the journey starts at "what should I do to this
+            // model", which is exactly this shelf's question; every item on the plan is a finding or a fix
+            // seen from the person's side rather than the rule's. PLACEMENT NOT YET RATIFIED BY KANE.
+            { "get_model_plan", ("Make it better", "Findings and fixes") },
+            { "get_words_queue", ("Make it better", "Findings and fixes") },
+            // Placement flagged for Kane (Plan-heart E4): History lives inside the Plan, so it files beside it.
+            { "get_plan_history", ("Make it better", "Findings and fixes") },
+            { "skip_model_plan_item", ("Make it better", "Findings and fixes") },
+            { "unskip_model_plan_item", ("Make it better", "Findings and fixes") },
+            { "model_plan_action", ("Make it better", "Findings and fixes") },
+            { "apply_plan_items", ("Make it better", "Findings and fixes") },
+            { "get_next_actions", ("Make it better", "Findings and fixes") },
+            // The target. Same shelf as the rest of the plan: the journey still starts at "what should I do
+            // to this model", and a target is the other half of that answer. PLACEMENT NOT YET RATIFIED BY
+            // KANE, exactly like the five above it.
+            { "add_plan_target", ("Make it better", "Findings and fixes") },
+            { "remove_plan_target", ("Make it better", "Findings and fixes") },
+            // The queue (Plan at the heart, lane E3). Same shelf: every task is a row of the plan, given to the
+            // assistant, and the journey still starts at "what should I do to this model". PLACEMENT NOT YET
+            // RATIFIED BY KANE, flagged for him in the slice 7 PR.
+            { "list_assistant_requests", ("Make it better", "Findings and fixes") },
+            { "claim_request", ("Make it better", "Findings and fixes") },
+            { "complete_request", ("Make it better", "Findings and fixes") },
+            { "decline_request", ("Make it better", "Findings and fixes") },
             // Prove it is right > Tests, numbers and evidence (24)
             { "add_interview_question", ("Prove it is right", "Tests, numbers and evidence") },
             { "capture_baseline", ("Prove it is right", "Tests, numbers and evidence") },
@@ -272,12 +311,13 @@ namespace Semanticus.Engine
             { "list_history_checkpoints", ("Track versions and compare", "Versions and history") },
             { "model_diff", ("Track versions and compare", "Versions and history") },
             { "restore_history_checkpoint", ("Track versions and compare", "Versions and history") },
-            // Ship it out > Publishing and deployment (24)
+            // Ship it out > Publishing and deployment (25)
             { "apply_model_diff", ("Ship it out", "Publishing and deployment") },
             { "cicd_generate", ("Ship it out", "Publishing and deployment") },
             { "cicd_publish", ("Ship it out", "Publishing and deployment") },
             { "deploy_gate", ("Ship it out", "Publishing and deployment") },
             { "deploy_live", ("Ship it out", "Publishing and deployment") },
+            { "publish_new_model", ("Ship it out", "Publishing and deployment") },
             { "deploy_stage", ("Ship it out", "Publishing and deployment") },
             { "deployment_history", ("Ship it out", "Publishing and deployment") },
             { "fabric_git_commit", ("Ship it out", "Publishing and deployment") },
@@ -311,19 +351,17 @@ namespace Semanticus.Engine
             { "get_doc_outline", ("Ship it out", "The model write-up") },
             { "get_doc_section", ("Ship it out", "The model write-up") },
             { "set_doc_section", ("Ship it out", "The model write-up") },
-            // Teach the AI about this model > Teach the AI (32)
+            // Teach the AI about this model > Teach the AI (28)
             { "accept_primer_suggestion", ("Teach the AI about this model", "Teach the AI") },
             { "add_insight", ("Teach the AI about this model", "Teach the AI") },
             { "ai_readiness_scan", ("Teach the AI about this model", "Teach the AI") },
-            { "ai_readiness_scan_live", ("Teach the AI about this model", "Teach the AI") },
-            { "ai_readiness_summary", ("Teach the AI about this model", "Teach the AI") },
             { "approve_insight", ("Teach the AI about this model", "Teach the AI") },
             { "create_data_agent", ("Teach the AI about this model", "Teach the AI") },
             { "delete_data_agent", ("Teach the AI about this model", "Teach the AI") },
             { "delete_insight", ("Teach the AI about this model", "Teach the AI") },
             { "downvote_insight", ("Teach the AI about this model", "Teach the AI") },
             { "edit_insight", ("Teach the AI about this model", "Teach the AI") },
-            { "enable_qna", ("Teach the AI about this model", "Teach the AI") },
+            { "create_linguistic_schema", ("Teach the AI about this model", "Teach the AI") },
             { "generate_data_agent_config", ("Teach the AI about this model", "Teach the AI") },
             { "get_ai_instructions", ("Teach the AI about this model", "Teach the AI") },
             { "get_data_agent", ("Teach the AI about this model", "Teach the AI") },
@@ -332,12 +370,10 @@ namespace Semanticus.Engine
             { "list_data_agents", ("Teach the AI about this model", "Teach the AI") },
             { "list_insights", ("Teach the AI about this model", "Teach the AI") },
             { "list_primer_suggestions", ("Teach the AI about this model", "Teach the AI") },
-            { "load_readiness_rules", ("Teach the AI about this model", "Teach the AI") },
             { "make_model_ai_ready", ("Teach the AI about this model", "Teach the AI") },
             { "purge_knowledge", ("Teach the AI about this model", "Teach the AI") },
             { "recall_experience", ("Teach the AI about this model", "Teach the AI") },
             { "reject_primer_suggestion", ("Teach the AI about this model", "Teach the AI") },
-            { "reset_readiness_rules", ("Teach the AI about this model", "Teach the AI") },
             { "set_ai_data_schema", ("Teach the AI about this model", "Teach the AI") },
             { "set_ai_instructions", ("Teach the AI about this model", "Teach the AI") },
             { "set_model_primer", ("Teach the AI about this model", "Teach the AI") },
@@ -380,9 +416,27 @@ namespace Semanticus.Engine
             { "set_workflow_enforcement", ("Set the rules of the work", "Workflows and rules") },
             { "skip_workflow_step", ("Set the rules of the work", "Workflows and rules") },
             { "start_workflow", ("Set the rules of the work", "Workflows and rules") },
+            // The composer's drafts (lane L4). Placement flagged for Kane in the PR: filed beside start_workflow, as a
+            // draft is how a workflow whose steps Semanticus runs is run.
+            { "compose_task", ("Set the rules of the work", "Workflows and rules") },
+            { "describe_workflow_steps", ("Set the rules of the work", "Workflows and rules") },
+            { "get_draft", ("Set the rules of the work", "Workflows and rules") },
+            { "edit_draft", ("Set the rules of the work", "Workflows and rules") },
+            { "run_draft", ("Set the rules of the work", "Workflows and rules") },
             { "submit_workflow_step", ("Set the rules of the work", "Workflows and rules") },
+            // Typed decisions (Jev M0a). Filed here because the journey starts at "what are the rules
+            // here, and what may leave my machine?", which is what this shelf answers. PLACEMENT NOT YET
+            // RATIFIED BY KANE: see the M0a report.
+            { "get_decision_points", ("Set the rules of the work", "Workflows and rules") },
+            { "set_decision_point_enabled", ("Set the rules of the work", "Workflows and rules") },
+            { "get_consent", ("Set the rules of the work", "Workflows and rules") },
+            { "set_consent", ("Set the rules of the work", "Workflows and rules") },
+            { "withdraw_consent", ("Set the rules of the work", "Workflows and rules") },
+            { "get_decision_budget", ("Set the rules of the work", "Workflows and rules") },
             // Look things up > Reference lists and instruction sheets (6)
-            { "bpa_get_fix_prompt", ("Look things up", "Reference lists and instruction sheets") },
+            // The box (Jev M2). The journey starts at "where is the thing that does X?", which is what this
+            // shelf answers, and routing only ever names a place. PLACEMENT NOT YET RATIFIED BY KANE.
+            { "route_ask", ("Look things up", "Reference lists and instruction sheets") },
             { "daxlib_search", ("Look things up", "Reference lists and instruction sheets") },
             { "get_fix_prompt", ("Look things up", "Reference lists and instruction sheets") },
             { "list_format_templates", ("Look things up", "Reference lists and instruction sheets") },

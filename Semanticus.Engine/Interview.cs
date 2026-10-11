@@ -103,7 +103,7 @@ namespace Semanticus.Engine
     /// The append-only JSONL delta store — a clone of <see cref="KnowledgeStore"/>'s kernel (one line = one delta;
     /// replay materializes the live set; a corrupt line is skipped and counted; 64KB line cap; never rewritten).
     /// Two scopes, same on-disk format: project (`.semanticus/interview/questions.jsonl`, beside the model) and
-    /// global (`%USERPROFILE%/.semanticus/interview/questions.jsonl`).
+    /// global (`<SemanticusHome>/interview/questions.jsonl`, SEMANTICUS_HOME or ~/.semanticus).
     /// </summary>
     internal static class InterviewStore
     {

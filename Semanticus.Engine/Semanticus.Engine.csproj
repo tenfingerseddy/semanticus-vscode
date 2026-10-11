@@ -43,6 +43,12 @@
     <EmbeddedResource Include="format-templates.json" />
   </ItemGroup>
 
+  <!-- The model facts place list (Facts/Data/README.md has its licence note). Embedded under a fixed logical name
+       so the loader does not depend on how MSBuild mangles the folder path. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Facts\Data\gazetteer.json" LogicalName="Semanticus.Engine.Facts.gazetteer.json" />
+  </ItemGroup>
+
   <!-- The Model Interview failure→fix map: the SINGLE source of truth stays beside the readiness catalog
        (docs/interview-fix-map.json — it is catalog data, not code) and is embedded via a link so the binary
        can never drift from the docs copy. Same fail-loud load pattern as format-templates.json. -->

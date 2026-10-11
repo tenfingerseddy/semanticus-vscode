@@ -1,0 +1,909 @@
+{
+ "version": 1,
+ "fresh": true,
+ "door": "plan",
+ "note": "The SECOND fresh labelled set, for the Plan door (Kane, 26 Sep): written after commit 8f917deb (the Plan's per-clause rule) was frozen, distinct from labels.json and labels-fresh.json, placeholder names only, committed with bar-plan2.json before any run on it.",
+ "items": [
+  {
+   "id": "p2-01",
+   "source": "fresh",
+   "words": "add a Freight Cost measure to Shipments",
+   "clauses": [
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-02",
+   "source": "fresh",
+   "words": "create a Returns Rate measure, show it as a percent",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ]
+   ]
+  },
+  {
+   "id": "p2-03",
+   "source": "fresh",
+   "words": "hide the Shipments row id",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "p2-04",
+   "source": "fresh",
+   "words": "put the logistics measures in a Logistics folder",
+   "clauses": [
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "p2-05",
+   "source": "fresh",
+   "words": "rename Shp Dt to Ship Date",
+   "clauses": [
+    [
+     "rename_object"
+    ]
+   ]
+  },
+  {
+   "id": "p2-06",
+   "source": "fresh",
+   "words": "write a description for every Warehouse column",
+   "clauses": [
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "p2-07",
+   "source": "fresh",
+   "words": "let Copilot know that carrier also means shipper",
+   "clauses": [
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "p2-08",
+   "source": "fresh",
+   "words": "join Shipments to Warehouse on WarehouseKey",
+   "clauses": [
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "p2-09",
+   "source": "fresh",
+   "words": "use DimDate as the model's date table",
+   "clauses": [
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "p2-10",
+   "source": "fresh",
+   "words": "change Weight to a decimal number",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "p2-11",
+   "source": "fresh",
+   "words": "set Unit Cost to not summarize",
+   "clauses": [
+    [
+     "set_summarize_by"
+    ]
+   ]
+  },
+  {
+   "id": "p2-12",
+   "source": "fresh",
+   "words": "sort Quarter Label by Quarter Number",
+   "clauses": [
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-13",
+   "source": "fresh",
+   "words": "flag the Country column as a country",
+   "clauses": [
+    [
+     "set_data_category"
+    ]
+   ]
+  },
+  {
+   "id": "p2-14",
+   "source": "fresh",
+   "words": "correct the Freight Cost formula so it ignores cancelled orders",
+   "clauses": [
+    [
+     "update_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-15",
+   "source": "fresh",
+   "words": "pull in the Carriers table",
+   "clauses": [
+    [
+     "create_import_table"
+    ]
+   ]
+  },
+  {
+   "id": "p2-16",
+   "source": "fresh",
+   "words": "add a column for delivery days to Shipments",
+   "clauses": [
+    [
+     "create_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-17",
+   "source": "fresh",
+   "words": "set up a calculation group for period comparisons",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ]
+   ]
+  },
+  {
+   "id": "p2-18",
+   "source": "fresh",
+   "words": "add a role for the logistics team",
+   "clauses": [
+    [
+     "create_role"
+    ]
+   ]
+  },
+  {
+   "id": "p2-19",
+   "source": "fresh",
+   "words": "refresh the Shipments table",
+   "clauses": [
+    [
+     "refresh_partition"
+    ]
+   ]
+  },
+  {
+   "id": "p2-20",
+   "source": "fresh",
+   "words": "run the model tests",
+   "clauses": [
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "p2-21",
+   "source": "fresh",
+   "words": "save the model now",
+   "clauses": [
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "p2-22",
+   "source": "fresh",
+   "words": "deploy the model to the UAT stage",
+   "clauses": [
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "p2-23",
+   "source": "fresh",
+   "words": "add an On Time % measure, format it as a percentage, then move it to the KPI folder",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ],
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "p2-24",
+   "source": "fresh",
+   "words": "import the Suppliers sheet, relate it to Product",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "p2-25",
+   "source": "fresh",
+   "words": "refresh Warehouse, then run the tests",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "p2-26",
+   "source": "fresh",
+   "words": "hide the audit columns, describe the Carrier table",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ],
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "p2-27",
+   "source": "fresh",
+   "words": "rename Qty Shipped to Units Shipped, then add synonyms for it",
+   "clauses": [
+    [
+     "rename_object"
+    ],
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "p2-28",
+   "source": "fresh",
+   "words": "set the Region column's data category to state or province, sort Region by Region Code",
+   "clauses": [
+    [
+     "set_data_category"
+    ],
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-29",
+   "source": "fresh",
+   "words": "make DimDate the date table, add a Fiscal Week column",
+   "clauses": [
+    [
+     "mark_date_table"
+    ],
+    [
+     "create_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-30",
+   "source": "fresh",
+   "words": "change the Discount formula, then check the numbers still add up",
+   "clauses": [
+    [
+     "update_measure"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "p2-31",
+   "source": "fresh",
+   "words": "add a security role for suppliers, then save",
+   "clauses": [
+    [
+     "create_role"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "p2-32",
+   "source": "fresh",
+   "words": "load the Budget table, add a Budget Variance measure, publish to test",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "create_measure"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "p2-33",
+   "source": "fresh",
+   "words": "convert Order Id to text, hide it",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ],
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "p2-34",
+   "source": "fresh",
+   "words": "stop Year Number from summing, put the date columns in a Calendar folder",
+   "clauses": [
+    [
+     "set_summarize_by"
+    ],
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "p2-35",
+   "source": "fresh",
+   "words": "add a Late Shipments measure, describe it for the report authors",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "p2-36",
+   "source": "fresh",
+   "words": "build a calculation group for currency, then run the saved checks",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ],
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "p2-37",
+   "source": "fresh",
+   "words": "reload the Orders table, save, then deploy to production",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "save_model"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "p2-38",
+   "source": "fresh",
+   "words": "relate Returns to Orders, then refresh Returns",
+   "clauses": [
+    [
+     "create_relationship"
+    ],
+    [
+     "refresh_partition"
+    ]
+   ]
+  },
+  {
+   "id": "p2-39",
+   "source": "fresh",
+   "words": "text the carrier about the late loads",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "p2-40",
+   "source": "fresh",
+   "words": "print the monthly pack for the board",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "p2-41",
+   "source": "fresh",
+   "words": "book a meeting with finance",
+   "clauses": [
+    []
+   ]
+  },
+  {
+   "id": "p2-42",
+   "source": "fresh",
+   "words": "add a Pick Rate measure, then call the finance team",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    []
+   ]
+  },
+  {
+   "id": "p2-43",
+   "source": "fresh",
+   "words": "add a Stockout Days measure to Inventory",
+   "clauses": [
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-44",
+   "source": "fresh",
+   "words": "create a new measure called Open Orders",
+   "clauses": [
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-45",
+   "source": "fresh",
+   "words": "new KPI for fill rate",
+   "clauses": [
+    [
+     "create_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-46",
+   "source": "fresh",
+   "words": "add documentation to the Carrier measures",
+   "clauses": [
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "p2-47",
+   "source": "fresh",
+   "words": "make the key columns invisible to report users",
+   "clauses": [
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "p2-48",
+   "source": "fresh",
+   "words": "show Net Weight with one decimal place",
+   "clauses": [
+    [
+     "set_measure_format"
+    ]
+   ]
+  },
+  {
+   "id": "p2-49",
+   "source": "fresh",
+   "words": "group the freight measures into a folder named Freight",
+   "clauses": [
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "p2-50",
+   "source": "fresh",
+   "words": "call the table FactShip Shipments instead",
+   "clauses": [
+    [
+     "rename_object"
+    ]
+   ]
+  },
+  {
+   "id": "p2-51",
+   "source": "fresh",
+   "words": "add the word revenue as another name for Sales Amount",
+   "clauses": [
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "p2-52",
+   "source": "fresh",
+   "words": "connect Inventory to Warehouse",
+   "clauses": [
+    [
+     "create_relationship"
+    ]
+   ]
+  },
+  {
+   "id": "p2-53",
+   "source": "fresh",
+   "words": "mark Calendar 2 as a date table",
+   "clauses": [
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "p2-54",
+   "source": "fresh",
+   "words": "fix the data type of Ship Date",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ]
+   ]
+  },
+  {
+   "id": "p2-55",
+   "source": "fresh",
+   "words": "summarise Unit Price by average",
+   "clauses": [
+    [
+     "set_summarize_by"
+    ]
+   ]
+  },
+  {
+   "id": "p2-56",
+   "source": "fresh",
+   "words": "order Day Name by Day Number",
+   "clauses": [
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-57",
+   "source": "fresh",
+   "words": "categorise the Web Link column as a web URL",
+   "clauses": [
+    [
+     "set_data_category"
+    ]
+   ]
+  },
+  {
+   "id": "p2-58",
+   "source": "fresh",
+   "words": "rewrite the Margin measure",
+   "clauses": [
+    [
+     "update_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-59",
+   "source": "fresh",
+   "words": "bring in the Promotions table from the source",
+   "clauses": [
+    [
+     "create_import_table"
+    ]
+   ]
+  },
+  {
+   "id": "p2-60",
+   "source": "fresh",
+   "words": "add a Days Late column to Shipments",
+   "clauses": [
+    [
+     "create_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-61",
+   "source": "fresh",
+   "words": "make a calculation group for time intelligence",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ]
+   ]
+  },
+  {
+   "id": "p2-62",
+   "source": "fresh",
+   "words": "add row level security for each region",
+   "clauses": [
+    [
+     "create_role"
+    ]
+   ]
+  },
+  {
+   "id": "p2-63",
+   "source": "fresh",
+   "words": "process the Inventory table",
+   "clauses": [
+    [
+     "refresh_partition"
+    ]
+   ]
+  },
+  {
+   "id": "p2-64",
+   "source": "fresh",
+   "words": "verify the numbers are correct",
+   "clauses": [
+    [
+     "run_tests"
+    ]
+   ]
+  },
+  {
+   "id": "p2-65",
+   "source": "fresh",
+   "words": "save my changes",
+   "clauses": [
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "p2-66",
+   "source": "fresh",
+   "words": "release the model to the test workspace",
+   "clauses": [
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "p2-67",
+   "source": "fresh",
+   "words": "create a Backorder Count measure, give it a thousands format",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "set_measure_format"
+    ]
+   ]
+  },
+  {
+   "id": "p2-68",
+   "source": "fresh",
+   "words": "import Holidays, mark it as the date table",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    [
+     "mark_date_table"
+    ]
+   ]
+  },
+  {
+   "id": "p2-69",
+   "source": "fresh",
+   "words": "rename Whse to Warehouse, hide WarehouseKey",
+   "clauses": [
+    [
+     "rename_object"
+    ],
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "p2-70",
+   "source": "fresh",
+   "words": "add a Cost per Kg measure, rewrite the Freight Cost measure",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "update_measure"
+    ]
+   ]
+  },
+  {
+   "id": "p2-71",
+   "source": "fresh",
+   "words": "refresh everything, run the checks, save",
+   "clauses": [
+    [
+     "refresh_partition"
+    ],
+    [
+     "run_tests"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "p2-72",
+   "source": "fresh",
+   "words": "describe the Inventory table, add alternative names for Stock on Hand",
+   "clauses": [
+    [
+     "set_description"
+    ],
+    [
+     "set_synonyms"
+    ]
+   ]
+  },
+  {
+   "id": "p2-73",
+   "source": "fresh",
+   "words": "make Postcode a postal code category, sort Month by Month Number",
+   "clauses": [
+    [
+     "set_data_category"
+    ],
+    [
+     "set_sort_by_column"
+    ]
+   ]
+  },
+  {
+   "id": "p2-74",
+   "source": "fresh",
+   "words": "add a Ship Year column, stop it summarizing",
+   "clauses": [
+    [
+     "create_column"
+    ],
+    [
+     "set_summarize_by"
+    ]
+   ]
+  },
+  {
+   "id": "p2-75",
+   "source": "fresh",
+   "words": "set Quantity to a whole number, put the quantity measures in a Volume folder",
+   "clauses": [
+    [
+     "set_column_data_type"
+    ],
+    [
+     "set_display_folder"
+    ]
+   ]
+  },
+  {
+   "id": "p2-76",
+   "source": "fresh",
+   "words": "add a Perfect Order % measure, check it with the saved tests, publish to UAT",
+   "clauses": [
+    [
+     "create_measure"
+    ],
+    [
+     "run_tests"
+    ],
+    [
+     "deploy_stage"
+    ]
+   ]
+  },
+  {
+   "id": "p2-77",
+   "source": "fresh",
+   "words": "link Carriers to Shipments on CarrierKey, describe the Carriers table",
+   "clauses": [
+    [
+     "create_relationship"
+    ],
+    [
+     "set_description"
+    ]
+   ]
+  },
+  {
+   "id": "p2-78",
+   "source": "fresh",
+   "words": "create a role for auditors, then hide the salary columns",
+   "clauses": [
+    [
+     "create_role"
+    ],
+    [
+     "set_column_hidden"
+    ]
+   ]
+  },
+  {
+   "id": "p2-79",
+   "source": "fresh",
+   "words": "add a currency calculation group, save the model",
+   "clauses": [
+    [
+     "create_calculation_group"
+    ],
+    [
+     "save_model"
+    ]
+   ]
+  },
+  {
+   "id": "p2-80",
+   "source": "fresh",
+   "words": "import the Targets table, then call the warehouse",
+   "clauses": [
+    [
+     "create_import_table"
+    ],
+    []
+   ]
+  }
+ ]
+}

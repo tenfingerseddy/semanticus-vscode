@@ -98,18 +98,19 @@ inputs:
                 Assert.NotNull(broadcast);
                 Assert.Contains(broadcast, w => w.Name == "with-ops");
 
-                // shadow a STOCK workflow (the seed library ships beside the test binary), then delete
+                // shadow a STOCK workflow (the seed library ships beside the test binary; optimize-dax since new-measure
+                // parked, lane W3), then delete
                 // the shadow — the stock one must reappear (delete = revert-to-stock, never a hole)
-                var stockMd = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "workflows", "new-measure.md"));
-                var afterShadow = await e.SaveWorkflowAsync("new-measure", stockMd.Replace("version: 1", "version: 9"), "human");
-                Assert.Equal(9, (await e.GetWorkflowAsync("new-measure")).Version);
-                Assert.Equal("user", afterShadow.Single(w => w.Name == "new-measure").Source);
+                var stockMd = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "workflows", "optimize-dax.md"));
+                var afterShadow = await e.SaveWorkflowAsync("optimize-dax", stockMd.Replace("version: 2", "version: 9"), "human");
+                Assert.Equal(9, (await e.GetWorkflowAsync("optimize-dax")).Version);
+                Assert.Equal("user", afterShadow.Single(w => w.Name == "optimize-dax").Source);
 
-                var afterDelete = await e.DeleteWorkflowAsync("new-measure", "human");
-                Assert.Equal("stock", afterDelete.Single(w => w.Name == "new-measure").Source);
+                var afterDelete = await e.DeleteWorkflowAsync("optimize-dax", "human");
+                Assert.Equal("stock", afterDelete.Single(w => w.Name == "optimize-dax").Source);
 
                 // deleting a stock name with no user copy is refused instructively
-                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => e.DeleteWorkflowAsync("new-measure", "human"));
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => e.DeleteWorkflowAsync("optimize-dax", "human"));
                 Assert.Contains("read-only", ex.Message);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => e.DeleteWorkflowAsync("no-such", "human"));
             }

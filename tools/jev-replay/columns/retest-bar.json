@@ -1,0 +1,10 @@
+{
+  "_about": "The bar for the 26 September re-test of column.summarize (the base-measure question) and column.category on the question the product ships, fixed and committed before any answer. Kane's bar of 26 September, read the way Kane decided summarize that day: a point stays ON only when, on the SECOND blind hand-check sample (fresh, never used to tune anything), the Pro path beats the rule (b > c), the win is not luck (exact McNemar p < alpha) and it makes no more harmful mistakes than the rule; and, on the answer key (every held-out column), it still makes no more harmful mistakes than the rule. Harmful: a total where the label is not sum (summarize); none for data category. Any point that fails switches off (its JevDecides constant goes false and the rules decide, as for measure.starter).",
+  "date": "2026-09-26",
+  "sure": 0.85,
+  "alpha": 0.05,
+  "decidingRead": "hand",
+  "keyRead": "harmful Pro <= harmful rule",
+  "heldOut": "every summarize and data-category column of the 218 pinned models except the first hand-check sample (handcheck1), which the key's fixes were fitted to",
+  "labels": "the fair answer key (fairkey.py, c55f4403) and the second hand-check sample (handcheck), both fixed before this run"
+}

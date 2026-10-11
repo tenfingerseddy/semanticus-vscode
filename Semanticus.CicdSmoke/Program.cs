@@ -29,6 +29,10 @@ namespace Semanticus.CicdSmoke
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            // It reaches no sign-in of the person's either, but keeps a service principal set in the environment: the
+            // live Fabric gate below runs only with one (CI sets it).
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("cicdsmoke", Semanticus.Engine.CloudSignIn.KeepServicePrincipal);
             var sessions = new SessionManager();
             // Smoke harness runs as Pro so it exercises the BULK apply_model_diff / cherry_pick; the Pro GATE itself
             // is covered by Semanticus.Tests/EntitlementGateTests.
@@ -55,7 +59,7 @@ namespace Semanticus.CicdSmoke
                         await GitCli.RunAsync(repo, "config", "user.email", "smoke@semanticus.local");
                         await GitCli.RunAsync(repo, "config", "user.name", "Semanticus Smoke");
                         await engine.OpenAsync(bim);
-                        await engine.SaveAsync(modelDir, "TMDL");   // SourcePath now anchors to modelDir (inside the repo)
+                        await engine.SaveAsync(modelDir, "TMDL", false, "human");   // SourcePath now anchors to modelDir (inside the repo)
                         Console.WriteLine($"[i] saved AdventureWorks as TMDL into a temp repo: {modelDir}");
 
                         var st0 = await engine.GitStatusAsync();
@@ -91,6 +95,7 @@ namespace Semanticus.CicdSmoke
 
                             var diff = await engine.GitDiffAsync(null, false);
                             Check("git_diff: clean working tree after the commit (no diff)", diff.Empty);
+                            if (!diff.Empty) Console.WriteLine("[i] what git_diff found after the commit:\n" + diff.Text);
 
                             // ModelCompare: an in-memory edit shows as a semantic measure Update vs git HEAD
                             // (exercises the session snapshot + the gitref worktree path).
@@ -127,12 +132,12 @@ namespace Semanticus.CicdSmoke
                     try
                     {
                         await engine.OpenAsync(bim);
-                        await engine.SaveAsync(baseDir, "TMDL");                 // the baseline on disk
+                        await engine.SaveAsync(baseDir, "TMDL", false, "human");                 // the baseline on disk
                         var m = (await engine.ListMeasuresAsync()).First();
                         var tbl = m.Table;
                         await engine.SetDaxAsync(m.Ref, "1 + 1 /* modified */", "agent");
                         await engine.CreateMeasureAsync("table:" + tbl, "Smoke New Measure", "42", "agent");
-                        await engine.SaveAsync(modDir, "TMDL");                  // the modified version on disk
+                        await engine.SaveAsync(modDir, "TMDL", false, "human");                  // the modified version on disk
                         var updRef = "measure:" + tbl + "/" + m.Name;
 
                         var diff = await engine.CompareModelsAsync(new ModelRef { Kind = "file", Path = modDir }, new ModelRef { Kind = "file", Path = baseDir });
@@ -176,14 +181,14 @@ namespace Semanticus.CicdSmoke
                     try
                     {
                         await engine.OpenAsync(bim);
-                        await engine.SaveAsync(relBase, "TMDL");                         // baseline
+                        await engine.SaveAsync(relBase, "TMDL", false, "human");                         // baseline
                         var rel = (await engine.GetModelGraphAsync()).Relationships.First();
                         var newFrom = rel.FromCardinality == "Many" ? "One" : "Many";
                         // CARDINALITY-only change — guards the RelEqual whitelist (cardinality must read as Update,
                         // not be silently dropped to Equal as it would if RelEqual omitted FromCardinality/ToCardinality).
                         await engine.SetRelationshipCardinalityAsync(rel.Name, newFrom, rel.ToCardinality, "agent");
                         await engine.CreateRoleAsync("Smoke Analyst", "Read", "agent");                     // a name-keyed object
-                        await engine.SaveAsync(relMod, "TMDL");
+                        await engine.SaveAsync(relMod, "TMDL", false, "human");
 
                         var rdiff = await engine.CompareModelsAsync(new ModelRef { Kind = "file", Path = relMod }, new ModelRef { Kind = "file", Path = relBase });
                         var relItems = rdiff.Items.Where(i => i.ObjectType == "Relationship").ToList();
@@ -221,7 +226,7 @@ namespace Semanticus.CicdSmoke
                         var tbl = (await engine.ListMeasuresAsync()).First().Table;
                         await engine.CreateMeasureAsync("table:" + tbl, "Cherry Pick Probe", "COUNTROWS(" + tbl + ")", "agent");
                         await engine.SetMeasureFormatAsync("measure:" + tbl + "/Cherry Pick Probe", "#,0", "agent");
-                        await engine.SaveAsync(cpSrc, "TMDL");                  // SOURCE model B (has the probe measure)
+                        await engine.SaveAsync(cpSrc, "TMDL", false, "human");                  // SOURCE model B (has the probe measure)
                         await engine.OpenAsync(bim);                           // re-open A fresh — no probe measure
                         var cpRef = "measure:" + tbl + "/Cherry Pick Probe";
 
@@ -255,7 +260,7 @@ namespace Semanticus.CicdSmoke
                         await engine.OpenAsync(bim);
                         var tbl = (await engine.ListMeasuresAsync()).First().Table;
                         await engine.CreateCalculatedColumnAsync("table:" + tbl, "Cherry Calc Col", "1", "agent");
-                        await engine.SaveAsync(ccSrc, "TMDL");                  // SOURCE = bim + a calculated column
+                        await engine.SaveAsync(ccSrc, "TMDL", false, "human");                  // SOURCE = bim + a calculated column
                         await engine.OpenAsync(bim);                           // open model = plain bim
                         var ccRef = "column:" + tbl + "/Cherry Calc Col";
 
@@ -283,7 +288,7 @@ namespace Semanticus.CicdSmoke
                         await engine.OpenAsync(bim);
                         var tbl = (await engine.ListMeasuresAsync()).First().Table;
                         await engine.CreateMeasureAsync("table:" + tbl, "Ref Tree Probe", "1", "agent");
-                        await engine.SaveAsync(rtSrc, "TMDL");
+                        await engine.SaveAsync(rtSrc, "TMDL", false, "human");
                         var tree = await engine.ListReferenceTreeAsync(new ModelRef { Kind = "file", Path = rtSrc });
                         Check("list_reference_tree: returns the reference model's tables", tree.Any(n => n.Ref == "table:" + tbl && (n.Kind == "table" || n.Kind == "calcgroup")));
                         Check("list_reference_tree: a table's measures appear as copyable child nodes with cherry_pick-compatible refs",
@@ -308,7 +313,7 @@ namespace Semanticus.CicdSmoke
                         await engine.SetObjectPropertyAsync("measure:" + tbl + "/Fmt Probe", "FormatStringExpression", "\"FMTPROBE \" & FORMAT(1,\"0\")", "agent");
                         await engine.CreateTableAsync("Rev/Exp", "agent");
                         await engine.CreateMeasureAsync("table:Rev/Exp", "Net", "42", "agent");
-                        await engine.SaveAsync(rfSrc, "TMDL");
+                        await engine.SaveAsync(rfSrc, "TMDL", false, "human");
 
                         // (L2) the reference tree escapes the '/' in refs but keeps the real display name.
                         var rtree = await engine.ListReferenceTreeAsync(new ModelRef { Kind = "file", Path = rfSrc });
@@ -337,7 +342,7 @@ namespace Semanticus.CicdSmoke
                         Check("review-fix L3: the overwrite applied the source expression", clash.Count == 1 && (clash[0].Expression ?? "").Trim() == "1");
 
                         // (H2) the dynamic format string survived the copy — save + confirm it serialized into the target TMDL.
-                        await engine.SaveAsync(rfOut, "TMDL");
+                        await engine.SaveAsync(rfOut, "TMDL", false, "human");
                         var tmdlHasFmt = Directory.EnumerateFiles(rfOut, "*.tmdl", SearchOption.AllDirectories).Any(f => File.ReadAllText(f).Contains("FMTPROBE"));
                         Check("review-fix H2: the dynamic format string copied across (not dropped by the old 5-prop copy)", tmdlHasFmt);
                         Console.WriteLine("[i] review-fix coverage: dynamic-format fidelity + '/'-table ref escaping + case-only overwrite all hold");
@@ -353,7 +358,7 @@ namespace Semanticus.CicdSmoke
                         await engine.OpenAsync(bim);
                         var tbl = (await engine.ListMeasuresAsync()).First().Table;
                         await engine.CreateMeasureAsync("table:" + tbl, "Merge Probe", "1", "agent");
-                        await engine.SaveAsync(mSrc, "TMDL");                     // SOURCE = bim + Merge Probe
+                        await engine.SaveAsync(mSrc, "TMDL", false, "human");                     // SOURCE = bim + Merge Probe
                         await engine.OpenAsync(bim);                             // open model = plain bim …
                         await engine.CreateMeasureAsync("table:" + tbl, "Stale Probe", "2", "agent");   // … plus a measure the source lacks
                         var mergeRef = "measure:" + tbl + "/Merge Probe";
@@ -566,15 +571,12 @@ namespace Semanticus.CicdSmoke
                     Check("deploy guard: MintToken is deterministic for the same intent", tok == DeployGuard.MintToken("p", "s0", "s1", new[] { "b", "a" }, secret) && tok.StartsWith("PROD-"));
                     Check("deploy guard: MintToken changes with the item set (no replay of a smaller preview's token)", tok != DeployGuard.MintToken("p", "s0", "s1", new[] { "a", "b", "c" }, secret));
 
-                    Check("deploy guard: a dry-run is never blocked", DeployGuard.Refusal(true, false, "agent", null, tok, false, false, false) == null);
-                    Check("deploy guard: an agent CAN deploy to a non-prod stage (gate passing)", DeployGuard.Refusal(false, true, "agent", null, tok, true, false, false) == null);
-                    Check("deploy guard: an agent CANNOT promote to prod", (DeployGuard.Refusal(true, true, "agent", tok, tok, true, false, false) ?? "").Contains("agent cannot promote"));
-                    Check("deploy guard: a human prod deploy with the WRONG token is refused", (DeployGuard.Refusal(true, true, "human", "PROD-wrong", tok, true, false, false) ?? "").Contains("confirmToken"));
-                    Check("deploy guard: a human prod deploy with the RIGHT token proceeds", DeployGuard.Refusal(true, true, "human", tok, tok, true, false, false) == null);
-                    Check("deploy guard: a failing readiness gate blocks a commit", (DeployGuard.Refusal(false, true, "human", null, tok, false, false, false) ?? "").Contains("readiness gate"));
-                    Check("deploy guard: a REASONED forceOverride lets a failing-gate (non-prod) deploy through", DeployGuard.Refusal(false, true, "human", null, tok, false, true, true) == null);
-                    Check("deploy guard: forceOverride WITHOUT a reason is refused (accountable override)", (DeployGuard.Refusal(false, true, "human", null, tok, false, true, false) ?? "").Contains("overrideReason"));
-                    Check("deploy guard: forceOverride CANNOT bypass the agent+prod block", (DeployGuard.Refusal(true, true, "agent", tok, tok, true, true, true) ?? "").Contains("agent cannot promote"));
+                    Check("deploy guard: a dry-run is never blocked", DeployGuard.Refusal(true, false, "agent", null, tok) == null);
+                    Check("deploy guard: an agent CAN deploy to a non-prod stage", DeployGuard.Refusal(false, true, "agent", null, tok) == null);
+                    Check("deploy guard: an agent CANNOT promote to prod", (DeployGuard.Refusal(true, true, "agent", tok, tok) ?? "").Contains("agent cannot promote"));
+                    Check("deploy guard: a human prod deploy with the WRONG token is refused", (DeployGuard.Refusal(true, true, "human", "PROD-wrong", tok) ?? "").Contains("confirmToken"));
+                    Check("deploy guard: a human prod deploy with the RIGHT token proceeds", DeployGuard.Refusal(true, true, "human", tok, tok) == null);
+                    Check("deploy guard: a human non-prod deploy needs no token and no reason", DeployGuard.Refusal(false, true, "human", null, tok) == null);
 
                     // The token-withholding control (pins the && so a ||-mutation that leaks the prod token to an agent fails here).
                     Check("deploy token: surfaced to a HUMAN prod dry-run", DeployGuard.SurfaceConfirmToken(true, "human"));
@@ -787,7 +789,7 @@ namespace Semanticus.CicdSmoke
                     Directory.CreateDirectory(Path.Combine(noPbism, "definition"));
                     File.WriteAllText(Path.Combine(noPbism, "definition", "model.tmdl"), "model M");
                     await engine.OpenAsync(bim);
-                    await engine.SaveAsync(noPbism, "TMDL");   // re-anchor SourcePath to this folder
+                    await engine.SaveAsync(noPbism, "TMDL", false, "human");   // re-anchor SourcePath to this folder
                     // SaveAsync flattened tmdl into noPbism root + still no definition.pbism → not a complete .SemanticModel.
                     var pubNoPbism = await engine.CicdPublishAsync("ws", "item", false, "azcli", null, "human");
                     Check("cicd publish: a folder missing definition.pbism is refused (incomplete .SemanticModel)",
@@ -798,7 +800,7 @@ namespace Semanticus.CicdSmoke
                     var pubModelRoot = Path.Combine(Path.GetTempPath(), "semanticus_pub_" + Guid.NewGuid().ToString("N").Substring(0, 8), "AdventureWorks.SemanticModel");
                     Directory.CreateDirectory(pubModelRoot);
                     await engine.OpenAsync(bim);
-                    await engine.SaveAsync(pubModelRoot, "TMDL");   // flat raw-TMDL (no definition/) — NOT a Fabric item layout
+                    await engine.SaveAsync(pubModelRoot, "TMDL", false, "human");   // flat raw-TMDL (no definition/) — NOT a Fabric item layout
                     var pubFlat = await engine.CicdPublishAsync("ws", "item", false, "azcli", null, "human");
                     Check("cicd publish: a flat raw-TMDL folder (no definition/) is refused with a clear message",
                         pubFlat.Error != null && pubFlat.Error.Contains("definition/"));
@@ -966,6 +968,18 @@ namespace Semanticus.CicdSmoke
                 && Set("FABRIC_TENANT", "AZURE_TENANT_ID", "POWERBI_TENANT_ID");
         }
 
+        // A scratch copy of the vendored fixture, never the file itself: an edit writes the History beside the model
+        // it edits (.semanticus/history.json, Plan-heart E4), and that must not land inside the submodule.
+        private static string ScratchCopy(string source)
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "sem-smoke-" + Guid.NewGuid().ToString("N").Substring(0, 12));
+            Directory.CreateDirectory(dir);
+            var copy = Path.Combine(dir, Path.GetFileName(source));
+            File.Copy(source, copy);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { Directory.Delete(dir, true); } catch { } };
+            return copy;
+        }
+
         private static string FindTestData(string fileName)
         {
             var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -975,7 +989,7 @@ namespace Semanticus.CicdSmoke
                 foreach (var root in new[] { Path.Combine("external", "TabularEditor"), "TabularEditor" })
                 {
                     var c = Path.Combine(dir.FullName, root, "TOMWrapperTest", "TestData", fileName);
-                    if (File.Exists(c)) return c;
+                    if (File.Exists(c)) return ScratchCopy(c);
                 }
                 dir = dir.Parent;
             }

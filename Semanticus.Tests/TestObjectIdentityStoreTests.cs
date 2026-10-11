@@ -140,6 +140,72 @@ namespace Semanticus.Tests
             Assert.Equal(renamed.NewRef, TestSuiteStore.LoadSuite(Path.Combine(_dir, LayoutStore.DirName)).Defs.Single().TargetRef);
         }
 
+        // UAT-J9-S10b-001: a saved SQL check bound by its lineage tag was handed to the runner as a bare measure
+        // NAME, which ObjectRefs.Resolve reads as a TABLE name, so a real measure read "is not a measure".
+        [Fact]
+        public async Task Saved_sql_check_bound_by_tag_finds_its_measure_and_never_says_not_a_measure()
+        {
+            Directory.CreateDirectory(_dir);
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Pro(), _dir);
+            await engine.CreateModelAsync("Tagged", 1604);
+            sessions.Current.SourcePath = Path.Combine(_dir, "tagged.bim");
+            var table = await engine.CreateTableAsync("Sales", "human");
+            var measureRef = await engine.CreateMeasureAsync(table, "Margin %", "1", "human");
+
+            var stored = await engine.SaveTestDefinitionAsync(new TestDefinition
+            {
+                Kind = TestKinds.MeasureReconcile, Title = "Margin by category", TargetRef = measureRef,
+                ParamsJson = TestSuiteStore.Serialize(new ReconcileRequest
+                {
+                    MeasureRef = measureRef, Sql = "SELECT 1", BlankPolicy = "zero",
+                }),
+            }, "human");
+            Assert.NotNull(stored.TargetTag);
+            // Without a live connection the run stops before it looks the measure up, so hold a fake one.
+            Assert.True(engine.TrySwapLiveForTest(LiveConnection.ForTest("xmla", "powerbi://x/y", "DS"), engine.MintLiveIntentForTest()));
+
+            var run = await engine.RunTestSuiteAsync(false, "human");
+
+            var outcome = Assert.Single(run.Reconciles, o => o.DefId == stored.Id);
+            Assert.DoesNotContain("not a measure", outcome.Message ?? "");
+        }
+
+        // verify (v-s10fix, B3): the name lookup must never bind a check to a DIFFERENT measure that shares the name.
+        // Two tables each carry "Margin %"; the check is saved against the Costs one. If the engine allows the twin at
+        // all, the bare-name lookup must refuse (ambiguous), never answer with the Sales measure.
+        [Fact]
+        public async Task Verify_a_same_named_measure_in_another_table_is_never_bound_in_place_of_the_saved_one()
+        {
+            Directory.CreateDirectory(_dir);
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Pro(), _dir);
+            await engine.CreateModelAsync("Twins", 1604);
+            sessions.Current.SourcePath = Path.Combine(_dir, "twins.bim");
+            var sales = await engine.CreateTableAsync("Sales", "human");
+            var costs = await engine.CreateTableAsync("Costs", "human");
+            await engine.CreateMeasureAsync(sales, "Margin %", "1", "human");
+            string twin;
+            try { twin = await engine.CreateMeasureAsync(costs, "Margin %", "2", "human"); }
+            catch (Exception) { return; }   // the engine refuses a twin name: the ambiguity cannot arise
+            if (twin != "measure:Costs/Margin %") return;   // the engine renames a twin ("Margin % 1", seen 5 Oct): no shared name
+
+            var review = await engine.ReviewReconcileMappingAsync(new ReconcileMappingRequest { MeasureRef = "Margin %" });
+            Assert.True(review.Error != null || (review.MeasureRef ?? "").Contains("Costs"),
+                $"a bare name bound {review.MeasureRef} while two measures share it");
+
+            var stored = await engine.SaveTestDefinitionAsync(new TestDefinition
+            {
+                Kind = TestKinds.MeasureReconcile, Title = "Costs margin", TargetRef = twin,
+                ParamsJson = TestSuiteStore.Serialize(new ReconcileRequest { MeasureRef = twin, Sql = "SELECT 1", BlankPolicy = "zero" }),
+            }, "human");
+            Assert.True(engine.TrySwapLiveForTest(LiveConnection.ForTest("xmla", "powerbi://x/y", "DS"), engine.MintLiveIntentForTest()));
+            var run = await engine.RunTestSuiteAsync(false, "human");
+            var outcome = Assert.Single(run.Reconciles, o => o.DefId == stored.Id);
+            Assert.DoesNotContain("Sales", outcome.TargetRef ?? "");
+            Assert.DoesNotContain("Sales", outcome.Dax ?? "");
+        }
+
         [Fact]
         public async Task Unresolved_name_fallback_returns_an_explicit_rename_warning()
         {

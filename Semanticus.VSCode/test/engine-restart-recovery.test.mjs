@@ -53,7 +53,7 @@ assert.match(attempt, /await reopenLastModel\(/,
 
 // The start catch is what says "could not start"; it must be reachable only from the connect block.
 assert.match(attempt,
-  /status\.text = '\$\(error\) Semanticus: engine error';[\s\S]{0,400}?could not start its engine/,
+  /(?:status\.text = |setStatusPlain\()'\$\(error\) Semanticus: engine error'\)?;[\s\S]{0,400}?could not start its engine/,   // setStatusPlain: r1 min4
   'the start catch keeps its own honest message for a real start failure');
 
 // ---- (b) the reopen is an open failure, never a start failure -------------------------------------------
@@ -83,7 +83,7 @@ assert.match(liveOpen, /listConnections/,
   'the live reopen takes its sign-in details from the saved connection record, not from guesses');
 assert.match(liveOpen, /sendRequest<OpenResult>\('openLocal'/,
   'a remembered running local model is reopened through the local open');
-assert.match(reopen, /openLiveTarget\(connected, target, opts\.restarted\)/,
+assert.match(reopen, /openLiveTarget\(connected, target, opts\.restarted, silentFirst\)/,
   'the discard permission IS whether this was a restart; it is never hardcoded');
 // The permission is never invented anywhere else in the reopen.
 assert.equal((reopen.match(/openLiveTarget\(/g) || []).length, 1,
@@ -155,7 +155,7 @@ assert.match(source, /const WEBVIEW_HOST_COMMANDS = new Set\(\[[\s\S]*?'semantic
   'and so does "Show details"');
 assert.ok(manifest.contributes.commands.some((c) => c.command === 'semanticus.showOutput'),
   'semanticus.showOutput is a real contributed command, not a webview-only id');
-assert.match(source, /registerCommand\('semanticus\.showOutput'/, 'and it is registered');
+assert.match(source, /registerPersonCommand\('semanticus\.showOutput'/, 'and it is registered');
 
 assert.match(source, /postToPanels\(\{ type: 'engineState', connected: false \}\)/,
   'the host tells both panels when the engine is gone, so Studio does not have to guess from a failed request');
@@ -178,8 +178,13 @@ assert.match(panel, /runHostCommand\('semanticus\.showOutput'\)/, 'Show details 
 assert.doesNotMatch(panel, /rpc\(/, 'the panel cannot reach the engine, so it must not try');
 
 // The panel replaces the page content; the Shell (and its header) stays around it.
-assert.match(app, /\{engineDown \? \(\s*<EngineDown \/>\s*\) : !session\?\.sessionId \?/,
+// The Semanticus Pro page is the one route ahead of it (23 September 2026): it needs no engine of its own, so a
+// person can still reach buying or a key while the engine is down.
+assert.match(app, /\{tab === 'pro' \? \([\s\S]{0,400}?<ProPage \/>\s*\) : engineDown && !keepPlan \? \(\s*<EngineDown \/>\s*\) : !session\?\.sessionId \?/,
   'the recovery panel replaces the page body inside the Shell, so the header stays');
+// ...except for one thing: words typed into the start plan and not saved (join 8 fix round 2, D1c). The Plan then stays on screen, read-only and saying so, because the panel would unmount the editor.
+assert.match(app, /const keepPlan = keepPlanThroughOutage\(\{ hasSession: !!session\?\.sessionId, hasDraft: anyWordsDraft, tab \}\);/,
+  'the one exception to the recovery panel: the OPEN model\'s typed, unsaved words on the Plan, with a plan to keep (join 11, A1)');
 
 // The webview must also be able to work it out on its own: a Studio that mounts while the engine is already
 // down never receives the transition message, only a rejected request.
@@ -231,9 +236,10 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench({ pathExists: () => true, sessionAfterOpen: () => fileSessionFromSnapshot() });
   bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
-  assert.deepEqual(bench.openCalls().map((c) => c.method), ['open'],
-    'a cold start with the snapshot present opens it offline: no network, no sign-in');
+  assert.deepEqual(bench.openCalls().map((c) => c.method), ['openLive', 'open'],
+    'a cold start tries the silent reconnect first; when no saved sign-in works it opens the cached copy offline');
   const got = bench.remembered();
   assert.equal(got?.kind, 'live', 'opening the cached bytes offline must not discard the live reopen target');
   assert.equal(got?.endpoint, LIVE_TARGET.endpoint, 'the endpoint is what the next restart needs');
@@ -243,20 +249,20 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench({ pathExists: () => false });
   bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
-  // NOT "ask the engine nicely for a silent open" — make no credential-bearing call at all. A headless lane
-  // on this branch showed a real Microsoft sign-in page open during a cold start even with the engine's
-  // non-interactive origin requested, and I could not attribute it. An extension that must not prompt does
-  // not get to depend on somebody else's boundary holding.
-  assert.deepEqual(bench.openCalls(), [],
-    'a background reopen must make NO live open call; it cannot pop a sign-in it never asks for');
-  // Astra, recheck 6: these used to read a stub's bookkeeping. They now read the sentence and the buttons a
-  // person would actually be shown, driven through the real reportReopenFailure.
-  const notice = bench.notices.at(-1);
-  assert.match(notice.message, /opening it again means signing in, and only you can do that/,
-    'and it says plainly that the model is still there but needs a person');
-  assert.deepEqual(notice.actions, ['Sign in', 'Open a model', 'Show details'],
-    'offering Sign in as the explicit human action');
+  // K15 follow-up (8 Oct): the cold start DOES make one live call now, but only the silent kind. openLive silentOnly reuses a
+  // sign-in the machine already holds and never opens a browser or a device-code prompt (engine: LocalEngine.SilentOnlyRefusal,
+  // AccountProfileTests). Anything else on a cold start is a defect, so the exact shape of the one call is pinned here.
+  const calls = bench.openCalls();
+  assert.deepEqual(calls.map((c) => c.method), ['openLive'], 'a cold start makes exactly one live call');
+  assert.equal(calls[0].args[11], true, 'and it is the silent kind: silentOnly is true');
+  assert.equal(calls[0].args[9], 'human', 'the person\'s own origin, so the unsaved-work rules still apply');
+  assert.equal(calls[0].args[10], false, 'and nothing is discarded');
+  // When the silent reconnect cannot work, the model waits for the person (the full case is (19) below).
+  const notice = bench.infos.at(-1);
+  assert.ok(notice.actions.includes('Sign in to reconnect'), 'and Sign in to reconnect is the explicit human action');
+  assert.deepEqual(bench.notices, [], 'a model waiting for a person is not a warning');
   assert.equal(bench.remembered()?.kind, 'live', 'while keeping the target, which has not gone anywhere');
 }
 
@@ -267,6 +273,7 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: true });
   const live = bench.openCalls().find((c) => c.method === 'openLive');
   assert.equal(live?.args[9], 'human', 'the person just asked for this restart, so a sign-in is allowed');
+  assert.equal(live?.args[11], false, 'a restart may sign in properly, so it is not the silent kind');
   assert.equal(live?.args[2], 'devicecode', 'the sign-in method comes from the saved connection record, not a guess');
 }
 
@@ -303,6 +310,7 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench({ pathExists: () => true, sessionAfterOpen: () => fileSessionFromSnapshot() });
   bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
   assert.equal(bench.remembered()?.kind, 'live', 'precondition: the cold start kept the live target');
   await bench.sandbox.saveCommand();
@@ -315,6 +323,7 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench({ pathExists: () => true, sessionAfterOpen: () => fileSessionFromSnapshot() });
   bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
   bench.sandbox.currentSession = fileSessionFromSnapshot({ source: '/fixture/chosen/Model.bim' });
   await bench.sandbox.saveCommand();
@@ -337,22 +346,25 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
   const bench = makeBench({ pathExists: () => false });
   bench.seed(LIVE_TARGET);
   bench.sandbox.answerNotice = null;                       // the warning is left sitting there
+  bench.sandbox.openThrows = new Error('A sign in is needed.'); bench.sandbox.openThrowsOnly = ['openLive'];   // the silent reconnect found nothing to reuse
   await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
-  const notice = bench.notices.at(-1);
-  assert.ok(notice.actions.includes('Sign in'), 'precondition: Sign in was offered');
+  bench.sandbox.openThrows = undefined;                    // later, the person signs in
+  const notice = bench.infos.at(-1);
+  assert.ok(notice.actions.includes('Sign in to reconnect'), 'precondition: Sign in to reconnect was offered');
+  const attemptsBefore = bench.openCalls().length;         // the cold start's own silent try
 
   // Meanwhile the person opens something else and edits it.
   bench.sandbox.currentSession = { sessionId: 'other-session', revision: 7, modelName: 'Newest',
     source: '/fixture/newest.bim', liveBound: false, hasUnsavedChanges: true };
   bench.sandbox.unsavedAnswer = undefined;                 // they press Cancel on the Save / Discard prompt
   await bench.sandbox.signInAndReopen(bench.connection, LIVE_TARGET);
-  assert.deepEqual(bench.openCalls(), [],
+  assert.equal(bench.openCalls().length, attemptsBefore,
     'Cancel on the unsaved-work prompt means the sign-in does not happen at all');
 
   // And when they do choose, the choice is what travels; a notice never carries restartic discard permission.
   bench.sandbox.unsavedAnswer = 'Discard';
   await bench.sandbox.signInAndReopen(bench.connection, LIVE_TARGET);
-  const live = bench.openCalls().find((c) => c.method === 'openLive');
+  const live = bench.openCalls().filter((c) => c.method === 'openLive').at(-1);
   assert.ok(live, 'Discard lets it through');
   assert.equal(live.args[10], true, 'and carries the discard the person just granted');
 }
@@ -463,5 +475,107 @@ for (const target of [LOCAL_TARGET, LIVE_TARGET, { kind: 'file', path: '/fixture
     assert.notEqual(flag, true, `an automatic ${target.kind} reopen must never discard unsaved work`);
   }
 }
+
+// ---- (l) K15, 8 Oct, the Yoga on 1.3.0: "the build doesn't remember the model you were connected to" -------
+// His last model was a published one. The cold start made no live call (rightly: a sign-in page has no business
+// opening by itself), logged "needs a sign-in, which only a person can start", showed NO model, and Studio fell
+// back to its "Open a model" page, whose Open model button leads to local files. The model he was on had gone
+// from the screen. A reopen that needs a sign-in must keep that model as the current one, say so, and offer one
+// button; it must never leave the person looking at nothing or at a local file they did not choose.
+
+// (19) His case: published model, no cached copy, cold start.
+{
+  const bench = makeBench({ pathExists: () => false });
+  bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  assert.deepEqual(bench.openCalls().map((c) => [c.method, c.args[11]]), [['openLive', true]], 'the only live call on a cold start is the silent one');
+  assert.equal(bench.sandbox.pendingReconnect?.endpoint, LIVE_TARGET.endpoint,
+    'the model he was on is kept as the current one, waiting for a sign-in');
+  assert.match(bench.sandbox.status.text, /SM_NFM.*sign in to reconnect/i, 'the status bar names it and says what to do');
+  const info = bench.infos.at(-1);
+  assert.ok(info?.actions.includes('Sign in to reconnect'), 'and one plain button is offered: ' + JSON.stringify(info));
+  assert.ok(!/only you can do that|could not be reopened/.test(info.message), 'in plain words, not as a failure');
+  assert.deepEqual(bench.notices, [], 'a model that is only waiting for a person is not a warning');
+  assert.equal(bench.posted.filter((m) => m.type === 'reconnectPending').at(-1)?.name, 'SM_NFM',
+    'Studio is told, so its page says "SM_NFM", not "Open a model to begin"');
+  assert.equal(bench.remembered()?.kind, 'live', 'and the target is never forgotten');
+}
+
+// (20) The cached copy is there: it opens, but it is not passed off as a local file.
+{
+  const bench = makeBench({ pathExists: () => true, sessionAfterOpen: () => fileSessionFromSnapshot() });
+  bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  assert.deepEqual(bench.openCalls().map((c) => c.method), ['openLive', 'open'], 'precondition: the silent reconnect failed, so the cached copy opened offline');
+  assert.equal(bench.sandbox.pendingReconnect?.endpoint, LIVE_TARGET.endpoint, 'but it is marked as waiting to reconnect');
+  assert.ok(bench.infos.at(-1)?.actions.includes('Sign in to reconnect'), 'and the person is told, with the button');
+}
+
+// (21) The button is the person's action: it signs in, and the wait ends when the live model is open.
+{
+  const bench = makeBench({ pathExists: () => false });
+  bench.seed(LIVE_TARGET);
+  bench.sandbox.openThrows = new Error('A sign in is needed: this device holds no saved sign-in for that model that can be reused without asking.'); bench.sandbox.openThrowsOnly = ['openLive'];
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  bench.sandbox.currentSession = undefined;
+  bench.sandbox.openThrows = undefined;                    // the person signs in, so this time it works
+  await bench.sandbox.signInToReconnect();
+  const live = bench.openCalls().filter((c) => c.method === 'openLive').at(-1);
+  assert.ok(live, 'Sign in to reconnect opens the live model');
+  assert.equal(live.args[11], false, 'the full sign-in, not the silent kind');
+  assert.equal(live.args[9], 'human', 'as the person');
+  assert.equal(live.args[10], false, 'discarding nothing');
+  assert.equal(bench.sandbox.pendingReconnect, undefined, 'and nothing is left waiting once it is open');
+  assert.equal(bench.remembered()?.kind, 'live');
+}
+
+// (22) A running Power BI Desktop model needs no sign-in, so a cached copy must not stand in for it.
+{
+  const bench = makeBench({ pathExists: () => true });
+  bench.seed(LOCAL_TARGET);
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  assert.deepEqual(bench.openCalls().map((c) => c.method), ['openLocal'],
+    'the running model is reopened live; the cached copy is only for when Desktop is gone');
+}
+{
+  const bench = makeBench({ pathExists: () => true, sessionAfterOpen: (m) => m === 'open' ? fileSessionFromSnapshot() : undefined });
+  bench.seed(LOCAL_TARGET);
+  bench.sandbox.openThrows = null;
+  const real = bench.connection.sendRequest;
+  bench.connection.sendRequest = async (method, ...args) => {
+    if (method === 'openLocal') { bench.calls.push({ method, args }); throw new Error('Desktop is not running'); }
+    return real(method, ...args);
+  };
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  assert.deepEqual(bench.openCalls().map((c) => c.method), ['openLocal', 'open'],
+    'Desktop closed: the cached copy opens instead, so the person still has the model');
+  assert.equal(bench.sandbox.pendingReconnect, undefined, 'there is no sign-in to wait for on a local model');
+}
+
+
+// (23) THE FOLLOW-UP (8 Oct): a cold start reconnects the published model silently when a saved sign-in works. No notice, no button.
+{
+  const bench = makeBench({ pathExists: () => false });
+  bench.seed(LIVE_TARGET);
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  const calls = bench.openCalls();
+  assert.deepEqual(calls.map((c) => [c.method, c.args[11]]), [['openLive', true]], 'one silent live open');
+  assert.equal(bench.sandbox.pendingReconnect, undefined, 'it worked, so nothing waits for a sign-in');
+  assert.deepEqual(bench.infos, [], 'and the person is not asked anything');
+  assert.deepEqual(bench.notices, []);
+  assert.equal(bench.remembered()?.kind, 'live', 'the model is the live one, not a file');
+  assert.equal(bench.remembered()?.endpoint, LIVE_TARGET.endpoint);
+}
+// (24) With a cached copy too, the live model still wins when the silent reconnect works.
+{
+  const bench = makeBench({ pathExists: () => true });
+  bench.seed(LIVE_TARGET);
+  await bench.sandbox.reopenLastModel(bench.context, bench.connection, { restarted: false });
+  assert.deepEqual(bench.openCalls().map((c) => c.method), ['openLive'], 'the cached copy is only the fallback');
+  assert.equal(bench.sandbox.pendingReconnect, undefined);
+}
+
 
 console.log('engine restart recovery tests passed');

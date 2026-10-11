@@ -225,8 +225,11 @@ export function anchorUnder(trigger: Element | null | undefined, popup: Element 
 // A group of controls folded behind one button. The popover is position:fixed and placed against the
 // button's own box, because the row clips horizontally (that is what stops a long row from pushing the page
 // sideways) and an absolutely-positioned popover inside it would be cut off at the row's edge.
-export function RowMenu({ label, title, badge, children, align = 'start' }: {
+export function RowMenu({ label, title, badge, children, align = 'start', closeOnPick = false }: {
   label: string;
+  /** Close once a button inside is pressed: a menu of one-shot actions (Arrange), not of toggles (Show) that a
+   *  person flips several of in a row. Journey m11 F17: Arrange stayed open over the canvas after Expand all. */
+  closeOnPick?: boolean;
   title?: string;
   badge?: number;
   children: React.ReactNode;
@@ -266,7 +269,8 @@ export function RowMenu({ label, title, badge, children, align = 'start' }: {
       </button>
       {open && (
         <div ref={pop} role="menu" aria-label={label} className="sem-rowmenu-pop"
-          style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}>
+          style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
+          onClick={closeOnPick ? (e) => { if ((e.target as Element).closest('button')) setOpen(false); } : undefined}>
           {children}
         </div>
       )}

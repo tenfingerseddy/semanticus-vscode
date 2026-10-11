@@ -26,13 +26,19 @@ namespace Semanticus.Tests
         private static RuleEvaluation Eval(SessionManager sessions, string id) =>
             ReadinessRuleSet.Default().Single(r => r.Id == id).Evaluate(sessions.Current.Model);
 
-        private static async Task<(LocalEngine Engine, SessionManager Sessions)> ModelAsync(string name)
+        private static async Task<(LocalEngine Engine, SessionManager Sessions)> ModelAsync(string name, int compatibilityLevel = 1604)
         {
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, new Fake());
-            await engine.CreateModelAsync(name, 1604);
+            if (compatibilityLevel < 1465) await TestModels.OpenEmptyBimAsync(engine, name, compatibilityLevel);
+            else await engine.CreateModelAsync(name, compatibilityLevel);
             return (engine, sessions);
         }
+
+        /// <summary>DIM-PRIMARY-NAME's tests ran below CL 1465 while its advice was a rename that collided with the table
+        /// once a linguistic schema existed. It now sets the row label (Kane's ruling, 27 Sep), which collides with
+        /// nothing, so its tests run on an ordinary 1604 model.</summary>
+        private const int DimensionCl = 1604;
 
         // ---- AISCHEMA-DEP-MISSING ------------------------------------------------------------------------
 
@@ -55,7 +61,7 @@ namespace Semanticus.Tests
                 Assert.Empty(noSchema.Violations);
 
                 // Still dormant: a seeded schema that excludes nothing is the uncurated default (DAC-AI-DATA-SCHEMA owns that).
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 var seeded = Eval(sessions, "AISCHEMA-DEP-MISSING");
                 Assert.Equal(0, seeded.Applicable);
                 Assert.Empty(seeded.Violations);
@@ -94,7 +100,7 @@ namespace Semanticus.Tests
                 await engine.CreateMeasureAsync(sales, "Row Count", "COUNTROWS ( DISTINCT ( Sales[Sales Key] ) )", "human");
                 await engine.SetColumnMetadataAsync(key, true, null, null, null, "human");
 
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 // Power BI auto-excludes model-hidden fields, so a hidden dependent is not a curation mistake.
                 await engine.SetAiDataSchemaAsync("column:Sales/Sales Key", false, null, "human");
                 var hiddenDependent = Eval(sessions, "AISCHEMA-DEP-MISSING");
@@ -117,7 +123,7 @@ namespace Semanticus.Tests
                 // qualifier drops the dependency entirely instead of reporting it.
                 await engine.CreateMeasureAsync(sales, "Guarded Amount", "VAR one = 1 RETURN [Base Amount] * one", "human");
 
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 await engine.SetAiDataSchemaAsync("measure:Sales/Base Amount", false, null, "human");
 
                 var ev = Eval(sessions, "AISCHEMA-DEP-MISSING");
@@ -151,7 +157,7 @@ namespace Semanticus.Tests
                 // 'Sales'[Cost] it never touches, which would be a false High finding on valid DAX.
                 await engine.CreateMeasureAsync(sales, "Var Qualified", "VAR t = SUMMARIZE ( Other, Other[Cost] ) RETURN SUMX ( t, t[Cost] )", "human");
 
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 await engine.SetAiDataSchemaAsync("column:Sales/Cost", false, null, "human");
 
                 var ev = Eval(sessions, "AISCHEMA-DEP-MISSING");
@@ -179,7 +185,7 @@ namespace Semanticus.Tests
                 await engine.CreateMeasureAsync(internals, "Internal Cost", "SUM ( Sales[Cost] )", "human");
                 await engine.SetObjectPropertyAsync(internals, "IsHidden", "true", "human");
 
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 await engine.SetAiDataSchemaAsync("column:Sales/Cost", false, null, "human");
 
                 var ev = Eval(sessions, "AISCHEMA-DEP-MISSING");
@@ -197,15 +203,17 @@ namespace Semanticus.Tests
                 var sales = await engine.CreateTableAsync("Sales", "human");
                 await engine.CreateColumnAsync(sales, "Amount", "Decimal", "Amount", "human");
                 await engine.CreateMeasureAsync(sales, "Total Amount", "SUM ( Sales[Amount] )", "human");
+
+                // Staging exists before anything reads it: since F-263 a write naming a table the model does not have
+                // is refused, which this setup relied on without meaning to.
+                var staging = await engine.CreateTableAsync("Staging", "human");
+                await engine.CreateColumnAsync(staging, "Rawval", "Decimal", "Rawval", "human");
+                await engine.CreateMeasureAsync(staging, "Staging Total", "SUM ( Staging[Rawval] )", "human");
                 // Reads a field of a table that is excluded WHOLE, so the dependency is just as absent from the
                 // curated schema as a field-level exclusion would make it.
                 await engine.CreateMeasureAsync(sales, "Total Rawval", "SUM ( Staging[Rawval] )", "human");
 
-                var staging = await engine.CreateTableAsync("Staging", "human");
-                await engine.CreateColumnAsync(staging, "Rawval", "Decimal", "Rawval", "human");
-                await engine.CreateMeasureAsync(staging, "Staging Total", "SUM ( Staging[Rawval] )", "human");
-
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 // set_ai_data_schema accepts a TABLE ref and writes one table entity carrying Visibility:Hidden.
                 var set = await engine.SetAiDataSchemaAsync(staging, false, null, "human");
                 Assert.True(set.Changed);
@@ -236,7 +244,7 @@ namespace Semanticus.Tests
                 Assert.Empty(noSchema.Violations);
 
                 // Clean: every bound entity still resolves to a live model object.
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
                 await engine.SetAiDataSchemaAsync("column:Sales/Amount", false, null, "human");
                 var clean = Eval(sessions, "SYN-ENTITY-ORPHAN");
                 Assert.True(clean.Applicable >= 1);
@@ -260,7 +268,7 @@ namespace Semanticus.Tests
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
                 await engine.CreateColumnAsync(sales, "Amount", "Decimal", "Amount", "human");
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
 
                 // Valid JSON whose entities carry a non-object Definition / Binding. JsonElement.TryGetProperty
                 // throws on a non-object, so an unguarded read would fail the whole scan; the contract is dormancy.
@@ -292,7 +300,7 @@ namespace Semanticus.Tests
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
                 await engine.CreateColumnAsync(sales, "Amount", "Decimal", "Amount", "human");
-                await engine.EnableQnaAsync(null, "human");
+                await engine.CreateLinguisticSchemaAsync(null, "human");
 
                 // en-US: one live binding plus TWO orphans (a deleted column and a deleted table).
                 // fr-FR: one live binding plus ONE orphan, to prove the aggregate does not leak across cultures.
@@ -392,8 +400,8 @@ namespace Semanticus.Tests
                 Assert.Equal("Calendar", finding.ObjectName);
 
                 // Clean: the same population, now described.
-                // set_description accepts measures/tables/columns/perspectives only, so the clean state is written
-                // straight onto the model (the rule reads TOM, not the writer).
+                // Written straight onto the model: the rule reads TOM, not the writer (set_description's own
+                // hierarchy path is proven in DogfoodFeedbackRulesTests).
                 Assert.NotNull(hierarchy);
                 await sessions.Current.MutateAsync("human", "describe hierarchy",
                     m => m.Tables["Date"].Hierarchies["Calendar"].Description = "Calendar drill path from year to month.");
@@ -408,7 +416,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Dimension_primary_name_rule_covers_violation_clean_and_dormant_populations()
         {
-            var (engine, sessions) = await ModelAsync("Batch7PrimaryName");
+            var (engine, sessions) = await ModelAsync("Batch7PrimaryName", DimensionCl);
             using (engine)
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
@@ -427,20 +435,25 @@ namespace Semanticus.Tests
                 Assert.Equal(0, unrelated.Applicable);
                 Assert.Empty(unrelated.Violations);
 
-                // Violation: the dimension's label column is "Product Name" and nothing is named "Product".
+                // Violation: the dimension's label column is "Product Name" and nothing is marked as its row label.
                 await engine.CreateRelationshipAsync(salesKey, productKey, null, true, "human");
                 var violation = Eval(sessions, "DIM-PRIMARY-NAME");
                 Assert.Equal(1, violation.Applicable);
                 var finding = Assert.Single(violation.Violations);
-                // The finding names the LABEL COLUMN, which is the object the advertised AiContent rename edits.
-                // It used to name the table, which no fix touches (see the plan test below).
+                // The finding names the LABEL COLUMN, which is the object the safe fix marks as the row label.
                 Assert.Equal("Product Name", finding.ObjectName);
                 Assert.Equal("column:Product/Product Name", finding.ObjectRef);
                 Assert.Contains("Dimension 'Product'", finding.Message, StringComparison.Ordinal);
                 Assert.Contains("Product Name", finding.Message, StringComparison.Ordinal);
 
-                // Clean: the same population, with the label renamed to match the table.
+                Assert.Contains("row label", finding.Message, StringComparison.Ordinal);
+
+                // A label named after the table is still a label, not a row label: it stays a violation, on that column.
                 await engine.RenameObjectAsync(productName, "Product", "human");
+                Assert.Equal("column:Product/Product", Assert.Single(Eval(sessions, "DIM-PRIMARY-NAME").Violations).ObjectRef);
+
+                // Clean: the same population, with the label marked as the row label.
+                await sessions.Current.MutateAsync("human", "row label", m => m.Tables["Product"].Columns["Product"].IsDefaultLabel = true);
                 var clean = Eval(sessions, "DIM-PRIMARY-NAME");
                 Assert.Equal(1, clean.Applicable);
                 Assert.Empty(clean.Violations);
@@ -454,14 +467,14 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Dimension_primary_name_rule_scores_only_the_many_to_one_dimension_slice()
         {
-            var (engine, sessions) = await ModelAsync("Batch7PrimaryNameCardinality");
+            var (engine, sessions) = await ModelAsync("Batch7PrimaryNameCardinality", DimensionCl);
             using (engine)
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
                 var salesCustomer = await engine.CreateColumnAsync(sales, "Customer Key", "Int64", "Customer Key", "human");
                 var salesRegion = await engine.CreateColumnAsync(sales, "Region Key", "Int64", "Region Key", "human");
 
-                // Both tables are label-column violations on their own: "<Table> Name" and no bare "<Table>" field.
+                // Both tables are row-label violations on their own: a "<Table> Name" label and no row label.
                 var customer = await engine.CreateTableAsync("Customer", "human");
                 var customerKey = await engine.CreateColumnAsync(customer, "Customer Key", "Int64", "Customer Key", "human");
                 await engine.CreateColumnAsync(customer, "Customer Name", "String", "Customer Name", "human");
@@ -500,15 +513,12 @@ namespace Semanticus.Tests
             }
         }
 
-        /// <summary>Correction 5: the rule advertises <c>FixKind.AiContent</c>, but <c>MapAiContent</c> had no case
-        /// for it, so the advertised fix produced NO plan item; and the finding targeted the TABLE while the
-        /// intended fix renames the LABEL COLUMN. The finding now targets the column, and the existing AI rename
-        /// mapping carries it into the plan , still <c>needs_content</c> at <c>rename</c> risk, so approval and the
-        /// rename-safe application path are unchanged.</summary>
+        /// <summary>The rule advertises <c>FixKind.SafeFix</c>, so its fix reaches the plan as a deterministic,
+        /// auto-approved item on the label column the finding names, and applying it clears the finding.</summary>
         [Fact]
-        public async Task Dimension_primary_name_rename_reaches_the_plan_on_the_label_column()
+        public async Task Dimension_primary_name_row_label_reaches_the_plan_on_the_label_column()
         {
-            var (engine, sessions) = await ModelAsync("Batch7PrimaryNamePlan");
+            var (engine, sessions) = await ModelAsync("Batch7PrimaryNamePlan", DimensionCl);
             using (engine)
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
@@ -518,88 +528,55 @@ namespace Semanticus.Tests
                 await engine.CreateColumnAsync(product, "Product Name", "String", "Product Name", "human");
                 await engine.CreateRelationshipAsync(salesKey, productKey, null, true, "human");
 
-                // The finding names the column that actually gets renamed, not the table.
                 var finding = Assert.Single(Eval(sessions, "DIM-PRIMARY-NAME").Violations);
-                Assert.Equal("Product Name", finding.ObjectName);
                 Assert.Equal("column:Product/Product Name", finding.ObjectRef);
 
                 var plan = await engine.ProposePlanAsync(null, includeAi: true, maxAiItems: 50, origin: "human");
                 var item = Assert.Single(plan.Items.Where(i => i.RuleId == "DIM-PRIMARY-NAME"));
-
-                // The intended rename, on the column, through the existing AI rename mapping.
-                Assert.Equal("rename", item.Kind);
+                Assert.Equal("set_default_label", item.Kind);
                 Assert.Equal("column:Product/Product Name", item.ObjectRef);
-                Assert.Equal("name", item.Target);
-                Assert.Equal("Product Name", item.Before);
-                Assert.Contains("Product", item.Title, StringComparison.Ordinal);
+                Assert.Equal("isDefaultLabel", item.Target);
+                Assert.Equal("false", item.Before);
+                Assert.Equal("true", item.After);
+                Assert.Equal("approved", item.Status);
+                Assert.Equal("safe", item.Risk);
+                Assert.Equal("deterministic", item.Source);
 
-                // Approval semantics preserved: AI-authored content, NOT auto-approved, and carried at rename risk
-                // so it goes through the rename-safe path rather than a blind property write.
-                Assert.Equal("needs_content", item.Status);
-                Assert.Equal("rename", item.Risk);
-                Assert.Equal("ai", item.Source);
-                Assert.Null(item.After);
-
-                // Approval semantics preserved through authoring: "rename" is an OPT-IN kind, so filling the value
-                // leaves the item PROPOSED (never auto-approved) and still needs an explicit human approval.
-                var authored = await engine.SetPlanItemAsync(item.Id, "Product", null, "human");
-                Assert.Equal("proposed", authored.Items.Single(i => i.Id == item.Id).Status);
-                Assert.Equal("Product", authored.Items.Single(i => i.Id == item.Id).After);
-                var approved = await engine.SetPlanItemAsync(item.Id, null, true, "human");
-                Assert.Equal("approved", approved.Items.Single(i => i.Id == item.Id).Status);
-
-                // Application semantics preserved: it applies through the shared rename seam and the model ends up
-                // with the bare table name, which is exactly what clears the finding.
                 var report = await engine.ApplyPlanAsync(null, "human");
                 Assert.Equal("applied", report.Items.Single(r => r.Id == item.Id).Status);
+                Assert.True(sessions.Current.Model.Tables["Product"].Columns["Product Name"].IsDefaultLabel);
                 var after = Eval(sessions, "DIM-PRIMARY-NAME");
                 Assert.Equal(1, after.Applicable);
                 Assert.Empty(after.Violations);
-                Assert.Contains(sessions.Current.Model.Tables["Product"].Columns, c => c.Name == "Product");
+
+                await engine.UndoAsync("human");
+                Assert.False(sessions.Current.Model.Tables["Product"].Columns["Product Name"].IsDefaultLabel);
             }
         }
 
-        /// <summary>Correction 5, second half: one property gets one plan item, so when NAME-COLUMN and
-        /// DIM-PRIMARY-NAME both want to rename the same codey label column the shared dedup key
-        /// (objectRef + target) keeps a single rename , correctly, since two renames of one object in one batch is
-        /// not a plan. It used to drop the losing finding's GUIDANCE along with its item, which is precisely where
-        /// DIM-PRIMARY-NAME's point (rename it to the TABLE's name, not just to something clearer) was lost. The
-        /// deduped finding now merges its message into the surviving item's rationale.</summary>
+        /// <summary>A codey label column trips both NAME-COLUMN (rename it) and DIM-PRIMARY-NAME (mark it as the row
+        /// label). They change different properties, so the plan carries both, each with its own guidance.</summary>
         [Fact]
-        public async Task Dimension_primary_name_guidance_survives_dedup_against_a_competing_rename_rule()
+        public async Task Dimension_row_label_and_a_codey_name_rename_are_separate_plan_items()
         {
-            var (engine, sessions) = await ModelAsync("Batch7PrimaryNameDedup");
+            var (engine, sessions) = await ModelAsync("Batch7PrimaryNameDedup", DimensionCl);
             using (engine)
             {
                 var sales = await engine.CreateTableAsync("Sales", "human");
                 var salesKey = await engine.CreateColumnAsync(sales, "Currency Key", "Int64", "Currency Key", "human");
                 var currency = await engine.CreateTableAsync("Currency", "human");
                 var currencyKey = await engine.CreateColumnAsync(currency, "Currency Key", "Int64", "Currency Key", "human");
-                // "CurrencyName" is BOTH the "<Table>Name" label shape and a camelCase-hump codey name, so
-                // DIM-PRIMARY-NAME and NAME-COLUMN both fire on this one column.
+                // "CurrencyName" is BOTH the "<Table>Name" label shape and a camelCase-hump codey name.
                 await engine.CreateColumnAsync(currency, "CurrencyName", "String", "CurrencyName", "human");
                 await engine.CreateRelationshipAsync(salesKey, currencyKey, null, true, "human");
 
-                var card = new ReadinessAnalyzer().Analyze(sessions.Current.Model);
-                var competing = card.Findings
-                    .Where(f => f.ObjectRef == "column:Currency/CurrencyName" && (f.RuleId == "NAME-COLUMN" || f.RuleId == "DIM-PRIMARY-NAME"))
-                    .ToArray();
-                Assert.Equal(2, competing.Length);   // the collision this test exists for
-
                 var plan = await engine.ProposePlanAsync(null, includeAi: true, maxAiItems: 50, origin: "human");
-                var renames = plan.Items.Where(i => i.ObjectRef == "column:Currency/CurrencyName" && i.Target == "name").ToArray();
-
-                // ONE item for the one property, with the ordinary rename contract intact.
-                var item = Assert.Single(renames);
-                Assert.Equal("rename", item.Kind);
-                Assert.Equal("rename", item.Risk);
-                Assert.Equal("needs_content", item.Status);
-                Assert.Null(item.After);
-
-                // Neither rule's guidance is lost: whichever rule owns the item, the rationale carries both messages.
-                foreach (var f in competing)
-                    Assert.Contains(f.Message, item.Rationale, StringComparison.Ordinal);
-                Assert.Contains("has no field named 'Currency'", item.Rationale, StringComparison.Ordinal);
+                var rename = Assert.Single(plan.Items.Where(i => i.ObjectRef == "column:Currency/CurrencyName" && i.Target == "name"));
+                Assert.Equal("NAME-COLUMN", rename.RuleId);
+                Assert.Equal("needs_content", rename.Status);
+                var label = Assert.Single(plan.Items.Where(i => i.ObjectRef == "column:Currency/CurrencyName" && i.Target == "isDefaultLabel"));
+                Assert.Equal("DIM-PRIMARY-NAME", label.RuleId);
+                Assert.Contains("row label", label.Rationale, StringComparison.Ordinal);
             }
         }
 

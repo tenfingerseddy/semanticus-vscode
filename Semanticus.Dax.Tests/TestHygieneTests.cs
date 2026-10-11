@@ -120,16 +120,21 @@ public class TestHygieneTests
     /// in a string literal, and all five rules stayed green: masking had reached two of this file's three call
     /// sites, so one idea had two implementations. An assertion that is only mentioned is not an assertion.
     /// </para>
+    /// <para>
+    /// An assertion REACHED through a call counts: a cut-down <c>_sample</c> of a swept theory calls the full
+    /// method, and a body can live in a shared helper. See <see cref="HasAssertion(TestMethod)"/> for how far
+    /// the call is followed.
+    /// </para>
     /// </summary>
     [Fact]
     public void Every_test_method_contains_at_least_one_assertion()
     {
         var offenders = TestMethods()
-            .Where(x => !HasAssertion(x.Method.Body))
+            .Where(x => !HasAssertion(x.Method))
             .Select(x => $"{x.File}: {x.Method.Name} contains no assertion")
             .ToList();
 
-        Assert.Empty(offenders);
+        Assert.True(offenders.Count == 0, "\n" + string.Join("\n", offenders));
     }
 
     /// <summary>
@@ -270,6 +275,39 @@ public class TestHygieneTests
         Assert.False(HasAssertion("/* Assert.True(x); */ var x = 1;"),
             "rule 2 counted an assertion inside a block comment");
 
+        // DELEGATION. A test may reach its assertion through a call to another method in the same file, which
+        // is how a cut-down "_sample" keeps one row of a swept theory (it calls the full method) and how a
+        // body moves into a shared helper. The assertion has to be REACHED, not merely named.
+        Assert.True(HasAssertion(InFile(DelegatingSample, "Rows_agree_sample")),
+            "rule 2 did not follow a sample's call to the full theory that holds the assertion");
+        Assert.True(HasAssertion(InFile(DelegatingSample, "Rows_agree")),
+            "rule 2 lost the full theory's own assertion");
+        Assert.True(HasAssertion(InFile(DelegatingThroughTwoHelpers, "Shows_the_band")),
+            "rule 2 did not follow a call through two private helpers");
+        Assert.True(HasAssertion(InFile(DelegatingThroughAwait, "Shows_the_band")),
+            "rule 2 did not follow an awaited call to an async helper");
+        Assert.False(HasAssertion(InFile(DelegatingToNothing, "Rows_agree_sample")),
+            "rule 2 passed a sample whose target holds no assertion");
+        Assert.False(HasAssertion(InFile(DelegatingToAMention, "Shows_the_band")),
+            "rule 2 counted an assertion that the delegate only mentions in a comment or a string");
+        Assert.False(HasAssertion(InFile(DelegatingInACycle, "Ping")),
+            "rule 2 passed a call cycle that holds no assertion, or looped");
+        Assert.False(HasAssertion(InFile(DelegatingToAnotherFile, "Shows_the_band")),
+            "rule 2 resolved a call to a method that is not in this file");
+        Assert.False(HasAssertion(InFile(DelegatingToAMember, "Shows_the_band")),
+            "rule 2 resolved a member call on some other object to a same-named helper in this file");
+
+        // INTERPOLATED STRINGS. A hole holds code, and that code can hold quotes of its own, so pairing quotes
+        // from the left flips every literal below the string. The real file that showed it wrote
+        // `$"{a ?? "no page"} ..."` and `$"{b ?? "no page (\"x\")"}"`; everything after read as code in
+        // the strings and as string in the code, and a sample below it lost its target.
+        Assert.True(HasAssertion(InFile(InterpolatedHoles, "Names_the_page")),
+            "rule 2 lost the assertion that follows an interpolated string whose holes hold quoted strings");
+        Assert.True(HasAssertion(InFile(InterpolatedHoles, "Names_the_page_sample")),
+            "rule 2 lost the target of a sample that sits below an interpolated string whose holes hold quoted strings");
+        Assert.False(HasAssertion(InFile(InterpolatedHolesNoAssert, "Names_the_page_sample")),
+            "rule 2 read an assertion out of an interpolated string, or out of a hole's quoted text");
+
         // WIDTH. Nothing above constrains how much the recogniser may match, because every negative is
         // parenthesis-free: appending `|\w+\(` to Asserts makes rule 2 vacuous across all 2419 methods and
         // every one of these still passes. These are ordinary calls that are NOT assertions, so a recogniser
@@ -378,6 +416,157 @@ public class TestHygieneTests
     private static TestMethod Synthetic(string body, params string[] parameters)
         => new("Synthetic", parameters, body, 0, body);
 
+    /// <summary>
+    /// The test called <paramref name="name"/> in a whole source file, cut the way the real scan cuts it (from its
+    /// signature to the next test attribute), so rule 2's delegation can be driven by a file it must resolve in.
+    /// The fixtures spell their attributes <c>[#Fact]</c>, because this file is itself scanned and a plain one inside a
+    /// string would be taken for a test of this class.
+    /// </summary>
+    private static TestMethod InFile(string source, string name)
+    {
+        var text = StripDocComments(source.Replace("[#", "["));
+        var signature = Signature.Matches(text).Cast<Match>().First(m => m.Groups["name"].Value == name);
+        var start = signature.Index + signature.Length;
+        var next = TestAttributeToken.Match(text, start);
+        return new(name, ParameterNames(signature.Groups["parameters"].Value), text[start..(next.Success ? next.Index : text.Length)], start, text);
+    }
+
+    private const string DelegatingSample = """
+        public class Fixture
+        {
+            [#Theory]
+            [InlineData(1)]
+            public void Rows_agree_sample(int n) => Rows_agree(n);
+
+            [#Theory]
+            [InlineData(1)]
+            [InlineData(2)]
+            public void Rows_agree(int n)
+            {
+                Assert.True(n > 0);
+            }
+        }
+        """;
+
+    private const string DelegatingThroughTwoHelpers = """
+        public class Fixture
+        {
+            [#Fact]
+            public void Shows_the_band() { Run(); }
+
+            private static void Run() { Check(3); }
+
+            private static void Check(int n) => Assert.InRange(n, 1, 5);
+        }
+        """;
+
+    private const string DelegatingThroughAwait = """
+        public class Fixture
+        {
+            [#Fact]
+            public async Task Shows_the_band() => await CheckAsync();
+
+            private static async Task CheckAsync()
+            {
+                await Task.Yield();
+                Assert.NotNull(await Task.FromResult(1));
+            }
+        }
+        """;
+
+    private const string DelegatingToNothing = """
+        public class Fixture
+        {
+            [#Theory]
+            [InlineData(1)]
+            public void Rows_agree_sample(int n) => Rows_agree(n);
+
+            [#Theory]
+            [InlineData(1)]
+            public void Rows_agree(int n)
+            {
+                var doubled = n * 2;
+            }
+        }
+        """;
+
+    private const string DelegatingToAMention = """
+        public class Fixture
+        {
+            [#Fact]
+            public void Shows_the_band() => Check();
+
+            private static void Check()
+            {
+                // Assert.True(x) goes here later
+                var note = "Assert.Equal(a, b)";
+            }
+        }
+        """;
+
+    private const string DelegatingInACycle = """
+        public class Fixture
+        {
+            [#Fact]
+            public void Ping() => Pong();
+
+            private static void Pong() => Ping();
+        }
+        """;
+
+    private const string DelegatingToAnotherFile = """
+        public class Fixture
+        {
+            [#Fact]
+            public void Shows_the_band() => Elsewhere.Check();
+        }
+        """;
+
+    private const string DelegatingToAMember = """
+        public class Fixture
+        {
+            private static void Check() { Assert.True(1 > 0); }
+
+            [#Fact]
+            public void Shows_the_band() { var list = new List<int>(); list.Check(); }
+        }
+        """;
+
+    private const string InterpolatedHoles = """"
+        public class Fixture
+        {
+            [#Theory]
+            [#InlineData(1)]
+            public async Task Names_the_page(int n)
+            {
+                var line = $"{door} names {r.Tool ?? "no page"} for the task \"{w}\" (the service's answer), "
+                    + $"and {j?.Tool ?? "no page (\"Semanticus does not know\")"}" + $@"{k ?? "a ""b"""} {{x}}";
+                Assert.True(line.Length > n);
+            }
+
+            [#Theory]
+            [#InlineData(1)]
+            public Task Names_the_page_sample(int n) => Names_the_page(n);
+        }
+        """";
+
+    private const string InterpolatedHolesNoAssert = """"
+        public class Fixture
+        {
+            [#Theory]
+            [#InlineData(1)]
+            public async Task Names_the_page(int n)
+            {
+                var line = $"{door} names {r.Tool ?? "Assert.True(x)"} for the task \"{w}\" (the service's answer), "
+                    + $"and {j?.Tool ?? "no page (\"Semanticus does not know\")"} Assert.Equal(a, b)";
+            }
+
+            [#Theory]
+            [#InlineData(1)]
+            public Task Names_the_page_sample(int n) => Names_the_page(n);
+        }
+        """";
+
     // ---- the scan -----------------------------------------------------------------------------------
 
     /// <summary>
@@ -427,6 +616,117 @@ public class TestHygieneTests
     /// site and nothing failed, because the control had masked its own fixture before checking it.
     /// </summary>
     private static bool HasAssertion(string body) => Asserts.IsMatch(MaskLiteralsAndComments(body));
+
+    /// <summary>
+    /// Rule 2 for a whole test: an assertion in its own text, or one it REACHES through a call to another method
+    /// of the same file (a test, or a private helper), and so on down. A cut-down <c>_sample</c> keeps one row of
+    /// a swept theory by calling the full method, and a body that moved into a shared helper is the same shape.
+    ///
+    /// <para>
+    /// The target's text is masked like everything else here, so an assertion a helper only MENTIONS in a comment
+    /// or a string does not count, and a call to something with no assertion (or to nothing in this file) still
+    /// fails. The calls followed are the test's own statements. Its direct check still uses the text cut to the
+    /// next test attribute, so a helper declared right after a test lends that test its assertion, as it always did.
+    /// Calls are matched by name: bare, <c>this.</c> or a class of this file, never a member of some other object, so
+    /// <c>list.Add()</c> cannot borrow the assertion of a helper that happens to be called Add. Overloads count
+    /// together, a cycle is cut by the visited set, and a partial class split over files is not followed.
+    /// </para>
+    /// </summary>
+    private static bool HasAssertion(TestMethod method)
+    {
+        var index = IndexOf(method.FileText);
+        var cut = MaskLiteralsAndComments(method.Body);
+        if (Asserts.IsMatch(cut)) return true;
+
+        // The test's own statements, found by matching braces on the masked file. When that fails (an
+        // interpolated string with quotes inside its holes can unbalance the mask) the cut text stands in.
+        var own = BodyAt(index.Masked, method.BodyStart) ?? cut;
+
+        var seen = new HashSet<string> { method.Name };
+        return Reaches(own);
+
+        bool Reaches(string code)
+        {
+            foreach (var name in index.Calls.Matches(code).Cast<Match>().Select(m => m.Groups["name"].Value).Distinct())
+            {
+                if (!index.Methods.TryGetValue(name, out var bodies) || !seen.Add(name)) continue;
+                if (bodies.Any(b => Asserts.IsMatch(b) || Reaches(b))) return true;
+            }
+            return false;
+        }
+    }
+
+    private sealed record FileIndex(string Masked, Dictionary<string, List<string>> Methods, Regex Calls);
+
+    private static string? indexedText;
+    private static FileIndex? indexed;
+
+    /// <summary>
+    /// One file's masked text, method table and call matcher, built once per file: the scan walks a file's tests
+    /// together, so remembering the last one is enough and masking per test would be quadratic.
+    /// </summary>
+    private static FileIndex IndexOf(string fileText)
+    {
+        lock (typeof(TestHygieneTests))
+        {
+            if (indexed is not null && ReferenceEquals(indexedText, fileText)) return indexed;
+
+            var masked = MaskLiteralsAndComments(fileText);
+            var classes = string.Join("|", Regex.Matches(masked, @"\bclass\s+(\w+)").Cast<Match>()
+                .Select(m => Regex.Escape(m.Groups[1].Value)).Append("this"));
+            var calls = new Regex($@"(?<![\w.])(?<name>\w+)\s*(?:<[^<>()]*>)?\s*\(|\b(?:{classes})\.(?<name>\w+)\s*(?:<[^<>()]*>)?\s*\(");
+            indexedText = fileText;
+            return indexed = new FileIndex(masked, MethodBodies(masked), calls);
+        }
+    }
+
+    /// <summary>A declaration with a modifier (<c>static</c> counts, so a helper with no access word is found), on a masked file.</summary>
+    private static readonly Regex MethodHead = new(
+        @"^[ \t]*(?:\[[^\]\n]*\][ \t]*)*(?:public|private|internal|protected|static)\b[^\n(=;]*?\b(?<name>\w+)\s*(?:<[^>\n]*>)?\s*\([^)]*\)",
+        RegexOptions.Multiline);
+
+    /// <summary>Method name to the masked bodies of every declaration of it in <paramref name="maskedFile"/>.</summary>
+    private static Dictionary<string, List<string>> MethodBodies(string maskedFile)
+    {
+        var methods = new Dictionary<string, List<string>>();
+        foreach (var head in MethodHead.Matches(maskedFile).Cast<Match>())
+        {
+            var body = BodyAt(maskedFile, head.Index + head.Length);
+            if (body is null) continue;
+            var name = head.Groups["name"].Value;
+            if (!methods.TryGetValue(name, out var list)) methods[name] = list = new List<string>();
+            list.Add(body);
+        }
+        return methods;
+    }
+
+    /// <summary>
+    /// The body of the member whose signature ends just before <paramref name="from"/>: a braced block, or an
+    /// expression up to its closing ';'. Null for anything else (a field, a declaration with no body).
+    /// </summary>
+    private static string? BodyAt(string masked, int from)
+    {
+        var i = from;
+        while (i < masked.Length && masked[i] != '{' && masked[i] != ';' && !(masked[i] == '=' && i + 1 < masked.Length && masked[i + 1] == '>')) i++;
+        if (i >= masked.Length || masked[i] == ';') return null;
+
+        var start = i;
+        var depth = 0;
+        var expression = masked[i] == '=';
+        for (; i < masked.Length; i++)
+        {
+            var c = masked[i];
+            if (c is '{' or '(' or '[') depth++;
+            else if (c is '}' or ')' or ']')
+            {
+                depth--;
+                if (depth == 0 && c == '}' && !expression) return masked[start..(i + 1)];
+                if (depth < 0) return null;
+            }
+            else if (c == ';' && expression && depth == 0) return masked[start..i];
+        }
+        return null;
+    }
 
     /// <summary>
     /// Rule 1's core, callable on a synthetic method so the rule can have a positive control.
@@ -712,6 +1012,48 @@ public class TestHygieneTests
         return close < 0 ? -1 : close + 1;
     }
 
+    /// <summary>The index of the closing quote of an interpolated string whose body starts at <paramref name="j"/>, or -1.</summary>
+    private static int SkipInterpolated(string text, int j, bool verbatim)
+    {
+        for (; j < text.Length; j++)
+        {
+            var c = text[j];
+            if (c == '{')
+            {
+                if (j + 1 < text.Length && text[j + 1] == '{') { j++; continue; }   // an escaped brace
+                var close = SkipHole(text, j + 1);
+                if (close < 0) return -1;
+                j = close;
+            }
+            else if (c == '\\' && !verbatim) j++;
+            else if (c == '"')
+            {
+                if (verbatim && j + 1 < text.Length && text[j + 1] == '"') { j++; continue; }   // a doubled quote
+                return j;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>The index of the '}' closing the hole whose code starts at <paramref name="j"/>, or -1. Literals inside it are skipped whole.</summary>
+    private static int SkipHole(string text, int j)
+    {
+        var depth = 1;
+        for (; j < text.Length; j++)
+        {
+            var c = text[j];
+            if (c == '"' || c == '\'' || (c == '@' && j + 1 < text.Length && text[j + 1] == '"'))
+            {
+                var end = SkipLiteral(text, j);
+                if (end < 0) return -1;
+                j = end;
+            }
+            else if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) return j;
+        }
+        return -1;
+    }
+
     /// <summary>
     /// The index of the last character of the C# literal starting at <paramref name="i"/>, or -1 if it never
     /// closes. Covers <c>'c'</c>, <c>"s"</c>, <c>@"s"</c> and raw <c>"""s"""</c> — the goldens are raw string
@@ -719,6 +1061,15 @@ public class TestHygieneTests
     /// </summary>
     private static int SkipLiteral(string text, int i)
     {
+        // An interpolated string ($"s", $@"s", @$"s") has holes, and a hole is code that can hold quoted strings of
+        // its own. Pairing quotes from the left flips every literal below such a string, which hid the rest of
+        // a file from rule 2's call following. (A raw $"""s""" keeps the plain reading below.)
+        var dollar = i > 0 && text[i - 1] == '$';
+        if (dollar && text[i] == '@' && i + 1 < text.Length && text[i + 1] == '"')
+            return SkipInterpolated(text, i + 2, verbatim: true);
+        if (dollar && text[i] == '"' && !(i + 2 < text.Length && text[i + 1] == '"' && text[i + 2] == '"'))
+            return SkipInterpolated(text, i + 1, verbatim: i > 1 && text[i - 2] == '@');
+
         if (text[i] == '\'')
         {
             for (var j = i + 1; j < text.Length; j++)
@@ -775,7 +1126,7 @@ public class TestHygieneTests
     ///
     /// <para>
     /// An attribute list may precede the modifier ON THE SAME LINE, because
-    /// <c>[Fact] public void Flags_iferror() =&gt; ...</c> is a real and common style here. Widening the scan
+    /// <c>[#Fact] public void Flags_iferror() =&gt; ...</c> is a real and common style here. Widening the scan
     /// from 19 files to 178 found <c>Semanticus.Tests/DaxLintTests.cs</c> writing all 64 of its tests that way,
     /// so the scan saw 64 attributes and zero methods and skipped the file entirely. An <c>[InlineData]</c> row
     /// still cannot match, because after its brackets there is no access modifier.

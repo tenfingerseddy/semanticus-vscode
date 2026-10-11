@@ -127,6 +127,29 @@ namespace Semanticus.Tests
             Assert.Contains(blockers, rec.Summary);
         }
 
+        // ---- Kane 8 Oct: a person is never asked for a reason. A red check goes in the history as "Published with
+        //      warnings" and the commit goes on; the agent door keeps the HUMAN-only refusal (tests above and below) ----
+        [Fact]
+        public async Task A_person_with_no_reason_publishes_past_a_red_gate_and_the_record_says_published_with_warnings()
+        {
+            using var engine = await RedModelAsync();
+
+            var token = await ReviewFenceTest.TokenAsync(engine, LocalEndpoint, "Blocked");
+            var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
+                engine.DeployLiveAsync(LocalEndpoint, "Blocked", null, null, null,
+                    commit: true, origin: "human", overrideReason: null, confirmToken: token));
+            // The throw is the dead loopback port, reached AFTER the gate. Never the gate, never a request for a reason.
+            Assert.DoesNotContain("blocked by the deploy gate", ex.Message);
+            Assert.DoesNotContain("overrideReason", ex.Message);
+
+            var chain = await engine.ListVerifiedEditsAsync();
+            var rec = Assert.Single(chain.Records.Where(r => r.Op == "deploy_live" && r.Verdict == "overridden"));
+            Assert.True(string.IsNullOrEmpty(rec.OverrideReason));   // no reason was given, none is invented
+            Assert.StartsWith("Published with warnings (", rec.Summary);
+            Assert.EndsWith(LocalEndpoint + "/Blocked", rec.Summary);
+            Assert.DoesNotContain("written reason", rec.Summary);
+        }
+
         // ---- an agent WITHOUT a reason gets the HUMAN-only refusal too: the origin check deliberately runs BEFORE
         //      the missing-reason branch, so an agent is never taught "pass overrideReason" only to be refused again ----
         [Fact]

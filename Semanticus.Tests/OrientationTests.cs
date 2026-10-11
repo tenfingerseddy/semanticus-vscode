@@ -52,17 +52,18 @@ namespace Semanticus.Tests
             Assert.Equal("No license found.", s.Entitlement.Reason);
             Assert.NotNull(s.Readiness);                 // a session is open
             Assert.NotNull(s.Graph);
-            // Model notes are Pro since 2026-09-15, so a free orientation carries NO Primer: handing a free
-            // session an 1800-char Primer excerpt here would be a hole straight through that gate.
-            Assert.Null(s.Primer);
+            // Model notes went free on 2026-09-22, so a free orientation carries the Primer excerpt like any
+            // other. It was withheld here while the document was paid; there is no gate left to hole.
+            Assert.NotNull(s.Primer);
+            Assert.Contains("Primer", s.Primer.Markdown);
             Assert.NotNull(s.Note);
             Assert.Contains("get_model_primer", s.Note);
             Assert.Contains("ai_readiness_scan", s.Note);   // the doc-map names the drill-down ops
             Assert.Contains("get_model_graph", s.Note);
         }
 
-        // The other half of the Primer line: the section is not deleted, it is entitled. A Pro session still gets
-        // it in the same one round-trip, so the gate reads as "who", never as "the feature went away".
+        // The other half of the old Primer line. A Pro session gets exactly what a free one gets now, in the
+        // same one round-trip, so the section is not tier-shaped any more.
         [Fact]
         public async Task Orientation_carries_the_primer_on_pro()
         {

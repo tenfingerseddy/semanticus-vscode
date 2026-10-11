@@ -17,7 +17,8 @@ import { gateArg, submitStepArgs } from '../webview/src/workflowsubmit.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (f) => readFileSync(resolve(root, f), 'utf8');
-const workflows = read('webview/src/workflows.tsx');
+// The Submit step button lives with the run's Plan row detail now (lane W2, R3).
+const workflows = read('webview/src/workflow-run.tsx');
 
 // ---- the binding that caused it ------------------------------------------------------------------
 // Binding the submit handler straight to onClick is what put a PointerEvent on the wire: React calls a

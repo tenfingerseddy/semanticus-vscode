@@ -226,7 +226,7 @@ namespace Semanticus.Tests
                         cal.AddTimeUnit(TimeUnit.Date, t.Columns["Date"]);
                         cal.AddTimeUnit(TimeUnit.Year, t.Columns["Year"]);
                     });
-                    await engine.SaveAsync(dir, "TMDL");
+                    await engine.SaveAsync(dir, "TMDL", false, "human");
                 }
 
                 using (var reopened = new LocalEngine(new SessionManager(), TestEntitlements.Pro))
@@ -286,8 +286,9 @@ namespace Semanticus.Tests
 
             // Both serialize the SAME calendar block. LineageTags are fresh GUIDs on each path, so normalize them out;
             // any REMAINING difference would be a real structural divergence between the two authoring routes.
-            var w = NormalizeLineageTags(wrapperTmdl);
-            var o = NormalizeLineageTags(opsTmdl);
+            // A script header also carries the block's @base marker, a hash of the text with those GUIDs in it.
+            var w = NormalizeLineageTags(System.Text.RegularExpressions.Regex.Replace(wrapperTmdl, " @base:[0-9a-f]{12}", ""));
+            var o = NormalizeLineageTags(System.Text.RegularExpressions.Regex.Replace(opsTmdl, " @base:[0-9a-f]{12}", ""));
             Assert.Contains("calendar Gregorian", w);   // the wrapper path emits the calendar block at all
             Assert.Equal(o, w);
             // PROVES: the two routes produce byte-identical TMDL. The CalendarOps bypass buys NO serialization

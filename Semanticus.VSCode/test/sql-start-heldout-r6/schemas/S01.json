@@ -1,0 +1,177 @@
+{
+  "Server": "s01-sql.example.invalid",
+  "Database": "MarketOrders",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "dim_calendar",
+      "KeyColumns": [
+        "DATE_KEY"
+      ],
+      "Columns": [
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "CAL_DATE",
+          "DataType": "DateTime"
+        },
+        {
+          "Name": "CAL_YEAR",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "MONTH_NO",
+          "DataType": "Int64"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_item",
+      "KeyColumns": [
+        "ITEM_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "ITEM_NAME",
+          "DataType": "String"
+        },
+        {
+          "Name": "CATEGORY",
+          "DataType": "String"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "dim_store",
+      "KeyColumns": [
+        "STORE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "STORE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "REGION",
+          "DataType": "String"
+        },
+        {
+          "Name": "OPEN_FLAG",
+          "DataType": "Boolean"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_sale",
+      "KeyColumns": [
+        "SALE_LINE_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "SALE_LINE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "STORE_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "UNITS",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "NET_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "fact_refund",
+      "KeyColumns": [
+        "REFUND_ID"
+      ],
+      "Columns": [
+        {
+          "Name": "REFUND_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "DATE_KEY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "ITEM_ID",
+          "DataType": "String"
+        },
+        {
+          "Name": "REFUND_QTY",
+          "DataType": "Int64"
+        },
+        {
+          "Name": "REFUND_AMT",
+          "DataType": "Decimal"
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": [
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_sale",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_calendar",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_sale",
+      "FromColumn": "ITEM_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_item",
+      "ToColumn": "ITEM_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_sale",
+      "FromColumn": "STORE_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_store",
+      "ToColumn": "STORE_ID"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_refund",
+      "FromColumn": "DATE_KEY",
+      "ToSchema": "dbo",
+      "ToTable": "dim_calendar",
+      "ToColumn": "DATE_KEY"
+    },
+    {
+      "FromSchema": "dbo",
+      "FromTable": "fact_refund",
+      "FromColumn": "ITEM_ID",
+      "ToSchema": "dbo",
+      "ToTable": "dim_item",
+      "ToColumn": "ITEM_ID"
+    }
+  ]
+}

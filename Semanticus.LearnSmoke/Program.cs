@@ -19,7 +19,7 @@ namespace Semanticus.LearnSmoke
     ///   owner engine (RpcServer) ── pipe ──┬── UI client (watches workflow/didChange — dual-drive)
     ///                                       └── RemoteEngine proxy ← McpTools.* (the actual MCP tools)
     ///
-    /// Isolation: both scopes are redirected to a disposable temp tree — USERPROFILE is repointed so GLOBAL-scope
+    /// Isolation: both scopes are redirected to a disposable temp tree: SEMANTICUS_HOME is repointed so GLOBAL-scope
     /// recall (which recall_experience reads AND writes retrieve-deltas to) never touches the real ~/.semanticus,
     /// and the two seeds live in ONE non-ephemeral workspace dir so they share the project knowledge store.
     /// </summary>
@@ -29,6 +29,8 @@ namespace Semanticus.LearnSmoke
 
         private static async Task<int> Main()
         {
+            // F-232: this run and every engine it starts use a scratch per-user home, never the real ~/.semanticus.
+            Semanticus.Engine.SemanticusHome.IsolateForTestRun("learnsmoke");
             // --- Isolate every on-disk store the loop touches into a disposable temp tree ----------------------
             // The dir prefix must NOT be "semanticus-*" — that is the ephemeral-live-snapshot marker
             // (ExperienceStore.IsEphemeralAnchor), which would push the project store to the workspace fallback.
@@ -37,11 +39,11 @@ namespace Semanticus.LearnSmoke
             var homeDir = Path.Combine(tempRoot, "home");
             Directory.CreateDirectory(wsDir);
             Directory.CreateDirectory(homeDir);
-            // Repoint the global knowledge scope (%USERPROFILE%/.semanticus/knowledge) at the temp home so a cold
+            // Repoint the global knowledge scope (SEMANTICUS_HOME/knowledge) at the temp home so a cold
             // store is genuinely cold and no retrieve-delta lands in the real user store. Capture the original so
-            // the finally can put it back — leaking a temp USERPROFILE would poison later work in the same process.
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
-            Environment.SetEnvironmentVariable("USERPROFILE", homeDir);
+            // the finally can put it back, since leaking a temp SEMANTICUS_HOME would poison later work in the same process.
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(homeDir, ".semanticus"));
 
             // Two seeds in the SAME dir: identical structure → identical FingerprintKey; same dir → shared
             // project knowledge store. (Genuinely shape-varied same-key FAMILIES are LearnBench's job, §5.1.)
@@ -86,6 +88,10 @@ namespace Semanticus.LearnSmoke
                 //    (target, originalDax) are missing, so the input gate REJECTS the submit (throws with
                 //    instructive text) — the gate actually bit; not a silent pass. Register the UI's
                 //    workflow/didChange waiter BEFORE start so the dual-drive broadcast is observed live.
+                // optimize-dax drafts since lane l9-finish (a composed starter). Its guided input gate is what this
+                // smoke needs, so the run starts from the starter's frozen guided bytes, loaded as the project copy (the
+                // pattern McpSmoke uses for new-measure).
+                await McpTools.SaveWorkflow(claude, "optimize-dax", File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "workflows-compat", "v1.2.2", "optimize-dax.md")));
                 var wfWait = ui.Notify.WaitNextWorkflowAsync();
                 var run = await McpTools.StartWorkflow(claude, "optimize-dax");
                 Check("start_workflow('optimize-dax') opens a run on step-1",
@@ -105,11 +111,14 @@ namespace Semanticus.LearnSmoke
 
                 // 4) Post-mortem → insight (fingerprint-scoped), approve if the write-gate held it 'pending'
                 var ins = await McpTools.AddInsight(claude,
-                    "optimize-dax step-1 failed: submitted without the required pre-rewrite baseline (originalDax + target). Capture get_dax + benchmark_dax_coldwarm warm median BEFORE rewriting.",
+                    "optimize-dax step-1 failed: submitted without the required pre-rewrite baseline (originalDax + target). Capture get_dax + benchmark_dax (mode='coldWarm') warm median BEFORE rewriting.",
                     new[] { "optimize-dax", "benchmark_delta", "missing-baseline" },
                     "post-mortem", "project", fingerprintScoped: true);
-                if (!string.Equals(ins.Status, "approved", StringComparison.Ordinal))
-                    ins = await McpTools.ApproveInsight(claude, ins.Id);
+                // Lessons an assistant writes are never approved by an assistant (39365d22, F-350 to F-353): the person
+                // trusts them. So the person's door approves it here, which is the product's own path.
+                Check("the assistant's lesson waits for the person (not approved by the assistant)",
+                    !string.Equals(ins.Status, "approved", StringComparison.Ordinal));
+                ins = await owner.ApproveInsightAsync(ins.Id, "human");
                 Check("post-mortem insight lands approved with a provenance envelope",
                     ins.Status == "approved" && ins.Provenance != null && !string.IsNullOrEmpty(ins.Provenance.When));
                 Check("insight is pinned to the current model's fingerprint",
@@ -146,7 +155,7 @@ namespace Semanticus.LearnSmoke
                 try { await serverTask; } catch { }
                 owner.Dispose();
                 sessions.Dispose();
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);   // restore BEFORE deleting the temp home
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);   // restore BEFORE deleting the temp home
                 try { Directory.Delete(tempRoot, true); } catch { }
             }
 

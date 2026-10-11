@@ -37,6 +37,7 @@ namespace Semanticus.Tests
 
         private static string Block(string objRef, string expr) => $"// @object {objRef}\n{expr}\n";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("COUNTROWS('Sales')")]
         [InlineData("COUNTROWS(FILTER('Sales', TRUE()))")]
@@ -83,6 +84,31 @@ namespace Semanticus.Tests
             Assert.Equal(before1, await e.GetDaxAsync(ms[1].Ref));
         }
 
+        // F-248 (Sol 6, slice 6 review): a set_dax plan item carried authored DAX past the shared write guard, so
+        // apply_plan wrote an expression every other DAX door refuses. It must fail as that one item, in the plan's
+        // normal way, and leave the measure as it was.
+        [Fact]
+        public async Task ApplyPlan_refuses_a_set_dax_item_whose_DAX_names_an_unknown_column()
+        {
+            using var e = await FreshAsync(pro: true);
+            var t = await e.CreateTableAsync("Sales", "human");
+            await e.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
+            var measure = await e.CreateMeasureAsync(t, "Total", "SUM(Sales[Amount])", "human");
+
+            var plan = await e.AddPlanItemAsync(measure, "set_dax", "SUM(Sales[NoSuchColumn])", null, null, null, "agent");
+            var item = plan.Items.First(i => i.Kind == "set_dax");
+            await e.SetPlanItemAsync(item.Id, null, approved: true, "human");
+            var report = await e.ApplyPlanAsync(new[] { item.Id }, "human");
+
+            Assert.Equal(0, report.AppliedCount);
+            Assert.Equal(1, report.FailedCount);
+            var line = report.Items.Single(i => i.Id == item.Id);
+            Assert.Equal("failed", line.Status);
+            Assert.Contains("not valid DAX", line.Note);
+            Assert.Equal("SUM(Sales[Amount])", await e.GetDaxAsync(measure));
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task ApplyDaxScript_refuses_plain_text_and_unbalanced_single_block_without_mutation()
         {
@@ -119,6 +145,7 @@ namespace Semanticus.Tests
             Assert.Equal(before, await e.GetDaxAsync(r));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task ApplyDaxScript_still_applies_a_valid_single_block()
         {
@@ -224,6 +251,7 @@ namespace Semanticus.Tests
         }
 
         // D-124: a calculated fact/dimension must keep its star-schema role; only unrelated calculated tables stay calculated.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Autogenerate_classifies_calculated_tables_by_relationship_role()
         {

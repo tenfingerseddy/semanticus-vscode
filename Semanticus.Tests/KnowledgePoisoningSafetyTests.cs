@@ -19,8 +19,8 @@ namespace Semanticus.Tests
     ///       poisoned retrievals after a single scoped purge_knowledge(confirm:true);
     ///   (C) apply-rate 0 by construction — recall is READ-ONLY advice (it mutates nothing), and every candidate
     ///       carries provenance, so a poisoned insight can never itself become an applied change.
-    /// Deterministic (fixed poison sets, USERPROFILE-redirected global scope, temp-copied project store) → CI-able.
-    /// The whole test assembly runs serial (TestModels CollectionBehavior), so the USERPROFILE swap is race-free.
+    /// Deterministic (fixed poison sets, SEMANTICUS_HOME-redirected global scope, temp-copied project store) → CI-able.
+    /// The whole test assembly runs serial (TestModels CollectionBehavior), so the SEMANTICUS_HOME swap is race-free.
     /// </summary>
     public sealed class KnowledgePoisoningSafetyTests
     {
@@ -42,17 +42,17 @@ namespace Semanticus.Tests
         private static bool IsPoison(RecallCandidate c) => c.Insight.Keys != null && c.Insight.Keys.Contains(PoisonKey);
 
         // A model-open engine whose project store is a TEMP COPY of the vendored .bim (opening the vendored model
-        // directly would write knowledge files into the submodule), with USERPROFILE redirected for global scope.
+        // directly would write knowledge files into the submodule), with SEMANTICUS_HOME redirected for global scope.
         private static async Task<(LocalEngine engine, SessionManager sessions, string dir, string origHome)> MakeAsync(bool autoApprove)
         {
             var dir = Path.Combine(Path.GetTempPath(), "smx-poison-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(Path.Combine(dir, ".semanticus"));
             if (!autoApprove)
                 File.WriteAllText(Path.Combine(dir, ".semanticus", "knowledge-settings.json"), "{ \"autoApprove\": false }");
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             var home = Path.Combine(dir, "home");
             Directory.CreateDirectory(home);
-            Environment.SetEnvironmentVariable("USERPROFILE", home);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
             var copy = Path.Combine(dir, "AdventureWorks.bim");
             File.Copy(TestModels.FindBim(), copy);
             var sessions = new SessionManager();
@@ -64,7 +64,7 @@ namespace Semanticus.Tests
         private static void Cleanup(SessionManager sessions, string dir, string origHome)
         {
             sessions.Dispose();   // release the model/TOM session BEFORE unwinding the redirected home / deleting the dir
-            Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+            Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
             try { Directory.Delete(dir, true); } catch { }
         }
 

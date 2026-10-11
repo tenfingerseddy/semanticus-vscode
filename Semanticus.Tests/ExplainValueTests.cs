@@ -137,7 +137,7 @@ namespace Semanticus.Tests
             Assert.False(c.Additive);
             Assert.Empty(c.Rows);                                 // NEVER a misleading sum-of-parts list
             Assert.Contains("do not add up", c.Note);
-            Assert.Contains("distinct counts", c.Note);
+            Assert.Contains("count of different things", c.Note);   // plain words, not "distinct counts"
         }
 
         [Fact]

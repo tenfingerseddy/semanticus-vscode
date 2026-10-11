@@ -88,7 +88,7 @@ const mLinter = linter(async (view): Promise<CmDiagnostic[]> => {
 }, { delay: 350 });
 
 const mTheme = EditorView.theme({
-  '&': { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: '8px', fontSize: '13px', lineHeight: '1.5' },
+  '&': { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)', fontSize: 'var(--sem-text-body)', lineHeight: 'var(--sem-lh-body)' },
   '&.cm-focused': { outline: '1px solid var(--sem-accent)' },
   '.cm-content': { fontFamily: M_FONT, caretColor: 'var(--sem-fg)' },
   '.cm-gutters': { fontFamily: M_FONT, background: 'transparent', color: 'var(--sem-muted)', border: 'none' },
@@ -100,10 +100,10 @@ const mTheme = EditorView.theme({
   // fine. Override CM's light-mode tooltip + give the diagnostic text the editor font.
   '.cm-tooltip.cm-tooltip-hover, .cm-completionInfo, .cm-tooltip.cm-tooltip-lint': {
     background: 'var(--sem-surface-2)', color: 'var(--sem-fg)',
-    border: '1px solid var(--sem-border)', borderRadius: '8px',
+    border: '1px solid var(--sem-border)', borderRadius: 'var(--sem-radius-card)',
     boxShadow: '0 6px 20px rgba(0,0,0,0.35)', overflow: 'hidden',
   },
-  '.cm-diagnostic': { fontFamily: M_FONT, fontSize: '12px', padding: '3px 8px' },
+  '.cm-diagnostic': { fontFamily: M_FONT, fontSize: 'var(--sem-text-meta)', padding: 'var(--sem-space-1) var(--sem-space-2)' },
 }, { dark: true });
 
 // A CodeMirror M editor: highlighting + bracket match/close + history + standard-library-aware

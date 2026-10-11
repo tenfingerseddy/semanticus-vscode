@@ -112,7 +112,11 @@ interface ChipItem { id: string; label: string; note?: string; title?: string; r
 // live here now, beside the live feed and the one command that wires the assistant up in the first place.
 // The chip no longer hides itself before the first run: it owns Permissions and Connect Claude Code, and a
 // person who has not connected yet is exactly the person who needs both.
-export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApprovalId }: { onOpen: (tab: string, approvalId?: string) => void; pendingApprovalCount?: number; firstPendingApprovalId?: string }) {
+export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApprovalId, planCount = null, onPlanCount }: {
+  onOpen: (tab: string, approvalId?: string) => void; pendingApprovalCount?: number; firstPendingApprovalId?: string;
+  /** The assistant track's Ready plus On it on the Plan (contract 11.4). Null draws no count. */
+  planCount?: number | null; onPlanCount?: () => void;
+}) {
   const { feed, pin } = useActivity();
   const [open, setOpen] = useState(false);
   // The menu is the first thing the chip opens; the live feed is one pick in, where it used to be the whole popover.
@@ -146,7 +150,6 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
   // only through the MCP door, so either one is proof it is wired to this session. Nothing in the webview can see
   // the folder's .mcp.json, so the un-proven side says so in the tooltip rather than claiming a checked negative.
   const assistantSeen = feed.length > 0 || pendingApprovalCount > 0;
-  const assistantState = assistantSeen ? 'connected' : 'not connected';
   const connectTitle = assistantSeen
     ? 'Your assistant has used this session. Running this again rewrites the connection file in this folder.'
     : 'Semanticus has not seen your assistant use this session. If you already wired it up, it may simply not have run anything yet.';
@@ -162,7 +165,9 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
     run: () => onOpen('permissions') });
   // The palette command is called Connect AI Assistant and the id still says claudeCode, but product copy never
   // names a vendor's model: it says "your assistant" (docs/product-copy-style.md, enforced by copy-rules).
-  items.push({ id: 'connect', label: 'Connect your assistant', note: assistantState, title: connectTitle,
+  // Once the assistant has been seen, the wiring is done and the row would only say "connected": it leaves the menu.
+  // The palette command (Connect Your Assistant) still rewrites the connection file for anyone who needs it again.
+  if (!assistantSeen) items.push({ id: 'connect', label: 'Connect your assistant', title: connectTitle,
     run: () => runHostCommand('semanticus.connectClaudeCode') });
 
   const pick = (item: ChipItem, fromKeyboard: boolean) => {
@@ -184,7 +189,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
     setOpen(false);
   };
   return (
-    <div ref={wrap} className="relative shrink-0" onBlur={closeOnFocusLeaving} style={{ marginRight: pendingApprovalCount > 0 ? 10 : undefined }}>
+    <div ref={wrap} className="relative flex shrink-0 items-center gap-1" onBlur={closeOnFocusLeaving}>
       <button ref={chipRef} type="button" aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {
@@ -192,24 +197,40 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
           else if (e.key === 'Escape' && open) { e.preventDefault(); setOpen(false); }
         }}
         title={latest?.label ? `Your assistant · ${latest.label}` : 'Your assistant'}
-        className="flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md"
-        style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' }}>
+        // Instrument: a hairline button like its neighbours in the header, not a tinted chip. On the tint, the
+        // muted feed mark measured 4.1:1 in Light Modern.
+        className="studio-header-action studio-feed-mark-host gap-2">
         {/* The dot only pulses while there is something live to pulse about; idle it is a plain muted mark. */}
-        <span className={`w-1.5 h-1.5 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
-          style={{ background: feed.length > 0 ? 'var(--sem-accent)' : 'var(--sem-muted)' }} />
-        <span className="font-semibold">Your assistant</span>
-        {feed.length > 0 && <span className="shrink-0" style={{ color: 'var(--sem-muted)' }}>{FEED_MARK}</span>}
+        <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
+          style={{ background: feed.length > 0 ? 'var(--sem-fg)' : 'var(--sem-muted)' }} />
+        <span>Your assistant</span>
+        {/* A badge on the chip's corner, drawn by CSS (styles.css .studio-feed-mark) and positioned absolutely: it takes
+            no layout width idle or live, so the assistant waking never refolds the header, and the idle header folds
+            no earlier than it would with no mark at all (m11 header-stable). The chip's text stays "Your assistant". */}
+        <span className="studio-feed-mark" aria-hidden="true" data-live={feed.length > 0 ? '' : undefined} />
       </button>
+      {/* The one count the chip carries for the Plan: its tasks ready for your assistant or being done by it. Pressing it
+          opens the Plan filtered to that track (Plan at the heart, contract 11.4). Zero draws nothing. */}
+      {planCount != null && planCount > 0 && onPlanCount && (
+        <button type="button" data-testid="assistant-plan-count" onClick={(e) => { e.stopPropagation(); setOpen(false); onPlanCount(); }}
+          aria-label={`${planCount} task${planCount === 1 ? '' : 's'} for your assistant on the Plan. Open them.`}
+          title={`${planCount} task${planCount === 1 ? '' : 's'} for your assistant on the Plan`}
+          className="flex h-6 items-center px-1 text-xs sem-num" style={{ color: 'var(--sem-fg)' }}>
+          {planCount > 99 ? '99+' : planCount}
+        </button>
+      )}
       {pendingApprovalCount > 0 && (
         <button onClick={(e) => { e.stopPropagation(); setOpen(false); onOpen('permissions', firstPendingApprovalId); }}
           aria-label={approvalLabel} title={approvalLabel}
-          className="absolute -right-2 -top-2 min-w-4 h-4 px-1 rounded-full text-[9px] leading-4 font-bold tnum"
-          style={{ background: 'var(--sem-warn)', color: 'var(--sem-on-warn)', boxShadow: '0 0 0 2px var(--sem-bg)' }}>
+          // Instrument: the count waiting for you is a number beside the button with a dot in the warning colour, not
+          // an amber badge pinned over its corner. It is still its own button, and still goes to the approvals.
+          className="flex h-6 items-center gap-1 px-1 text-xs sem-num" style={{ color: 'var(--sem-fg)' }}>
+          <span className="w-1 h-1 rounded-full" aria-hidden style={{ background: 'var(--sem-warn)' }} />
           {pendingApprovalCount > 99 ? '99+' : pendingApprovalCount}
         </button>
       )}
       {open && view === 'menu' && (
-        <div ref={menuRef} tabIndex={-1} role="menu" aria-label="Your assistant" className="studio-chip-menu absolute right-0 top-full z-50 mt-1"
+        <div ref={menuRef} tabIndex={-1} role="menu" aria-label="Your assistant" className="studio-chip-menu studio-header-pop absolute right-0 top-full mt-1"
           onKeyDown={(e) => {
             if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
             else if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight((h) => (h + 1 + items.length) % items.length); }
@@ -226,7 +247,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
         </div>
       )}
       {open && view === 'feed' && (
-        <div ref={feedRef} tabIndex={-1} className="absolute right-0 top-full mt-1 z-50 w-96 rounded-lg shadow-xl overflow-hidden outline-none"
+        <div ref={feedRef} tabIndex={-1} className="studio-header-pop absolute right-0 top-full mt-1 w-96 rounded-(--sem-radius-card) shadow-xl overflow-hidden outline-none"
           onKeyDown={(e) => {
             if (e.key === 'Escape') { e.preventDefault(); closeAndReturnFocus(); }
             // Left/Backspace walk back to the menu the same way the Back button does, so the feed is not a one-way
@@ -235,15 +256,15 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
             else if (e.key === 'ArrowLeft' || e.key === 'Backspace') { e.preventDefault(); setView('menu'); }
           }}
           style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>
-          <div className="px-3 py-2 text-[11px] uppercase tracking-wide font-semibold flex items-center gap-2"
+          <div className="px-3 py-2 text-xs font-semibold flex items-center gap-2"
             style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>
-            <span className={`w-1.5 h-1.5 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
-              style={{ background: feed.length > 0 ? 'var(--sem-accent)' : 'var(--sem-muted)' }} />
+            <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
+              style={{ background: feed.length > 0 ? 'var(--sem-fg)' : 'var(--sem-muted)' }} />
             Live activity · your assistant
-            <button type="button" onClick={() => setView('menu')} className="ml-auto normal-case tracking-normal font-medium"
-              style={{ color: 'var(--sem-accent)' }} title="Back to the assistant menu">Back</button>
+            <button type="button" onClick={() => setView('menu')} className="sem-btn sem-btn-sm sem-btn-quiet ml-auto"
+              title="Back to the assistant menu">Back</button>
           </div>
-          {feed.length === 0 && <div className="px-3 py-3 text-[12px]" style={{ color: 'var(--sem-muted)' }}>
+          {feed.length === 0 && <div className="px-3 py-3 text-xs" style={{ color: 'var(--sem-muted)' }}>
             Nothing yet. Anything your assistant runs on this model shows up here.
           </div>}
           <div className="max-h-96 overflow-auto">
@@ -255,18 +276,19 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
               const tab = KIND_TAB[e.kind];
               const body = (
                 <>
-                  <span className="shrink-0">{FEED_MARK}</span>
+                  {/* Decoration: the entry is read by its words, never as "bullet Ran DAX query" (verifier round 2). */}
+                  <span className="shrink-0" aria-hidden="true">{FEED_MARK}</span>
                   <span className="min-w-0 flex-1">
-                    <span className="text-[12px] font-medium">{e.label}</span>
-                    {e.query && <span className="text-[11px] font-mono block truncate" style={{ color: 'var(--sem-muted)' }}>{e.query}</span>}
+                    <span className="text-xs font-medium">{e.label}</span>
+                    {e.query && <span className="text-xs font-mono block truncate" style={{ color: 'var(--sem-muted)' }}>{e.query}</span>}
                   </span>
-                  {e.error ? <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-bad)' }}>error</span>
-                    : e.rowCount != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.rowCount} rows</span>
-                    : e.elapsedMs != null ? <span className="text-[10px] tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.elapsedMs}ms</span> : null}
+                  {e.error ? <span className="text-(length:--sem-text-label) shrink-0" style={{ color: 'var(--sem-bad)' }}>error</span>
+                    : e.rowCount != null ? <span className="text-(length:--sem-text-label) tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.rowCount} rows</span>
+                    : e.elapsedMs != null ? <span className="text-(length:--sem-text-label) tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{e.elapsedMs}ms</span> : null}
                 </>
               );
               if (!e.approvalId && !tab) return (
-                <div key={e.seq} className="w-full text-left px-3 py-1.5 flex items-center gap-2"
+                <div key={e.seq} className="w-full text-left px-3 py-2 flex items-center gap-2"
                   style={{ borderBottom: '1px solid var(--sem-border)' }}>
                   {body}
                 </div>
@@ -277,7 +299,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
                   else { pin(e); onOpen(tab); }
                   setOpen(false);
                 }}
-                  className="w-full text-left px-3 py-1.5 flex items-center gap-2 hover:bg-[var(--sem-surface-2)]"
+                  className="w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-[var(--sem-hover)]"
                   title={e.approvalId ? 'Open the exact permission request waiting for approval' : `Open this run in the ${TAB_LABEL[tab] ?? tab} tab`}
                   style={{ borderBottom: '1px solid var(--sem-border)' }}>
                   {body}
@@ -295,9 +317,8 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
 export function ClaudeRanBanner({ event, onClear }: { event: ActivityEvent | null | undefined; onClear?: () => void }) {
   if (!event) return null;
   return (
-    <div className="flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md"
-      style={{ background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' }}>
-      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: 'var(--sem-accent)' }} />
+    <div className="sem-inset flex items-center gap-2 text-xs" style={{ color: 'var(--sem-fg)' }}>
+      <span className="w-1 h-1 rounded-full shrink-0" style={{ background: 'var(--sem-fg)' }} />
       <span className="font-semibold shrink-0">Your assistant</span>
       <span className="shrink-0">{event.label}</span>
       {event.query && <span className="font-mono truncate" style={{ color: 'var(--sem-muted)' }}>{event.query}</span>}

@@ -788,6 +788,8 @@ namespace Semanticus.Engine
                         Values = slot.Values ?? Array.Empty<string>(),
                     }).ToArray(),
                     Steps = (def.Steps ?? Array.Empty<WorkflowStep>()).Select((step, i) => EditStep(source, step, i)).ToArray(),
+                    AssistantNotes = def.SchemaVersion >= 3 ? def.AssistantNotes : null,
+                    Inputs = def.SchemaVersion >= 3 ? EditQuestions(def.Inputs) : Array.Empty<WorkflowEditQuestion>(),
                 },
             };
             if (string.Equals(def.Kind, "template", StringComparison.Ordinal))
@@ -806,8 +808,16 @@ namespace Semanticus.Engine
             var key = loc?.Key ?? StepKey(step, index);
             var inputLocs = loc?.Inputs ?? new List<ItemLoc>();
             var verifyLocs = loc?.Verify ?? new List<ItemLoc>();
+            var v3 = source.Def?.SchemaVersion >= 3;
             return new WorkflowEditStep
             {
+                Performer = v3 ? step.Performer : null,
+                Phase = v3 && step.PhaseWritten ? step.Phase : null,
+                Action = v3 ? EditAction(step.Action) : null,
+                Questions = v3 ? EditQuestions(step.Questions) : Array.Empty<WorkflowEditQuestion>(),
+                Blanks = v3 ? EditBlanks(step.Blanks) : Array.Empty<WorkflowEditBlank>(),
+                Brief = v3 ? step.Brief : null,
+                Checks = v3 ? EditChecks(step.Checks) : Array.Empty<WorkflowEditCheck>(),
                 Key = key, Fingerprint = Fingerprint(step), Id = step.Id,
                 IdKind = !step.HasExplicitId ? "implicit-positional" : PositionalStepId.IsMatch(step.Id ?? "") ? "explicit-positional" : "explicit-stable",
                 Number = step.Number, Title = step.Title, Instructions = step.Instructions, Ops = step.Ops ?? Array.Empty<string>(), When = step.When,
@@ -845,6 +855,111 @@ namespace Semanticus.Engine
                 },
             };
         }
+
+        // ---- format 3 (lane author-gaps, B7): the composer fields as Author edits them ----------------------------
+
+        private static WorkflowEditQuestion[] EditQuestions(WorkflowQuestion[] questions) =>
+            (questions ?? Array.Empty<WorkflowQuestion>()).Select(q => new WorkflowEditQuestion
+            {
+                Name = q.Name, Question = q.Question, Type = q.Type, Required = q.Required, By = q.By,
+                Values = q.Values ?? Array.Empty<string>(), From = q.From, Jev = q.Jev, Default = q.Default,
+            }).ToArray();
+
+        private static WorkflowEditBlank[] EditBlanks(WorkflowBlank[] blanks) =>
+            (blanks ?? Array.Empty<WorkflowBlank>()).Select(b => new WorkflowEditBlank
+            {
+                Name = b.Name, Kind = b.Kind, Fills = b.Fills, By = b.By, DependsOn = b.DependsOn ?? Array.Empty<string>(),
+                MaxChars = b.MaxChars, Choices = b.Choices, Generator = b.Generator,
+            }).ToArray();
+
+        private static WorkflowEditCheck[] EditChecks(WorkflowCheck[] checks) =>
+            (checks ?? Array.Empty<WorkflowCheck>()).Select(c => new WorkflowEditCheck
+            {
+                Kind = c.Kind, Phase = c.Phase, Target = c.Target, Min = c.Min, Max = c.Max, Of = c.Of ?? Array.Empty<string>(), When = c.When,
+            }).ToArray();
+
+        private static WorkflowEditAction EditAction(StepAction a) => a == null ? null : new WorkflowEditAction
+        {
+            Op = a.Op,
+            Args = a.Arguments.Select(x => new WorkflowEditArgument { Name = x.Name, Value = x.Value, Values = x.Values }).ToArray(),
+        };
+
+        /// <summary>The composer fields a set_field may write on a step, and the key each is written under.</summary>
+        private static readonly Dictionary<string, string> V3StepFields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["performer"] = "performer", ["phase"] = "phase", ["action"] = "action", ["questions"] = "questions",
+            ["blanks"] = "blanks", ["brief"] = "instructions", ["checks"] = "checks",
+        };
+
+        private static void RequireV3(SourceMap map, string target, string field)
+        {
+            if (map.Def.SchemaVersion < 3)
+                throw new PatchException("invalid_operation", $"'{field}' is a format 3 field. Upgrade this workflow to format 3 first, then add it.", target, field);
+        }
+
+        /// <summary>A list of maps as one flow line, in the format's own key order, leaving out what is empty.</summary>
+        private static string EncodeMapList(JsonElement value, string what, string[] order, string[] numbers, string[] lists)
+        {
+            if (value.ValueKind != JsonValueKind.Array) throw new PatchException("invalid_operation", what + " must be a list.");
+            var items = new List<string>();
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) throw new PatchException("invalid_operation", "Every entry in " + what + " must be an object.");
+                RequireOnlyProperties(item, what, order);
+                var pieces = new List<string>();
+                foreach (var key in order)
+                {
+                    if (!item.TryGetProperty(key, out var v) || v.ValueKind == JsonValueKind.Null) continue;
+                    if (lists.Contains(key))
+                    {
+                        if (v.ValueKind != JsonValueKind.Array) throw new PatchException("invalid_operation", $"{what}: '{key}' must be a list.");
+                        if (v.GetArrayLength() == 0) continue;
+                        pieces.Add(key + ": [" + string.Join(", ", v.EnumerateArray().Select(x => JsonSerializer.Serialize(JsonString(x), JsonOptions))) + "]");
+                        continue;
+                    }
+                    if (numbers.Contains(key) && v.ValueKind == JsonValueKind.Number) { pieces.Add(key + ": " + v.GetRawText()); continue; }
+                    var text = v.ValueKind == JsonValueKind.String ? v.GetString() : v.GetRawText();
+                    if (string.IsNullOrEmpty(text)) continue;
+                    pieces.Add(key + ": " + JsonSerializer.Serialize(text, JsonOptions));
+                }
+                items.Add("{ " + string.Join(", ", pieces) + " }");
+            }
+            return "[" + string.Join(", ", items) + "]";
+        }
+
+        private static string EncodeQuestions(JsonElement v) => EncodeMapList(v, "questions",
+            new[] { "name", "question", "type", "required", "by", "values", "from", "jev", "default" }, Array.Empty<string>(), new[] { "values" });
+
+        private static string EncodeBlanks(JsonElement v) => EncodeMapList(v, "blanks",
+            new[] { "name", "kind", "fills", "by", "dependsOn", "maxChars", "choices", "generator" }, new[] { "maxChars" }, new[] { "dependsOn" });
+
+        private static string EncodeChecks(JsonElement v) => EncodeMapList(v, "checks",
+            new[] { "kind", "phase", "target", "min", "max", "of", "when" }, new[] { "min", "max" }, new[] { "of" });
+
+        private static string EncodeAction(JsonElement v)
+        {
+            if (v.ValueKind != JsonValueKind.Object) throw new PatchException("invalid_operation", "action must be an object with op and args.");
+            RequireOnlyProperties(v, "action", "op", "args");
+            var op = RequiredString(v, "op");
+            var pieces = new List<string> { "op: " + op };
+            if (v.TryGetProperty("args", out var args) && args.ValueKind == JsonValueKind.Array)
+                foreach (var a in args.EnumerateArray())
+                {
+                    RequireOnlyProperties(a, "action argument", "name", "value", "values");
+                    var name = RequiredString(a, "name");
+                    if (a.TryGetProperty("values", out var list) && list.ValueKind == JsonValueKind.Array)
+                        pieces.Add(EncodeMapKey(name) + ": [" + string.Join(", ", list.EnumerateArray().Select(x => JsonSerializer.Serialize(JsonString(x), JsonOptions))) + "]");
+                    else if (a.TryGetProperty("value", out var one) && one.ValueKind != JsonValueKind.Null)
+                        pieces.Add(EncodeMapKey(name) + ": " + JsonSerializer.Serialize(one.ValueKind == JsonValueKind.String ? one.GetString() : one.GetRawText(), JsonOptions));
+                }
+            return "{ " + string.Join(", ", pieces) + " }";
+        }
+
+        /// <summary>A list or text field: an empty one is written as no field at all.</summary>
+        private static JsonElement NullWhenEmpty(JsonElement value) =>
+            value.ValueKind == JsonValueKind.Array && value.GetArrayLength() == 0
+            || value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(value.GetString())
+                ? JsonSerializer.SerializeToElement<object>(null) : value;
 
         private static WorkflowEditModel BuildModelWithoutLocations(WorkflowDef def, WorkflowEditRestriction restriction)
         {
@@ -897,6 +1012,14 @@ namespace Semanticus.Engine
                 throw new PatchException("invalid_operation", "set_field requires expect.", key, field);
             if (!operation.TryGetProperty("value", out var value))
                 throw new PatchException("invalid_operation", "set_field requires value.", key, field);
+            // A step title is one heading line, and a heading keeps no spaces at its ends. Author sends the title as it is
+            // typed, so "Define the measure " comes between "Define the measure" and "Define the measure FIRST": the three
+            // are compared and written without those spaces, or the middle one could never be written and took the whole
+            // save with it (the verifier on m11/sol-fixes-1 round 2).
+            // A step's text ("What it does") is the same: the file reads it back without the spaces at its ends, so "reconcile "
+            // typed on the way to "reconcile the stock ledger", or a text left ending in a space, refused the whole save
+            // (verifier on m11/sol-fixes-1 round 3, VR7). Typed text always saves; only those spaces are not kept.
+            if (target.Kind == "step" && field is "title" or "instructions") { expect = TrimmedText(expect); value = TrimmedText(value); }
             var current = CurrentField(target, field);
             if (!JsonEqual(expect, current))
                 throw new PatchException("stale_value", $"The current value of '{field}' no longer matches expect. Reproject the draft and retry.", key, field);
@@ -911,6 +1034,8 @@ namespace Semanticus.Engine
                         "title" or "description" or "whenToUse" or "strictness" => PatchMapField(text, map.Front, field, value, map),
                         "version" => PatchMapField(text, map.Front, field, value, map),
                         "triggers" or "tags" => PatchMapField(text, map.Front, field, value, map),
+                        "assistantNotes" => RequireV3Then(map, key, field, () => PatchV3Field(text, map, map.Front, field, NullWhenEmpty(value), null)),
+                        "inputs" => RequireV3Then(map, key, field, () => PatchV3Field(text, map, map.Front, field, NullWhenEmpty(value), EncodeQuestions)),
                         _ => throw ReadOnlyOrUnknown(key, field),
                     };
                     break;
@@ -967,7 +1092,7 @@ namespace Semanticus.Engine
             var def = Parse(changed);
             // Dependent edits may repair an intermediate reference. Container DTOs also carry null/default
             // members and opaque map-entry keys that are not authored values, so verify their final parse only.
-            if (def.Error != null || field == "call" || field == "forEach" || field == "forEach.source") return;
+            if (def.Error != null || field is "call" or "forEach" or "forEach.source" or "inputs" or "questions" or "blanks" or "checks" or "action") return;
             var changedMap = Build(changed, def);
             var resolved = Resolve(aliases, key);
             if (!changedMap.Targets.TryGetValue(resolved, out var changedTarget)) return;
@@ -1000,6 +1125,8 @@ namespace Semanticus.Engine
                 "forEach.maxIterations" => (target.Step.Control?.Entry("forEach")?.Value as YMap)?.Entry("maxIterations") != null,
                 "call.workflow" => (target.Step.Control?.Entry("call")?.Value as YMap)?.Entry("workflow") != null,
                 "call.returns" => (target.Step.Control?.Entry("call")?.Value as YMap)?.Entry("returns") != null,
+                "brief" => target.Step.Control?.Entry("instructions") != null,
+                "performer" or "phase" => target.Step.Control?.Entry(field) != null,
                 _ => false,
             };
         }
@@ -1024,6 +1151,7 @@ namespace Semanticus.Engine
         {
             "title" => def.Title, "description" => def.Description, "whenToUse" => def.WhenToUse,
             "version" => def.Version, "strictness" => def.Strictness, "triggers" => def.Triggers, "tags" => def.Tags,
+            "assistantNotes" => def.AssistantNotes, "inputs" => def.Inputs,
             _ => null,
         };
 
@@ -1054,11 +1182,103 @@ namespace Semanticus.Engine
             },
             "call.workflow" => step.Call?.Workflow, "call.returns" => step.Call?.Returns,
             "gate.strictness" => step.Gate?.Strictness,
+            "performer" => step.Performer, "phase" => step.PhaseWritten ? step.Phase : null, "brief" => step.Brief,
+            "action" => EditAction(step.Action), "questions" => EditQuestions(step.Questions),
+            "blanks" => EditBlanks(step.Blanks), "checks" => EditChecks(step.Checks),
             _ => null,
         };
 
+        /// <summary>Who does a step and what Semanticus runs move together, because the format ties them: a step
+        /// Semanticus runs has an action, and a step someone else does has neither an action nor blanks. Setting an
+        /// action gives the step to Semanticus; giving the step to the assistant or a person takes its action and blanks
+        /// off; Semanticus without an action, or an action taken off a step Semanticus runs, is refused with the way out.
+        /// The changes land together, from the bottom of the block up, so no offset goes stale in between.</summary>
+        private static string SetWhoDoesIt(string text, SourceMap map, StepLoc step, string field, JsonElement value)
+        {
+            var control = step.Control ?? throw new PatchException("source_map_mismatch", "This step's block was not located. Use Source.", step.Key, field);
+            var edits = new List<(int Start, int End, string Text)>();
+            var semanticus = JsonSerializer.SerializeToElement(WorkflowPerformers.Semanticus);
+            var none = JsonSerializer.SerializeToElement<object>(null);
+            if (field == "action")
+            {
+                if (value.ValueKind == JsonValueKind.Null)
+                {
+                    if (step.Step.Performer == WorkflowPerformers.Semanticus)
+                        throw new PatchException("invalid_operation", "A step Semanticus runs needs its action. Give the step to your assistant or to you first, which takes the action off.", step.Key, field);
+                    return text;
+                }
+                edits.Add(FieldSpan(control, "action", value, map, EncodeAction));
+                if (step.Step.Performer != WorkflowPerformers.Semanticus) edits.Add(FieldSpan(control, "performer", semanticus, map, null));
+            }
+            else
+            {
+                var who = value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                if (!WorkflowPerformers.All.Contains(who))
+                    throw new PatchException("invalid_operation", "performer is one of: " + string.Join(", ", WorkflowPerformers.All) + ".", step.Key, field);
+                if (who == WorkflowPerformers.Semanticus && step.Step.Action == null)
+                    throw new PatchException("invalid_operation", "Choose the action Semanticus runs first. Setting the action gives the step to Semanticus.", step.Key, field);
+                edits.Add(FieldSpan(control, "performer", value, map, null));
+                if (who != WorkflowPerformers.Semanticus)
+                {
+                    edits.Add(FieldSpan(control, "action", none, map, null));
+                    edits.Add(FieldSpan(control, "blanks", none, map, null));
+                }
+            }
+            foreach (var e in edits.Where(e => e.Start >= 0).OrderByDescending(e => e.Start).ThenByDescending(e => e.End))
+                text = Replace(text, e.Start, e.End, e.Text);
+            return text;
+        }
+
+        /// <summary>What PatchMapField would change, as a span and its new text, so several can land at once. A start of
+        /// -1 is no change.</summary>
+        private static (int Start, int End, string Text) FieldSpan(YMap map, string key, JsonElement value, SourceMap source, Func<JsonElement, string> encoder)
+        {
+            var entry = map.Entry(key);
+            if (value.ValueKind == JsonValueKind.Null)
+                return entry == null ? (-1, -1, "") : (entry.Start, EntryRemovalEnd(source, entry), "");
+            if (IsFlowMap(source, map))
+                throw new PatchException("unpreservable_spelling", $"The flow-style block containing '{key}' cannot be changed field by field. Use Source.", null, key);
+            var encoded = (encoder ?? EncodeYaml)(value);
+            if (entry == null) return (map.InsertAt, map.InsertAt, new string(' ', map.Indent) + key + ": " + encoded + map.Ending);
+            // A block list or block map spans lines up to the next key, line ending included, so the whole entry is
+            // written again as one line rather than its value alone (which would swallow the line ending after it).
+            var block = entry.Value is YSequence { Flow: false } || entry.Value is YMap { Flow: false };
+            if (block) return (entry.Start, EntryRemovalEnd(source, entry), new string(' ', LeadingIndent(source, entry.KeyNode.Start)) + key + ": " + encoded + map.Ending);
+            return (entry.Value.Start, entry.Value.End, EncodeForExisting(entry.Value, value, encoded, source));
+        }
+
+        /// <summary>One composer field set through <see cref="FieldSpan"/>.</summary>
+        private static string PatchV3Field(string text, SourceMap source, YMap map, string key, JsonElement value, Func<JsonElement, string> encoder)
+        {
+            var (start, end, replacement) = FieldSpan(map, key, value, source, encoder);
+            return start < 0 ? text : Replace(text, start, end, replacement);
+        }
+
+        private static string RequireV3Then(SourceMap map, string target, string field, Func<string> patch)
+        {
+            RequireV3(map, target, field);
+            return patch();
+        }
+
         private static string SetStepField(string text, SourceMap map, StepLoc step, string field, JsonElement value)
         {
+            if (field is "performer" or "action")
+            {
+                RequireV3(map, step.Key, field);
+                return SetWhoDoesIt(text, map, step, field, NullWhenEmpty(value));
+            }
+            if (V3StepFields.TryGetValue(field, out var v3Key))
+            {
+                RequireV3(map, step.Key, field);
+                Func<JsonElement, string> encoder = field switch
+                {
+                    "questions" => EncodeQuestions, "blanks" => EncodeBlanks, "checks" => EncodeChecks, "action" => EncodeAction,
+                    _ => null,
+                };
+                return step.Control != null
+                    ? PatchV3Field(text, map, step.Control, v3Key, NullWhenEmpty(value), encoder)
+                    : PatchControlField(text, map, step, v3Key, NullWhenEmpty(value), encoder);
+            }
             if (field == "title")
             {
                 var title = JsonString(value);
@@ -1109,7 +1329,7 @@ namespace Semanticus.Engine
             if (def.Error != null) return text;
             var map = Build(text, def);
             var step = map.Steps.FirstOrDefault(s => s.Key == stepKey);
-            if (step?.ControlFence != null && !step.Step.HasExplicitId && step.Step.When == null
+            if (step?.ControlFence != null && def.SchemaVersion < 3 && !step.Step.HasExplicitId && step.Step.When == null
                 && step.Step.ForEach == null && step.Step.Call == null)
                 return Replace(text, step.ControlFence.Start, step.ControlFence.End, "");
             return text;
@@ -1685,7 +1905,7 @@ namespace Semanticus.Engine
 
         private static string EmitStep(JsonElement value, string ending)
         {
-            RequireOnlyProperties(value, "add_step value", "id", "title", "instructions", "ops", "when", "forEach", "call", "gate");
+            RequireOnlyProperties(value, "add_step value", "id", "title", "instructions", "ops", "when", "forEach", "call", "gate", "performer");
             var id = RequiredString(value, "id");
             var title = value.TryGetProperty("title", out var titleNode) && titleNode.ValueKind == JsonValueKind.String ? titleNode.GetString() : "Untitled";
             if ((title ?? "").IndexOfAny(new[] { (char)10, (char)13 }) >= 0)
@@ -1695,6 +1915,10 @@ namespace Semanticus.Engine
             var b = new StringBuilder();
             b.Append("## Step 0: ").Append(title ?? "Untitled").Append(ending);
             b.Append("```yaml step").Append(ending).Append("id: ").Append(id).Append(ending);
+            // Format 3: who does the new step. A step Semanticus runs needs an action first, so Author adds a new step as
+            // the assistant's (or a person's stop) and the author gives it to Semanticus by choosing its action.
+            if (value.TryGetProperty("performer", out var performer) && performer.ValueKind == JsonValueKind.String)
+                b.Append("performer: ").Append(EncodeYaml(performer)).Append(ending);
             if (value.TryGetProperty("when", out var when) && when.ValueKind != JsonValueKind.Null) b.Append("when: ").Append(EncodeYaml(when)).Append(ending);
             if (value.TryGetProperty("forEach", out var each) && each.ValueKind != JsonValueKind.Null) b.Append("forEach: ").Append(EditForEachYaml(each)).Append(ending);
             if (value.TryGetProperty("call", out var call) && call.ValueKind != JsonValueKind.Null) b.Append("call: ").Append(EditCallYaml(call)).Append(ending);
@@ -1835,6 +2059,13 @@ namespace Semanticus.Engine
             var right = JsonSerializer.SerializeToElement(value, JsonOptions);
             return JsonElement.DeepEquals(element, right);
         }
+
+        // A Windows line break is the same break the file writes: sent over set_field (an agent's edit), "a\r\nb" could never
+        // be read back as sent and refused the whole save (verifier on m11/sol-fixes-1 round 4, L6).
+        private static JsonElement TrimmedText(JsonElement value) =>
+            value.ValueKind == JsonValueKind.String
+                ? JsonSerializer.SerializeToElement((value.GetString() ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim(), JsonOptions)
+                : value;
 
         private static string JsonString(JsonElement value)
         {

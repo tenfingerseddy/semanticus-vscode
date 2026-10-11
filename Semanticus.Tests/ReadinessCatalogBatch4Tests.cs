@@ -15,24 +15,30 @@ namespace Semanticus.Tests
     /// missing/partial. The tests make the row-to-rule upgrade executable: violation, clean and dormant/advisory
     /// behavior is pinned before the catalog arithmetic moves.
     /// </summary>
-    public sealed class ReadinessCatalogBatch4Tests
+    public sealed class ReadinessCatalogBatch4Tests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public ReadinessCatalogBatch4Tests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro => true;
             public EntitlementInfo Info { get; } = new EntitlementInfo { Tier = "pro" };
         }
 
-        private static async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
+        private async Task<(LocalEngine engine, SessionManager sessions)> BaseModelAsync()
         {
             var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, new Fake());
+            return (await _copies.OpenAsync("base", BuildBaseModelAsync, new Fake(), sessions), sessions);
+        }
+
+        private static async Task BuildBaseModelAsync(LocalEngine engine)
+        {
             await engine.CreateModelAsync("CatalogBatch4", 1604);
             var table = await engine.CreateTableAsync("Sales", "human");
             await engine.CreateColumnAsync(table, "Sales Amount", "Decimal", "Sales Amount", "human");
             await engine.CreateColumnAsync(table, "Customer Name", "String", "Customer Name", "human");
             await engine.CreateMeasureAsync(table, "Total Sales", "SUM ( Sales[Sales Amount] )", "human");
-            return (engine, sessions);
         }
 
         private static RuleEvaluation Eval(SessionManager sessions, string id)
@@ -58,15 +64,35 @@ namespace Semanticus.Tests
                 Assert.Equal(0, Eval(importSessions, "DAC-QNA-DISABLED").Applicable); // no readable PBIP switch
             }
 
+            // Microsoft: the model setting Copilot needs to index values is on by default for Import AND Direct
+            // Lake models (copilot-prepare-data-ai-faq, semantic-model-best-practices), so only DirectQuery needs
+            // the nudge. The rule used to fire on Direct Lake too.
             var dlSessions = new SessionManager();
             using (var directLake = new LocalEngine(dlSessions, new Fake()))
             {
                 await directLake.CreateModelAsync("DirectLake", 1604);
                 await directLake.CreateDirectLakeTableAsync("Lake Sales", "sales", null, null, "human");
-                var unknown = Eval(dlSessions, "DAC-QNA-STORAGE");
-                Assert.Equal(0, unknown.Applicable); // context advisory, never a scoring pass
-                Assert.Single(unknown.Violations);
+                var dl = Eval(dlSessions, "DAC-QNA-STORAGE");
+                Assert.Equal(0, dl.Applicable);
+                Assert.Empty(dl.Violations);
                 Assert.Equal(0, Eval(dlSessions, "DAC-QNA-DISABLED").Applicable);
+            }
+
+            var (dq, dqSessions) = await BaseModelAsync();
+            using (dq)
+            {
+                await dqSessions.Current.MutateAsync("human", "mark partitions DirectQuery for the readiness fixture", m =>
+                {
+                    foreach (var p in m.AllPartitions) p.Mode = ModeType.DirectQuery;
+                });
+                var unknown = Eval(dqSessions, "DAC-QNA-STORAGE");
+                Assert.Equal(0, unknown.Applicable); // context advisory, never a scoring pass
+                var finding = Assert.Single(unknown.Violations);
+                // Copilot framing, and no fix-op hint: enable_qna seeds the linguistic schema, it never turns
+                // this Power BI setting on, so pointing at it sent the agent to the wrong tool.
+                Assert.DoesNotContain("enable_qna", finding.Message);
+                Assert.Contains("Copilot", finding.Message);
+                Assert.DoesNotContain("Q&A", finding.RuleTitle ?? "");
             }
 
             var dir = TempDir("qna-clean");

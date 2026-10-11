@@ -1,0 +1,2 @@
+Plan: tasks are paused by the person. Carry on with what they ask you directly.
+Add a Store geography hierarchy: you may finish it.

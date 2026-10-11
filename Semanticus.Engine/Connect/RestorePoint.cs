@@ -92,8 +92,7 @@ namespace Semanticus.Engine
             else File.Delete(path);
         }
 
-        public static string Root() => RootOverride
-            ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".semanticus", DirName);
+        public static string Root() => RootOverride ?? Path.Combine(SemanticusHome.Root(), DirName);
 
         // An endpoint is a URL and a database is a free-text name; neither is a safe path component. Hash the PAIR so
         // one target maps to exactly one directory, and retention can never prune across targets.

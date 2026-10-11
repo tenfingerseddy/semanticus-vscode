@@ -22,6 +22,7 @@ namespace Semanticus.Engine
         private const int ExplainChainDepthCap = 6;     // dependency BFS depth
         private const int ExplainChainNodeCap = 64;     // dependency BFS node budget
         private const int ExplainMemberCap = 5000;      // contributor members scanned (past it: refuse honestly)
+        private const int ExplainDriverCap = 4;         // measures a number is built from, worked out beside it
         private const int ExplainFilterProbeCap = 6;    // drop-one-filter probes (bounded live cost)
 
         public async Task<ExplainDossier> ExplainValueAsync(string measureRef, ExplainFilterContext context, bool decompose, string decomposeBy, int topK, string origin)
@@ -69,12 +70,11 @@ namespace Semanticus.Engine
                 ChainTruncated = snap.ChainTruncated,
                 Lineage = snap.Lineage,
                 Rls = ExplainLogic.RlsAdvisory(snap.Roles, snap.DepTables),
+                Format = snap.Format,
             };
 
             var exprForEval = Baseline.MeasureRefExpr(snap.Name);
-            var memberArgs = memberFilters
-                .Select(f => f.Empty ? DaxBench.CompileEmptyFilter(f.Column) : DaxBench.CompileMemberFilter(f.Column, f.Members))
-                .ToArray();
+            var memberArgs = await ExplainMemberArgsAsync(memberFilters);
             var cellQuery = BuildExplainQuery(exprForEval, groupBy, memberArgs, predicates);
 
             var live = _live;
@@ -93,8 +93,9 @@ namespace Semanticus.Engine
 
             if (evalError != null)
             {
-                d.Evidence = new ExplainEvidence { Available = false, Query = cellQuery, Note = "The value query failed: " + evalError };
-                d.Summary = $"The number could not be computed here ({FirstLine(evalError)}). If you just created or edited this measure, the live model may not have it yet: deploy or refresh first, then try again.";
+                var why = DaxErrorText.Sentence(evalError);
+                d.Evidence = new ExplainEvidence { Available = false, Query = cellQuery, Note = "The value query failed: " + why };
+                d.Summary = $"The number could not be computed here. {why}{(why.EndsWith('.') ? "" : ".")} If you just created or edited this measure, the live model may not have it yet: deploy or refresh first, then try again.";
                 await FinishExplainAsync(s, d, origin);
                 return d;
             }
@@ -125,7 +126,8 @@ namespace Semanticus.Engine
                     d.Contributors = await BuildContributorsAsync(live, snap, exprForEval, groupBy, memberArgs, predicates, decomposeBy, topK,
                         Convert.ToDouble(raw, System.Globalization.CultureInfo.InvariantCulture), filterTables);
                 else if (decompose)
-                    d.Contributors = new ExplainContributors { Additive = false, Note = "This value is not a number, so there is no sum-of-parts breakdown." };
+                    d.Contributors = new ExplainContributors { Additive = false, Note = "This value is not a number, so there is no breakdown." };
+                d.Drivers = await ExplainDriversAsync(live, snap, groupBy, memberArgs, predicates);
                 d.Summary = $"{Bracket(snap.Name)} is {DisplayNumber(raw)} for this selection."
                           + (d.Contributors != null && d.Contributors.Additive ? " The largest parts are listed below." : "");
             }
@@ -152,6 +154,8 @@ namespace Semanticus.Engine
             public ModelGraph Graph;
             public List<KeyValuePair<string, string>> Bodies;      // display name → DAX (blank-by-design scan)
             public List<string> DecomposeCandidates;               // ordered 'Table'[Column] refs
+            public string Format;                                  // the measure's own format string
+            public List<(string Name, string Format)> Drivers;     // the measures it uses directly
         }
 
         private ExplainSnapshot BuildExplainSnapshot(Model m, string measureRef, ISet<string> filterTables)
@@ -227,6 +231,10 @@ namespace Semanticus.Engine
                 Graph = graph,
                 Bodies = bodies,
                 DecomposeCandidates = FindDecomposeCandidates(m, graph, depTables, filterTables),
+                Format = string.IsNullOrWhiteSpace(target.FormatString) ? null : target.FormatString,
+                Drivers = chain.Where(n => n.Depth == 1 && n.Kind == "measure")
+                    .Select(n => ObjectRefs.Resolve(m, n.Ref) as Measure).Where(me => me != null)
+                    .Select(me => (me.Name, string.IsNullOrWhiteSpace(me.FormatString) ? null : me.FormatString)).Take(ExplainDriverCap).ToList(),
             };
         }
 
@@ -291,6 +299,30 @@ namespace Semanticus.Engine
                 if (pick != null) refs.Add(ColRef(tb.Name, pick.Name));
             }
             return refs;
+        }
+
+        /// <summary>The filter argument for each pinned member of the clicked cell. A column the model types as a date gets its members as dates, not text.</summary>
+        internal async Task<string[]> ExplainMemberArgsAsync(ExplainFilter[] filters)
+        {
+            var wanted = filters.Where(f => !f.Empty).Select(f => f.Column).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var dates = wanted.Length == 0 ? new HashSet<string>() : await _sessions.Require().ReadAsync(m => DateColumns(m, wanted));
+            return filters.Select(f => f.Empty ? DaxBench.CompileEmptyFilter(f.Column) : DaxBench.CompileMemberFilter(f.Column, f.Members, dates.Contains(f.Column))).ToArray();
+        }
+
+        private static HashSet<string> DateColumns(Model m, IEnumerable<string> columnRefs)
+        {
+            var found = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in columnRefs)
+            {
+                var table = ExplainLogic.TableOf(r);
+                var open = r.LastIndexOf('['); var close = r.LastIndexOf(']');
+                if (table == null || open < 0 || close <= open) continue;
+                var name = r.Substring(open + 1, close - open - 1).Replace("]]", "]");
+                var col = m.Tables.FirstOrDefault(t => string.Equals(t.Name, table, StringComparison.OrdinalIgnoreCase))?.Columns
+                    .FirstOrDefault(c => string.Equals(c.Name, name, StringComparison.OrdinalIgnoreCase));
+                if (col?.DataType == DataType.DateTime) found.Add(r);
+            }
+            return found;
         }
 
         private static string ColRef(string table, string column) => "'" + table.Replace("'", "''") + "'[" + column + "]";
@@ -514,6 +546,25 @@ namespace Semanticus.Engine
         private static string JoinPlain(List<string> items)
             => items.Count == 1 ? items[0] : string.Join(", ", items.Take(items.Count - 1)) + " or " + items[items.Count - 1];
 
+        // The measures this one is built from, each worked out in the same cell. A driver that will not compute or is blank is left out.
+        private async Task<ExplainDriver[]> ExplainDriversAsync(LiveConnection live, ExplainSnapshot snap, string[] groupBy, string[] memberArgs, string[] predicates)
+        {
+            var drivers = new List<ExplainDriver>();
+            foreach (var (name, format) in snap.Drivers ?? new List<(string, string)>())
+            {
+                try
+                {
+                    var rs = await live.ExecuteAsync(BuildExplainQuery(Baseline.MeasureRefExpr(name), groupBy, memberArgs, predicates), 3, 60);
+                    if (rs == null || !string.IsNullOrEmpty(rs.Error)) continue;
+                    var pick = PickCellValue(rs, groupBy.Length);
+                    if (pick.Error != null || pick.IsBlank || !IsNum(pick.Value)) continue;
+                    drivers.Add(new ExplainDriver { Name = name, Value = DaxBench.Fmt(pick.Value), Format = format });
+                }
+                catch { /* a driver is a help, never a failure */ }
+            }
+            return drivers.ToArray();
+        }
+
         // ---- contributors (the one new algorithm — bounded, deterministic, non-additive-guarded) ----
 
         private async Task<ExplainContributors> BuildContributorsAsync(LiveConnection live, ExplainSnapshot snap,
@@ -521,9 +572,9 @@ namespace Semanticus.Engine
         {
             var dim = !string.IsNullOrWhiteSpace(decomposeBy) ? decomposeBy.Trim() : snap.DecomposeCandidates.FirstOrDefault();
             if (dim == null)
-                return new ExplainContributors { Additive = false, Note = "No related dimension column was found to break this number down by. Pass decomposeBy (a 'Table'[Column] one relationship hop from the data) to choose one." };
+                return new ExplainContributors { Additive = false, Note = "No related column was found to break this number down by." };
             if (groupBy.Any(g => string.Equals(g, dim, StringComparison.OrdinalIgnoreCase)))
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "That column already pins this cell (it is one of the visual's axes), so there is nothing to split. Pick a different column (pass decomposeBy)." };
+                return new ExplainContributors { Dimension = dim, Additive = false, Note = "That column is already fixed for this number, so there is nothing to split. Pick a different column." };
 
             // The cell's OWN context (axis + filters — Finding A) with the decompose dim appended as the last
             // axis column, so each part is exactly "this cell, further split by one member".
@@ -532,9 +583,9 @@ namespace Semanticus.Engine
             var vIdx = axis.Length;           // the value column
             ResultSet rs;
             try { rs = await live.ExecuteAsync(BuildExplainQuery(exprForEval, axis, memberArgs, predicates), ExplainMemberCap + 1, 120); }
-            catch (Exception ex) { return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown query failed: " + FirstLine(ex.Message) }; }
+            catch (Exception ex) { return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown could not be worked out: " + FirstLine(ex.Message) }; }
             if (rs == null || !string.IsNullOrEmpty(rs.Error))
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown query failed: " + FirstLine(rs?.Error ?? "no result") + (string.IsNullOrWhiteSpace(decomposeBy) ? "" : " Check the decomposeBy column ref ('Table'[Column].)") };
+                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The breakdown could not be worked out: " + FirstLine(rs?.Error ?? "no result") };
 
             var members = new List<KeyValuePair<string, double>>();
             var allNumeric = true;
@@ -546,12 +597,11 @@ namespace Semanticus.Engine
                 members.Add(new KeyValuePair<string, double>(member, Convert.ToDouble(row[vIdx], System.Globalization.CultureInfo.InvariantCulture)));
             }
             if (!allNumeric)
-                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The values are not numbers here, so there is no sum-of-parts breakdown." };
+                return new ExplainContributors { Dimension = dim, Additive = false, Note = "The values are not numbers here, so there is no breakdown." };
 
             var truncated = rs.Truncated || members.Count > ExplainMemberCap;
             var c = ExplainLogic.BuildContributors(dim, cellValue, members, truncated, topK);
-            if (string.IsNullOrWhiteSpace(decomposeBy) && snap.DecomposeCandidates.Count > 1)
-                c.Note = AppendNote(c.Note, "Other columns to try: " + string.Join(", ", snap.DecomposeCandidates.Where(x => x != dim).Take(3)) + " (pass decomposeBy).");
+            if (!c.Additive && !truncated) c.Spread = ExplainLogic.Spread(members);
             return c;
         }
 

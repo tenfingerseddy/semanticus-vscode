@@ -1,0 +1,231 @@
+/* The start plan (startplan.tsx): option A of the spec-first start. One list on the Plan page in five sections, a
+   Needs you band above them, B's small link drawing at the top of Links and dates, C's source name beside the model
+   name. Tokens only: every size, gap and colour is a --sem-* name from tokens.css, who decided a line is a shape and a
+   word (never colour alone), and the page answers to ITS OWN width (container sp), not the window's, because the Studio
+   is a panel that is often narrower than its window. */
+
+.sp-page { container: sp / inline-size; display: flex; flex-direction: column; gap: var(--sem-gap); min-width: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.sp-muted { color: var(--sem-muted); }
+.sp-num { font-variant-numeric: tabular-nums; }
+.sp-trunc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* the head: what this model is, where it comes from, and the one thing to press */
+.sp-head { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sem-space-3) var(--sem-space-4); }
+.sp-head-l { flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: var(--sem-space-1); }
+.sp-head h2 { margin: 0; font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: var(--sem-weight-strong); }
+.sp-head h2 span { font-weight: var(--sem-weight); color: var(--sem-muted); }
+.sp-head p { margin: 0; max-width: 90ch; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-head-r { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack); }
+
+/* notices: Jev's progress, the Free line, an approval that moved, an error */
+.sp-note { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-3); padding: var(--sem-inset-pad); border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-note b { font-weight: var(--sem-weight-strong); }
+.sp-note-warn { box-shadow: inset 2px 0 0 var(--sem-warn); }
+.sp-note-bad { box-shadow: inset 2px 0 0 var(--sem-bad); }
+.sp-note-good { box-shadow: inset 2px 0 0 var(--sem-good); }
+.sp-note-busy { box-shadow: inset 2px 0 0 var(--sem-doer-engine); }
+.sp-note-need { box-shadow: inset 2px 0 0 var(--sem-doer-you); }
+.sp-note .sp-bar { flex: 1 1 120px; max-width: 240px; }
+.sp-bar { display: flex; height: var(--sem-space-1); overflow: hidden; background: var(--sem-rule); }
+.sp-bar i { display: block; height: 100%; background: var(--sem-doer-engine); }
+.sp-bar-wait i { width: 35%; animation: sp-bar-wait 1.4s ease-in-out infinite alternate; }
+@keyframes sp-bar-wait { from { transform: translateX(0); } to { transform: translateX(185%); } }
+@media (prefers-reduced-motion: reduce) { .sp-bar-wait i { animation: none; width: 100%; } }
+.sp-band { margin-bottom: var(--sem-stack); justify-content: space-between; }
+
+/* the strip: four cells, a number and a gauge each */
+.sp-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0 var(--sem-card-pad); }
+.sp-cell { display: flex; flex-direction: column; gap: var(--sem-space-1); min-width: 0; padding: var(--sem-space-3) var(--sem-card-pad); border-right: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-cell:first-child { padding-left: 0; }
+.sp-cell:last-child { padding-right: 0; border-right: 0; }
+.sp-cell-k { color: var(--sem-muted); }
+.sp-cell-v { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sem-space-2); color: var(--sem-fg); font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
+.sp-cell-v small { color: var(--sem-muted); font-size: var(--sem-text-meta); font-weight: var(--sem-weight); }
+.sp-gauge { display: flex; height: var(--sem-space-1); overflow: hidden; background: var(--sem-rule); }
+.sp-gauge i { display: block; height: 100%; }
+.sp-g-jev { background: var(--sem-fg); } .sp-g-rule { background: var(--sem-doer-engine); } .sp-g-assistant { background: var(--sem-doer-agent); }
+.sp-g-you { background: var(--sem-doer-you); } .sp-g-default { background: var(--sem-faint); } .sp-g-words { background: var(--sem-doer-agent); }
+.sp-keys { display: flex; flex-wrap: wrap; gap: 0 var(--sem-space-3); color: var(--sem-muted); }
+/* A grade that can still move is never drawn as the answer: no green, and its words sit right under it. */
+.sp-after.sp-provisional { color: var(--sem-muted); font-style: italic; }
+.sp-grade-note { color: var(--sem-warn); }
+@container sp (max-width: 1000px) {
+  .sp-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sp-cell:nth-child(2) { border-right: 0; padding-right: 0; }
+  .sp-cell:nth-child(3) { padding-left: 0; }
+  .sp-cell:nth-child(n+3) { border-top: var(--sem-hairline) solid var(--sem-rule); }
+}
+
+.sp-facts { display: flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-6); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.sp-facts b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+
+/* the Needs you band: the lines Jev was not sure about, and the grant, each with its own choices */
+.sp-needs { display: flex; flex-direction: column; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-tint-warn); }
+.sp-needs-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sem-space-1) var(--sem-space-3); min-height: var(--sem-bar-h); padding: var(--sem-space-2) var(--sem-card-pad); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.sp-needs-h b { color: var(--sem-fg); font-size: var(--sem-text-body); font-weight: var(--sem-weight-strong); }
+.sp-need { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: var(--sem-space-1) var(--sem-space-3); align-items: center; padding: var(--sem-space-2) var(--sem-card-pad); border-top: var(--sem-hairline) solid var(--sem-border); }
+.sp-need-t b { display: block; font-weight: var(--sem-weight-strong); }
+.sp-need-t span { display: block; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-need-opts { display: flex; flex-wrap: wrap; gap: var(--sem-space-2); justify-content: flex-end; }
+.sp-need-nomark { display: block; }
+.sp-lean { margin-left: var(--sem-space-1); color: var(--sem-muted); font-size: var(--sem-text-meta); font-weight: var(--sem-weight); }
+/* Narrow, the mark keeps its place: it sits on its own line above the question, so who asks (Jev or Semanticus) is never lost. */
+@container sp (max-width: 1000px) {
+  .sp-need { grid-template-columns: minmax(0, 1fr); }
+  .sp-need-nomark { display: none; }
+  .sp-need-opts { justify-content: flex-start; }
+}
+
+/* a mark: a shape, and the word. Jev is a star, a rule a square, you a circle, your assistant a diamond, a default a ring */
+.sp-who { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); white-space: nowrap; }
+.sp-ico { flex: none; width: 12px; height: 12px; }
+.sp-who-jev .sp-ico { color: var(--sem-fg); }
+.sp-who-rule .sp-ico { color: var(--sem-doer-engine); }
+.sp-who-you .sp-ico { color: var(--sem-doer-you); }
+.sp-who-assistant .sp-ico { color: var(--sem-doer-agent); }
+.sp-who-default .sp-ico { color: var(--sem-muted); }
+.sp-conf { color: var(--sem-muted); }
+
+/* the filters and the list */
+.sp-filterbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-4); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+.sp-filters { display: flex; flex-wrap: wrap; gap: 0 var(--sem-space-4); }
+.sp-filter { position: relative; display: inline-flex; align-items: center; gap: var(--sem-space-1); min-height: var(--sem-bar-h); padding: 0; border: 0; background: transparent; color: var(--sem-muted); font: inherit; white-space: nowrap; cursor: pointer; }
+.sp-filter b { color: var(--sem-muted); font-weight: var(--sem-weight); font-size: var(--sem-text-meta); }
+.sp-filter:hover { color: var(--sem-fg); }
+.sp-filter[aria-pressed="true"] { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+.sp-filter[aria-pressed="true"] b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+.sp-filter[aria-pressed="true"]::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; border-bottom: 2px solid var(--sem-fg); }
+body.vscode-high-contrast .sp-filter[aria-pressed="true"]::after, body.vscode-high-contrast-light .sp-filter[aria-pressed="true"]::after { border-bottom-color: var(--sem-strong-border); }
+.sp-filterbar .sp-hint { margin-left: auto; font-size: var(--sem-text-meta); color: var(--sem-muted); }
+
+.sp-list { box-sizing: border-box; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-surface); overflow: hidden; }
+.sp-sec-h { display: flex; align-items: center; gap: var(--sem-space-2); width: 100%; box-sizing: border-box; min-height: var(--sem-row-2); padding: 0 var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); text-align: left; cursor: pointer; }
+.sp-sec + .sp-sec .sp-sec-h { border-top: var(--sem-hairline) solid var(--sem-border); }
+.sp-sec-h:hover { background: var(--sem-hover); }
+.sp-car { flex: none; width: 12px; color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.sp-sec-h b { font-size: var(--sem-text-title); font-weight: var(--sem-weight-strong); white-space: nowrap; }
+.sp-sec-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.sp-sec-r { display: inline-flex; align-items: center; gap: var(--sem-space-3); margin-left: auto; color: var(--sem-muted); font-size: var(--sem-text-meta); white-space: nowrap; }
+.sp-need-n { display: inline-flex; align-items: center; gap: var(--sem-space-1); color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
+.sp-need-n::before { content: ""; width: var(--sem-space-1); height: var(--sem-space-1); border-radius: 50%; background: var(--sem-warn); }
+
+.sp-grp { display: flex; align-items: center; gap: var(--sem-space-2); width: 100%; box-sizing: border-box; min-height: var(--sem-row); padding: 0 var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font-size: var(--sem-text-meta); text-align: left; cursor: pointer; }
+.sp-grp:hover { background: var(--sem-hover); }
+.sp-grp b { font-weight: var(--sem-weight-strong); }
+.sp-grp-src { color: var(--sem-muted); font-family: var(--sem-font-num); }
+.sp-grp-r { margin-left: auto; color: var(--sem-muted); }
+
+.sp-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 184px 96px; gap: var(--sem-space-3); align-items: center; box-sizing: border-box; width: 100%; min-height: var(--sem-row-2); padding: var(--sem-space-1) 0 var(--sem-space-1) var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
+.sp-row:hover { background: var(--sem-hover); }
+.sp-row-need { box-shadow: inset 2px 0 0 var(--sem-warn); }
+/* A held line is shown and kept, but not built: an amber edge and a quiet title, never struck out (it comes back). */
+.sp-row-held { box-shadow: inset 2px 0 0 var(--sem-warn); }
+.sp-row-held .sp-row-t b { color: var(--sem-muted); }
+/* The opened row and its detail are ONE panel on the faint fill, so no box stands next to another box. */
+.sp-item-open { background: var(--sem-surface-2); }
+.sp-row-open { border-bottom-color: transparent; }
+.sp-row-t { min-width: 0; display: flex; flex-direction: column; }
+.sp-row-t b { font-weight: var(--sem-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-row-t b .sp-choice { font-weight: var(--sem-weight); color: var(--sem-muted); }
+.sp-row-t span { overflow-wrap: anywhere; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-row-t code { font-family: var(--sem-font-num); }
+.sp-row-t .sp-who2 { display: none; margin-right: var(--sem-space-2); }
+.sp-row-val { padding-right: var(--sem-card-pad); text-align: right; font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.sp-state { display: inline-flex; align-items: baseline; gap: var(--sem-space-2); white-space: nowrap; font-size: var(--sem-text-meta); }
+.sp-state::before { content: ""; flex: none; align-self: center; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--sem-fg); }
+.sp-state-good::before { border: 0; background: var(--sem-good); }
+.sp-state-need { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
+.sp-state-need::before { border: 0; background: var(--sem-warn); }
+.sp-state-warn { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
+.sp-state-warn::before { border: 0; background: var(--sem-warn); }
+.sp-state-quiet { color: var(--sem-muted); }
+.sp-state-quiet::before { border-color: var(--sem-faint); }
+.sp-changed { box-shadow: inset 2px 0 0 var(--sem-focus); }
+@container sp (max-width: 1000px) {
+  .sp-row { grid-template-columns: minmax(0, 1fr) auto; padding-right: var(--sem-space-3); }
+  .sp-row > .sp-who, .sp-row > .sp-row-val { display: none; }
+  .sp-row .sp-state { grid-column: 2; }
+  .sp-row-t .sp-who2 { display: inline-flex; margin-bottom: var(--sem-space-1); }
+  .sp-state { white-space: normal; max-width: 120px; }
+}
+
+.sp-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sem-space-3) var(--sem-space-6); padding: var(--sem-space-3) var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-detail dl { margin: 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--sem-space-2) var(--sem-space-3); align-content: start; }
+.sp-detail dt { color: var(--sem-muted); }
+.sp-detail dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sp-detail code { font-family: var(--sem-font-num); }
+.sp-detail-acts { display: flex; flex-wrap: wrap; gap: var(--sem-space-2); }
+@container sp (max-width: 1000px) { .sp-detail { grid-template-columns: minmax(0, 1fr); } .sp-detail dl { grid-template-columns: 96px minmax(0, 1fr); } }
+
+/* B's small drawing at the top of Links and dates */
+.sp-draw { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-6); padding: var(--sem-space-3) var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+.sp-draw svg { flex: 0 1 auto; max-width: 100%; height: auto; }
+.sp-draw-t { flex: 1 1 200px; min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.sp-draw-t b { display: block; color: var(--sem-fg); font-weight: var(--sem-weight-strong); font-size: var(--sem-text-body); }
+.sp-draw-key { display: flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-4); margin-top: var(--sem-space-2); }
+.sp-draw-key span { display: inline-flex; align-items: center; gap: var(--sem-space-2); }
+.sp-draw-key i { display: inline-block; width: 18px; border-top: 2px solid var(--sem-fg); }
+.sp-draw-key i.off { border-top: 2px dashed var(--sem-muted); }
+.sp-node-box { fill: var(--sem-surface-2); stroke: var(--sem-border); stroke-width: 1; }
+.sp-node-name { fill: var(--sem-fg); font-size: var(--sem-text-meta); font-weight: 600; }
+.sp-node-src { fill: var(--sem-muted); font-size: var(--sem-text-label); font-family: var(--sem-font-num); }
+.sp-edge { fill: none; stroke: var(--sem-fg); stroke-width: 1.5; }
+.sp-edge-off { stroke: var(--sem-muted); stroke-dasharray: 4 3; }
+.sp-arrow { fill: var(--sem-fg); }
+
+/* the foot: Approve and build, sticky at the bottom of the scroll */
+/* The Studio's scroller keeps --sem-space-4 of padding under its content (main.pb-4), and a sticky bar stops above it, which
+   let rows show underneath. The bar reaches down through that padding and carries it as its own. */
+.sp-foot { position: sticky; bottom: calc(var(--sem-space-4) * -1); z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-4); padding: var(--sem-space-2) 0 calc(var(--sem-space-2) + var(--sem-space-4)); border-top: var(--sem-hairline) solid var(--sem-border); background: var(--sem-bg); font-size: var(--sem-text-meta); }
+.sp-foot-t { flex: 1 1 240px; min-width: 0; color: var(--sem-muted); }
+.sp-foot-t b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+.sp-foot-r { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
+.sp-legend { display: flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-4); color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.sp-source { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--sem-space-1) var(--sem-space-4); color: var(--sem-muted); font-size: var(--sem-text-meta); }
+
+/* the start form */
+.sp-form { container: spf / inline-size; display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); column-gap: var(--sem-gap); row-gap: var(--sem-space-3); align-content: start; }
+.sp-form > * { grid-column: span 7; min-width: 0; }
+@container spf (max-width: 1000px) { .sp-form > * { grid-column: 1 / -1; } }
+.sp-form h2 { margin: 0; font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: var(--sem-weight-strong); }
+.sp-form p { margin: 0; color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.sp-field { display: flex; flex-direction: column; gap: var(--sem-space-1); font-size: var(--sem-text-meta); }
+.sp-field > span:first-child { color: var(--sem-muted); }
+.sp-field input { box-sizing: border-box; height: var(--sem-control-h); padding: 0 var(--sem-space-2); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-control); background: var(--sem-surface); color: var(--sem-fg); font: inherit; font-size: var(--sem-text-body); min-width: 0; }
+.sp-field-row { display: flex; gap: var(--sem-space-2); align-items: center; }
+.sp-field-row input { flex: 1 1 auto; }
+.sp-pick { display: flex; flex-direction: column; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-surface); }
+.sp-pick label { display: flex; align-items: center; gap: var(--sem-space-2); padding: var(--sem-space-2) var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); cursor: pointer; }
+.sp-pick label:last-child { border-bottom: 0; }
+.sp-pick label b { font-weight: var(--sem-weight-strong); }
+.sp-pick label span { color: var(--sem-muted); font-size: var(--sem-text-meta); }
+
+/* the person's edit boxes (a new name, the words on a line) and the folded column list under a table (join 7) */
+.sp-editor { display: flex; flex-direction: column; gap: var(--sem-space-2); margin-top: var(--sem-space-2); }
+.sp-editor input, .sp-editor textarea { box-sizing: border-box; width: 100%; padding: var(--sem-space-1) var(--sem-space-2); border: var(--sem-hairline) solid var(--sem-rule); border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); color: var(--sem-fg); font: inherit; }
+.sp-editor-acts { display: flex; gap: var(--sem-space-2); }
+.sp-cols { border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); }
+.sp-cols-h { display: flex; align-items: center; gap: var(--sem-space-2); min-height: var(--sem-row); padding: 0 var(--sem-card-pad) 0 calc(var(--sem-card-pad) + var(--sem-space-4)); color: var(--sem-muted); cursor: pointer; }
+.sp-cols-h:hover { background: var(--sem-hover); }
+.sp-cols-l { list-style: none; margin: 0; padding: 0 var(--sem-card-pad) var(--sem-space-2) calc(var(--sem-card-pad) + var(--sem-space-4)); display: flex; flex-direction: column; }
+.sp-col { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto; align-items: center; gap: var(--sem-space-2) var(--sem-space-3); min-height: var(--sem-row); border-top: var(--sem-hairline) solid var(--sem-rule); }
+.sp-col-out .sp-col-n { text-decoration: line-through; color: var(--sem-muted); }
+.sp-col-a { display: flex; flex-wrap: wrap; gap: var(--sem-space-1); justify-content: flex-end; min-width: 0; }
+.sp-col-a .sp-editor { min-width: 220px; }
+@container sp (max-width: 560px) { .sp-col { grid-template-columns: minmax(0, 1fr) auto; } .sp-col-t { grid-column: 1 / -1; } }
+
+/* A name the naming rules would flag (join 8, K1): said in the warm tone beside the row's sub-line and the column's tags, with Keep this name in the open row and the column list. */
+.sp-flag, .sp-col-flag { color: var(--sem-warn); }
+
+/* The words editor meeting newer words (UAT-J8-A-002): the draft stays open, the new words stand beside it, and the choice is the one every other editor offers. */
+.sp-words-moved { display: flex; flex-direction: column; gap: var(--sem-space-2); padding: var(--sem-space-1) var(--sem-space-3); box-shadow: inset 2px 0 0 var(--sem-warn); font-size: var(--sem-text-meta); }
+.sp-words-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sem-space-3); }
+.sp-words-pair > div { display: flex; flex-direction: column; gap: var(--sem-space-1); min-width: 0; }
+.sp-words-theirs { box-sizing: border-box; padding: var(--sem-space-1) var(--sem-space-2); box-shadow: inset 2px 0 0 var(--sem-rule); color: var(--sem-fg); white-space: pre-wrap; overflow-wrap: anywhere; min-height: 3.5em; }
+.sp-words-choose { display: flex; flex-wrap: wrap; gap: var(--sem-space-2); }
+.sp-words-said { color: var(--sem-warn); font-size: var(--sem-text-meta); }
+@container sp (max-width: 560px) { .sp-words-pair { grid-template-columns: minmax(0, 1fr); } }
+
+/* The per-table sample choice after the grant (UAT-J8-B, U2): the grant dialog's checkbox and words, kept on the table's own row. */
+.sp-sample { display: flex; align-items: center; gap: var(--sem-space-2); min-height: var(--sem-row); padding: 0 var(--sem-card-pad) 0 calc(var(--sem-card-pad) + var(--sem-space-4)); border-bottom: var(--sem-hairline) solid var(--sem-rule); color: var(--sem-muted); font-size: var(--sem-text-meta); cursor: pointer; }
+.sp-sample[data-allowed="no"] span { text-decoration: line-through; }

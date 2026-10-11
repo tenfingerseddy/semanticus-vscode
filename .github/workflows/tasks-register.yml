@@ -20,6 +20,11 @@ name: Task register
 #
 # One node invocation, no dependencies, no checkout of submodules: cheap enough that keying it narrowly is
 # about honesty rather than cost.
+#
+# Since 2026-09-25 these jobs run on the owner's self-hosted Linux runners in the private repository and bill
+# no GitHub minutes; `runs-on` falls back to `ubuntu-latest` in the public mirror and when the repository
+# variable CI_LINUX_RUNNER is `github-hosted`. ci.yml's WHERE THE LINUX JOBS RUN block has the reasoning, and
+# tools/ci-gate/gate-battery.mjs asserts both files keep that fallback and the isolation step.
 
 # SECOND REGISTER, SAME MACHINE. docs/findings.md is the finding queue: one row per review finding, a closed
 # three-state verdict set, and a bidirectional link to TASKS.md for anything scheduled. It exists because
@@ -79,9 +84,10 @@ jobs:
   duplicate-task-ids:
     name: Every task id is defined exactly once
     if: github.event.repository.private == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -110,11 +116,12 @@ jobs:
   fixed-findings-name-real-commits:
     name: Every FIXED finding names a commit that touched what it claims
     if: github.event.repository.private == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -126,9 +133,10 @@ jobs:
   codex-findings-are-rowed:
     name: Every Codex finding has a row
     if: github.event.repository.private == true
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/self-hosted-isolate
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

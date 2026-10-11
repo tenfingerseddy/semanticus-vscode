@@ -61,10 +61,20 @@ namespace Semanticus.Engine.Lineage
     {
         public string Path { get; set; }
         public string Name { get; set; }
+        /// <summary>The stable choice id of the report this hit came from, so a caller can join it back to the
+        /// row in <see cref="ImpactCheckedScope.Reports"/> it belongs to. A display name is NOT an identity:
+        /// two chosen reports in different workspaces can share one, and joining by name then hands one report's
+        /// hit to the other. Null only when the reading came from a bare path analysis with no scope behind it.</summary>
+        public string ChoiceId { get; set; }
         public int Visuals { get; set; }
         public string[] UsedRefs { get; set; } = Array.Empty<string>();
         /// <summary>The pages and visuals the field appears on. Restored after the first build dropped them.</summary>
         public ImpactVisualHit[] Details { get; set; } = Array.Empty<ImpactVisualHit>();
+        /// <summary>How many matching visuals are counted in <see cref="Visuals"/> but NOT listed in
+        /// <see cref="Details"/>. The detail list is capped, so a very busy report cannot fill a whole answer;
+        /// the cap used to be silent, and a surface paging through the details then stopped at the cap while
+        /// saying nothing about the rest. Zero whenever every match is listed.</summary>
+        public int DetailsOmitted { get; set; }
     }
 
     public sealed class ImpactReplayCheck
@@ -114,9 +124,12 @@ namespace Semanticus.Engine.Lineage
     internal static class ImpactAssessmentBuilder
     {
         private const int CheckCap = 100;
+        /// <summary>How many matching visuals one report may list. Anything past it is counted in
+        /// ImpactReportHit.DetailsOmitted rather than dropped without a word.</summary>
+        private const int DetailCap = 200;
 
         public static ImpactAssessmentResult Build(Model model, ImpactAssessmentRequest request,
-            ReportAnalysisResult reports, TestSuiteInfo tests, ReportScopeResult scope, bool savedChecksArePro = false)
+            ReportAnalysisResult reports, TestSuiteInfo tests, ReportScopeResult scope)
         {
             if (model == null) throw new ArgumentNullException(nameof(model));
             request ??= new ImpactAssessmentRequest();
@@ -131,7 +144,7 @@ namespace Semanticus.Engine.Lineage
             var impact = LineageGraph.Impact(model, objectRef);
             var affected = new HashSet<string>(impact.Impacted.Select(x => x.Ref), StringComparer.OrdinalIgnoreCase) { impact.Root };
             var reportHits = BuildReportHits(reports, affected, impact.Root);
-            var unknowns = BuildUnknowns(intent, scopeName, reports, tests, scope, savedChecksArePro);
+            var unknowns = BuildUnknowns(intent, scopeName, reports, tests, scope);
             var checks = BuildChecks(affected, tests);
             var relevantSavedTests = checks.Count(x => x.Kind == "saved-test");
             var knownReplay = checks.Count(x => x.Kind != "ambient-suite");
@@ -157,14 +170,14 @@ namespace Semanticus.Engine.Lineage
                 VisualsImpacted = reportHits.Sum(x => x.Visuals),
                 ReplayChecks = checks.Take(CheckCap).ToArray(),
                 ReplayChecksOmitted = Math.Max(0, checks.Count - CheckCap),
-                Coverage = BuildCoverage(scopeName, reports, tests, relevantSavedTests, savedChecksArePro),
+                Coverage = BuildCoverage(scopeName, reports, tests, relevantSavedTests),
                 Unknowns = unknowns.ToArray(),
                 Summary = Summary(intent, impact),
                 ReportSummary = scopeName == "model" ? null : ReportSummary(impact, reportHits, scope),
                 Checked = new ImpactCheckedScope
                 {
                     Model = modelName,
-                    Reports = scopeName == "model" ? Array.Empty<ReportScopeReport>() : (scope?.Reports ?? Array.Empty<ReportScopeReport>()),
+                    Reports = scopeName == "model" ? Array.Empty<ReportScopeReport>() : CountedFromThisReading(scope?.Reports, reports),
                     ReportsChecked = scopeName == "model" ? 0 : (scope?.Checked ?? 0),
                     ReportsListed = scopeName == "model" ? 0 : (scope?.Listed ?? 0),
                     CheckedWhenUtc = scopeName == "model" ? null : scope?.CheckedWhenUtc,
@@ -172,6 +185,27 @@ namespace Semanticus.Engine.Lineage
                 },
                 SuggestedNextAction = NextAction(request, impact, checks, unknowns),
             };
+        }
+
+        /// <summary>The scope's report rows with their counts taken from the reading that built THIS answer's impact list.
+        /// A folder handed in on the call joins the scope as a row built before anything was read, so its fields and
+        /// visuals read zero beside an impact list that named the visuals it touches (UAT N3: a report using 13 fields
+        /// and 10 visuals read as unused). The usage is joined to its row by the report's choice id, never by name.
+        /// A row with no reading behind it keeps what it had: it was not read, and zero is the honest count.</summary>
+        internal static ReportScopeReport[] CountedFromThisReading(ReportScopeReport[] rows, ReportAnalysisResult reports)
+        {
+            rows ??= Array.Empty<ReportScopeReport>();
+            var usageById = (reports?.Reports ?? Array.Empty<ReportUsage>())
+                .Where(u => u.Read && !string.IsNullOrEmpty(u.ChoiceId))
+                .GroupBy(u => u.ChoiceId, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            return rows.Select(r =>
+            {
+                if (r?.Id == null || !usageById.TryGetValue(r.Id, out var u)) return r;
+                var copy = (ReportScopeReport)r.MemberwiseCloneForCounts();
+                copy.FieldsUsed = u.FieldCount;
+                copy.Visuals = u.Visuals?.Length ?? 0;
+                return copy;
+            }).ToArray();
         }
 
         internal static string NormalizeIntent(string value)
@@ -214,8 +248,10 @@ namespace Semanticus.Engine.Lineage
                     .Where(v => (v.UsedRefs ?? Array.Empty<string>()).Any(affected.Contains)).ToArray();
                 hits.Add(new ImpactReportHit
                 {
-                    Path = report.Path, Name = report.Name, Visuals = touching.Length, UsedRefs = used,
-                    Details = touching.Take(200).Select(v =>
+                    Path = report.Path, Name = report.Name, ChoiceId = report.ChoiceId,
+                    Visuals = touching.Length, UsedRefs = used,
+                    DetailsOmitted = Math.Max(0, touching.Length - DetailCap),
+                    Details = touching.Take(DetailCap).Select(v =>
                     {
                         var shown = (v.UsedRefs ?? Array.Empty<string>()).Where(affected.Contains).ToArray();
                         return new ImpactVisualHit
@@ -232,7 +268,11 @@ namespace Semanticus.Engine.Lineage
                     }).ToArray(),
                 });
             }
-            return hits.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase).ToArray();
+            // Two hits can share a name AND a path, so the choice id is the last tiebreak: without it the order of
+            // same-named reports is whatever the reading happened to produce.
+            return hits.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.Path, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(x => x.ChoiceId, StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         // The automatic suite checks structure. It does NOT prove security, and the old title said it did.
@@ -261,11 +301,9 @@ namespace Semanticus.Engine.Lineage
         // Every gap, as a sentence a person can act on. The report half comes from the model's own report scope,
         // so the page and the assistant read the same account of what was and was not checked.
         private static List<string> BuildUnknowns(string intent, string scopeName, ReportAnalysisResult reports,
-            TestSuiteInfo tests, ReportScopeResult scope, bool savedChecksArePro)
+            TestSuiteInfo tests, ReportScopeResult scope)
         {
             var unknowns = new List<string>();
-            if (savedChecksArePro)
-                unknowns.Add("Saved checks were not looked at, because Tests is a Semanticus Pro feature. Any check bound to something on this list is missing from it.");
             if (scopeName == "modelAndReports")
             {
                 if (scope != null && scope.Gaps.Length > 0) unknowns.AddRange(scope.Gaps);
@@ -283,7 +321,7 @@ namespace Semanticus.Engine.Lineage
         }
 
         private static ImpactCoverageArea[] BuildCoverage(string scopeName, ReportAnalysisResult reports,
-            TestSuiteInfo tests, int relevantSavedTests, bool savedChecksArePro)
+            TestSuiteInfo tests, int relevantSavedTests)
         {
             var coverage = new List<ImpactCoverageArea>
             {
@@ -306,11 +344,9 @@ namespace Semanticus.Engine.Lineage
             coverage.Add(new ImpactCoverageArea
             {
                 Area = "saved-tests",
-                Status = savedChecksArePro ? "unknown" : (tests?.UnreadableLines ?? 0) == 0 ? "planned" : "incomplete",
+                Status = (tests?.UnreadableLines ?? 0) == 0 ? "planned" : "incomplete",
                 Checked = relevantSavedTests, Unknown = tests?.UnreadableLines ?? 0,
-                Detail = savedChecksArePro
-                    ? "Saved checks were not read: Tests is a Semanticus Pro feature."
-                    : "Saved checks are picked by the thing they are bound to. Nothing here runs them.",
+                Detail = "Saved checks are picked by the thing they are bound to. Nothing here runs them.",
             });
             return coverage.ToArray();
         }

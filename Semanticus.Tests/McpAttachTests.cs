@@ -23,7 +23,7 @@ namespace Semanticus.Tests
             if (OperatingSystem.IsWindows())
                 return;   // Windows named pipes are the short name; the missing-socket failure is Unix.
 
-            var pipeName = "semanticus-attach-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+            var pipeName = TestPipe.Mint("semanticus-attach-");
             var advertisedPath = EngineBroker.PipePathFor(pipeName);
             var sessions = new SessionManager();
             var owner = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
@@ -39,7 +39,7 @@ namespace Semanticus.Tests
                 first = await RemoteEngine.ConnectAsync(pipeName, timeoutMs: 2000);
                 await first.CreateModelAsync("AttachProbe", 1604);
                 // The advertised short name is missing (the UAT observation). The stamped path is the live socket.
-                var missingName = "semanticus-missing-" + Guid.NewGuid().ToString("N").Substring(0, 8);
+                var missingName = TestPipe.Mint("semanticus-missing-");
                 Assert.False(File.Exists(EngineBroker.PipePathFor(missingName)));
                 remote = await RemoteEngine.ConnectAsync(missingName, timeoutMs: 2000, pipePath: advertisedPath);
                 var info = await remote.SessionInfoAsync();
@@ -108,15 +108,10 @@ namespace Semanticus.Tests
         // SEPARATE process. This runs the shipped door end to end on the platform that broke: a real `serve` owner
         // and a real `mcp` agent, two processes, two temp directories (the UAT shape). Before the name fix the
         // agent printed "could not start for this folder within 5s" and never joined.
-        [Fact]
+        [EngineApphostFact]
         public async Task Agent_door_process_joins_a_live_owner_process()
         {
-            var apphost = FindEngineApphost();
-            if (apphost == null)
-            {
-                Console.WriteLine("skipped: no built engine apphost beside the tests (build Semanticus.Engine first)");
-                return;
-            }
+            var apphost = EngineApphost.Find();   // present: EngineApphostFact skips the test otherwise
 
             var ws = Path.Combine(Path.GetTempPath(), "smx-door-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             var agentTmp = Path.Combine(Path.GetTempPath(), "smx-door-tmp-" + Guid.NewGuid().ToString("N").Substring(0, 8));
@@ -152,19 +147,6 @@ namespace Semanticus.Tests
                 try { Directory.Delete(ws, true); } catch { }
                 try { Directory.Delete(agentTmp, true); } catch { }
             }
-        }
-
-        /// <summary>The shipped apphost beside the test binaries: &lt;repo&gt;/Semanticus.Engine/bin/&lt;config&gt;/net8.0/.
-        /// Null when nothing is built there, so the test reports a skip a reader can act on.</summary>
-        private static string FindEngineApphost()
-        {
-            var here = new DirectoryInfo(AppContext.BaseDirectory);      // .../Semanticus.Tests/bin/<config>/net8.0/
-            var config = here.Parent?.Name;
-            var root = here.Parent?.Parent?.Parent?.Parent?.FullName;
-            if (config == null || root == null) return null;
-            var name = OperatingSystem.IsWindows() ? "Semanticus.Engine.exe" : "Semanticus.Engine";
-            var path = Path.Combine(root, "Semanticus.Engine", "bin", config, "net8.0", name);
-            return File.Exists(path) ? path : null;
         }
 
         private static Process StartEngine(string apphost, string[] args, string tmpDir, Action<string> onErr = null)

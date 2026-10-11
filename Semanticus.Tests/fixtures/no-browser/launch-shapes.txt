@@ -1,0 +1,121 @@
+# Every line below (except comments and blank lines) is one way a test, smoke or tool could open a web page or reach the
+# person's desktop. NoBrowserSignInGuardTests.The_source_scan_catches_every_known_launch_shape requires the source scan to
+# catch each one. The first 18 are the verifier's round-4 probes (m11/state-home, 28 Sep): the scan saw 3 of them. Add a
+# line whenever a new shape is found. This file is data, never compiled or run.
+System.Diagnostics.Process.Start("xdg-open", url);
+System.Diagnostics.Process.Start("chromium", url);
+System.Diagnostics.Process.Start("/usr/lib/chromium/chromium", url);
+System.Diagnostics.Process.Start("gio", "open " + url);
+System.Diagnostics.Process.Start("omarchy-launch-browser", url);
+System.Diagnostics.Process.Start("firefox", url);
+var c = new Azure.Identity.InteractiveBrowserCredential(); c.GetToken(new Azure.Core.TokenRequestContext(new[] { "x" }));
+System.Diagnostics.Process.Start(System.Environment.GetEnvironmentVariable("BROWSER"), url);
+typeof(Semanticus.Engine.InteractiveSignIn).GetField("_allowed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static).SetValue(null, true);
+System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+System.Diagnostics.Process.Start("systemd-run", "--user " + url);
+System.Diagnostics.Process.Start("gtk-launch", "chromium.desktop " + url);
+spawn('xdg-open', [url]);
+spawn('chromium', [url]);
+const { default: openUrl } = await import('open'); await openUrl(url);
+spawn(process.env.BROWSER, [url]);
+spawn('gio', ['open', url]);
+spawn('omarchy-launch-browser', [url]);
+# More shapes of the same families.
+var psi = new ProcessStartInfo { FileName = "google-chrome", Arguments = url };
+Process.Start("/usr/bin/firefox", url);
+Process.Start("uwsm-app", "-- chromium " + url);
+Process.Start("hyprctl", "dispatch exec chromium");
+Process.Start("gdbus", "call --session --dest org.freedesktop.portal.Desktop");
+Process.Start("busctl", "--user call org.freedesktop.portal.Desktop");
+Process.Start("dbus-send", "--session --dest=org.freedesktop.portal.Desktop");
+Process.Start("code", path);
+execFileSync('omarchy-launch-webapp', [url]);
+import open from 'open';
+const open = require('open');
+spawnSync(process.env['BROWSER'], [url]);
+exec(`chromium ${url}`);
+subprocess.run(["firefox", url])
+webbrowser.open(url)
+Start-Process "https://example.invalid/"
+chromium "$url" &
+xdg-open "$url"
+"$BROWSER" "$url"
+var cred = new InteractiveBrowserCredential(options);
+typeof(InteractiveSignIn).GetProperty(nameof(InteractiveSignIn.Allowed));
+# Targeted round (28 Sep): the verifier's scan missed 50 of 53 variants of the families above. These are those shapes
+# and their neighbours: wrapped commands, a shell inside a string, PowerShell, Python's webbrowser module, the
+# environment read another way, headed browser automation, the GitHub CLI's web pages, MSAL's own interactive sign-in,
+# and the person's Azure sign-in with no browser (the Azure CLI, the Azure Developer CLI, Azure PowerShell and the
+# credentials that reach them).
+timeout 5 chromium "$url"
+env firefox "$url"
+env -i HOME="$HOME" firefox "$url"
+command chromium "$url"
+nice -n 5 chromium "$url"
+code "$path"
+code --new-window "$path"
+open "$url"
+BROWSER=firefox npm test
+& code $path
+& "chromium" $url
+Start-Process $url
+Start-Process chromium $url
+Start-Process -FilePath "firefox" -ArgumentList $url
+Invoke-Item $url
+ii $url
+[System.Diagnostics.Process]::Start("chromium", $url)
+[System.Diagnostics.Process]::Start($url)
+cmd.exe /c start "" "$url"
+explorer.exe $url
+rundll32 url.dll,FileProtocolHandler $url
+System.Diagnostics.Process.Start("/bin/sh", "-c 'chromium " + url + "'");
+Process.Start("bash", "-c \"firefox " + url + "\"");
+var psi = new ProcessStartInfo("/usr/bin/env", "chromium " + url);
+Process.Start(Path.Combine("/usr", "bin", "chromium"), url);
+var exe = Path.Combine(bin, "firefox");
+Process.Start("cmd", "/c start " + url);
+var r = await app.AcquireTokenInteractive(scopes).ExecuteAsync();
+builder.WithSystemWebViewOptions(new SystemWebViewOptions());
+var b = Environment.GetEnvironmentVariables()["BROWSER"];
+spawn('sh', ['-c', `chromium ${url}`]);
+execSync('timeout 5 firefox ' + url);
+import('node:child_process').then((cp) => cp.exec('chromium ' + url));
+spawn('/usr/bin/env', ['firefox', url]);
+const { BROWSER } = process.env;
+const b = env.BROWSER;
+spawn(env['BROWSER'], [url]);
+await chromium.launch({ headless: false });
+const browser = await puppeteer.launch({ headless: false });
+const ctx = await playwright.chromium.launchPersistentContext(dir, { headless: false });
+npx playwright test --headed
+exec('gh browse');
+execFile('gh', ['browse']);
+exec('gh pr view --web');
+gh browse
+import webbrowser as wb
+from webbrowser import open as open_page
+webbrowser.get().open(url)
+python3 -m webbrowser "$url"
+subprocess.Popen(["/usr/bin/env", "chromium", url])
+os.system("firefox " + url)
+browser = p.chromium.launch(headless=False)
+az login --use-device-code
+az account get-access-token --resource "$resource"
+azd auth login
+spawn('az', ['login']);
+execSync('az account get-access-token --resource ' + resource);
+subprocess.run(["az", "account", "show"])
+subprocess.call("az login", shell=True)
+Process.Start("az", "login");
+var psi = new ProcessStartInfo("azd", "auth login");
+Connect-AzAccount
+$token = Get-AzAccessToken -ResourceUrl $resource
+var c = new DefaultAzureCredential();
+var c = new Azure.Identity.ManagedIdentityCredential();
+var c = new AzureCliCredential();
+var c = new AzurePowerShellCredential();
+var c = new AzureDeveloperCliCredential();
+var c = new VisualStudioCodeCredential();
+var c = new SharedTokenCacheCredential();
+const credential = new DefaultAzureCredential();
+credential = DefaultAzureCredential()

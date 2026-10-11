@@ -93,6 +93,24 @@ Distributed under the Microsoft Software License Terms that accompany the
 official NuGet packages; redistributed here as permitted by those terms.
 https://learn.microsoft.com/analysis-services/client-libraries
 --------------------------------------------------------------------------------
+Instrument Sans (font)
+Copyright 2022 The Instrument Sans Project Authors
+Licensed under the SIL Open Font License 1.1 (OFL-1.1).
+https://github.com/Instrument/instrument-sans
+
+The exported documentation embeds the Latin subset of this font, unchanged, so
+the file reads the same with no network. The full licence text is in
+THIRD-PARTY-NOTICES.md, which sits beside this file in this package.
+--------------------------------------------------------------------------------
+JetBrains Mono (font)
+Copyright 2020 The JetBrains Mono Project Authors
+Licensed under the SIL Open Font License 1.1 (OFL-1.1).
+https://github.com/JetBrains/JetBrainsMono
+
+The exported documentation embeds the Latin subset of the Regular weight,
+unchanged, for numbers and code. The full licence text is in
+THIRD-PARTY-NOTICES.md, which sits beside this file in this package.
+--------------------------------------------------------------------------------
 
 Additional open-source dependencies are used under their respective licenses
 as declared in the NuGet and npm package manifests of this repository.

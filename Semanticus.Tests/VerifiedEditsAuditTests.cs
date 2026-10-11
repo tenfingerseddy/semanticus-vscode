@@ -64,6 +64,7 @@ namespace Semanticus.Tests
         //    undoable write would not), and the audit write is not itself an undo step.
         // ============================================================================================================
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Record_survives_undo_change()
         {
@@ -99,6 +100,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Record_write_is_not_an_undo_step()
         {
@@ -123,6 +125,7 @@ namespace Semanticus.Tests
         // B. Chain mechanics — links, sequence, tamper detection, loud recovery from a corrupt blob.
         // ============================================================================================================
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Chain_links_and_seq()
         {
@@ -145,6 +148,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Tamper_is_detected()
         {
@@ -208,6 +212,7 @@ namespace Semanticus.Tests
         // C. Honest-recording negatives — the trail must NEVER contain manufactured evidence.
         // ============================================================================================================
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mode_off_records_nothing()
         {
@@ -220,6 +225,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Empty_expression_records_nothing()
         {
@@ -266,6 +272,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Override_ships_unverified_item_and_is_recorded()
         {
@@ -307,6 +314,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task No_override_skips_as_before()
         {
@@ -341,6 +349,7 @@ namespace Semanticus.Tests
         //    (only the readiness gate). Both use localhost:59999 — the connection is refused AFTER the checkpoint.
         // ============================================================================================================
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Red_gate_blocks_commit_without_reason()
         {
@@ -356,6 +365,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Red_gate_override_is_recorded_before_the_push()
         {
@@ -384,6 +394,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Green_gate_needs_no_reason()
         {
@@ -482,6 +493,7 @@ namespace Semanticus.Tests
         // --- G1. The audit-dirty bit — a verified record leaves the session unsaved even when undo returns the model
         //     to its checkpoint. Without this bit, save/git read CLEAN and silently drop the (non-undoable) record. ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Audit_record_marks_session_dirty_even_after_undo()
         {
@@ -503,6 +515,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Audit_record_round_trips_through_save()
         {
@@ -519,7 +532,7 @@ namespace Semanticus.Tests
                     await engine.UndoAsync("human");                // record survives undo, session is audit-dirty
                     hash = (await engine.ListVerifiedEditsAsync()).Records.Single().Hash;
 
-                    await engine.SaveAsync(path, "bim");            // a checkpoint-resetting save persists the trail...
+                    await engine.SaveAsync(path, "bim", false, "human");            // a checkpoint-resetting save persists the trail...
                     Assert.False((await engine.SessionInfoAsync()).HasUnsavedChanges);   // ...and clears the audit-dirty bit
                 }
 
@@ -541,6 +554,7 @@ namespace Semanticus.Tests
         // --- G2. Tail truncation is detected by the head anchor — link-checking alone can't see it (a prefix of a
         //     valid chain is itself a valid chain), so Load cross-checks the "<count>|<lastHash>" head. ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Tail_truncation_is_detected()
         {
@@ -599,6 +613,7 @@ namespace Semanticus.Tests
         // --- G3. The seq-0 sentinel collision is killed — FirstBroken flags by 1-based POSITION (not the stored Seq),
         //     so a tampered record can't set its own Seq to 0 to collide with the "no break" sentinel. ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Seq_zero_tamper_flags_the_position_not_zero()
         {
@@ -630,6 +645,7 @@ namespace Semanticus.Tests
         // --- G4. Field-smear is detected — the hash basis length-prefixes every field, so content can't shift across a
         //     field boundary undetectably (a bare-\n join let "Summary\nX"|"Y" re-split as "Summary"|"X\nY" identically). ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Field_smear_across_the_boundary_is_detected()
         {
@@ -663,6 +679,7 @@ namespace Semanticus.Tests
         // --- G5. Non-mutating records carry Revision 0 (deploy outcomes aren't model mutations); a real Verified-Mode
         //     set_dax record carries the actual mutation revision (> 0). ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Deploy_override_record_carries_revision_zero()
         {
@@ -697,6 +714,7 @@ namespace Semanticus.Tests
         // --- G6. A multi-line override reason cannot forge the markdown export — every caller-supplied line is
         //     flattened, so an embedded "## N." can't inject a fabricated record heading into the auditor report. ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Multiline_override_reason_cannot_forge_the_markdown_export()
         {
@@ -718,6 +736,7 @@ namespace Semanticus.Tests
         // --- G7. Segmentation — the active chain caps at 500 records; on overflow it archives the full segment whole
         //     and opens a fresh chain whose FIRST record is a chain-archived marker that vouches for the frozen one. ---
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Chain_archives_a_full_segment_and_opens_a_fresh_one()
         {
@@ -1003,6 +1022,7 @@ namespace Semanticus.Tests
         }
 
         // H7 — tracked + clean ⇒ the record anchors to the EXACT HEAD the model sat on.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Base_commit_stamped_for_a_tracked_and_clean_model()
         {
@@ -1032,6 +1052,7 @@ namespace Semanticus.Tests
 
         // H8 — a dirty working tree (the tracked model file differs from HEAD) ⇒ no anchor. HEAD does not contain
         // this on-disk state, so stamping it would lie.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Base_commit_empty_for_a_dirty_working_tree()
         {
@@ -1058,6 +1079,7 @@ namespace Semanticus.Tests
         }
 
         // H9 — an untracked model (repo inited, never added/committed) ⇒ no anchor (also an unborn HEAD).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Base_commit_empty_for_an_untracked_model()
         {

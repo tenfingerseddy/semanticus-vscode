@@ -1,0 +1,1378 @@
+{
+ "column.category|Customer|City": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "String",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 0,
+    "measured": {
+     "blankShare": 0.012,
+     "cardinality": 40,
+     "distinct": 40,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0.85,
+      "country": 0,
+      "postcode": 0,
+      "region": 0.025
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 250,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "City",
+   "table_columns": [
+    "CustomerKey",
+    "Customer Name"
+   ],
+   "table_name": "Customer"
+  }
+ },
+ "column.category|Customer|Customer Name": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "String",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 0,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 250,
+     "distinct": 250,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": true,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "Int64",
+      "name": "CustomerKey"
+     }
+    ],
+    "relationship_role": "none",
+    "table_rows": 250,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Customer Name",
+   "table_columns": [
+    "CustomerKey",
+    "City"
+   ],
+   "table_name": "Customer"
+  }
+ },
+ "column.category|Customer|CustomerKey": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": true,
+    "measure_count_in_the_same_table": 0,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 250,
+     "distinct": 250,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": true,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "String",
+      "name": "Customer Name"
+     }
+    ],
+    "relationship_role": "one",
+    "table_rows": 250,
+    "this_column_is_used_in_a_relationship": true,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "CustomerKey",
+   "table_columns": [
+    "Customer Name",
+    "City"
+   ],
+   "table_name": "Customer"
+  }
+ },
+ "column.category|Sales|Amount": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Double",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0.002,
+     "cardinality": 5123,
+     "distinct": 5123,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 1
+   },
+   "column_name": "Amount",
+   "table_columns": [
+    "CustomerKey",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|CustomerKey": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 250,
+     "distinct": 250,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "many",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": true,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "CustomerKey",
+   "table_columns": [
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|Month Number": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 12,
+     "distinct": 12,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": true,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Month Number",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|Order Line": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 9,
+     "distinct": 9,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Order Line",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|Region": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "String",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 4,
+     "distinct": 4,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "Int64",
+      "name": "Region Order"
+     }
+    ],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Region",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|Region Order": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 4,
+     "distinct": 4,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": true,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "String",
+      "name": "Region"
+     }
+    ],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": true,
+    "used_by_measures": 0
+   },
+   "column_name": "Region Order",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.category|Sales|Unit Price": {
+  "questions": {
+   "data_category": {
+    "criteria": {
+     "Address": "the column holds street addresses",
+     "Barcode": "the column holds barcode values",
+     "City": "the column holds city or town names",
+     "Continent": "the column holds continent names",
+     "Country": "the column holds country or region names",
+     "County": "the column holds county names",
+     "ImageUrl": "the column holds web addresses that point at image files",
+     "Latitude": "the column holds latitude coordinates",
+     "Longitude": "the column holds longitude coordinates",
+     "Place": "the column holds place names that are not one of the kinds above",
+     "PostalCode": "the column holds postal codes or zip codes",
+     "StateOrProvince": "the column holds state, province or region-within-country names",
+     "WebUrl": "the column holds web addresses that point at web pages",
+     "none": "the values are none of the kinds listed below"
+    },
+    "instructions": "What kind of real-world thing do the values in this column hold? Answer none unless the values clearly are that kind of thing.",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Double",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 180,
+     "distinct": 180,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 1
+   },
+   "column_name": "Unit Price",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Customer|CustomerKey": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": true,
+    "measure_count_in_the_same_table": 0,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 250,
+     "distinct": 250,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": true,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "String",
+      "name": "Customer Name"
+     }
+    ],
+    "relationship_role": "one",
+    "table_rows": 250,
+    "this_column_is_used_in_a_relationship": true,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "CustomerKey",
+   "table_columns": [
+    "Customer Name",
+    "City"
+   ],
+   "table_name": "Customer"
+  }
+ },
+ "column.summarize|Sales|Amount": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Double",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0.002,
+     "cardinality": 5123,
+     "distinct": 5123,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 1
+   },
+   "column_name": "Amount",
+   "table_columns": [
+    "CustomerKey",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Sales|CustomerKey": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 250,
+     "distinct": 250,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "many",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": true,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "CustomerKey",
+   "table_columns": [
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Sales|Month Number": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 12,
+     "distinct": 12,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": true,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Month Number",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Sales|Order Line": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 9,
+     "distinct": 9,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 0
+   },
+   "column_name": "Order Line",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Sales|Region Order": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Int64",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 4,
+     "distinct": 4,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": true,
+     "looksLikeQuarter": true,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": true
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [
+     {
+      "data_type": "String",
+      "name": "Region"
+     }
+    ],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": true,
+    "used_by_measures": 0
+   },
+   "column_name": "Region Order",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Unit Price",
+    "Month Number",
+    "Order Line",
+    "Region"
+   ],
+   "table_name": "Sales"
+  }
+ },
+ "column.summarize|Sales|Unit Price": {
+  "questions": {
+   "summarize_by": {
+    "criteria": {
+     "average": "rates, ratios, percentages, prices, scores and measurements, where the mean means something and the total does not",
+     "count": "the number of rows is counted",
+     "distinctcount": "the number of different values is counted",
+     "max": "the largest value is taken",
+     "min": "the smallest value is taken",
+     "none": "keys, ids, codes, years, period numbers and other labels stored as numbers, where a total means nothing",
+     "sum": "additive amounts and quantities, where a total means something"
+    },
+    "instructions": "Following good modelling practice, how should this column's values be combined in its base measure, the explicit measure a report author uses instead of the column itself?",
+    "type": "choice"
+   }
+  },
+  "state": {
+   "column_facts": {
+    "data_type": "Double",
+    "is_a_calculated_column": false,
+    "is_key": false,
+    "measure_count_in_the_same_table": 2,
+    "measured": {
+     "blankShare": 0,
+     "cardinality": 180,
+     "distinct": 180,
+     "emailShare": 0,
+     "imageUrlShare": 0,
+     "looksLikeDayName": false,
+     "looksLikeMonthName": false,
+     "looksLikeMonthNumber": false,
+     "looksLikePeriodNumber": false,
+     "looksLikeQuarter": false,
+     "looksLikeYear": false,
+     "placeShare": {
+      "city": 0,
+      "country": 0,
+      "postcode": 0,
+      "region": 0
+     },
+     "sampled": false,
+     "uniqueOnEveryRow": false,
+     "urlShare": 0,
+     "wholeNumbers": false
+    },
+    "model_tables": [
+     {
+      "columns": 3,
+      "measures": 0,
+      "table": "Customer"
+     },
+     {
+      "columns": 7,
+      "measures": 2,
+      "table": "Sales"
+     }
+    ],
+    "one_to_one_partners": [],
+    "relationship_role": "none",
+    "table_rows": 81000,
+    "this_column_is_used_in_a_relationship": false,
+    "used_as_sort_target": false,
+    "used_by_measures": 1
+   },
+   "column_name": "Unit Price",
+   "table_columns": [
+    "CustomerKey",
+    "Amount",
+    "Month Number",
+    "Order Line",
+    "Region",
+    "Region Order"
+   ],
+   "table_name": "Sales"
+  }
+ }
+}

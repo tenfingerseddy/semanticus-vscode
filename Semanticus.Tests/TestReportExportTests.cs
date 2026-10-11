@@ -42,12 +42,15 @@ namespace Semanticus.Tests
             Assert.Null(before.Error);
             Assert.Null(before.Markdown);
 
+            // Validation went free on 22 September 2026, so a free session gets the same honest note rather
+            // than a refusal sentence.
             using var freeSessions = new SessionManager();
             using var free = new LocalEngine(freeSessions, new Fake(false));
             await free.OpenAsync(TestModels.FindBim());
-            var refusal = await Assert.ThrowsAsync<EntitlementException>(() => free.ExportTestReportAsync());
-            Assert.Contains("is a Semanticus Pro feature.", refusal.Message);
-            Assert.Contains("Tests", refusal.Message);
+            var onFree = await free.ExportTestReportAsync();
+            Assert.Contains("run the suite again", onFree.Note);
+            Assert.Null(onFree.Error);
+            Assert.Null(onFree.Markdown);
         }
 
         [Fact]

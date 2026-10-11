@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: secure-with-rls
 title: Set up data access rules
 description: Define row access, inspect propagation, test allowed and denied cases, and record the remaining published-model check.
 whenToUse: "Use when people must see different rows by region, department or customer. For a publish review of existing roles, use Publish changes; for general cleanup, use Tidy a model."
-version: 1
+version: 2
 strictness: hard
 triggers: [create_role, set_table_permission, set_role_permission]
 ---
 
 ## Step 1: State who may see what
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Capture the business rule in the user's terms. A test identity is useful for a dynamic rule but may be
 declined when the model uses a static role. Keep least privilege and the intended denied population explicit.
@@ -26,6 +31,10 @@ inputs:
 ```
 
 ## Step 2: Create the role and inspect propagation
+```yaml step
+performer: assistant
+id: step-2
+```
 
 Create the role, apply the simplest sufficient dimension filter, add members when the model permits it,
 and inspect the graph. RLS does not cross inactive relationships; bidirectional paths touching secured
@@ -42,6 +51,10 @@ inputs:
 ```
 
 ## Step 3: Check an allowed case
+```yaml step
+performer: assistant
+id: step-3
+```
 
 Create a control measure that simulates the role filter and give `target` its ref. Supply an independently
 known allowed result when available. The scalar probe can verify the simulated calculation, but `run_dax`
@@ -67,9 +80,13 @@ verify:
 ```
 
 ## Step 4: Check a denied case
+```yaml step
+performer: assistant
+id: step-4
+```
 
 Attempt an out-of-scope member or total and record the result. A non-empty denied result is a security
-failure that must be fixed and retested. `bpa_clean` can catch structural regressions, but it cannot prove
+failure: record it, stop, and have the rule fixed and the draft run again. `bpa_clean` can catch structural regressions, but it cannot prove
 role impersonation; perform that check against the published model after deployment.
 
 ```yaml gate
@@ -86,11 +103,27 @@ verify:
 ```
 
 ## Step 5: Apply conditional OLS and save
+```yaml step
+performer: assistant
+id: step-5
+```
 
 If the requirement hides a table or column's existence, apply `set_table_ols` or `set_column_ols` and check
-that shared measures do not touch secured fields. Then call `save_model`. Record the exact post-deploy
-role-impersonation check still required; a simulated CALCULATE result is not that check.
+that shared measures do not touch secured fields. Semanticus saves the model in the next step. Record the
+exact post-deploy role-impersonation check still required; a simulated CALCULATE result is not that check.
 
 ```yaml gate
-ops: [set_table_ols, set_column_ols, save_model]
+ops: [set_table_ols, set_column_ols]
 ```
+
+## Step 6: Save the secured model
+```yaml step
+id: step-6
+performer: semanticus
+phase: after
+action:
+  op: save_model
+```
+
+Semanticus saves the model once every check above has passed. Nothing here runs if a check before it
+stopped the draft.

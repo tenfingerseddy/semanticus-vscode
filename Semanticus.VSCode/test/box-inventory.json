@@ -1,0 +1,801 @@
+{
+ "about": "Join 11 solui, round 3. Every text box in webview/src/*.tsx has a class here, and every draft scope prefix has a lister. test/solui-r3-inventory.test.mjs fails on a box or a prefix with no entry, and on an entry with no box. Classes: held (the words are held in the draft store or the persisted state and outlive the box), search (a search or filter box), parent (the value is owned above the box, whose owner holds it), transient (typed once for one gesture), outage-deferred (plain state: the words die when the box is drawn anew, the outage, restart and licence class that Kane deferred). The classes were seeded from the code by test/helpers/box-inventory.mjs and judged by hand; a wrong class is a bug in this file.",
+ "boxes": {
+  "App.tsx::SortableTable::input::q": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "accountpicker.tsx::AccountPicker::input::tenantId": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "advmodels.tsx::PerspectivesPanel::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "advmodels.tsx::PerspectivesPanel::input::newName": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "advmodels.tsx::FieldParamsPanel::input::name": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "advmodels.tsx::FieldParamsPanel::input::p.label": {
+   "class": "outage-deferred",
+   "why": "a parameter label: plain useState in the panel"
+  },
+  "advmodels.tsx::CalcGroupsPanel::input::newName": {
+   "class": "outage-deferred",
+   "why": "the new group name: plain useState in the panel"
+  },
+  "advmodels.tsx::CalcGroupCard::input::prec": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "useKeptText with hold: the typed words are mirrored into the draft store"
+  },
+  "advmodels.tsx::CalcGroupCard::input::iName": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "advmodels.tsx::CalcGroupCard::DaxField::iExpr": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "advmodels.tsx::CalcItemRow::DaxField::expr": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "advmodels.tsx::FormatStringControl::DaxField::dyn": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "advmodels.tsx::RlsOlsPanel::input::newName": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "advmodels.tsx::Members::input::name": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "advmodels.tsx::TableSecurityRow::DaxField::filter": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the row filter is held through useEditBase persist under rowfilter|"
+  },
+  "advmodels.tsx::TableSecurityRow::input::colFilter": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the row filter is held through useEditBase persist under rowfilter|"
+  },
+  "advmodels.tsx::DaxLibPanel::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "advmodels.tsx::TextInput::input::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "askbox.tsx::AskBar::input::text": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "askdata.tsx::AskDataView::input::words": {
+   "class": "held",
+   "how": "persisted-state",
+   "why": "the page keeps it in its persisted state under a key, so a remount and a reload find it"
+  },
+  "askdata.tsx::ChipMenu::input::find": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "askdata.tsx::FilterWords::input::text": {
+   "class": "search",
+   "why": "a filter box over a list of chips"
+  },
+  "askdata.tsx::FilterWords::input::text#2": {
+   "class": "search",
+   "why": "a filter box over a list of chips"
+  },
+  "composer-draft.tsx::DraftBody::textarea::draftText": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "composer-draft.tsx::DraftBody::input::more": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "composer-draft.tsx::Question::input::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "useKeptText with hold under cdraft|<draft>, field answer:<question> (round 3)"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::form.name": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::form.server": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::form.database": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::endpoint": {
+   "class": "outage-deferred",
+   "why": "plain useState in the hub (the live connect and create forms); only the SQL endpoint form (form.*) is held"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::database": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::newTenant": {
+   "class": "outage-deferred",
+   "why": "plain useState in the hub (the live connect and create forms); only the SQL endpoint form (form.*) is held"
+  },
+  "connectionshub.tsx::ConnectionsHub::input::createName": {
+   "class": "outage-deferred",
+   "why": "plain useState in the hub (the live connect and create forms); only the SQL endpoint form (form.*) is held"
+  },
+  "connectpickers.tsx::DesktopPickerView::input::p.address": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "connectpickers.tsx::WorkspacePickerView::input::p.tenant": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "dataagent.tsx::NewAgentForm::input::name": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "dataagent.tsx::TeachPanel::textarea::instr": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "held under dataagent|<agent>|... through holdDraft"
+  },
+  "dataagent.tsx::FewShotEditor::input::r.question": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "held under dataagent|<agent>|... through holdDraft"
+  },
+  "dataagent.tsx::FewShotEditor::input::r.query": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "held under dataagent|<agent>|... through holdDraft"
+  },
+  "dataagent.tsx::ShipPanel::input::desc": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "daxeditor.tsx::DaxField::DaxEditor::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "daxlab.tsx::DaxLabView::DaxEditor::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "daxlab.tsx::SpeedView::input::runs": {
+   "class": "held",
+   "how": "persisted-state",
+   "why": "persisted-state: the run count is kept under lab.runs"
+  },
+  "daxlab.tsx::LabeledMono::DaxEditor::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "diagram.tsx::TableNode::input::data.filter": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "diagram.tsx::DiagramInner::input::nameDraft": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "diagram.tsx::TablePalette::input::q": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "documentation.tsx::SectionEditor::textarea::draft": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "documentation.tsx::TextField::input::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "fieldspanel.tsx::FieldsPanel::input::filter": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "findings.tsx::WaiveControl::input::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "grid.tsx::ResultGrid::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "gridfilter.tsx::DateBody::input::draft.mode === 'rel' ? draft.n : 6": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "gridfilter.tsx::DateBody::input::draft.from ?? ''": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "gridfilter.tsx::DateBody::input::draft.to ?? ''": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "gridfilter.tsx::NumberBody::input::draft.a ?? ''": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "gridfilter.tsx::NumberBody::input::draft.b ?? ''": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "gridfilter.tsx::TextBody::input::draft.value": {
+   "class": "parent",
+   "why": "a field of the grid filter: the filter popover owns the draft (verify-solui-r2-b C1)"
+  },
+  "help.tsx::WhereIndex::input::q": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "instructions.tsx::AiInstructionsCard::textarea::draft": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "knowledge.tsx::KnowledgeView::textarea::draft": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "knowledge.tsx::InsightCard::textarea::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "knowledge.tsx::InsightCard::input::keys": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "knowledge.tsx::RecallSection::input::query": {
+   "class": "search",
+   "why": "a recall search box"
+  },
+  "lineage-impact.tsx::ImpactCard::input::filter": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineage-impact.tsx::ImpactCard::input::reportFilter": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineage-impact.tsx::CleanupList::input::filter ?? ''": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineage-impact.tsx::ChooseReportsDrawer::input::folderPath": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "lineage.tsx::ImpactPane::input::q": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineagegraph.tsx::LineageGraphView::input::search": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineageslicer.tsx::MultiSelect::input::q": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "lineagetree.tsx::LineageTreeInner::input::search": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "mcode.tsx::MCodeView::textarea::form.polling": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "mcode.tsx::MLane::input::newName": {
+   "class": "outage-deferred",
+   "why": "plain useState: the new query name and the reference name; only the M editor text is held"
+  },
+  "mcode.tsx::MLane::input::refName": {
+   "class": "outage-deferred",
+   "why": "plain useState: the new query name and the reference name; only the M editor text is held"
+  },
+  "mcode.tsx::MLane::MEditor::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "mcode.tsx::Num::input::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "objectbrowser.tsx::ObjectBrowser::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "optimize.tsx::Row::input::draft": {
+   "class": "parent",
+   "why": "the row's draft is owned by the slot list above it"
+  },
+  "plan-history.tsx::PlanHistory::input::saving": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "plan-repeat.tsx::CadenceForm::input::c.every": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the cadence being set is held under the row (CadenceHold, planrow|<id>, field repeat)"
+  },
+  "plan-repeat.tsx::CadenceForm::input::c.date ?? ''": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the cadence being set is held under the row (CadenceHold, planrow|<id>, field repeat)"
+  },
+  "plan-row.tsx::PlanRowDetail::input::note": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "plan.tsx::PlanView::textarea::field": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "pqtransforms.tsx::RenameForm::input::v": {
+   "class": "transient",
+   "why": "a one-gesture form in a menu: it opens, takes a word and applies or closes"
+  },
+  "pqtransforms.tsx::FilterForm::input::val": {
+   "class": "transient",
+   "why": "a one-gesture form in a menu: it opens, takes a word and applies or closes"
+  },
+  "pqtransforms.tsx::ReplaceForm::input::find": {
+   "class": "transient",
+   "why": "a one-gesture form in a menu: it opens, takes a word and applies or closes"
+  },
+  "pqtransforms.tsx::ReplaceForm::input::repl": {
+   "class": "transient",
+   "why": "a one-gesture form in a menu: it opens, takes a word and applies or closes"
+  },
+  "pqtransforms.tsx::KeepTopN::input::n": {
+   "class": "transient",
+   "why": "a one-gesture form in a menu: it opens, takes a word and applies or closes"
+  },
+  "pqtransforms.tsx::AppliedStepsPanel::input::draft": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "propage.tsx::KeyZone::input::p.keyValue": {
+   "class": "transient",
+   "why": "a key typed once for one lookup"
+  },
+  "queriesask.tsx::AskField::input::ask.words": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "querywells.tsx::AddMenu::input::find": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "relationships.tsx::RelationshipsView::input::filter": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.id": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.name": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.category": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.appliesTo": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::textarea::d.expression": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.message": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.description": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "rulesauthor.tsx::CustomRulesPanel::input::d.fixExpression": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "search.tsx::SearchView::input::find": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "search.tsx::SearchView::input::replace": {
+   "class": "search",
+   "why": "the replace half of the search page"
+  },
+  "sendtask.tsx::RuleCheckBox::input::check": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "spec.tsx::SpecView::textarea::jsonDraft": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "spec.tsx::MeasureRow::DaxField::m.dax ?? ''": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "spec.tsx::TableAdder::input::name": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "spec.tsx::NameInput::input::v": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "spec.tsx::Field::input::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "startplan.tsx::Editor::textarea::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the line's words are held under the plan line (startplan-drafts); the editor seeds from the held draft"
+  },
+  "startplan.tsx::Editor::input::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the line's words are held under the plan line (startplan-drafts); the editor seeds from the held draft"
+  },
+  "startplan.tsx::WordsEditor::textarea::text": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the line's words are held under the plan line (startplan-drafts); the editor seeds from the held draft"
+  },
+  "startplan.tsx::StartForm::input::typed.server": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "startplan.tsx::StartForm::input::typed.database": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "startplan.tsx::StartForm::input::name": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "startplan.tsx::StartForm::input::folder": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "tests-authoring.tsx::ContextFields::input::manual": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::ToleranceInputs::input::abs": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::ToleranceInputs::input::relPercent": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::input::expected": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::input::filterColumn": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::input::filterValue": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::input::provenance": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::textarea::expressionDax": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TrustedAnswerForm::textarea::filterDax": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::CompareWithSourceForm::textarea::sql": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::CompareWithSourceForm::textarea::filterDax": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::CompareWithSourceForm::textarea::sqlGrandTotal": {
+   "class": "parent",
+   "why": "a field of the check form: the author owns the draft and holds it (useEditBase persist under tests-authoring|)"
+  },
+  "tests-authoring.tsx::TableRowCountForm::input::schema": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "tests-authoring.tsx::TableRowCountForm::input::entity": {
+   "class": "held",
+   "how": "draft-store",
+   "why": "the component holds its words in the draft store (heldDraft, useEditBase persist, draftStore.set or a hold prop)"
+  },
+  "tests.tsx::SavedChecks::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "ui.tsx::Mono::DaxEditor::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "workflow-run.tsx::GateField::textarea::value": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "workflow-run.tsx::GateField::textarea::reason": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
+  },
+  "workflow-ui.tsx::ReasonButton::input::reason": {
+   "class": "transient",
+   "why": "a reason typed for one press"
+  },
+  "workflow-v3fields.tsx::Plain::textarea::(no value)": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflow-v3fields.tsx::Plain::input::(no value)": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflow-v3fields.tsx::AddArgument::input::name": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "workflow-v3fields.tsx::AddArgument::input::value": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflowdesign.tsx::SourceEditor::textarea::source": {
+   "class": "parent",
+   "why": "the source text is the Author draft, held by heldDrafts in workflowdesign.tsx"
+  },
+  "workflowforms.tsx::Text::textarea::(no value)": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflowforms.tsx::Text::input::(no value)": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflowforms.tsx::OpPicker::input::filter": {
+   "class": "search",
+   "why": "a filter over the list of operations"
+  },
+  "workflowforms.tsx::WorkflowStepForm::input::step.title": {
+   "class": "parent",
+   "why": "a field of the Author step form: the Author draft owns the words (heldDrafts)"
+  },
+  "workflows.tsx::WorkflowsView::input::query": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "workflows.tsx::NewPanel::textarea::words": {
+   "class": "outage-deferred",
+   "why": "plain useState; the page keeps the panel mounted while it holds words (onHeld), which covers another writer but not a remount"
+  },
+  "workflows.tsx::NewPanel::input::blank": {
+   "class": "outage-deferred",
+   "why": "plain useState; the page keeps the panel mounted while it holds words (onHeld), which covers another writer but not a remount"
+  },
+  "workflows.tsx::UseDrawer::input::values[s.name] ?? ''": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "deploy.tsx::PromotePanel::input::note": {
+   "class": "outage-deferred",
+   "why": "plain useState: the words live only while the box is mounted (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "publish-changes.tsx::NewModel::input::name": {
+   "class": "outage-deferred",
+   "why": "the new model's name: plain useState in the card, prefilled from the open model's name and kept once typed (the outage, restart and licence class C4, deferred by Kane's decision)"
+  }
+ },
+ "scopes": {
+  "planrow|": {
+   "lister": "named-lister",
+   "where": "plan-row.tsx PlanRowWordsKept",
+   "why": "words for a row that left the plan are named on the Plan with Copy and Discard"
+  },
+  "cdraft|": {
+   "lister": "named-lister",
+   "where": "composer-draft.tsx DraftBody (cd-words-kept)",
+   "why": "words for a box the draft no longer offers are named with Copy and Discard; a draft that is gone altogether leaves its words unlisted (a join item)"
+  },
+  "calcitem|": {
+   "lister": "orphan-drafts",
+   "where": "advmodels.tsx CalcGroupsPanel",
+   "why": "an item is known by its ref, so a rename looks like a delete: OrphanDrafts asks"
+  },
+  "calcgroup|": {
+   "lister": "orphan-drafts",
+   "where": "advmodels.tsx CalcGroupsPanel",
+   "why": "round 3: a group known by its ref; a rename the page can pair moves the words, any other leaves them to OrphanDrafts"
+  },
+  "rowfilter|": {
+   "lister": "orphan-drafts",
+   "where": "advmodels.tsx RlsOlsPanel",
+   "why": "a row filter is known by role and table name"
+  },
+  "rolemember|": {
+   "lister": "orphan-drafts",
+   "where": "advmodels.tsx RlsOlsPanel",
+   "why": "members typed for a role known by name"
+  },
+  "mcode|": {
+   "lister": "orphan-drafts",
+   "where": "mcode.tsx",
+   "why": "two literal listers: mcode|policy| (by table) and mcode|query| (by query id)"
+  },
+  "spec|": {
+   "lister": "orphan-drafts",
+   "where": "spec.tsx",
+   "why": "spec|buf| is listed by OrphanDrafts; spec|json and spec|struct are singletons (one per model)"
+  },
+  "startplan|": {
+   "lister": "orphan-drafts",
+   "where": "startplan.tsx",
+   "why": "a plan line is known by its name: OrphanDrafts asks"
+  },
+  "startplan-gone|": {
+   "lister": "named-lister",
+   "where": "startplan.tsx",
+   "why": "a retired plan line keeps its words under this prefix and the plan names them (orphanLine)"
+  },
+  "waive|": {
+   "lister": "orphan-drafts",
+   "where": "findings.tsx",
+   "why": "the lister is computed per page (waive|<holdAs>|), one for each findings list"
+  },
+  "insight|": {
+   "lister": "id-keyed",
+   "where": "knowledge.tsx",
+   "why": "an insight has an id that survives a rename; pruneGone drops the words of a deleted one"
+  },
+  "rules|": {
+   "lister": "id-keyed",
+   "where": "rulesauthor.tsx",
+   "why": "a custom rule has an id that survives a rename; pruneGone drops the words of a deleted one"
+  },
+  "dataagent|": {
+   "lister": "id-keyed",
+   "where": "dataagent.tsx",
+   "why": "keyed by the agent id and the data source folder, both stable"
+  },
+  "notes|": {
+   "lister": "singleton",
+   "where": "knowledge.tsx",
+   "why": "one Primer per model: there is no object to lose"
+  },
+  "instructions|": {
+   "lister": "singleton",
+   "where": "instructions.tsx",
+   "why": "one instruction text per model: there is no object to lose"
+  },
+  "hub|": {
+   "lister": "named-lister",
+   "where": "connectionshub.tsx heldSqlForm",
+   "why": "the hub opens the endpoint form again on the first held draft of its row"
+  },
+  "docs|": {
+   "lister": "orphan-drafts",
+   "where": "documentation.tsx NarrativePane",
+   "why": "join 12, J-D1: keyed by a name-based object ref and a section; words typed for an object the assistant renamed or deleted are listed with Keep mine on it (the same section of another object) and Discard"
+  },
+  "tests-authoring|": {
+   "lister": "unlisted",
+   "where": "tests-authoring.tsx",
+   "why": "check|<id> is id-keyed and new|<kind> is a singleton, but mapping|<table> is name-based and has no lister (a join item)"
+  },
+  "restored|": {
+   "lister": "named-lister",
+   "where": "othermodels.tsx OtherModelWords",
+   "why": "words restored read-only after VS Code restarted are listed by model"
+  },
+  "readiness|": {
+   "lister": "not-a-scope",
+   "where": "App.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "stats|": {
+   "lister": "not-a-scope",
+   "where": "App.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "bpa|": {
+   "lister": "not-a-scope",
+   "where": "bpa.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "explain|": {
+   "lister": "not-a-scope",
+   "where": "explainpanel.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "slot|": {
+   "lister": "not-a-scope",
+   "where": "optimize.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "rule|": {
+   "lister": "not-a-scope",
+   "where": "sendtask.tsx",
+   "why": "a sendKey of the Give to your assistant button, not a draft scope"
+  },
+  "model|": {
+   "lister": "not-a-scope",
+   "where": "spec.tsx",
+   "why": "part of a box id inside spec|buf|, not a scope of its own"
+  },
+  "new-table|": {
+   "lister": "not-a-scope",
+   "where": "spec.tsx",
+   "why": "part of a box id inside spec|buf|, not a scope of its own"
+  }
+ }
+}

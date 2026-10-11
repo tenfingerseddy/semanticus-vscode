@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
-import { manageLicense, showLicense, onReconnect, rpc } from './bridge';
-import { FEATURE_OF_TOOL, PRO_FEATURES, featureOfTool, type ProFeature } from './features';
+import { onEntitlementChange, onReconnect, rpc, navigateInStudio } from './bridge';
+import { FEATURE_OF_TOOL, PRO_FEATURES, featureOfTool, isRetiredFeature, type ProFeature, type RetiredProFeature } from './features';
+
+/** Every Unlock Pro in Studio, the header chip and Help all land here: the Semanticus Pro page (Kane approved
+ *  the in-app Pro design on 23 September 2026). It used to start the host's quick pick and then the browser,
+ *  and the upsell notice went to the website. The page is where the plan is chosen now, and the host still
+ *  runs the whole checkout from it, which is what keeps a webview out of a payment path. */
+export function upgradeToPro(): void {
+  navigateInStudio('pro');
+}
 
 // ===================================================================================================
 // The shared Free/Pro presentation kit. Two jobs now.
@@ -79,6 +87,14 @@ function bindTierReconnect(): void {
     publish({ tier: 'unknown', features: [] });
     void fetchTier();
   });
+  // A licence swapped into the running engine (F-242) moves the tier with no reconnect. Same three steps: drop
+  // the old grant first, then show what the engine now says.
+  onEntitlementChange(() => {
+    generation++;
+    tierPromise = null;
+    publish({ tier: 'unknown', features: [] });
+    void fetchTier();
+  });
 }
 function useEntitlement(): Entitlement {
   const [value, setValue] = useState(entitlement);
@@ -97,9 +113,13 @@ export function useTier(): string {
 
 /** Is this feature granted? `null` means the caller is asking about a free tool, which is always granted,
  *  so a component can call this unconditionally and keep its hook order stable. */
-export function useFeature(feature: ProFeature | null): FeatureGrant {
+export function useFeature(feature: ProFeature | RetiredProFeature | null): FeatureGrant {
   const value = useEntitlement();
   if (!feature) return 'granted';
+  // A feature that was retired on 22 September is free, and free is granted BEFORE the entitlement answers
+  // as well as after. Letting it fall through to the tier read would have held a free page on "checking"
+  // until get_entitlement landed, for a question the answer to no longer depends on.
+  if (isRetiredFeature(feature)) return 'granted';
   if (value.tier === 'unknown') return 'unknown';
   return value.features.includes(feature) ? 'granted' : 'denied';
 }
@@ -125,49 +145,56 @@ export function isEntitlementError(e: unknown): boolean {
   return /Semanticus Pro feature/i.test(String((e as Error)?.message ?? e ?? ''));
 }
 
+/**
+ * The quiet pill a free page shows where ONE paid control stood.
+ *
+ * It is not the preview. A preview replaces a whole page that a free session cannot open at all; this
+ * stands inside a page that IS free and works, in the one section that is not. The Plan uses that shape
+ * for Run the plan, the ask box uses it for the box, and Model notes uses it for the workflow library.
+ *
+ * Nothing behind it may be CALLED. The pill is what a page shows instead of asking, so a section that
+ * renders this and still makes its read has gained an upsell and kept the refusal.
+ *
+ * `testId` ends in -pro-pill by convention: tools/uishot/cp-pro-drive.mjs finds every pill on a page by
+ * that suffix, so a new one is measured without anybody having to remember to register it.
+ *
+ * plan.tsx and askbox.tsx still carry their own copy of this markup, written before there was one place
+ * to put it. They should move here; test/pro-feature-line.test.mjs holds this one either way.
+ */
+export function ProPill({ line, testId, unlockTestId }: { line: React.ReactNode; testId: string; unlockTestId?: string }) {
+  // Instrument: a flat inset, the word Pro in the label size, the line, and the one filled button.
+  return (
+    <div data-testid={testId} className="sem-inset flex flex-wrap items-center gap-3">
+      <span className="sem-label">Pro</span>
+      <span className="min-w-0 flex-1 text-xs">{line}</span>
+      <button type="button" data-testid={unlockTestId} onClick={upgradeToPro}
+        className="sem-btn sem-btn-sm sem-btn-primary shrink-0">Unlock Pro</button>
+    </div>
+  );
+}
+
 // The small "Pro" pill worn inside a bulk button. `show` keeps call sites terse (render only for the
 // free tier); `variant='onAccent'` keeps it legible on accent/danger-filled primary buttons.
 export function ProBadge({ show, variant }: { show: boolean; variant?: 'onAccent' | 'accent' }) {
   if (!show) return null;
-  const onAccent = variant === 'onAccent';
+  // Instrument: the word, in the label size and a quieter colour, with no pill behind it.
   return (
-    <span className="text-[9px] uppercase tracking-wide font-bold px-1 py-px rounded ml-1.5"
-      style={onAccent
-        ? { background: 'color-mix(in srgb, var(--sem-on-accent) 24%, transparent)', color: 'var(--sem-on-accent)' }
-        : { background: 'color-mix(in srgb, var(--sem-accent) 20%, transparent)', color: 'var(--sem-accent)' }}>
+    <span className="ml-2 text-(length:--sem-text-label) font-normal"
+      style={{ color: variant === 'onAccent' ? 'var(--sem-on-accent)' : 'var(--sem-muted)' }}>
       Pro
     </span>
   );
 }
 
-// One ambient licensing door in the Studio shell. Free users get the upgrade invitation; active subscribers
-// get account management (including cancellation) without a new tab or any billing logic in the extension.
-export function LicenseButton() {
-  const tier = useTier();
-  if (tier === 'unknown') return null;
-  const isPro = tier === 'pro';
-  return (
-    <button onClick={isPro ? showLicense : manageLicense} title={isPro ? 'Show your Pro license' : 'See Semanticus Pro and upgrade options'}
-      className="sem-btn sem-btn-sm shrink-0"
-      style={isPro ? undefined : { background: 'var(--sem-accent-soft)', color: 'var(--sem-accent)', borderColor: 'color-mix(in srgb, var(--sem-accent) 42%, var(--sem-border))' }}>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M10 13a5 5 0 0 0 7.1.1l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" /><path d="M14 11a5 5 0 0 0-7.1-.1l-2 2A5 5 0 0 0 12 20l1.1-1.1" />
-      </svg>
-      {isPro ? 'Pro options' : 'Upgrade to Pro'}
-    </button>
-  );
-}
-
-// The teaching notice a free click gets instead of an error: accent-tinted (an invitation, not a
+// The teaching notice a free click gets instead of an error: a flat inset (an invitation, not a
 // failure) with a dismiss. The copy is written per surface, in plain analyst English.
 export function UpsellNotice({ children, onDismiss }: { children: React.ReactNode; onDismiss?: () => void }) {
   return (
-    <div className="rounded-lg px-3 py-2 text-[12px] flex items-start gap-2"
-      style={{ background: 'color-mix(in srgb, var(--sem-accent) 12%, transparent)', color: 'var(--sem-fg)', border: '1px solid color-mix(in srgb, var(--sem-accent) 34%, transparent)' }}>
+    <div className="sem-inset text-xs flex items-start gap-2" style={{ color: 'var(--sem-fg)' }}>
       <span className="flex-1 min-w-0">{children}</span>
-      <button onClick={manageLicense} className="sem-btn sem-btn-sm sem-btn-primary shrink-0">Upgrade to Pro →</button>
+      <button onClick={upgradeToPro} className="sem-btn sem-btn-sm sem-btn-primary shrink-0">Unlock Pro</button>
       {onDismiss && (
-        <button onClick={onDismiss} title="Dismiss" className="shrink-0 text-[12px] px-1 rounded" style={{ color: 'var(--sem-muted)' }}>✕</button>
+        <button onClick={onDismiss} title="Dismiss" className="shrink-0 text-xs px-1 rounded-(--sem-radius-control)" style={{ color: 'var(--sem-muted)' }}>✕</button>
       )}
     </div>
   );

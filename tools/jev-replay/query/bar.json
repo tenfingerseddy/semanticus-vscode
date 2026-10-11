@@ -1,0 +1,10 @@
+{
+ "point": "query.summarize",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "version": 2,
+ "supersedes": "version 1 (commit 12925fa3: right at least 80%, wrong and would run at most 5%, not below the word match), under which runs 1 and 2 were scored. Kane set a new switch-on bar for every Jev decision on 26 September; this is that bar in the form the coordinator gave for a point with no rule to compare against. It is committed before run 3. The labelled set is the same 62 items, which runs 1 and 2 have already seen.",
+ "rule": "Jev reads data questions for Pro (JevQueryReader.JevReads = true) only when ALL hold on the labelled set: (1) Jev's right rate is reliably above the best non-Jev baseline (the word match, JevQueryWordArm: the closest measures and columns by name, exact value matches, top N from the words): more items Jev gets right and the baseline gets wrong than the other way round, with an exact two-sided McNemar test on those discordant items at p < mcnemarAlpha; (2) Jev makes no more harmful mistakes than the baseline, a harmful mistake being a reading settled with confidence that is wrong and would run, so it returns a plausible number (wrongRan). A reading Jev is not sure of must say so and run nothing; it counts as not right and is never harmful. A decline item is right when nothing is settled, and harmful when a reading runs.",
+ "mcnemarAlpha": 0.05,
+ "harmfulNotAboveBaseline": true
+}

@@ -68,6 +68,7 @@ namespace Semanticus.Tests
             Assert.Contains(pr.Fields, f => f.Entity == "Sales" && f.Property == "Amount");   // the good part still parsed
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AnalyzeReports_demotes_safe_to_caution_when_a_report_part_could_not_be_parsed()
         {
@@ -82,6 +83,7 @@ namespace Semanticus.Tests
                 var table = (await engine.ListMeasuresAsync()).First().Table;
                 var usedRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Skip_Used", "1", "agent");
                 var orphanRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Skip_Orphan", "1", "agent");
+                await engine.SetObjectPropertyAsync(orphanRef, "IsHidden", "true", "agent");   // the table is a dimension: visible would be visibleAttribute
 
                 var partial = new ReportDefinitionReader.ParseResult { DefinitionFound = true, SkippedParts = 1 };
                 partial.Fields.Add(new ReportDefinitionReader.FieldRef { Entity = table, Property = "Skip_Used", Kind = "column" });
@@ -212,6 +214,7 @@ namespace Semanticus.Tests
             finally { try { Directory.Delete(root, recursive: true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AnalyzeReports_demotes_a_safe_item_whose_name_matches_an_unresolved_reference()
         {
@@ -225,7 +228,9 @@ namespace Semanticus.Tests
                 await engine.OpenAsync(TestModels.FindBim());
                 var table = (await engine.ListMeasuresAsync()).First().Table;
                 var matchRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Unres_Match", "1", "agent");
+                await engine.SetObjectPropertyAsync(matchRef, "IsHidden", "true", "agent");   // the table is a dimension: visible would be visibleAttribute
                 var otherRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Unres_Other", "1", "agent");
+                await engine.SetObjectPropertyAsync(otherRef, "IsHidden", "true", "agent");   // the table is a dimension: visible would be visibleAttribute
                 await engine.CreateCalculatedColumnAsync("table:" + table, "Unres_Used", "1", "agent");
 
                 // A representative report: one field RESOLVED (so coverage is complete and the wrong-model blanket
@@ -245,6 +250,7 @@ namespace Semanticus.Tests
             finally { engine.Dispose(); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AnalyzeReports_resolves_a_hierarchy_reference_to_its_level_columns()
         {
@@ -343,6 +349,7 @@ namespace Semanticus.Tests
             Assert.Contains(handler.Requests, u => u.Contains("operations/op-1/result"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task GetDefinition_interactive_budget_fails_fast_with_an_honest_message()
         {
@@ -385,6 +392,7 @@ namespace Semanticus.Tests
             Assert.Equal(2, handler.Requests.Count);   // exactly maxPolls polls, no early exit
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task GetReportDefinition_hard_ceiling_cancels_a_wedged_request_with_the_same_honest_message()
         {
@@ -614,6 +622,7 @@ namespace Semanticus.Tests
             finally { engine.Dispose(); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task AnalyzeReports_demotes_safe_to_caution_when_a_report_is_unreadable()
         {
@@ -628,6 +637,7 @@ namespace Semanticus.Tests
                 var table = (await engine.ListMeasuresAsync()).First().Table;
                 var usedRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Cloud_Used", "1", "agent");
                 var orphanRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Cloud_Orphan", "1", "agent");
+                await engine.SetObjectPropertyAsync(orphanRef, "IsHidden", "true", "agent");   // the table is a dimension: visible would be visibleAttribute
 
                 var good = new ReportDefinitionReader.ParseResult { DefinitionFound = true };
                 good.Fields.Add(new ReportDefinitionReader.FieldRef { Entity = table, Property = "Cloud_Used", Kind = "column" });
@@ -661,6 +671,7 @@ namespace Semanticus.Tests
                 await engine.OpenAsync(TestModels.FindBim());
                 var table = (await engine.ListMeasuresAsync()).First().Table;
                 var orphanRef = await engine.CreateCalculatedColumnAsync("table:" + table, "Cloud_Orphan2", "1", "agent");
+                await engine.SetObjectPropertyAsync(orphanRef, "IsHidden", "true", "agent");   // the table is a dimension: visible would be visibleAttribute
 
                 var wrong = new ReportDefinitionReader.ParseResult { DefinitionFound = true };
                 wrong.Fields.Add(new ReportDefinitionReader.FieldRef { Entity = "NoSuchTable", Property = "NoSuchColumn", Kind = "column" });

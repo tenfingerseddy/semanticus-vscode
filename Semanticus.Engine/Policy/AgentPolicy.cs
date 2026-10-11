@@ -131,12 +131,15 @@ namespace Semanticus.Engine
             return new AgentPolicy { Enabled = true, Preset = "unreadable", Matrix = m };
         }
 
-        // EditLocal and DeployFile never touch a live target, so they are Allow at every label in every preset — the
-        // label on those is meaningless (you are editing a working copy / writing a file). Only the endpoint-reaching
-        // capabilities tighten with the label and the preset.
+        // EditLocal and DeployFile never touch a live target, so they are Allow at every label in every preset but one:
+        // the label on those is meaningless (you are editing a working copy / writing a file). Locked is that one. Its
+        // card says "Even local writes ask first", so the two local rows ASK at every label (Sol UAT S10-mA2-011: they
+        // stayed Always and the assistant's set_description landed unasked). Only the endpoint-reaching capabilities
+        // tighten with the label and the preset.
         private static PolicyAction Cell(string preset, AgentCapability cap, string label)
         {
-            if (cap == AgentCapability.EditLocal || cap == AgentCapability.DeployFile) return PolicyAction.Allow;
+            if (cap == AgentCapability.EditLocal || cap == AgentCapability.DeployFile)
+                return preset == "locked" ? PolicyAction.Ask : PolicyAction.Allow;
 
             // Rank the label 0..3 so a preset is a threshold, not a table of 28 hand-typed values that can drift.
             var lvl = label switch { "local" => 0, "dev" => 1, "uat" => 2, _ => 3 };
@@ -159,7 +162,7 @@ namespace Semanticus.Engine
                     : (lvl <= 0 ? PolicyAction.Allow : lvl == 3 ? PolicyAction.Deny : PolicyAction.Ask),
 
                 // Enterprise/locked: maximum separation of duties. Data preview local-only; every live write to uat/prod
-                // denied; even local/dev writes ask.
+                // denied; even local/dev writes ask, and so does every edit to the working model and every file write.
                 "locked" => cap == AgentCapability.QueryData
                     ? (lvl == 0 ? PolicyAction.Allow : PolicyAction.Deny)
                     : (lvl <= 1 ? PolicyAction.Ask : PolicyAction.Deny),

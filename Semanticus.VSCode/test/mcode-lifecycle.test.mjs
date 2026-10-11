@@ -179,21 +179,68 @@ import {
 
 // Round 5 finding: malformed quoted-identifier escapes must be scanned once. The former global regex retried at
 // every nested "#(" and took seconds for this reviewer-shaped 128 KB identifier.
+//
+// This guard reads the SHAPE of the cost, not a stopwatch. An absolute millisecond budget measured the machine
+// rather than the scanner: on a loaded build host the same linear scan read 24 ms on one run and 120 ms on the
+// next, so a fixed 100 ms budget failed for a reason the code could not cause. What the regression actually did
+// was turn a linear scan into a quadratic one, so that is what is asserted. Four times the input must not cost
+// anything like four-squared the time, and a host that is five times slower slows both readings together, so
+// the ratio survives what the stopwatch could not.
+//
+// Measured both ways, best-of-5 at each size. This code, run ten times with 20 busy loops saturating an 8-core
+// host (load average 23.67), grew 0.39x to 3.20x and passed every run; the old 100 ms budget failed on the same
+// host at 109 ms and 120 ms. A copy of the scanner mutated back to the pre-fix shape, where an unmatched "#("
+// is abandoned and the walk resumes one character on so every later one rescans the same tail, grew 16.02x
+// (1,237 ms then 19,820 ms) and was rejected. A perfectly linear scan grows 4x at four times the input and a
+// quadratic one about 16x (four squared). The threshold of 8 is twice linear: the headroom absorbs noise (every
+// linear reading measured here stayed under 3.3x), and a quadratic scan still cannot get under it.
 {
-  const unmatchedEscapeCount = 64_000;
-  const malformedName = '#('.repeat(unmatchedEscapeCount);
-  const started = performance.now();
-  const token = profileSubjectToken('Sales', [
-    { name: 'Main', sourceType: 'M', source: `#"${malformedName}"` },
-  ], [
-    { name: malformedName, kind: 'M', expression: '1' },
-  ]);
-  const elapsedMs = performance.now() - started;
-  assert.ok(elapsedMs < 100,
-    `64,000 unmatched quoted-identifier escapes must complete under 100 ms (measured ${elapsedMs.toFixed(3)} ms)`);
-  assert.deepEqual(JSON.parse(token)[2], [[malformedName, '1']],
+  const smallEscapeCount = 16_000;
+  const largeEscapeCount = 64_000;
+  const growthIfLinear = largeEscapeCount / smallEscapeCount;
+
+  const scanOnce = (escapes) => {
+    const malformedName = '#('.repeat(escapes);
+    const started = performance.now();
+    const token = profileSubjectToken('Sales', [
+      { name: 'Main', sourceType: 'M', source: `#"${malformedName}"` },
+    ], [
+      { name: malformedName, kind: 'M', expression: '1' },
+    ]);
+    return { elapsedMs: performance.now() - started, token, malformedName };
+  };
+
+  // Best-of-5. A single reading also carries JIT warm-up and whatever else the host happened to be running in
+  // that instant; the cheapest of five is the reading least polluted by both, at either size.
+  const bestOfFive = (escapes) => {
+    let best = null;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const run = scanOnce(escapes);
+      if (best === null || run.elapsedMs < best.elapsedMs) best = run;
+    }
+    return best;
+  };
+
+  const small = bestOfFive(smallEscapeCount);
+  const large = bestOfFive(largeEscapeCount);
+  const growth = large.elapsedMs / small.elapsedMs;
+  assert.ok(growth < growthIfLinear * 2,
+    `${largeEscapeCount.toLocaleString('en-US')} unmatched quoted-identifier escapes must cost no more than a `
+    + `linear multiple of ${smallEscapeCount.toLocaleString('en-US')} (measured ${growth.toFixed(2)}x for `
+    + `${growthIfLinear}x the input: ${small.elapsedMs.toFixed(3)} ms then ${large.elapsedMs.toFixed(3)} ms)`);
+
+  // A ratio cannot see a blow-up that hits every size equally, so one loose ceiling stays as the backstop. It is
+  // deliberately 25 times the slowest loaded reading measured here (80.0 ms), because it is not a budget: it only
+  // has to catch the original symptom, which was seconds.
+  assert.ok(large.elapsedMs < 2_000,
+    `${largeEscapeCount.toLocaleString('en-US')} unmatched quoted-identifier escapes must not take seconds `
+    + `(measured ${large.elapsedMs.toFixed(3)} ms)`);
+
+  assert.deepEqual(JSON.parse(large.token)[2], [[large.malformedName, '1']],
     'an unmatched escape remains literal so invalid M can still be diagnosed safely');
-  console.log(`M Code malformed quoted-identifier perf: ${elapsedMs.toFixed(3)} ms for ${unmatchedEscapeCount} unmatched escapes`);
+  console.log(`M Code malformed quoted-identifier perf: ${small.elapsedMs.toFixed(3)} ms at ${smallEscapeCount} `
+    + `then ${large.elapsedMs.toFixed(3)} ms at ${largeEscapeCount} unmatched escapes (${growth.toFixed(2)}x for `
+    + `${growthIfLinear}x the input)`);
 }
 
 // Round 2 finding 2: an abandoned A operation cannot release or act as the owner of a newer A operation after
@@ -295,6 +342,11 @@ import {
     'a still-present table is kept');
   assert.equal(reconcileTableSelection('Sales', []), '',
     'no tables means no selection');
+  // UAT-S07b-2-001: a tree jump remounts Power Query before its model document has loaded. Healing against that
+  // not-yet-known table list wiped the jump's table, and the document then picked the model's first table.
+  assert.equal(reconcileTableSelection('Product', null), 'Product',
+    'an unloaded table list keeps the selection a tree jump just made');
+  assert.equal(reconcileTableSelection('Product', undefined), 'Product');
   assert.equal(policyFetchAllowed('Sales', ['Inventory']), false,
     'do not fetch policy for a table the open model does not have');
   assert.equal(policyFetchAllowed('Sales', ['Sales']), true);
@@ -303,6 +355,8 @@ import {
 {
   const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../webview/src/mcode.tsx'), 'utf8');
   assert.match(src, /reconcileTableSelection/);
+  assert.match(src, /reconcileTableSelection\(selected, doc \? tables\.map\(\(t\) => t\.name\) : null\)/,
+    'the heal step must pass null until the model document has loaded (UAT-S07b-2-001)');
   assert.match(src, /policyFetchAllowed/);
   assert.doesNotMatch(src, /if \(err\) return <div className="p-4">/,
     'a stale-table error must not replace the whole M Code tab');

@@ -19,8 +19,11 @@ namespace Semanticus.Tests
     /// grade letter moved, a net-new Warning+ finding landed on a touched object, or blast radius &gt; 0);
     /// dry-runs never emit.
     /// </summary>
-    public sealed class HealthDeltaTests
+    public sealed class HealthDeltaTests : IClassFixture<ModelTemplates>
     {
+        private readonly ModelTemplates _templates;
+        public HealthDeltaTests(ModelTemplates templates) => _templates = templates;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro { get; }
@@ -32,10 +35,10 @@ namespace Semanticus.Tests
         /// and column — so DESC/FMT/NAME rules all pass at baseline, and the deterministic worsening lever is the
         /// DESC-MEASURE &gt;50%-undescribed gate (2 of 3 undescribed caps the score at D). Verified empirically:
         /// baseline grades C (synonyms/DAC keep it off A/B); the SECOND bad measure moves the letter C→D.</summary>
-        private static async Task<(LocalEngine engine, SessionManager sm, string m1)> FreshAsync(bool pro = true)
+        // Lean suite (8 Oct): every build call here pays a full health rescan on commit, so the eight calls that make this model are made
+        // once per class and each test opens its own saved copy.
+        private static async Task BuildCleanAsync(LocalEngine engine)
         {
-            var sm = new SessionManager();
-            var engine = new LocalEngine(sm, new Fake(pro));
             await engine.CreateModelAsync("HealthTest", 1604);
             var t = await engine.CreateTableAsync("Sales", "human");
             await engine.CreateColumnAsync(t, "Amount", "Decimal", "Amount", "human");
@@ -45,7 +48,14 @@ namespace Semanticus.Tests
             await engine.SetDescriptionAsync("table:Sales", "One row per sales transaction.", "human");
             await engine.SetDescriptionAsync("column:Sales/Amount", "The transaction amount in dollars.", "human");
             await engine.SetObjectPropertyAsync("column:Sales/Amount", "FormatString", "#,0.00", "human");
-            return (engine, sm, m1);
+        }
+
+        private async Task<(LocalEngine engine, SessionManager sm, string m1)> FreshAsync(bool pro = true)
+        {
+            var sm = new SessionManager();
+            var engine = new LocalEngine(sm, new Fake(pro));
+            await _templates.OpenCopyAsync(engine, "clean", BuildCleanAsync, TestEntitlements.Pro);
+            return (engine, sm, "measure:Sales/Total Amount");
         }
 
         /// <summary>Run one mutation and capture the single ChangeNotification it broadcasts.</summary>
@@ -133,6 +143,7 @@ namespace Semanticus.Tests
 
         // Blast radius: a SEMANTIC edit to a referenced measure reports its downstream count; the same object's
         // cosmetic edit reports nothing (impact roots are semantic-prop deltas only).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Impact_counts_downstream_of_a_semantic_edit_only()
         {
@@ -154,6 +165,7 @@ namespace Semanticus.Tests
         }
 
         // The chip's undo affordance is honest: undoing the letter-moving edit broadcasts the REVERSE movement.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Undo_reports_the_reverse_grade_movement()
         {
@@ -191,6 +203,7 @@ namespace Semanticus.Tests
         // The MCP success filter (McpHealthAppender): appends ONE terse block to a mutating agent call's result,
         // take-once (the next read-only call appends nothing), and a FAILED call's partial stash never leaks
         // onto the next result.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mcp_filter_appends_the_block_once_and_never_leaks_across_calls()
         {
@@ -256,6 +269,7 @@ namespace Semanticus.Tests
         // C1: correlation-true attribution — two "parallel" tool calls each drain exactly their OWN deltas
         // (the old drain-the-whole-queue design handed the first drainer both, merged, and the second none),
         // a multi-commit call merges honestly into one slot (no MailboxCap eviction), and take-once holds per id.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Parallel_calls_each_drain_their_own_deltas_by_correlation_id()
         {
@@ -302,6 +316,7 @@ namespace Semanticus.Tests
         // C2: a baseline that throws on its BPA leg must not permanently kill BPA net-new detection — the
         // probe reseeds the missing memo on the next commit and detection RESUMES (it used to stay dead for
         // the whole session).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Baseline_bpa_throw_recovers_and_detection_resumes()
         {
@@ -374,6 +389,7 @@ namespace Semanticus.Tests
         // that carries a Warning+ BPA violation does NOT re-report the moved violation as net-new. Under the old
         // name-path keys this lane had NO rename protection at all ("BPA renames can re-key — accepted edge"),
         // so this rename minted a false net-new Warning and lit the chip.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Renamed_bpa_violation_is_not_net_new()
         {
@@ -421,6 +437,7 @@ namespace Semanticus.Tests
         // commit. The rule's model-wide count rises, so the count-based guard cannot suppress anything — only the
         // rename-stable LineageTag identity keeps the renamed object's moved findings out of "net-new". Exactly
         // one bad measure's worth of findings must report (the added one), not two.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rename_plus_same_rule_add_reports_only_the_new_object()
         {
@@ -447,6 +464,7 @@ namespace Semanticus.Tests
         // C6/S2: a mega-batch commit whose semantic roots exceed the OLD 64-root cap must still report the real
         // blast radius — the multi-source BFS walks ALL roots, so a leaf-heavy prefix can never truncate the
         // dependent-bearing root out of the count.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Mega_batch_commit_never_truncates_the_blast_radius()
         {
@@ -469,6 +487,7 @@ namespace Semanticus.Tests
         // P6 used to pin the LAZY tier check: free got nothing until a license was activated mid-session. The
         // probe has no entitlement any more (HealthDeltaProbe lost the parameter), so the pin flips: a tier that
         // changes under the running session must change NOTHING about the delta, before or after.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Tier_changing_mid_session_changes_nothing_about_the_delta()
         {
@@ -499,6 +518,7 @@ namespace Semanticus.Tests
 
         // The scoped BPA overload is faithful: for the touched object it reports exactly the full scan's rule
         // hits, and model-scope rules never enter a scoped card whose scope doesn't include the model itself.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Scoped_bpa_scan_matches_the_full_scan_for_the_touched_object()
         {

@@ -62,9 +62,9 @@ test('palette Edit DAX with no node uses the tree selection (D-057)', () => {
 
 test('extension Edit DAX command does not dereference a missing node (D-057)', () => {
     const src = read('src/extension.ts');
-    assert.match(src, /registerCommand\('semanticus\.editDax',\s*\(n\?: TreeNode\) => editDaxCmd\(n\)\)/);
+    assert.match(src, /registerPersonCommand\('semanticus\.editDax',\s*\(n\?: TreeNode\) => editDaxCmd\(n\)\)/);
     assert.match(src, /resolveEditDaxNode/);
-    assert.doesNotMatch(src, /registerCommand\('semanticus\.editDax',\s*\(n: TreeNode\) => openDax\(n\)\)/);
+    assert.doesNotMatch(src, /registerPersonCommand\('semanticus\.editDax',\s*\(n: TreeNode\) => openDax\(n\)\)/);
 });
 
 test('FormatStringControl infers mode from inferFormatMode (D-036)', () => {

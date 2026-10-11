@@ -39,7 +39,7 @@ assert.equal(model.resultChip(true, { verdict: 'Pass', missing: true }), 'Could 
 {
   const all = model.runScopeGroups(5, 8, 6);
   assert.deepEqual(all.map((g) => g.id), ['checks', 'relationships', 'tableCounts']);
-  assert.deepEqual(all.map((g) => g.label), ['Enabled saved checks', 'Relationships', 'Table row counts']);
+  assert.deepEqual(all.map((g) => g.label), ['Saved checks', 'Relationships', 'Table row counts']);
   assert.deepEqual(all.map((g) => g.count), [5, 8, 6]);
 
   const noTables = model.runScopeGroups(5, 8, 0);
@@ -137,12 +137,12 @@ assert.equal(model.relationshipAttention(3), '3 relationships need attention');
 assert.equal(model.relationshipAttention(0), 'Nothing needs attention');
 
 // ---------------------------------------------------------------------------------------------------
-// 7 (Astra 3). A total-only comparison is limited evidence and says so before the last click.
+// 7 (Astra 3). A total-only comparison proves very little and says so before the last click.
 // ---------------------------------------------------------------------------------------------------
 {
   const note = model.limitedEvidenceNote(0);
   assert.ok(note, 'a total-only comparison must carry a note');
-  assert.match(note, /limited evidence/);
+  assert.match(note, /proves very little/);
   // Fable's wording, decided against the engine's ReconcileContract: groupBy is 'required for a
   // verdict', so the cost of leaving it empty is a VERDICT CEILING, not a vague weakness.
   assert.match(note, /A comparison with no groups can show a matching total but can never pass as verified\./);

@@ -31,8 +31,11 @@ namespace Semanticus.Tests
     /// not observable from here, and inventing a count would be its own lie. Objects-in-scope (M) IS countable
     /// without running the expression, so that is all we report.
     /// </summary>
-    public sealed class BpaUnknownScopeTests
+    public sealed class BpaUnknownScopeTests : IClassFixture<TemplateCopies>
     {
+        private readonly TemplateCopies _copies;
+        public BpaUnknownScopeTests(TemplateCopies copies) => _copies = copies;
+
         private sealed class Fake : IEntitlement
         {
             public bool IsPro => true;
@@ -48,9 +51,10 @@ namespace Semanticus.Tests
             "\"Severity\":3,\"Scope\":\"Measure\",\"Expression\":\"Name.Substring(3).Length >= 0\"}]";
 
         // The same clean fixture the deploy-gate tests use: nothing in the Microsoft corpus blocks on it.
-        private static async Task<LocalEngine> CleanModelAsync()
+        private Task<LocalEngine> CleanModelAsync() => _copies.OpenAsync("clean", BuildCleanModelAsync, new Fake(), new SessionManager());
+
+        private static async Task BuildCleanModelAsync(LocalEngine engine)
         {
-            var engine = new LocalEngine(new SessionManager(), new Fake());
             await engine.CreateModelAsync("Unknowns", 1604);
             var t = await engine.CreateTableAsync("Sales", "human");
             var amt = await engine.CreateColumnAsync(t, "Sales Amount", "Decimal", "Sales Amount", "human");
@@ -64,7 +68,6 @@ namespace Semanticus.Tests
             await engine.SetObjectPropertyAsync(dkey, "IsKey", "true", "human");
             await engine.SetObjectPropertyAsync(dkey, "FormatString", "yyyy-mm-dd", "human");
             await engine.MarkDateTableAsync(dt, "Date", "human");
-            return engine;
         }
 
         // Add the object the expression throws on: a measure whose name is shorter than 3 characters. Kept separate
@@ -169,7 +172,7 @@ namespace Semanticus.Tests
             Assert.Contains("Gate blocked", after.Note);
         }
 
-        // ---- 3) the token-light summary carries it too (an agent that only calls bpa_summary must still see it) ----
+        // ---- 3) the token-light summary carries it too (an agent that only reads the summary must still see it) ----
 
         [Fact]
         public async Task The_bpa_summary_carries_the_unknown_as_a_first_class_count()
@@ -193,7 +196,7 @@ namespace Semanticus.Tests
             "\"Category\":\"Descriptions\",\"Severity\":\"High\",\"Scope\":\"Measure\"," +
             "\"Expression\":\"Name.Substring(3).Length >= 0\"}]";
 
-        // First line of defence, and it is stronger than the BPA lane's: load_readiness_rules TEST-RUNS the rule on the
+        // First line of defence, and it is stronger than the BPA lane's: load_rules (system='air') TEST-RUNS the rule on the
         // open model and REFUSES to load one that cannot evaluate, so it never enters the corpus and never scores.
         // (This is precisely what BPA rule loading does not do, which is why BPA needs the scorecard-level unknown.)
         [Fact]

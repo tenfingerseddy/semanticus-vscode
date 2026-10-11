@@ -18,7 +18,7 @@ const pkg = JSON.parse(read('package.json'));
 
 // --- 1. the bus: one shared webview helper, one host handler, no focus steal ---------------------------
 assert.match(bridge, /export function selectInProperties\(/, 'bridge must export the shared selection-bus helper');
-assert.match(bridge, /postMessage\(\{ type: 'selectObject', ref \}\)/, 'the bus must post the selectObject message');
+assert.match(bridge, /postToHostStamped\(\{ type: 'selectObject', ref \}\)/, 'the bus must post the selectObject message');
 
 assert.match(ext, /msg\?\.type === 'selectObject'/, 'the Studio message relay must handle selectObject');
 assert.match(ext, /function selectRefInProperties\(/, 'the host must route selectObject through one function');
@@ -35,7 +35,7 @@ assert.doesNotMatch(busFn, /semanticusProperties\.focus/, 'the bus must NOT stea
 assert.match(bridge, /export function focusSelectInProperties\(/, 'bridge must export the focus-driven selection helper');
 const focusSel = bridge.slice(bridge.indexOf('export function focusSelectInProperties'));
 assert.match(focusSel, /pendingFocusRef = ref;/, 'focusSelectInProperties must record the ref');
-assert.match(focusSel, /vscode\.postMessage\(\{ type: 'selectObject', ref \}\)/, 'focusSelectInProperties must ALWAYS post');
+assert.match(focusSel, /postToHostStamped\(\{ type: 'selectObject', ref \}\)/, 'focusSelectInProperties must ALWAYS post');
 assert.match(focusSel, /setTimeout\(clearPendingFocus, \d+\)/, 'focusSelectInProperties must arm a timeout that expires the one-shot token (no lingering across gestures)');
 assert.match(bridge, /function clearPendingFocus\(\)/, 'a shared clear must reset the token AND cancel its timer');
 assert.match(bridge, /window\.clearTimeout\(pendingFocusTimer\)/, 'clearPendingFocus must cancel the pending timer so it cannot fire late against a fresh token');
@@ -115,7 +115,7 @@ assert.doesNotMatch(app, /stagedCols\.has\(table \+ '\/' \+ column\)/, "the colu
 // otherwise the old refs stay actionable during the in-flight reload and a just-renamed object is still reachable.
 // The reset helper clears the whole staged shape (meta + column names + the summarize/unused joins) and BOTH the
 // model-change and reconnect handlers call it BEFORE refetching — so no stale ref stays actionable during the reload.
-assert.match(app, /const reset = \(\) => \{ setMeta\(null\); setStagedCols\(null\); setColRows\(undefined\); setUnused\(undefined\); \};/, 'a model change must clear the whole staged shape (meta + column names + joins)');
+assert.match(app, /const reset = \(\) => \{ setMeta\(null\); setStagedCols\(null\); setColRows\(undefined\); setUnused\(undefined\); setFacts\(undefined\); \};/, 'a model change must clear the whole staged shape (meta + column names + joins + the engine storage findings)');
 assert.match(app, /onDidChange\(\(\) => \{ reset\(\); loadStaged\(\); \}\)/, 'a model change must clear the staged shape BEFORE refetching (no actionable stale refs during the reload)');
 // Reconnect additionally clears the SCAN + comparison snapshots (clearScan) — a new connection/model must never
 // keep rendering the previous model's storage numbers or persist under its comparison chain.
@@ -145,9 +145,9 @@ assert.ok(loadTablesFn.indexOf('setTables([])') < loadTablesFn.indexOf("rpc<Mode
   'the clear must precede the getModelGraph refetch (no actionable obsolete-ref rows during the in-flight reload)');
 
 // --- 3. Context-menu Rename → the Properties Name row; F2 → the Input Box --------------------------------
-assert.match(ext, /registerCommand\('semanticus\.renameObject', \(n: TreeNode, ns\?: TreeNode\[\]\) => renameInPropertiesCmd\(n, ns\)\)/,
+assert.match(ext, /registerPersonCommand\('semanticus\.renameObject', \(n: TreeNode, ns\?: TreeNode\[\]\) => renameInPropertiesCmd\(n, ns\)\)/,
   'context-menu Rename must route to the Properties grid (forwarding the selection for multi-select handling)');
-assert.match(ext, /registerCommand\('semanticus\.renameObjectInputBox', \(n: TreeNode\) => renameCmd\(n\)\)/,
+assert.match(ext, /registerPersonCommand\('semanticus\.renameObjectInputBox', \(n: TreeNode\) => renameCmd\(n\)\)/,
   'the InputBox rename must survive as its own command');
 const renameFn = ext.slice(ext.indexOf('async function renameInPropertiesCmd'), ext.indexOf('async function renameCmd'));
 assert.match(renameFn, /semanticusProperties\.focus/, 'rename must focus the Properties view');
@@ -238,6 +238,7 @@ assert.match(propgrid, /\.select\(\)/, 'the Name text must be selected (type-ove
 const cmds = pkg.contributes.commands.map((c) => c.command);
 assert.ok(cmds.includes('semanticus.renameObjectInputBox'), 'package.json must contribute the fallback command');
 const ctx = pkg.contributes.menus['view/item/context'];
-assert.ok(ctx.some((m) => m.command === 'semanticus.renameObjectInputBox'), 'the fallback must be reachable from the tree context menu');
+assert.ok(!ctx.some((m) => m.command === 'semanticus.renameObjectInputBox'), 'Rename with Input Box left the right-click menu: Rename… and F2 cover it (T1)');
+assert.ok(pkg.contributes.keybindings.some((k) => k.command === 'semanticus.renameObjectInputBox' && k.key === 'f2'), 'F2 still starts the Input Box rename');
 
 console.log('selection bus + F2 rename contract tests passed');

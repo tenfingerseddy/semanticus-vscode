@@ -42,6 +42,7 @@ namespace Semanticus.Tests
         }
 
         // ---- BPA: a waiver pointing at a rule that no longer exists is surfaced + counted ---------------------------
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bpa_waiver_for_a_rule_id_absent_from_the_loaded_set_is_surfaced_and_counted()
         {
@@ -192,7 +193,11 @@ namespace Semanticus.Tests
                 Assert.Empty(card.RuleErrors);
                 Assert.Equal(1, card.OrphanedWaiverCount);
                 Assert.Equal(DeadAirRule.ToLowerInvariant(), Assert.Single(card.OrphanedWaivers).RuleId);
-                Assert.Equal(0, card.WaivedCount);
+                // A rule-level acceptance of a rule that is loaded always has its row (round 7, "Accepted for the whole model"), so the two known
+                // rules here are listed and counted with it; the rule id nothing carries is the orphan, and no live-data rule is evaluated offline.
+                Assert.Equal(new[] { customId.ToLowerInvariant(), "desc-measure" }.OrderBy(x => x),
+                    card.Findings.Where(f => f.WholeRuleRow).Select(f => f.RuleId.ToLowerInvariant()).OrderBy(x => x));
+                Assert.Equal(card.Findings.Count(f => f.Waived), card.WaivedCount);
                 Assert.DoesNotContain(card.Findings, f => ReadinessRuleSet.LiveRules(new ReadinessLiveStats()).Any(r => r.Id == f.RuleId));
             }
 
@@ -206,6 +211,7 @@ namespace Semanticus.Tests
         }
 
         // ---- the healthy case must stay quiet: a LIVE waiver is never mislabelled as orphaned -----------------------
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_waiver_matching_a_loaded_rule_is_not_reported_as_orphaned()
         {
@@ -227,6 +233,7 @@ namespace Semanticus.Tests
         }
 
         // ---- a rule-level (model-wide) waiver orphans the same way, and is reported with a null ref -----------------
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rule_level_waiver_for_a_dead_rule_is_surfaced_as_orphaned()
         {
@@ -244,6 +251,7 @@ namespace Semanticus.Tests
         }
 
         // ---- the cross-system guard: an "air" waiver is not judged against the BPA rule set (or vice versa) ---------
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_air_waiver_is_not_reported_as_an_orphan_on_the_bpa_card()
         {

@@ -167,38 +167,39 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
     e.dataTransfer.effectAllowed = 'copy';
   };
 
-  if (err) return <div className="text-[12px]" style={{ color: 'var(--sem-bad)' }}>{err}</div>;
+  if (err) return <div className="text-xs xe-dot xe-dot-bad">{err}</div>;
 
   return (
     <div className="flex flex-col min-h-0" style={{ height }}>
       {/* toolbar: search · group-by · kind chips · hidden */}
-      <div className="flex items-center gap-1.5 flex-wrap pb-1.5 shrink-0">
+      <div className="flex items-center gap-2 flex-wrap pb-1 shrink-0">
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search fields… ( / )" spellCheck={false} data-ob-search
-          className="text-[12px] px-2 py-1 rounded-md outline-none flex-1 min-w-[120px]" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-        <div className="flex items-center gap-0.5">
+          className="text-xs px-2 py-1 rounded-(--sem-radius-control) outline-none flex-1 min-w-[120px]" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
+        <div className="flex items-center gap-1">
           {(['table', 'folder', 'flat'] as GroupBy[]).map((g) => (
             <button key={g} onClick={() => setGroupBy(g)} title={`Group by ${g}`}
-              className="text-[10px] px-1.5 py-0.5 rounded-md font-medium capitalize"
-              style={groupBy === g ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>{g}</button>
+              className="text-(length:--sem-text-label) px-2 py-0 rounded-(--sem-radius-control) font-medium capitalize"
+              style={groupBy === g ? { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', fontWeight: 'var(--sem-weight-strong)' } : { color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>{g}</button>
           ))}
         </div>
       </div>
-      <div className="flex items-center gap-1.5 flex-wrap pb-1.5 shrink-0">
+      <div className="flex items-center gap-2 flex-wrap pb-1 shrink-0">
         {availableKinds.map((k) => (
           <Chip key={k} active={kindOn.has(k)} onClick={() => toggleKind(k)}>
-            <span style={{ color: KIND_GLYPH[k].color }}>{KIND_GLYPH[k].g}</span> {k === 'hierarchy' ? 'hierarchies' : k + 's'}
+            <span style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[k].g}</span> {k === 'hierarchy' ? 'hierarchies' : k + 's'}
           </Chip>
         ))}
         {nodes.some((n) => n.isHidden) && <Chip active={showHidden} onClick={() => setShowHidden((v) => !v)}>hidden</Chip>}
-        <span className="text-[11px] tnum ml-auto" style={{ color: 'var(--sem-muted)' }}>
+        <span className="text-(length:--sem-text-label) tnum ml-auto" style={{ color: 'var(--sem-muted)' }}>
           {filtered.length === nodes.length ? `${nodes.length} object${nodes.length === 1 ? '' : 's'}` : `${filtered.length} of ${nodes.length}`}
         </span>
       </div>
 
       {/* virtualized rows */}
-      <div ref={parentRef} className="overflow-auto rounded-lg flex-1 min-h-0" style={{ border: '1px solid var(--sem-border)' }}>
+      {/* No box of its own: the card it sits in is the box (a card never sits inside a card). */}
+      <div ref={parentRef} className="overflow-auto flex-1 min-h-0" style={{ borderTop: '1px solid var(--sem-rule)' }}>
         {rows.length === 0 ? (
-          <div className="text-[12px] p-3" style={{ color: 'var(--sem-muted)' }}>{query ? 'No matching objects.' : (emptyHint ?? 'No objects.')}</div>
+          <div className="text-xs p-3" style={{ color: 'var(--sem-muted)' }}>{query ? 'No matching objects.' : (emptyHint ?? 'No objects.')}</div>
         ) : (
           <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
             {virtualizer.getVirtualItems().map((vr) => {
@@ -207,10 +208,10 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
               if (row.t === 'group') {
                 return (
                   <button key={vr.key} onClick={() => toggleGroup(row.key)} style={common}
-                    className="flex items-center gap-1.5 px-2 text-left" >
-                    <span className="inline-block w-3 text-[9px]" style={{ transform: row.open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
-                    <span className="text-[12px] font-semibold truncate">{row.label}</span>
-                    <span className="text-[10px]" style={{ color: 'var(--sem-muted)' }}>({row.count})</span>
+                    className="flex items-center gap-2 px-2 text-left" >
+                    <span className="inline-block w-3 text-(length:--sem-text-label)" style={{ transform: row.open ? 'none' : 'rotate(-90deg)', color: 'var(--sem-muted)' }}>▾</span>
+                    <span className="text-xs font-semibold truncate">{row.label}</span>
+                    <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>({row.count})</span>
                   </button>
                 );
               }
@@ -226,20 +227,19 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
                   draggable={dragEnabled && daxRefOf(n) !== null} onDragStart={dragEnabled ? drag(n) : undefined}
                   onClick={() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }}
                   title={daxRefOf(n) ?? n.ref}
-                  className={'group flex items-center gap-1.5 pl-2 pr-2 cursor-pointer hover:bg-[var(--sem-surface-2)] ' + (groupBy === 'flat' ? '' : 'pl-5')}>
+                  className={'group flex items-center gap-2 pl-2 pr-2 cursor-pointer hover:bg-[var(--sem-hover)] ' + (groupBy === 'flat' ? '' : 'pl-4')}>
                   {multiSelect && (
                     <button onClick={(e) => onCheck(n, e)} aria-checked={checked} role="checkbox"
-                      className="w-3.5 h-3.5 rounded inline-flex items-center justify-center text-[9px] shrink-0"
-                      style={{ background: checked ? 'var(--sem-accent)' : 'transparent', color: '#fff', border: '1px solid ' + (checked ? 'var(--sem-accent)' : 'var(--sem-border)') }}>{checked ? '✓' : ''}</button>
+                      className={'xe-check' + (checked ? ' is-on' : '')}>{checked ? '✓' : ''}</button>
                   )}
-                  <span className="shrink-0 w-3 text-center" style={{ color: KIND_GLYPH[n.kind].color }}>{KIND_GLYPH[n.kind].g}</span>
-                  <span className="text-[12px] truncate flex-1" {...rowKeyProps(() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }, () => focusSelectInProperties(n.ref))}>{n.name}
-                    {groupBy !== 'table' && <span className="text-[11px]" style={{ color: 'var(--sem-muted)' }}> · {n.table}</span>}
-                    {n.isKey && <span className="text-[9px] ml-1 px-1 rounded" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)' }}>key</span>}
+                  <span className="shrink-0 w-3 text-center" style={{ color: 'var(--sem-muted)' }}>{KIND_GLYPH[n.kind].g}</span>
+                  <span className="text-xs truncate flex-1" {...rowKeyProps(() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }, () => focusSelectInProperties(n.ref))}>{n.name}
+                    {groupBy !== 'table' && <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}> · {n.table}</span>}
+                    {n.isKey && <span className="text-(length:--sem-text-label) ml-1" style={{ color: 'var(--sem-muted)' }}>key</span>}
                   </span>
-                  {n.dataType && <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-muted)' }}>{n.dataType}</span>}
-                  {!picked && <span className="text-[10px] shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" style={{ color: 'var(--sem-muted)' }}>add +</span>}
-                  <RevealBtn objRef={n.ref} className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100" />
+                  {n.dataType && <span className="text-(length:--sem-text-label) shrink-0" style={{ color: 'var(--sem-muted)' }}>{n.dataType}</span>}
+                  {!picked && <span className="text-(length:--sem-text-label) shrink-0 invisible group-hover:visible group-focus-within:visible" style={{ color: 'var(--sem-muted)' }}>add +</span>}
+                  <RevealBtn objRef={n.ref} className="invisible group-hover:visible group-focus-within:visible" />
                 </div>
               );
             })}
@@ -249,9 +249,9 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
 
       {/* multi-select action bar */}
       {multiSelect && selectedNodes.length > 0 && (
-        <div className="flex items-center gap-2 pt-1.5 shrink-0">
-          <span className="text-[11px]" style={{ color: 'var(--sem-fg)' }}>{selectedNodes.length} selected</span>
-          <button onClick={() => setSel(new Set())} className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>clear</button>
+        <div className="flex items-center gap-2 pt-1 shrink-0">
+          <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-fg)' }}>{selectedNodes.length} selected</span>
+          <button onClick={() => setSel(new Set())} className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>clear</button>
           <button onClick={() => { onPickMany?.(selectedNodes); setSel(new Set()); }}
             className="sem-btn sem-btn-sm sem-btn-primary ml-auto">
             Add {selectedNodes.length} selected
@@ -264,8 +264,7 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
 
 function Chip({ children, active, onClick }: { children: React.ReactNode; active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="text-[10px] px-1.5 py-0.5 rounded-md font-medium inline-flex items-center gap-1"
-      style={active ? { background: 'var(--sem-accent-soft)', color: 'var(--sem-fg)' } : { color: 'var(--sem-muted)', background: 'var(--sem-surface-2)', opacity: 0.6 }}>
+    <button onClick={onClick} aria-pressed={active} className="sem-seg-item">
       {children}
     </button>
   );

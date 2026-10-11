@@ -1,0 +1,91 @@
+table Events
+	/// event identifier
+	column 'Event ID'
+		dataType: int64
+		sourceColumn: EventID
+		summarizeBy: none
+
+	/// session identifier
+	column 'Session ID'
+		dataType: int64
+		sourceColumn: SessionID
+		summarizeBy: none
+
+	/// event date join key
+	column 'Event Date Key'
+		dataType: int64
+		sourceColumn: EventDateKey
+		summarizeBy: none
+
+	/// campaign join key
+	column 'Campaign Key'
+		dataType: int64
+		sourceColumn: CampaignKey
+		summarizeBy: none
+
+	/// device join key
+	column 'Device Key'
+		dataType: int64
+		sourceColumn: DeviceKey
+		summarizeBy: none
+
+	column 'Event Type'
+		dataType: string
+		sourceColumn: EventType
+		summarizeBy: none
+
+	/// commerce revenue in dollars. Cents must remain visible.
+	column Revenue
+		dataType: double
+		sourceColumn: Revenue
+		summarizeBy: none
+
+	/// page load duration in milliseconds. Tenths of a millisecond matter.
+	column 'Page Load Ms'
+		dataType: double
+		sourceColumn: PageLoadMs
+		summarizeBy: none
+
+	/// event duration in seconds. Tenths of a second matter.
+	column 'Duration Seconds'
+		dataType: double
+		sourceColumn: DurationSeconds
+		summarizeBy: none
+
+	/// year of session stored as integer
+	column 'Session Year'
+		dataType: int64
+		sourceColumn: SessionYear
+		summarizeBy: none
+
+	/// distinct sessions
+	measure Sessions = DISTINCTCOUNT(Events[Session ID])
+
+	/// purchase events
+	measure Purchases = CALCULATE(COUNTROWS(Events), Events[Event Type] = "purchase")
+
+	/// purchases divided by sessions. Report to at least a tenth of a percentage point.
+	measure 'Checkout Conversion' = DIVIDE([Purchases], [Sessions])
+
+	/// bounce sessions divided by sessions. Report to at least a tenth of a percentage point.
+	measure 'Bounce Rate' = DIVIDE(CALCULATE([Sessions], Events[Event Type] = "bounce"), [Sessions])
+
+	/// mean page load in milliseconds. Tenths of a millisecond matter.
+	measure 'Average Page Load' = AVERAGE(Events[Page Load Ms])
+
+	/// mean session duration in seconds. Tenths of a second matter.
+	measure 'Average Session Duration' = AVERAGE(Events[Duration Seconds])
+
+	/// dollars per session. Cents must remain visible.
+	measure 'Revenue Per Session' = DIVIDE(SUM(Events[Revenue]), [Sessions])
+
+	/// revenue divided by campaign spend, shown as x multiple. Display as an x multiple to hundredths.
+	measure 'Return on Ad Spend' = DIVIDE(SUM(Events[Revenue]), SUM(Campaign[Spend]))
+
+	partition Events = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [EventID = Int64.Type, SessionID = Int64.Type, EventDateKey = Int64.Type, CampaignKey = Int64.Type, DeviceKey = Int64.Type, EventType = type text, Revenue = type number, PageLoadMs = type number, DurationSeconds = type number, SessionYear = Int64.Type], {})
+			in
+				Source

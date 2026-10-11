@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const extension = read('src/extension.ts');
-const compare = read('webview/src/compare.tsx');
-const deploy = read('webview/src/deploy.tsx');
+const changes = read('webview/src/publish-changes.tsx');
+const sharedCopy = read('webview/src/publishcopy.ts');
 
 assert.doesNotMatch(extension, /The live model already matches the session/,
   'D-002: Save to Live must not claim the live model already matches when it only counted adds and edits');
@@ -19,20 +19,15 @@ assert.match(extension, /Nothing is removed unless you tick/,
   'D-001: Save to Live must say that extra live objects stay unless the person ticks them');
 assert.match(extension, /canPickMany:\s*true/,
   'D-001: extra live objects must be offered as an unticked multi-select');
-assert.match(deploy, /deleteRefs/,
-  'D-001: Ship Publish must pass ticked live-only refs to deployLive');
-assert.match(deploy, /Nothing is removed unless you tick/,
-  'D-001: Ship Publish must say extra live objects stay unless ticked');
-assert.match(deploy, /type="checkbox"/,
-  'D-001: Ship Publish must offer extra live objects as unticked boxes');
-
-assert.match(compare, /targetIsWorkspace/,
-  'D-001: Push changes must recognise a published model as a target that can apply');
-assert.match(compare, /targetIsFile \|\| targetIsSession \|\| targetIsWorkspace/,
-  'D-001: Validate selection must be enabled when the Target is a published model');
-assert.doesNotMatch(compare, /To apply, set the Target to a <b>file<\/b> or the <b>working copy<\/b>/,
-  'D-001: the published-model dead-end copy must be gone');
-assert.match(compare, /kind === 'workspace'[\s\S]{0,120}action !== 'Delete'/,
-  'D-001: Delete rows against a published model must start unticked');
+assert.match(changes, /it\.action !== 'Delete'/,
+  'D-001: a removal from a published model must start unticked (the one tick that stays a choice)');
+assert.match(changes, /Tick all[\s\S]{0,40}|const tickAll = \(\) => setWish\(new Set\(items\.filter\(\(i\) => !isRemoval\(i\)\)/,
+  'D-001: Tick all must not tick removals');
+assert.match(sharedCopy, /Tick to remove it there/,
+  'D-001: Ship Publish must say a destination-only object stays unless ticked');
+assert.match(changes, /type="checkbox"/,
+  'D-001: the Publish page must offer destination-only objects as unticked boxes');
+assert.match(changes, /rpc<ApplyDiffResult>\('applyDiff', left, right, \[\.\.\.effective\], true, 'human'\)/,
+  'D-001: the Publish page must send the reviewed selection, removals included, through applyDiff');
 
 console.log('honest live-diff copy and apply-path tests passed');

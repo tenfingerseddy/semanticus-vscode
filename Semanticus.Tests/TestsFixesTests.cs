@@ -390,6 +390,9 @@ namespace Semanticus.Tests
                         ToleranceRelative = 0.0000001,
                     }),
                 }, "human");
+                // A check bound by its lineage tag now finds its measure (join 10, s10fix B3), so the run reaches its SQL. Answer it here: a real run signs in
+                // with the Azure CLI, which no test may do (the no-browser net failed the engine suite on exactly this call).
+                engine.ReconcileSqlForTests = (server, database, sql) => new ResultSet { Columns = new[] { new ColumnDef { Name = "v" } }, Rows = new[] { new object[] { 4321m } }, RowCount = 1 };
 
                 var run = await engine.RunTestSuiteAsync(false, "human");
                 const string sentence = "Allowed difference: 0.000001234567 or 0.00001%, whichever is larger. Blanks read as zero.";

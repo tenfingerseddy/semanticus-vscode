@@ -1,0 +1,24 @@
+table Department
+	/// department join key
+	column 'Department Key'
+		dataType: int64
+		sourceColumn: DepartmentKey
+		summarizeBy: none
+
+	column 'Cost Center'
+		dataType: int64
+		sourceColumn: CostCenter
+		summarizeBy: none
+
+	column 'Department Name'
+		dataType: string
+		sourceColumn: DepartmentName
+		summarizeBy: none
+
+	partition Department = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [DepartmentKey = Int64.Type, CostCenter = Int64.Type, DepartmentName = type text], {})
+			in
+				Source

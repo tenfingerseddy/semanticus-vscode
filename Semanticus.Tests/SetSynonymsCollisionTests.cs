@@ -15,7 +15,7 @@ namespace Semanticus.Tests
     /// linguistic validator folds every LSDL entity's bound name into ONE term dictionary, so entities for
     /// hidden shadow columns duplicating visible names made EVERY synonym write fail model-wide. Pins: the
     /// self-heal (prune dead/hidden-bound entities), the pre-flight collision guard with actionable errors,
-    /// the hidden-target refusal, the keep-what-you-don't-understand fail-safe, enable_qna's non-fatal
+    /// the hidden-target refusal, the keep-what-you-don't-understand fail-safe, create_linguistic_schema's non-fatal
     /// heal-and-warn, and the DAC-QNA-NAME-COLLISIONS readiness rule. Driven through LocalEngine so the
     /// MCP surface is what's proven, not just the helper.
     /// </summary>
@@ -60,13 +60,59 @@ namespace Semanticus.Tests
         private static Task<string> ContentAsync(SessionManager sessions) =>
             sessions.Require().ReadAsync(m => m.Cultures["en-US"].Content);
 
+        // UAT-S06a-1-001: create_linguistic_schema accepted "bad culture!", answered changed:true and stored a
+        // linguistic schema whose Language was that string. A culture name that is not a real culture must be
+        // refused with a way forward, and the model left untouched. A real culture still seeds normally.
+        [Fact]
+        public async Task A_culture_that_is_not_a_real_culture_is_refused_and_nothing_is_written()
+        {
+            var (engine, sessions) = await ModelAsync();
+            using (engine)
+            {
+                var rev = sessions.Require().Revision;
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.CreateLinguisticSchemaAsync("bad culture!", "agent"));
+                Assert.Contains("bad culture!", ex.Message);
+                Assert.Contains("en-US", ex.Message);                                    // names a valid example
+                await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SetSynonymsAsync("column:Work Pack/Region", new[] { "area" }, "bad culture!", "agent"));
+                Assert.Equal(rev, sessions.Require().Revision);
+                Assert.False(await sessions.Require().ReadAsync(m => m.Cultures.Contains("bad culture!")));
+
+                var ok = await engine.CreateLinguisticSchemaAsync("en-AU", "agent");
+                Assert.True(ok.Changed);
+                Assert.True(await sessions.Require().ReadAsync(m => m.Cultures.Contains("en-AU")));
+            }
+        }
+
+        // UAT-S11-3-001 (Sol's retest on 0ee45add): create_linguistic_schema("en_AU") answered changed:true and stored a
+        // schema whose Language was "en_AU". The culture list resolves "en_AU" (and "EN-au", " en-AU") to en-AU, so the
+        // check passed while the raw spelling was written. A culture name is written only in its exact form, so any
+        // other spelling is refused with the exact form to pass, and nothing is written.
+        [Fact]
+        public async Task A_culture_spelled_other_than_its_exact_form_is_refused_with_the_exact_form()
+        {
+            var (engine, sessions) = await ModelAsync();
+            using (engine)
+            {
+                var rev = sessions.Require().Revision;
+                var before = await sessions.Require().ReadAsync(m => m.Cultures.Select(c => c.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+                foreach (var spelling in new[] { "en_AU", "EN-au", " en-AU" })
+                {
+                    var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.CreateLinguisticSchema(engine, spelling));
+                    Assert.Contains("'en-AU'", ex.Message);                              // the exact form to pass instead
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SetSynonymsAsync("column:Work Pack/Region", new[] { "area" }, spelling, "agent"));
+                }
+                Assert.Equal(rev, sessions.Require().Revision);
+                Assert.Equal(before, await sessions.Require().ReadAsync(m => m.Cultures.Select(c => c.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray()));
+            }
+        }
+
         [Fact]
         public async Task Set_synonyms_round_trips_through_the_donor_reader()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 var result = await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client", "account holder" }, null, "agent");
                 Assert.True(result.Changed);
                 Assert.Null(result.Warning);
@@ -78,6 +124,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dead_entities_are_pruned_and_the_write_succeeds_with_a_warning()
         {
@@ -94,7 +141,7 @@ namespace Semanticus.Tests
                 var result = await engine.SetSynonymsAsync("column:Work Pack/Region", new[] { "area" }, null, "agent");
                 Assert.True(result.Changed);
                 Assert.Contains("Pruned 2", result.Warning);
-                Assert.Contains("Q&A ignores hidden objects", result.Warning);
+                Assert.Contains("Copilot ignores hidden objects", result.Warning);
 
                 var content = await ContentAsync(sessions);
                 Assert.DoesNotContain("Shadow Col", content);
@@ -104,25 +151,26 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Visible_duplicate_names_are_refused_with_both_tables_named()
+        public async Task Visible_duplicate_names_are_accepted()
         {
+            // 27 Sep ruling: the one refusal on record came from entities for HIDDEN shadow columns (pruned above);
+            // nothing shows the validator refusing two visible fields, and Power BI Desktop saves such models. Two
+            // visible fields with one name are a Copilot ambiguity DAC-QNA-NAME-COLLISIONS reports; the write goes on.
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
                 await engine.CreateColumnAsync("table:Task", "Client Name", "String", "Client Name", "human");   // visible duplicate
                 await InjectAsync(sessions, Lsdl(Entity("work_pack.client_name", "Work Pack", "Client Name")));
 
-                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                    engine.SetSynonymsAsync("column:Task/Client Name", new[] { "customer" }, null, "agent"));
-                Assert.Contains("client name", ex.Message);
-                Assert.Contains("Task", ex.Message);
-                Assert.Contains("Work Pack", ex.Message);
-                Assert.Contains("Rename or hide", ex.Message);
+                var r = await engine.SetSynonymsAsync("column:Task/Client Name", new[] { "customer" }, null, "agent");
+                Assert.True(r.Changed);
+                Assert.Contains("customer", await ContentAsync(sessions));
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Camel_split_collisions_block_and_plural_fold_collisions_warn()
+        public async Task Camel_split_and_plural_fold_names_are_accepted_without_a_fold_warning()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
@@ -135,20 +183,18 @@ namespace Semanticus.Tests
                     Entity("work_pack.date_key", "Work Pack", "Date Key"),
                     Entity("work_pack.cycle_months", "Work Pack", "Cycle Months")));
 
-                // camel split is EXACT-tier: DateKey normalises to the existing entity's 'date key' — refused.
-                var camel = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                    engine.SetSynonymsAsync("column:Task/DateKey", new[] { "when" }, null, "agent"));
-                Assert.Contains("date key", camel.Message);
+                // 'DateKey' reads as the existing 'date key': a Copilot ambiguity, not a refused write.
+                var camel = await engine.SetSynonymsAsync("column:Task/DateKey", new[] { "when" }, null, "agent");
+                Assert.True(camel.Changed);
 
-                // the singular fold is only an approximation: Cycle Month vs Cycle Months PROCEEDS with a warning
-                // (the commit-time backstop carries the live truth) — a fold false-positive must not block a write.
+                // The plural fold was our approximation of the lemmatiser, with nothing behind it: no warning now.
                 var fold = await engine.SetSynonymsAsync("column:Task/Cycle Month", new[] { "cadence" }, null, "agent");
                 Assert.True(fold.Changed);
-                Assert.Contains("plural folding", fold.Warning);
-                Assert.Contains("cycle month", fold.Warning);
+                Assert.True(fold.Warning == null || !fold.Warning.Contains("plural folding", StringComparison.Ordinal), fold.Warning);
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dry_run_set_synonyms_leaves_the_lsdl_byte_identical()
         {
@@ -170,13 +216,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Undo_restores_the_lsdl_after_set_synonyms()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 var before = await ContentAsync(sessions);
 
                 await engine.SetSynonymsAsync("column:Work Pack/Client Name", new[] { "client" }, null, "agent");
@@ -187,6 +234,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Entities_referenced_by_relationships_are_never_pruned()
         {
@@ -210,6 +258,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Clean_name_key_collisions_suffix_instead_of_overwriting()
         {
@@ -220,7 +269,7 @@ namespace Semanticus.Tests
                 // so both writes are allowed — the second entity must get a suffixed key, not replace the first.
                 await engine.CreateColumnAsync("table:Work Pack", "AB", "String", "AB", "human");
                 await engine.CreateColumnAsync("table:Work Pack", "A,B", "String", "A,B", "human");
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
 
                 await engine.SetSynonymsAsync("column:Work Pack/AB", new[] { "first" }, null, "agent");
                 await engine.SetSynonymsAsync("column:Work Pack/A,B", new[] { "second" }, null, "agent");
@@ -233,13 +282,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Hidden_targets_are_refused_with_an_actionable_message()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.SetColumnMetadataAsync("column:Task/Task Status", true, null, null, null, "human");
 
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -281,7 +331,7 @@ namespace Semanticus.Tests
                     Entity("work_pack.client_name", "Work Pack", "Client Name"),
                     Entity("task.client_name", "Task", "Client Name")));              // colliding VISIBLE pair survives
 
-                var result = await engine.EnableQnaAsync(null, "agent");
+                var result = await engine.CreateLinguisticSchemaAsync(null, "agent");
                 Assert.True(result.Changed);                                          // the prune is a real edit
                 Assert.Contains("Pruned 1", result.Warning);
                 Assert.Contains("client name", result.Warning);                       // collision surfaced, not thrown
@@ -294,13 +344,14 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Readiness_rule_fires_one_finding_per_collision_group()
         {
             var (engine, sessions) = await ModelAsync();
             using (engine)
             {
-                await engine.EnableQnaAsync(null, "agent");
+                await engine.CreateLinguisticSchemaAsync(null, "agent");
                 await engine.CreateColumnAsync("table:Task", "Client Name", "String", "Client Name", "human");   // group 1
                 await engine.CreateColumnAsync("table:Work Pack", "Date Key", "String", "Date Key", "human");    // group 2
                 await engine.CreateColumnAsync("table:Task", "DateKey", "String", "DateKey", "human");
@@ -320,6 +371,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Readiness_rule_is_dormant_without_a_linguistic_culture_or_qna_signal()
         {

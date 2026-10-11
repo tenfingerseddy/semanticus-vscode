@@ -91,8 +91,8 @@ namespace Semanticus.Tests
                 var template = await engine.GetWorkflowTemplateAsync("hard-measure");
                 Assert.Null(canonical.Error);
                 Assert.Null(template.Error);
-                Assert.Equal(7, canonical.Version);
-                Assert.Equal(5, template.Version);
+                Assert.Equal(8, canonical.Version);   // lane l9-finish: both drafts now, with a step Semanticus runs at the end
+                Assert.Equal(6, template.Version);
                 Assert.Equal("Test a complex measure", canonical.Title);
                 Assert.Equal(new[] { "measure_goal", "measure_pattern" }, template.Slots.Select(x => x.Name));
                 Assert.DoesNotContain(template.Slots, x => x.Name.Contains("control", StringComparison.OrdinalIgnoreCase));
@@ -106,10 +106,11 @@ namespace Semanticus.Tests
                 var featured = await engine.GetWorkflowAsync("hard-measure-v5-test");
 
                 Assert.Null(featured.Error);
-                Assert.Equal(5, featured.Version);
-                // The stock file is the SHORT form now; the template keeps the long one.
-                Assert.Equal(4, canonical.Steps.Length);
-                Assert.Equal(7, featured.Steps.Length);
+                Assert.Equal(6, featured.Version);
+                // The stock file is the SHORT form now; the template keeps the long one. Each ends with one step Semanticus
+                // runs itself (lane l9-finish), so the assistant's gated steps are the count that matters.
+                Assert.Equal(4, canonical.Steps.Count(x => x.Performer == WorkflowPerformers.Assistant));
+                Assert.Equal(7, featured.Steps.Count(x => x.Performer == WorkflowPerformers.Assistant));
 
                 foreach (var workflow in new[] { canonical, featured })
                 {

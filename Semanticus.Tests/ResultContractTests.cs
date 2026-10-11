@@ -35,7 +35,7 @@ namespace Semanticus.Tests
             "list_partitions", "list_roles", "list_calculation_groups", "get_perspectives",
             "get_model_summary", "get_properties", "get_plan", "set_plan_item", "propose_plan",
             "create_role", "create_relationship", "create_perspective", "create_calculation_group",
-            "create_calculation_item", "set_compatibility_level", "bpa_scan", "load_bpa_rules",
+            "create_calculation_item", "set_compatibility_level", "bpa_scan", "load_rules",
             "set_column_data_type", "get_op_catalog", "run it directly",
             // batch-2 recovery ops (workflows / knowledge / daxlib / data-agent families)
             "list_workflows", "get_workflow", "save_workflow", "check_workflow", "open_model", "save_model",

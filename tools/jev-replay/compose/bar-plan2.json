@@ -1,0 +1,11 @@
+{
+ "point": "compose.draft",
+ "door": "plan",
+ "arm": "kane-2026-09-26",
+ "committed": "2026-09-26",
+ "committedBeforeFirstRun": true,
+ "decidedBy": "Kane, 26 September 2026",
+ "rule": "The Plan door goes on for Pro (JevDraftBuilder.JevDraftsOnPlan = true) only when, on this set, the Pro path (per-clause rule) is right on more Plan drafts than the word match alone, the paired difference has an exact two-sided McNemar p < 0.05, and the Pro path makes no more dropped steps and no more wrong steps than the word match alone.",
+ "alpha": 0.05,
+ "labels": "labels-plan2.json"
+}

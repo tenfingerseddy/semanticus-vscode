@@ -1,14 +1,19 @@
 ---
+schemaVersion: 3
 name: check-blast-radius
 title: Review a risky change
 description: Assess a risky model change, capture relevant evidence, replay saved checks, and record the remaining risk without applying the change.
 whenToUse: "Use before removing, restructuring or otherwise changing an object with downstream use. For a rename that should be applied with a plan, use Rename with impact review; for a quick dependency lookup, use Lineage."
-version: 1
+version: 2
 strictness: hard
 triggers: [impact_assessment, capture_baseline, delete_object, rename_object]
 ---
 
 ## Step 1: Assess the proposed change
+```yaml step
+performer: assistant
+id: step-1
+```
 
 Name the exact object and intended change before editing. Supply local PBIR report paths when report-aware
 coverage is available; decline them with a reason when this review is model-only. `impact_assessment`
@@ -35,6 +40,10 @@ verify:
 ```
 
 ## Step 2: Capture values when the change can be measured
+```yaml step
+performer: assistant
+id: step-2
+```
 
 Before any edit, call `capture_baseline` for the target and its measurable dependants with representative
 group-by columns. Record the engine capture id. If there is no live query model or no measurable value,
@@ -54,6 +63,10 @@ verify:
 ```
 
 ## Step 3: Replay the saved checks
+```yaml step
+performer: assistant
+id: step-3
+```
 
 Run `run_tests` for the current model and export the result with `export_test_report`. The suite's saved
 SQL comparisons, relationship checks and static security checks are the reusable safety net. A missing
@@ -67,14 +80,16 @@ verify:
 ```
 
 ## Step 4: Decide and preserve the review record
+```yaml step
+performer: assistant
+id: step-4
+```
 
 Record whether to proceed, revise or reject, and list every remaining report binding, live-connection gap,
-failed check or unresolved dependency. Export the terminal workflow evidence and save it only when the
-project's evidence record calls for it. This workflow remains apply-free; use the appropriate editor or
-rename workflow after the decision.
+failed check or unresolved dependency. Semanticus saves the review record in the next step. This workflow
+remains apply-free; use the appropriate editor or rename workflow after the decision.
 
 ```yaml gate
-ops: [export_workflow_evidence, save_evidence]
 inputs:
   - name: decision
     question: "Proceed, revise or reject, with the evidence-based reason."
@@ -85,3 +100,16 @@ inputs:
     type: text
     required: required
 ```
+
+## Step 5: Save the review record
+```yaml step
+id: step-5
+performer: semanticus
+phase: after
+action:
+  op: save_evidence
+  source: workflow
+```
+
+Semanticus saves the record of the checked steps with the model: the impact scope, the baseline, the replayed
+checks, the decision and every remaining risk.

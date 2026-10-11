@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { lstatSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  approvedEngineEndpointHosts,
   assertReleaseContentSafe,
   credentialPathFinding,
+  engineEndpointApprovalReason,
   isEngineOwnedPath,
   isPackagedEngineBinaryPath,
   isPackagedEngineEndpointPath,
+  personalIdentityFinding,
   releaseContentFinding,
 } from '../scripts/release-security.mjs';
 
@@ -251,6 +254,72 @@ assert.equal(
   'unapproved-engine-endpoint',
   'the dead placeholder host is not approved for release',
 );
+
+// ---- an approved engine endpoint is approved DELIBERATELY, with its reason ------------------------
+//
+// The decision vendor is the first host the engine calls that is neither Microsoft's nor our own site, so
+// the gate now carries a second, narrower list: approved hosts, each with the sentence saying why it is
+// allowed. The reason is asserted here rather than merely present, so an addition cannot be a one-line
+// edit nobody reads, and an approval cannot quietly outlive the reason it was granted under.
+//
+// There are two entries because there are two routes, and the reasons say which is which: a shipped build
+// reaches the relay on a licence, and only a development machine with SEMANTICUS_JEV_KEY set reaches the
+// vendor. The vendor's reason was "temporary until the relay replaces the direct call" while the relay did
+// not exist; it does now, so the sentence says what the direct call is FOR rather than what it is waiting
+// on (F-194).
+assert.equal(
+  releaseContentFinding('https://relay.semanticus.com.au/v1/decide', { engineBoundary: true, engineSource: true }),
+  null,
+  'the hosted relay is an approved engine endpoint',
+);
+assert.equal(
+  engineEndpointApprovalReason('relay.semanticus.com.au'),
+  'the hosted decision relay, the only route a shipped build takes for Jev typed decisions: Pro only, '
+  + 'behind the decision registry and consent, authenticated with the licence token, and holding no '
+  + 'vendor key anywhere in the engine',
+);
+assert.equal(
+  releaseContentFinding('https://api.typesafe.ai/v1/systemone', { engineBoundary: true, engineSource: true }),
+  null,
+  'the decision vendor endpoint is an approved engine endpoint',
+);
+assert.equal(
+  engineEndpointApprovalReason('api.typesafe.ai'),
+  'the Jev vendor, reached directly in development only, behind SEMANTICUS_JEV_KEY; no shipped path sets '
+  + 'that variable and a licensed session goes through the relay instead',
+);
+// The relay's approval is for the relay host alone. The bare site is separately allowed as our own domain,
+// but neither approval reaches a neighbour of the other.
+assert.equal(
+  releaseContentFinding('https://relay2.semanticus.com.au/v1/decide', { engineBoundary: true, engineSource: true }),
+  'unapproved-engine-endpoint',
+  'a neighbouring relay host is not approved by the relay entry',
+);
+// Exact host only. A subdomain, a lookalike and a neighbour are all different hosts and none of them is
+// approved by this entry.
+for (const notApproved of [
+  'https://evil.api.typesafe.ai/v1/systemone',
+  'https://api.typesafe.ai.example/v1/systemone',
+  'https://api2.typesafe.ai/v1/systemone',
+  'https://relay.semanticus.com.au.example/v1/decide',
+  'https://evil.relay.semanticus.com.au/v1/decide',
+]) {
+  assert.equal(
+    releaseContentFinding(notApproved, { engineBoundary: true, engineSource: true }),
+    'unapproved-engine-endpoint',
+    notApproved,
+  );
+  assert.equal(engineEndpointApprovalReason(new URL(notApproved).hostname), null, notApproved);
+}
+// Every approval carries a real reason. A blank or placeholder sentence is the approval losing the only
+// thing that makes it deliberate.
+assert.ok(approvedEngineEndpointHosts().length > 0, 'the approved-endpoint list is empty, so nothing is pinned');
+for (const host of approvedEngineEndpointHosts()) {
+  const reason = engineEndpointApprovalReason(host);
+  assert.equal(typeof reason, 'string', host);
+  assert.ok(reason.trim().length >= 40, `${host} is approved with no real reason: ${JSON.stringify(reason)}`);
+  assert.equal(host, host.toLowerCase(), `${host} must be lower case, or a lookup will miss it`);
+}
 for (const packagedSource of [
   'extension/engine/Semanticus.Engine.exe',
   'extension/engine/createdump.exe',
@@ -556,6 +625,87 @@ assert.equal(
   'unapproved-engine-endpoint',
   'endpoint data outside a hash-pinned inert range still fails closed',
 );
+// A range found by content: the runtime moves the .NET Brotli dictionary between servicing releases
+// (8.0.30 to 8.0.31 moved it 512 bytes in the Windows files), so the gate finds it by its first bytes and
+// still ignores only a block whose full length hashes to the pin.
+const locatedRange = {
+  find: Buffer.from('timedown-synthetic-dictionary:'),
+  length: 0,
+  sha256: '',
+};
+const locatedDictionary = Buffer.concat([
+  locatedRange.find,
+  Buffer.from('<a href="http://model-provider.corp/v1/infer">x</a>'),
+]);
+locatedRange.length = locatedDictionary.length;
+locatedRange.sha256 = createHash('sha256').update(locatedDictionary).digest('hex');
+const locatedOptions = { engineBoundary: true, engineSource: true, engineBinary: true, binaryIgnoredRanges: [locatedRange] };
+for (const offset of [0, 7, 4096, 99999]) {
+  assert.equal(
+    releaseContentFinding(Buffer.concat([Buffer.alloc(offset, 0x41), locatedDictionary, Buffer.from('\0tail')]), locatedOptions),
+    null,
+    `a hash-pinned block found by content is ignored at offset ${offset}`,
+  );
+}
+const alteredDictionary = Buffer.from(locatedDictionary);
+alteredDictionary[alteredDictionary.length - 8] ^= 1;
+assert.equal(
+  releaseContentFinding(Buffer.concat([Buffer.from('xx'), alteredDictionary]), locatedOptions),
+  'unapproved-engine-endpoint',
+  'a found block that differs by one byte is not ignored',
+);
+assert.equal(
+  releaseContentFinding(Buffer.concat([locatedDictionary, Buffer.from('\0https://other-provider.corp/v1')]), locatedOptions),
+  'unapproved-engine-endpoint',
+  'a URL outside the found block still fails',
+);
+assert.equal(
+  releaseContentFinding(Buffer.concat([Buffer.from('https://other-provider.corp/v1\0'), locatedDictionary]), locatedOptions),
+  'unapproved-engine-endpoint',
+  'a URL before the found block still fails',
+);
+assert.equal(
+  releaseContentFinding(Buffer.concat([locatedRange.find, Buffer.from('https://other-provider.corp/v1'), Buffer.alloc(200)]), locatedOptions),
+  'unapproved-engine-endpoint',
+  'the start marker alone, without the full pinned block, ignores nothing',
+);
+
+// The real dictionary, taken from a .NET runtime pack when this machine has one in its NuGet cache.
+const nugetRoot = path.join(process.env.NUGET_PACKAGES ?? path.join(process.env.HOME ?? '', '.nuget', 'packages'));
+const realDictionaryFile = ['win-x64', 'linux-x64', 'win-arm64', 'osx-x64']
+  .flatMap((rid) => {
+    const dir = path.join(nugetRoot, `microsoft.netcore.app.runtime.${rid}`);
+    try {
+      return readdirSync(dir).sort().reverse().map((version) => path.join(dir, version, 'runtimes', rid, 'native'));
+    } catch { return []; }
+  })
+  .flatMap((dir) => { try { return readdirSync(dir).filter((f) => /compression\.native/i.test(f)).map((f) => path.join(dir, f)); } catch { return []; } })[0];
+if (realDictionaryFile) {
+  const nativeBytes = readFileSync(realDictionaryFile);
+  const start = nativeBytes.indexOf(Buffer.from('timedownlifeleftbackcodedata'));
+  assert.ok(start >= 0, 'the runtime pack file holds the Brotli dictionary');
+  const realDictionary = nativeBytes.subarray(start, start + 122784);
+  const compressionFile = 'extension/engine/System.IO.Compression.Native.dll';
+  const gateOptions = { engineBoundary: true, engineSource: true, engineBinary: true };
+  for (const offset of [345488, 344976, 312336, 1000]) {
+    assert.doesNotThrow(
+      () => assertReleaseContentSafe(compressionFile, Buffer.concat([Buffer.alloc(offset, 0), realDictionary, Buffer.alloc(64, 0)]), gateOptions),
+      `the real Brotli dictionary is ignored at offset ${offset}`,
+    );
+  }
+  const alteredReal = Buffer.from(nativeBytes);
+  alteredReal[start + 5000] ^= 1;
+  assert.throws(
+    () => assertReleaseContentSafe(compressionFile, alteredReal, gateOptions),
+    /unapproved-engine-endpoint/,
+    'the real dictionary altered by one byte fails the gate',
+  );
+  assert.throws(
+    () => assertReleaseContentSafe(compressionFile, Buffer.concat([nativeBytes, Buffer.from('\0https://other-provider.corp/v1')]), gateOptions),
+    /unapproved-engine-endpoint/,
+    'a URL outside the real dictionary still fails',
+  );
+}
 assert.equal(
   releaseContentFinding('<PackageReference Include="Azure.AI.OpenAI" />', { engineBoundary: true }),
   'model-provider-package',
@@ -619,6 +769,22 @@ assert.equal(releaseContentFinding('password=/pwd=/access_token= in a message is
 assert.equal(releaseContentFinding('cs += $";Password={bearerToken}";'), null);
 assert.equal(releaseContentFinding('password:!0,range:!0,search:!0,terminal:!0'), null);
 assert.equal(releaseContentFinding('FABRIC_SECRET: ${{ secrets.FABRIC_SECRET }}'), null);
+
+// Personal identity: the forbidden strings are held as digests, so the mechanism is proven here on a fictional
+// domain, and the tracked-tree scan below is what proves the real ones are gone.
+const sha256 = (text) => createHash('sha256').update(text).digest('hex');
+const fictional = new Set([sha256('northwind.example'), sha256('jordan.lee')]);
+assert.equal(personalIdentityFinding('signed in as avery@northwind.example', fictional), 'personal-identity');
+assert.equal(personalIdentityFinding("tenantId: 'northwind.example'", fictional), 'personal-identity');
+assert.equal(personalIdentityFinding('https://portal.eu.northwind.example/x', fictional), 'personal-identity');
+assert.equal(personalIdentityFinding('jordan.lee@fabrikam.com', fictional), 'personal-identity');
+assert.equal(personalIdentityFinding('Jordan.Lee@Fabrikam.com.', fictional), 'personal-identity');
+assert.equal(personalIdentityFinding('avery@northwind.examples and jordan.leeds', fictional), null);
+assert.equal(personalIdentityFinding(Buffer.from('as avery@northwind.example', 'utf16le'), fictional), 'personal-identity');
+// The first-name placeholder is on the real list; Contoso-style fictional names and the public author name are not.
+assert.equal(releaseContentFinding(`as ${'kane'}@contoso.com`), 'personal-identity');
+assert.equal(releaseContentFinding('as megan@contoso.com in tenant contoso.com, avery@fabrikam.com'), null);
+assert.equal(releaseContentFinding('Copyright (c) Kane Snyder'), null);
 
 const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url));
 const listed = spawnSync('git', ['ls-files', '-z'], {

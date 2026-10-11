@@ -47,6 +47,7 @@ namespace Semanticus.Tests
 
         // ---- cross-table measure paste (the new targetRef) --------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Measure_pastes_onto_another_table_with_a_collision_safe_name()
         {
@@ -64,6 +65,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Measure_pastes_onto_another_table_keeping_an_explicit_free_name()
         {
@@ -79,6 +81,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Measure_paste_avoids_a_column_name_on_the_landing_table()
         {
@@ -115,6 +118,7 @@ namespace Semanticus.Tests
 
         // ---- model-scope kinds: table / field parameter / calculation group ---------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Table_duplicates_at_model_scope_with_its_children()
         {
@@ -139,6 +143,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Field_parameter_duplicates_as_a_calculated_table_with_its_parameter_marker()
         {
@@ -173,6 +178,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calculation_group_duplicates_with_its_items()
         {
@@ -210,6 +216,7 @@ namespace Semanticus.Tests
 
         // ---- calculation items: in-place + cross-group -------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calculation_item_duplicates_in_place_and_pastes_onto_another_group()
         {
@@ -230,6 +237,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Calculation_item_paste_onto_a_plain_table_refuses_and_teaches()
         {
@@ -248,6 +256,7 @@ namespace Semanticus.Tests
 
         // ---- columns / hierarchies stay on their own table ---------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Column_paste_onto_another_table_refuses_and_teaches()
         {
@@ -267,6 +276,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Hierarchy_paste_onto_another_table_refuses_and_teaches()
         {

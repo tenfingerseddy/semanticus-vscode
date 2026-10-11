@@ -42,19 +42,33 @@ assert.match(firstSave, /showSaveDialog|showOpenDialog/, 'the first save must op
 assert.match(firstSave, /canSelectFiles:\s*true[\s\S]*canSelectFolders:\s*false|filters:[\s\S]*bim/, 'the first save must be able to pick a .bim file');
 assert.match(firstSave, /canSelectFolders:\s*true/, 'the first save must be able to pick a TMDL folder');
 
+// HOW this stays true now that the engine no longer outlives VS Code (2026-09-21, Kane's nine orphans).
+// The mechanism is the GRACE. deactivate still does not kill, because it cannot tell a reload from a quit.
+// The engine's parent dying opens a twenty-second grace (Semanticus.Engine/ParentLifetime.cs) instead of
+// ending it; the window that comes back reconnects to the same engine and calls adoptParent, which switches
+// the watch to the new extension host and cancels the shutdown. A window that does not come back leaves an
+// engine that exits by itself, which is the orphan fix. Semanticus.VSCode/test/engine-lifetime.test.mjs
+// pins both halves, and Semanticus.Tests/EngineLifetimeTests.cs proves them across real processes.
 const deactivate = extension.slice(extension.indexOf('export function deactivate'), extension.indexOf('// ---- engine lifecycle'));
 assert.doesNotMatch(deactivate, /spawned\.kill/, 'a window reload must not kill the engine that still holds the session');
 assert.doesNotMatch(deactivate, /killEngine/, 'a window reload must not kill the engine that still holds the session');
 
 assert.match(extension, /diskDiverged/, 'the host must read when files on disk no longer match the loaded model');
-assert.match(extension, /Reload from disk/, 'a disk change must offer to reload the model from disk');
+assert.match(extension, /reload from disk/i, 'a disk change must offer to reload the model from disk');
+// Kane 8 Oct: the unasked popup is gone. A disk change is a quiet status bar item; the click offers the reload, and
+// the save-time "Replace files on disk" question (saveCommand) stays, because that is where work could be lost.
+const diskWarn = sliceFn('warnIfDiskDiverged');
+assert.doesNotMatch(diskWarn, /showWarningMessage|showInformationMessage|modal/, 'a disk change while you work raises no popup');
+assert.match(diskWarn, /diskChangedStatus\.show\(\)/, 'a disk change shows a status bar item');
+assert.match(extension, /diskChangedStatus\.command = 'semanticus\.reloadFromDisk'/, 'the status bar item reloads from disk when pressed');
+assert.match(sliceFn('reloadFromDiskCmd'), /confirmUnsavedWork/, 'the reload still protects unsaved work');
 assert.match(extension, /createFileSystemWatcher|watchModelDisk/, 'the host must watch the loaded model files for an external checkout');
 
 assert.match(hub, /hasUnsavedChanges/, 'the Connections hub must see the dirty flag');
 assert.match(hub, /confirmUnsaved|openConfirm|replaceConfirm|hasUnsavedChanges && !/, 'opening from the hub must ask when the open model is dirty');
 assert.match(hub, /Opening another model throws those changes away unless you save first|replaces the open model, which has unsaved changes/, 'the hub must say the open would throw unsaved work away');
 
-assert.match(deploy, /modelReloadNeeded/, 'a git pull or checkout that changes disk must surface the reload flag');
-assert.match(deploy, /files on disk changed|Reload from disk|modelReloadNeeded/, 'Deploy must not ignore a checkout that left the session behind disk');
+// git pull and checkout left the Publish page on 8 October 2026 (Advanced is gone); the assistant door still carries
+// modelReloadNeeded on its result, and the host's disk watcher above is what tells a person the files moved.
 
 console.log('unsaved work prompt tests passed');

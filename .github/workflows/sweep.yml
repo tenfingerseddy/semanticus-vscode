@@ -1,0 +1,85 @@
+# THE NIGHTLY SWEEP (lean suite, Kane 8 Oct).
+#
+# The engine suite has two tiers. The DEFAULT tier runs on every pull request through ci.yml with
+# `--filter "Cost!=sweep"` and a 900 s budget. This workflow runs the other tier, `--filter "Cost=sweep"`: every test
+# or class that carries [Trait("Cost", "sweep")] (Semanticus.Tests/TestTemplates.cs, TestCost). That is the full matrices,
+# the door and mode copies, the held-out sets, and the FULL PLAN COMMUTATION GATE (about sixteen minutes, which used
+# to run on every pull request).
+#
+# WHERE AND WHEN. Nightly on the owner's self-hosted Linux runner (the Latitude), which bills no GitHub minutes, and
+# on demand through workflow_dispatch. A green sweep on the release sha is a RELEASE-CHECKLIST item.
+#
+# NOTHING IS ENFORCED ON SPEED HERE. The sweep is allowed to be slow; the gate still holds executed == discovered
+# through the same filter, so an aborted or short sweep fails. `--slowest` prints the 15 slowest tests so a sweep
+# test that has grown can be seen.
+#
+# PRIVATE ONLY. The job is skipped on the public mirror: no runner of ours is registered there, and a scheduled job
+# that fell back to `ubuntu-latest` would run for hours on a hosted machine for nobody. The runs-on fallback below
+# is the same one ci.yml uses, so the rollback variable (CI_LINUX_RUNNER=github-hosted) moves this job too.
+name: sweep
+
+on:
+  schedule:
+    # 15:17 UTC, which is 01:17 in Brisbane: the machine is idle and the minute is off the hour on purpose.
+    - cron: '17 15 * * *'
+  workflow_dispatch:
+
+# One sweep at a time, and a new trigger waits instead of cancelling a run that is hours in.
+concurrency:
+  group: sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: sweep (Cost=sweep)
+    if: github.event.repository.private == true
+    runs-on: ${{ github.event.repository.private && vars.CI_LINUX_RUNNER != 'github-hosted' && fromJSON('["self-hosted","linux","semanticus"]') || 'ubuntu-latest' }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive          # the vendored TE2 TOMWrapper donor (pinned)
+      - uses: ./.github/actions/self-hosted-isolate
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-java@v4       # ANTLR DAX-lexer codegen (FormulaFixup) needs a JDK at build time
+        with:
+          distribution: microsoft
+          java-version: '17'
+      - uses: actions/setup-node@v4       # the gate is a node script
+        with:
+          node-version: '20'
+      - name: Prove the suite gate can still fail (an aborted run must not read as green)
+        run: node tools/suite-gate.test.mjs
+      - name: Build the solution
+        run: dotnet build Semanticus.sln -c Release
+      # THROUGH THE GATE, never bare, for the reason ci.yml gives. The filter is the sweep tier; the count check is
+      # per filter. There is no budget flag: --slowest only prints. A sweep with no test in it fails the count check
+      # (a gate with nothing discovered cannot pass), so a mistyped trait cannot turn the sweep into an empty green.
+      - name: 'Sweep tier: full matrices, door and mode copies, held-out sets, full plan commutation gate (xUnit)'
+        run: node tools/suite-gate.mjs --project Semanticus.Tests/Semanticus.Tests.csproj --configuration Release --filter "Cost=sweep" --slowest
+      # A SELF-HOSTED RUNNER DOES NOT REBOOT BETWEEN JOBS: the same clean-up build-and-smoke does in ci.yml. Every process
+      # that still carries THIS job's isolation marker is stopped, by pid, matched on the process environment and never on a
+      # command line, so it cannot reach an engine the machine's owner started in VS Code.
+      - name: Stop anything this job left running (self-hosted only)
+        if: always() && runner.environment == 'self-hosted'
+        env:
+          SEMANTICUS_CI_JOB: ''
+        run: |
+          marker="SEMANTICUS_CI_JOB=$RUNNER_TEMP/iso"
+          stopped=0
+          for envf in /proc/[0-9]*/environ; do
+            pid="${envf#/proc/}"; pid="${pid%/environ}"
+            [ "$pid" = "$$" ] && continue
+            [ -r "$envf" ] || continue   # other users' processes are unreadable, and never ours to stop
+            if tr '\0' '\n' 2>/dev/null < "$envf" | grep -qxF "$marker"; then
+              echo "stopping pid $pid: $(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-160)"
+              kill -9 "$pid" 2>/dev/null && stopped=$((stopped + 1))
+            fi
+          done
+          echo "Stopped $stopped leftover process(es)."
+          rm -rf "/tmp/sci-$RUNNER_NAME"   # this job's TMPDIR (see .github/actions/self-hosted-isolate)

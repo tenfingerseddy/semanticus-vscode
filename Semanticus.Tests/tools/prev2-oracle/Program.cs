@@ -145,8 +145,16 @@ static class Program
                 .Where(p => !Path.GetFileName(p).StartsWith("README", StringComparison.OrdinalIgnoreCase))
                 .OrderBy(p => Path.GetFileName(p), StringComparer.Ordinal).ToArray();
             foreach (var f in files)
-                parts.Add(Fingerprint(args[a + 1] + "/" + Path.GetFileName(f),
-                    WorkflowParser.ParseFile(f, "stock")));
+            {
+                // Lane author-gaps, L9: a stock file converted to format 3 is read from its frozen v1 bytes in the sibling
+                // "-compat/v1.2.2" folder, in the same place, exactly as WorkflowV1CompatibilityTests reads it. Read as
+                // text, never through the pinned parser, which knows nothing of format 3.
+                var declaresV3 = File.ReadLines(f).Skip(1).TakeWhile(l => l.TrimEnd() != "---").Any(l => l.Trim() == "schemaVersion: 3");
+                if (!declaresV3) { parts.Add(Fingerprint(args[a + 1] + "/" + Path.GetFileName(f), WorkflowParser.ParseFile(f, "stock"))); continue; }
+                var frozen = Path.Combine(args[a] + "-compat", "v1.2.2", Path.GetFileName(f));
+                if (!File.Exists(frozen)) throw new InvalidOperationException($"{f} is format 3 but its v1 bytes are not frozen at {frozen}.");
+                parts.Add(Fingerprint(args[a + 1] + "-compat/v1.2.2/" + Path.GetFileName(f), WorkflowParser.ParseFile(frozen, "stock")));
+            }
         }
         File.WriteAllText(args[0], string.Join("\n", parts) + "\n", new UTF8Encoding(false));
         Console.Error.WriteLine($"wrote {args[0]} ({parts.Count} files)");

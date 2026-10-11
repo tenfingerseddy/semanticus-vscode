@@ -141,45 +141,48 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Generate_is_pro_gated_and_needs_an_open_session()
+        public async Task Generate_is_free_now_and_still_needs_an_open_session()
         {
+            // The advanced half of Published, the Data agent included, went free on 22 September 2026.
             using var free = new LocalEngine(new SessionManager(), new Fake(pro: false));
             await free.OpenAsync(TestModels.FindBim());
-            await Assert.ThrowsAsync<EntitlementException>(() => free.GenerateDataAgentConfigFromModelAsync(200));
+            Assert.NotNull(await free.GenerateDataAgentConfigFromModelAsync(200));
 
-            using var proNoModel = new LocalEngine(new SessionManager(), new Fake(pro: true));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => proNoModel.GenerateDataAgentConfigFromModelAsync(200));
+            using var noModel = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => noModel.GenerateDataAgentConfigFromModelAsync(200));
         }
 
         // ---- write guards ----
 
-        // The 2026-09-15 line (Kane): the WHOLE Data agent tab is Pro, reads included, because Pro is four whole
-        // features now. The gate still throws at the very top, so a free call never gets a request summary for a
-        // write it can't finish, and nothing is ever sent.
+        // The 2026-09-15 line made the WHOLE Data agent tab Pro. Kane replaced that line on 2026-09-22 ("free
+        // is the tool, Pro is the tool that works for you") and the advanced half of Published came with it, so
+        // every one of these is free. The DRY RUN still changes nothing and still sends nothing, which is what
+        // these tests are really about.
         [Fact]
-        public async Task All_data_agent_writes_are_pro_gated_dry_run_included()
+        public async Task All_data_agent_writes_are_free_and_a_dry_run_still_sends_nothing()
         {
             using var free = new LocalEngine(new SessionManager(), new Fake(pro: false));
-            await Assert.ThrowsAsync<EntitlementException>(() => free.CreateDataAgentAsync("ws", "Agent", null, commit: false, "azcli", null, "human"));
-            await Assert.ThrowsAsync<EntitlementException>(() => free.UpdateDataAgentAsync("ws", "agent-1", "x", null, null, null, commit: false, "azcli", null, "human"));
-            await Assert.ThrowsAsync<EntitlementException>(() => free.PublishDataAgentAsync("ws", "agent-1", null, commit: false, "azcli", null, "human"));
-            await Assert.ThrowsAsync<EntitlementException>(() => free.DeleteDataAgentAsync("ws", "agent-1", commit: false, "azcli", null, "human"));
-            // commit=true is refused by the same top-of-op gate (never reaches token acquisition).
-            await Assert.ThrowsAsync<EntitlementException>(() => free.CreateDataAgentAsync("ws", "Agent", null, commit: true, "azcli", null, "human"));
+            // Empty ids keep this off the network: each call is refused by its own argument checking, not by a
+            // tier gate and not by a token acquisition, so nothing is ever sent.
+            foreach (var report in new[]
+            {
+                await free.CreateDataAgentAsync("", "Agent", null, commit: false, "azcli", null, "human"),
+                await free.UpdateDataAgentAsync("", "agent-1", "x", null, null, null, commit: false, "azcli", null, "human"),
+                await free.PublishDataAgentAsync("", "agent-1", null, commit: false, "azcli", null, "human"),
+                await free.DeleteDataAgentAsync("", "agent-1", commit: false, "azcli", null, "human"),
+            })
+                Assert.NotEqual("ok", report.Status);   // nothing was sent, and nothing was committed
         }
 
         [Fact]
-        public async Task Reads_are_pro_now_and_run_once_the_tier_grants_them()
+        public async Task Reads_are_free_and_really_run()
         {
+            // The read really runs on a free session: the missing-id refusal proves it, and empty ids keep the
+            // test off the network (no token acquired, nothing live).
             using var free = new LocalEngine(new SessionManager(), new Fake(pro: false));
-            // list/get used to be the free half of this tab. A whole feature is Pro now, so both refuse at the top
-            // with the one feature sentence, before an id is ever read.
-            var listed = await Assert.ThrowsAsync<EntitlementException>(() => free.ListDataAgentsAsync("", "azcli", null));
-            Assert.StartsWith("Data agent is a Semanticus Pro feature.", listed.Message);
-            await Assert.ThrowsAsync<EntitlementException>(() => free.GetDataAgentAsync("", "", "azcli", null));
+            Assert.Contains("workspaceId", (await free.ListDataAgentsAsync("", "azcli", null)).Error);
+            Assert.Contains("agentId", (await free.GetDataAgentAsync("", "", "azcli", null)).Error);
 
-            // On Pro the read really runs: the missing-id refusal proves it, and empty ids keep the test off the
-            // network (no token acquired, nothing live).
             using var pro = new LocalEngine(new SessionManager(), new Fake(pro: true));
             Assert.Contains("workspaceId", (await pro.ListDataAgentsAsync("", "azcli", null)).Error);
             Assert.Contains("agentId", (await pro.GetDataAgentAsync("", "", "azcli", null)).Error);
@@ -241,6 +244,97 @@ namespace Semanticus.Tests
             var noOp = await e.UpdateDataAgentAsync("ws", "agent-1", null, null, null, null, commit: false, "azcli", null, "human");
             Assert.Equal("error", noOp.Status);
             Assert.Contains("Nothing changed", noOp.Message);
+        }
+
+        // ---- Sol6 round 3 (D2): a Teach save names the text it started from, and the write compares it with the part as Fabric holds it now ----
+
+        private static System.Collections.Generic.Dictionary<string, string> Parts(string instructions, string fewshotsJson = null)
+        {
+            var map = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (instructions != null) map[DataAgentRest.DraftStageConfigPath] = "{\"$schema\":\"1.0.0\",\"aiInstructions\":" + JsonSerializer.Serialize(instructions) + "}";
+            if (fewshotsJson != null) map[DataAgentRest.DraftPrefix + "semantic_model-Sales/fewshots.json"] = fewshotsJson;
+            return map;
+        }
+
+        [Fact]
+        public void A_Teach_save_over_instructions_that_moved_is_refused_with_the_words_the_page_looks_for()
+        {
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                LocalEngine.GuardDataAgentExpected("instructions", "Use Sales Amount.", Parts("Use Net Sales."), null, "Use Sales Amount. Fiscal year starts in July.", null));
+            Assert.Contains("changed in the model after you opened it", ex.Message);
+            Assert.Contains("Nothing was written", ex.Message);
+        }
+
+        [Fact]
+        public void A_Teach_save_passes_when_the_instructions_are_where_it_started_or_already_say_what_it_writes_or_it_names_nothing()
+        {
+            LocalEngine.GuardDataAgentExpected("instructions", "Use Sales Amount.", Parts("Use Sales Amount."), null, "Mine", null);
+            LocalEngine.GuardDataAgentExpected("instructions", "Old", Parts("Mine"), null, "Mine", null);
+            LocalEngine.GuardDataAgentExpected(null, null, Parts("Use Net Sales."), null, "Mine", null);   // the MCP door names nothing: unfenced
+            LocalEngine.GuardDataAgentExpected("instructions", "", Parts(null), null, "Mine", null);       // an agent with no stage config reads as empty
+            Assert.Throws<InvalidOperationException>(() => LocalEngine.GuardDataAgentExpected("instructions", "Old", Parts(null), null, "Mine", null));
+        }
+
+        [Fact]
+        public void A_Teach_save_of_examples_compares_the_rows_not_the_file_text()
+        {
+            const string started = "{\"fewShots\":[{\"id\":\"1\",\"question\":\"q\",\"query\":\"EVALUATE 1\"}]}";
+            const string sameRowsOtherLayout = "{ \"fewShots\" : [ { \"query\":\"EVALUATE 1\", \"id\":\"1\", \"question\":\"q\", \"extra\": true } ] }";
+            const string moved = "{\"fewShots\":[{\"id\":\"1\",\"question\":\"q\",\"query\":\"EVALUATE 2\"}]}";
+            LocalEngine.GuardDataAgentExpected("fewshots", started, Parts(null, sameRowsOtherLayout), "semantic_model-Sales", null, "{\"fewShots\":[]}");
+            var ex = Assert.Throws<InvalidOperationException>(() => LocalEngine.GuardDataAgentExpected("fewshots", started, Parts(null, moved), "semantic_model-Sales", null, "{\"fewShots\":[]}"));
+            Assert.Contains("changed in the model after you opened it", ex.Message);
+        }
+
+        // Join 7 (K4, the sol6-ui round 3 note e): the schema's field ticks were the last Teach-side save that sent the loaded document whole over whatever Fabric holds.
+        private const string SchemaStarted = "{\"elements\":[{\"display_name\":\"Sales\",\"is_selected\":true,\"children\":[{\"display_name\":\"Amount\",\"is_selected\":true}]}]}";
+        private static System.Collections.Generic.Dictionary<string, string> SchemaParts(string datasourceJson)
+        {
+            var map = Parts(null);
+            if (datasourceJson != null) map[DataAgentRest.DraftPrefix + "semantic_model-Sales/datasource.json"] = datasourceJson;
+            return map;
+        }
+
+        [Fact]
+        public void A_schema_save_over_a_schema_that_moved_is_refused_with_the_words_the_page_looks_for()
+        {
+            const string moved = "{\"elements\":[{\"display_name\":\"Sales\",\"is_selected\":true,\"children\":[{\"display_name\":\"Amount\",\"is_selected\":false}]}]}";
+            const string mine = "{\"elements\":[{\"display_name\":\"Sales\",\"is_selected\":false,\"children\":[{\"display_name\":\"Amount\",\"is_selected\":false}]}]}";
+            var ex = Assert.Throws<InvalidOperationException>(() =>
+                LocalEngine.GuardDataAgentExpected("schema", SchemaStarted, SchemaParts(moved), "semantic_model-Sales", null, null, mine));
+            Assert.Contains("changed in the model after you opened it", ex.Message);
+            Assert.Contains("Nothing was written", ex.Message);
+        }
+
+        [Fact]
+        public void A_schema_save_compares_the_document_not_its_layout_and_passes_where_it_started_or_already_says_what_it_writes()
+        {
+            const string otherLayout = "{ \"elements\" : [ { \"children\" : [ { \"is_selected\":true, \"display_name\":\"Amount\" } ], \"is_selected\":true, \"display_name\":\"Sales\" } ] }";
+            const string mine = "{\"elements\":[{\"display_name\":\"Sales\",\"is_selected\":false}]}";
+            LocalEngine.GuardDataAgentExpected("schema", SchemaStarted, SchemaParts(otherLayout), "semantic_model-Sales", null, null, mine);   // the same document, laid out another way
+            LocalEngine.GuardDataAgentExpected("schema", "{}", SchemaParts(mine), "semantic_model-Sales", null, null, mine);                       // it already says what is being written
+            LocalEngine.GuardDataAgentExpected(null, null, SchemaParts("{\"elements\":[]}"), "semantic_model-Sales", null, null, mine);           // the MCP door names nothing: unfenced
+            Assert.Throws<InvalidOperationException>(() => LocalEngine.GuardDataAgentExpected("schema", SchemaStarted, SchemaParts(null), "semantic_model-Sales", null, null, mine));   // the source is gone
+        }
+
+        [Fact]
+        public async Task A_schema_starting_point_needs_the_schema_to_be_what_is_written()
+        {
+            using var e = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var none = await e.UpdateDataAgentAsync("ws", "agent-1", "hello", null, null, null, commit: true, "azcli", null, "human", "schema", SchemaStarted);
+            Assert.Equal("error", none.Status);
+            Assert.Contains("Nothing was sent", none.Message);
+        }
+
+        [Fact]
+        public async Task A_starting_point_that_matches_no_part_being_written_is_refused_before_anything_is_sent()
+        {
+            using var e = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            var wrongPart = await e.UpdateDataAgentAsync("ws", "agent-1", "hello", null, null, null, commit: true, "azcli", null, "human", "fewshots", "{}");
+            Assert.Equal("error", wrongPart.Status);
+            Assert.Contains("Nothing was sent", wrongPart.Message);
+            var noPart = await e.UpdateDataAgentAsync("ws", "agent-1", null, "semantic_model-Sales", "{}", null, commit: true, "azcli", null, "human", "instructions", "old");
+            Assert.Equal("error", noPart.Status);
         }
 
         [Fact]

@@ -123,7 +123,8 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "step-1", "step-2" }, applied.Document.Metadata.StepIds);
             Assert.Equal(Utf8.GetBytes(expected), File.ReadAllBytes(f.FilePath));
             Assert.Equal(1, broadcasts);
-            Assert.Single(activities, activity => activity.Kind == "upgrade_workflow" && activity.Ok);
+            Assert.Equal("Upgraded workflow 'upgrade-test' to version 2", Assert.Single(activities, activity => activity.Kind == "upgrade_workflow" && activity.Ok).Label);
+            Assert.Equal("Upgraded the workflow to version 2. Existing instructions and gates are preserved.", applied.Reason);
             Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(f.FilePath)!, "*.tmp"));
         }
 
@@ -187,9 +188,12 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
-        public async Task Valid_v2_is_a_noop_even_with_implicit_step_ids(bool dryRun)
+        public async Task Valid_latest_version_is_a_noop_even_with_implicit_step_ids(bool dryRun)
         {
-            var source = "---" + Lf + "schemaVersion: 2" + Lf + Simple.Substring(4);
+            // The latest version is 3 since the composer format (contract 11.3); a v3 step with no action
+            // says who does it, and still has no explicit id.
+            var source = "---" + Lf + "schemaVersion: 3" + Lf + Simple.Substring(4).Replace("## Step 1: Work" + Lf,
+                "## Step 1: Work" + Lf + "```yaml step" + Lf + "performer: assistant" + Lf + "```" + Lf);
             using var f = new Fixture(source);
             var fixedTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             File.SetLastWriteTimeUtc(f.FilePath, fixedTime);
@@ -200,7 +204,7 @@ namespace Semanticus.Tests
             Assert.False(result.Changed);
             Assert.False(result.CanApply);
             AssertNoNextAction(result);
-            Assert.Contains("already uses version 2", result.Reason);
+            Assert.Contains("already uses version 3", result.Reason);
             Assert.Equal(source, result.ProposedText);
             Assert.Equal("", result.Diff);
             Assert.Equal(0, result.AddedLines);
@@ -354,6 +358,17 @@ namespace Semanticus.Tests
                 Assert.False(preview.Changed);
                 Assert.False(preview.CanApply);
                 AssertNoNextAction(preview);
+                // Lane author-gaps, L9: six starters ship in format 3 now. There is nothing to upgrade, and a write is
+                // still refused with the stock file untouched.
+                if (preview.Document.Metadata.SchemaVersion >= 3)
+                {
+                    Assert.Contains("already uses version 3", preview.Reason);
+                    var none = await f.Engine.UpgradeWorkflowAsync(preview.Name, false, preview.Document.ByteHash, preview.Document.Path);
+                    Assert.False(none.Changed);
+                    Assert.Equal(bytes, File.ReadAllBytes(file));
+                    safe++;
+                    continue;
+                }
                 if (preview.Document.Metadata.SchemaVersion == 2 || preview.Reason.Contains("project copy")) safe++;
                 else
                 {
@@ -374,7 +389,7 @@ namespace Semanticus.Tests
                 Assert.DoesNotContain("createOnly", refused.Reason);
                 Assert.Equal(bytes, File.ReadAllBytes(file));
             }
-            var unfenced = await f.Engine.UpgradeWorkflowAsync("new-measure", false);
+            var unfenced = await f.Engine.UpgradeWorkflowAsync("incremental-refresh-setup", false);
             Assert.False(unfenced.Changed);
             Assert.Contains("project copy", unfenced.Reason);
             Assert.True(safe > 0);
@@ -414,7 +429,7 @@ namespace Semanticus.Tests
                 session.SourcePath = Path.Combine(f.Workspace, "model.bim");
                 sessionId = session.Id;
             }
-            var pipe = "semanticus-upgrade-" + Guid.NewGuid().ToString("N");
+            var pipe = TestPipe.Mint("semanticus-upgrade-");
             using var server = new RpcServer(f.Sessions, f.Engine, pipe);
             using var cts = new CancellationTokenSource();
             var running = server.RunAsync(cts.Token);
@@ -452,10 +467,16 @@ namespace Semanticus.Tests
                 var humanRead = await f.Engine.GetWorkflowDocumentAsync("upgrade-test");
                 Assert.Equal(result.Document.ByteHash, humanRead.ByteHash);
                 Assert.Equal(preview.ProposedText, humanRead.ExactText);
-                var again = await remote.UpgradeWorkflowAsync("upgrade-test", false, humanRead.ByteHash, humanRead.Path);
+                // Composer contract 11.3: version 2 upgrades once more, to version 3, and only the latest
+                // version is a no-op. One version per call, so each is its own reviewed change.
+                var toV3 = await remote.UpgradeWorkflowAsync("upgrade-test", false, humanRead.ByteHash, humanRead.Path);
+                Assert.True(toV3.Changed, toV3.Reason);
+                var v3Read = await f.Engine.GetWorkflowDocumentAsync("upgrade-test");
+                Assert.Equal(3, v3Read.Metadata.SchemaVersion);
+                var again = await remote.UpgradeWorkflowAsync("upgrade-test", false, v3Read.ByteHash, v3Read.Path);
                 Assert.False(again.Changed);
                 AssertNoNextAction(again);
-                Assert.Contains("already uses version 2", again.Reason);
+                Assert.Contains("already uses version 3", again.Reason);
             }
             finally { cts.Cancel(); try { await running; } catch (OperationCanceledException) { } }
         }

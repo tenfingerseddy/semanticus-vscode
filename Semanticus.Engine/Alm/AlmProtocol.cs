@@ -14,6 +14,7 @@ namespace Semanticus.Engine
     public sealed class GitFileChange
     {
         public string Path { get; set; }
+        public string OrigPath { get; set; }  // a rename or copy's original path (null otherwise), relative like Path
         public string Status { get; set; }   // M | A | D | R | C | U | ?? (untracked)
         public bool Staged { get; set; }      // true if the change is in the index (staged)
         public bool Worktree { get; set; }    // true if there's an unstaged worktree change
@@ -91,6 +92,9 @@ namespace Semanticus.Engine
         public string[] Paths { get; set; } = Array.Empty<string>();
         public string Note { get; set; }
         public string Error { get; set; }
+        /// <summary>The session the restore reopened the model as, when it restored. Studio keys what it carries across
+        /// the remount to it, so a line about this restore never shows on a different model.</summary>
+        public string SessionId { get; set; }
     }
 
     public sealed class GitLogEntry
@@ -321,6 +325,9 @@ namespace Semanticus.Engine
         public string[] Blockers { get; set; } = Array.Empty<string>();
         /// <summary>Blocking findings on objects this change did not touch. Information, never a block.</summary>
         public int OlderWarnings { get; set; }
+        /// <summary>True when the gate judged the whole model instead of a change set: no edits in this session yet,
+        /// a model-wide edit, or a model with no saved or published copy. <see cref="CheckLine"/> then says so.</summary>
+        public bool WholeModel { get; set; }
         /// <summary>One-line result of the checks on this change. Whole-model leftovers are a count with a
         /// pointer to AI Readiness.</summary>
         public string CheckLine { get; set; }
@@ -344,6 +351,16 @@ namespace Semanticus.Engine
         public string Description { get; set; }
         public string Type { get; set; }              // Personal | Workspace | AdminWorkspace (open enum)
         public string CapacityId { get; set; }        // null unless assigned to a capacity
+    }
+
+    // One semantic model in a workspace (Fabric "List Semantic Models"). The Connections picker lists these so a
+    // person picks a model instead of pasting an address; DisplayName is the database name connect_xmla takes.
+    public sealed class FabricSemanticModel
+    {
+        public string Id { get; set; }
+        public string DisplayName { get; set; }
+        public string Description { get; set; }
+        public string WorkspaceId { get; set; }
     }
 
     public sealed class DeploymentPipeline

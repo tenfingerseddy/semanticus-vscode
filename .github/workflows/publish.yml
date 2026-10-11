@@ -41,7 +41,7 @@ jobs:
           java-version: '17'
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Install extension dependencies from the lockfile
         working-directory: Semanticus.VSCode
         run: npm ci --no-fund --no-audit

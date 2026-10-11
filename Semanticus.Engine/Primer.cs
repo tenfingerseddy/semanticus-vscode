@@ -24,6 +24,9 @@ namespace Semanticus.Engine
         public string[] SourceRunIds { get; set; } = Array.Empty<string>();
         public int EvidenceCount { get; set; }
         public string Provenance { get; set; }
+        /// <summary>No person has approved this lesson's current words (usually your assistant wrote them). Only a person can accept it into
+        /// the Primer; accepting it is that approval.</summary>
+        public bool NeedsReview { get; set; }
     }
 
     public sealed class PrimerSectionFreshness

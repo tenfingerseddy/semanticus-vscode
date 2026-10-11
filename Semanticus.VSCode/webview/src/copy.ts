@@ -18,21 +18,23 @@ export function uiLabel(value: unknown, fallback = 'Not available'): string {
   return words;
 }
 
-/** The five Studio areas. Tool ids stay separate because they are part of the compatibility API. */
+/** The seven Studio areas, in strip order. Tool ids stay separate: they are part of the compatibility API. */
 export const STUDIO_AREA_LABELS = {
-  model: 'Model',
-  calc: 'Calculations',
-  checks: 'Checks',
-  changes: 'Changes',
+  overview: 'Overview',
+  plan: 'Plan',
+  explore: 'Explore',
+  edit: 'Edit',
+  review: 'Review',
+  publish: 'Publish',
   workflows: 'Workflows',
 } as const;
 
 /** Shared explanations for the four local and remote actions people commonly confuse. */
 export const EDIT_ACTION_COPY = {
-  apply: 'Apply puts the selected proposed changes into your working model. It creates one undoable edit and does not publish anything.',
+  apply: 'Apply puts the changes you selected into your working model. It creates one undoable edit and does not publish anything.',
   save: 'Save keeps the current edit in your working model or writes the current workflow or spec to its local file, depending on the page. It does not publish to a live destination.',
-  publish: 'Publish sends reviewed model changes to the chosen live destination after you review and confirm. It changes model definitions, not data, and does not refresh data.',
-  restore: 'Restore, called Roll back in Changes, returns a chosen live destination to a saved restore point after you preview and confirm. Local Undo cannot reverse that remote change.',
+  publish: 'Publish sends the changes you tick to the chosen live destination. It changes model definitions, not data, and does not refresh data. Undo publish puts the destination back.',
+  restore: 'Restore, called Earlier versions on Publish, returns a chosen live destination to a saved version. Local Undo cannot reverse that remote change.',
 } as const;
 
 /** Plain next steps shared by page guides and empty states. */
@@ -53,11 +55,11 @@ export const SESSION_STATE_COPY = {
   },
   success: {
     title: 'Done',
-    detail: 'Read the result before moving on. A local model edit appears under Changes > History. A publish or restore result names the live destination that changed.',
+    detail: 'Read the result before moving on. A local model edit appears in Plan > History. A publish or restore result names the live destination that changed.',
   },
   noLiveConnection: {
     title: 'No live connection',
-    detail: 'You can edit model structure and formulas here. Connect a live model to run queries, preview rows, measure performance or test real answers.',
+    detail: 'You can edit model structure and formulas here. Connect a live model to run queries, preview rows, measure performance or check real answers.',
     action: 'Choose a test model',
   },
   staleQuery: {
@@ -77,7 +79,7 @@ export const SESSION_STATE_COPY = {
   },
   notChecked: {
     title: 'Not checked',
-    detail: 'No check has finished for this item, so there is nothing to rely on yet. Run the relevant check before treating it as evidence.',
+    detail: 'No check has finished for this item, so there is nothing to rely on yet. Run the relevant check before relying on it.',
     action: 'Run the check',
   },
 } as const;
@@ -86,32 +88,34 @@ export const ASSISTANT_SYNC_COPY =
   'The VS Code view updates at once. Your assistant sees the change on its next call.';
 
 /**
- * The publish safety check, in one set of words, because Changes > History and Help both have to describe it
+ * The publish safety check, in one set of words, because the History record and Help both have to describe it
  * and they used not to describe it at all. Kane read a stack of red boxes on History that said only
  * "Reason: <something an assistant typed months ago>" and asked "what does all this gate stuff mean?". The
  * words below are the answer, and they are the ONLY place the answer is written.
  *
  * What the check really is, so this copy stays true to it: before a live publish commits, the engine runs the
  * deploy gate (LocalEngine.DeployGateAsync) over the model. The gate passes or it returns a set of blockers.
- * A publish past a returned set of blockers is refused unless a HUMAN writes a reason, and that reason plus
- * the blockers is appended to the model's audit trail before the push. Nothing here may promise more.
+ * A person's publish goes ahead either way, and a red result is recorded with the publish. An assistant is
+ * refused unless it writes a reason, and that reason plus the blockers is appended to the model's audit trail
+ * before the push. Nothing here may promise more. Older records always carry a reason.
  */
 export const SAFETY_CHECK_COPY = {
-  heading: 'Publishes that went ahead with a red safety check',
+  heading: 'Publishes that went ahead with a red check',
   explainer: 'Before a publish, Semanticus checks the model. Green means no blocking problem was found. '
-    + 'Red means blocking problems remained, and the publish only went ahead because someone wrote a reason.',
-  // Only the block on Changes > History may say "here". Help is not where the reasons are.
-  keptHere: 'Those reasons are kept here.',
-  helpTail: 'A red check does not stop you. It means someone has to write down why the publish should go '
-    + 'ahead anyway, and that reason is kept with the model on Changes > History.',
+    + 'Red means blocking problems remained when the publish went ahead.',
+  // Only the block on the History record may say "here". Help is not where the reasons are.
+  keptHere: 'Any reasons given are kept here.',
+  helpTail: 'A red check does not stop you. It is recorded with the publish in Plan > History. An assistant that '
+    + 'publishes past one must write down why, and that reason is kept there too.',
   pill: 'Red check',
-  publishTitle: 'Published with a red safety check',
-  promoteTitle: 'Moved to the next stage with a red safety check',
-  publishWentAhead: 'The publish went ahead with a written reason.',
-  promoteWentAhead: 'The move went ahead with a written reason.',
+  publishTitle: 'Published with a red check',
+  promoteTitle: 'Moved to the next stage with a red check',
+  publishWentAhead: 'The publish went ahead.',
+  promoteWentAhead: 'The move went ahead.',
   found: 'The check found',
   destinationLabel: 'Where it went:',
-  helpQuestion: 'What is the safety check?',
+  noReason: 'No reason given.',
+  helpQuestion: 'What is the check before a publish?',
 } as const;
 
 /** What one red-check publish said, read back out of the sentence the engine recorded with it. */
@@ -126,7 +130,8 @@ export interface SafetyCheckOverride {
 
 // The recorded summary is the ONLY place a red-check publish keeps its destination: the record's
 // machine-readable evidence carries the gate result and never the endpoint, so the destination has to come
-// back out of the sentence. TWO generations of that sentence exist on real models and both are matched here.
+// back out of the sentence. Three shapes exist on real models and all are matched here: two generations of the
+// reasoned override, and (8 Oct) a person's publish with warnings and no reason.
 // The first is the wording Kane read off his own audit trail; those records are hash-chained and cannot be
 // rewritten after the fact, so the only way they ever read plainly is for this reader to understand them.
 const OVERRIDE_SUMMARY_SHAPES: { open: string; mid: string; kind: 'publish' | 'promote' }[] = [
@@ -134,6 +139,7 @@ const OVERRIDE_SUMMARY_SHAPES: { open: string; mid: string; kind: 'publish' | 'p
   { open: 'gate RED (', mid: '): override accepted to promote ', kind: 'promote' },
   { open: 'Red safety check (', mid: '). Published anyway with a written reason, to ', kind: 'publish' },
   { open: 'Red safety check (', mid: '). Moved to the next stage anyway with a written reason, from ', kind: 'promote' },
+  { open: 'Published with warnings (', mid: '), to ', kind: 'publish' },
 ];
 
 /** Reads a recorded summary as a red-check publish, or null when it is any other kind of record. */
@@ -171,15 +177,15 @@ export function plainProblems(text: unknown): string {
 // to uiLabel, so no engine id can reach the audit trail (UX-02 / UX-06, D-209).
 const OP_LABEL: Record<string, string> = {
   blame_value: 'What moved this number?',
-  apply_plan: 'Plan applied',
-  'apply_plan-item': 'Plan item applied',
+  apply_plan: 'Changes applied',
+  'apply_plan-item': 'One change applied',
   optimize_measure: 'Measure optimization',
   set_dax: 'DAX change',
   create_measure: 'New measure',
   create_column: 'New column',
   create_relationship: 'New relationship',
   compare_baseline: 'Baseline comparison',
-  deploy_live: 'Live deploy',
+  deploy_live: 'Published to a live model',
   save_model: 'Model saved',
 };
 
@@ -189,9 +195,9 @@ const OP_LABEL: Record<string, string> = {
  * the short label lives here and the catalog sentence becomes the chip's tooltip.
  */
 const OP_TITLE: Record<string, string> = {
-  add_plan_item: 'Stage it now',
-  ai_readiness_scan: 'Score AI understanding',
-  apply_plan: 'Apply the staged changes',
+  add_plan_item: 'Add it to the changes',
+  ai_readiness_scan: 'Score AI readiness',
+  apply_plan: 'Apply the pending changes',
   apply_safe_fixes: 'Apply the safe fixes',
   bpa_scan: 'Check model quality',
   capture_baseline: 'Save a before picture',
@@ -206,13 +212,13 @@ const OP_TITLE: Record<string, string> = {
   create_table: 'Add a table',
   daxlib_search: 'Search the formula library',
   deploy_live: 'Publish it',
-  export_test_report: 'Export the test report',
-  export_workflow_evidence: 'Evidence report',
+  export_test_report: 'Export the check report',
+  export_workflow_evidence: 'Workflow report',
   generate_date_table: 'Add a date table',
   get_doc_section: 'Read part of the write-up',
   get_grounding: 'Read the naming rules',
   get_model_summary: 'Summarise the model',
-  get_plan: 'Open the change plan',
+  get_plan: 'Open the pending changes',
   git_commit: 'Save a version',
   impact_assessment: 'Check what this affects',
   lint_dax: 'Check the formula style',
@@ -225,8 +231,8 @@ const OP_TITLE: Record<string, string> = {
   preview_table: 'Preview the rows',
   probe_measure: 'Try the measure',
   run_dax: 'Run a query',
-  run_tests: 'Run the tests',
-  save_evidence: 'Save the evidence',
+  run_tests: 'Run the checks',
+  save_evidence: 'Save the report',
   save_model: 'Save the model',
   save_spec: 'Save the model plan',
   set_ai_instructions: 'Write the notes for AI',
@@ -234,7 +240,7 @@ const OP_TITLE: Record<string, string> = {
   set_description: 'Write a description',
   set_measure_format: 'Set the number format',
   set_partition_m: 'Change where the data comes from',
-  set_plan_item: 'Update a staged change',
+  set_plan_item: 'Update a pending change',
   start_workflow: 'Start a workflow',
   undo_change: 'Undo the last change',
   update_measure: 'Edit a measure',
@@ -254,10 +260,10 @@ const CHECK_TITLE: Record<string, string> = {
   expected_values: 'The numbers match what you expected',
   impact_assessment: 'What this affects was checked',
   interview_replay: 'The saved questions were asked again',
-  plan_item_applied: 'The staged change was applied',
-  plan_item_staged: 'The change was staged for review',
-  readiness_rescan: 'AI understanding was scored again',
-  tests_replay: 'The saved tests were run again',
+  plan_item_applied: 'The pending change was applied',
+  plan_item_staged: 'The change is pending review',
+  readiness_rescan: 'AI readiness was scored again',
+  tests_replay: 'The saved checks were run again',
   workflow_admissible: 'The workflow file is sound',
 };
 
@@ -379,6 +385,15 @@ export function defaultSignInMode(known?: { authMode?: string | null } | null): 
 export function isInteractiveSignIn(mode: unknown): boolean {
   const folded = defaultSignInMode({ authMode: mode == null ? null : String(mode) });
   return folded === 'interactive' || folded === 'devicecode';
+}
+
+/**
+ * May a page start the sign-in for this choice now? A way of signing in that opens a window or shows a code only runs
+ * after the person pressed Sign in for this exact choice (`askedFor` is the key of the choice they pressed it for).
+ * Picking the choice in a menu is not asking: it used to list workspaces at once and open the window (UAT-J9-S10d-002).
+ */
+export function mayStartSignIn(mode: unknown, askedFor: string, choiceKey: string): boolean {
+  return !isInteractiveSignIn(mode) || askedFor === choiceKey;
 }
 
 /** What a person can press to get past a failed sign-in. */

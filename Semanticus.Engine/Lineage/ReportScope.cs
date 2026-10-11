@@ -40,6 +40,13 @@ namespace Semanticus.Engine.Lineage
         public string Name { get; set; }
         /// <summary>Where it came from, in words: a workspace name, or the folder it was read from.</summary>
         public string Source { get; set; }
+        /// <summary>A published report's OWN coordinates, carried on the wire so a caller can hand this list
+        /// straight back to set_report_scope without losing them. They used to be left off this shape while the
+        /// page rebuilt every save from it, so taking one of several chosen reports off the list saved the
+        /// survivors with no workspace and no report id, and the next check then looked for each of them under
+        /// an empty workspace by display name. Null for a local folder, which is found by its Source path.</summary>
+        public string WorkspaceId { get; set; }
+        public string ReportId { get; set; }
         /// <summary>checked | couldNotBeFullyChecked | notChecked | needsChecking</summary>
         public string State { get; set; } = ReportScopeStates.NotChecked;
         public string CheckedWhenUtc { get; set; }
@@ -48,6 +55,9 @@ namespace Semanticus.Engine.Lineage
         /// <summary>How many of the model's fields this report was found to use. Zero until it is checked.</summary>
         public int FieldsUsed { get; set; }
         public int Visuals { get; set; }
+
+        /// <summary>A copy that can carry other counts, so a reading taken for one answer never edits the shared row.</summary>
+        internal ReportScopeReport MemberwiseCloneForCounts() => (ReportScopeReport)MemberwiseClone();
     }
 
     public static class ReportScopeStates
@@ -56,6 +66,41 @@ namespace Semanticus.Engine.Lineage
         public const string CouldNotBeFullyChecked = "couldNotBeFullyChecked";
         public const string NotChecked = "notChecked";
         public const string NeedsChecking = "needsChecking";
+    }
+
+    /// <summary>
+    /// Why a reading is not a clean "checked", in one plain sentence. Kane, 16 September, on a real Fabric
+    /// workspace: the card said two reports "could not be fully checked" and there was no way to find out why.
+    /// The page can only show a cause the engine recorded, so this is the ONE place that cause is written, and
+    /// it has three jobs:
+    ///   - it never comes back empty. A scrubbed transport message can be blank, and "?? fallback" does not
+    ///     catch an empty string, so the state used to arrive with the empty string behind it;
+    ///   - it names the cause that actually happened. A definition that parsed perfectly and then could not be
+    ///     matched to this model is NOT a definition that could not be read, and saying so was false;
+    ///   - it uses the same words the assessment's own unknowns use, so one fact reads the same way wherever
+    ///     it turns up.
+    /// </summary>
+    public static class ReportCheckNotes
+    {
+        public const string PartsUnreadable = "Part of this report could not be read, so its use of this model is not fully known.";
+        public const string Unreadable = "This report could not be read.";
+        public const string NoCauseRecorded = "This report could not be fully read, and the reason was not recorded.";
+
+        public static string Unmatched(int count) =>
+            (count == 1 ? "1 thing this report shows" : count + " things this report shows")
+            + " could not be matched to this model, so its use of this model is not fully known.";
+
+        /// <summary>The cause behind one report's state. <paramref name="read"/> is whether the definition was
+        /// read at all; the counts are that reading's own coverage gaps; <paramref name="error"/> is the
+        /// transport's or the reader's own message, which may be null, empty, or whitespace.</summary>
+        public static string For(bool read, int skippedParts, int unmatched, string error)
+        {
+            var given = string.IsNullOrWhiteSpace(error) ? null : error.Trim();
+            if (!read) return given ?? Unreadable;
+            if (skippedParts > 0) return PartsUnreadable;
+            if (unmatched > 0) return Unmatched(unmatched);
+            return given ?? NoCauseRecorded;
+        }
     }
 
     /// <summary>What this model's answers were checked against: the model itself, the named reports with their state
@@ -173,6 +218,9 @@ namespace Semanticus.Engine.Lineage
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
         };
 
+        /// <summary>The sidecar file, for a witness that hashes it.</summary>
+        public static string PathFor(string dir) => Path.Combine(dir, SubDir, FileName);
+
         /// <summary>Every choice in the sidecar. The caller filters to the open model's identity.</summary>
         public static (List<ReportScopeChoice> Choices, int Unreadable) Load(string dir)
         {
@@ -181,7 +229,7 @@ namespace Semanticus.Engine.Lineage
 
         /// <summary>Replace this model's whole choice set. Returns what was stored, or null when it could not be
         /// written — never throws, like the suite store it sits beside.</summary>
-        public static List<ReportScopeChoice> Replace(string dir, string modelIdentity, IEnumerable<ReportScopeChoice> choices)
+        public static List<ReportScopeChoice> Replace(string dir, string modelIdentity, IEnumerable<ReportScopeChoice> choices, Action<string> beforeWrite = null)
         {
             if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(modelIdentity)) return null;
             var next = (choices ?? Array.Empty<ReportScopeChoice>()).Where(c => c != null && !string.IsNullOrWhiteSpace(c.Id)).ToList();
@@ -189,6 +237,7 @@ namespace Semanticus.Engine.Lineage
             {
                 lock (Gate)
                 {
+                    beforeWrite?.Invoke(PathFor(dir));
                     var (all, _) = LoadUnlocked(dir);
                     all.RemoveAll(x => string.Equals(x?.ModelIdentity ?? "", modelIdentity, StringComparison.Ordinal));
                     all.AddRange(next);
@@ -196,7 +245,7 @@ namespace Semanticus.Engine.Lineage
                 }
                 return next;
             }
-            catch { return null; }
+            catch (Exception ex) when (ex is not StaleApprovalException) { return null; }
         }
 
         private static (List<ReportScopeChoice> Choices, int Unreadable) LoadUnlocked(string dir)

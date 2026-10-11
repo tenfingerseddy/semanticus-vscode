@@ -1,0 +1,11 @@
+CustomerKey,CustomerCode,CustomerName,Segment,City,Region,JoinDate
+1,CU-001,Alpine Supply Co,Trade,Lakeside,North,2019-04-02
+2,CU-002,Bright Harbour Ltd,Trade,Harborview,Coast,2020-01-18
+3,CU-003,Cedar Works,Trade,Pine Crest,Mountain,2021-07-09
+4,CU-004,Dawn Fields,Retail,Riverbend,South,2022-02-14
+5,CU-005,Elm Yard,Retail,Willow Glen,South,2022-10-30
+6,CU-006,Fern Hollow,Retail,Lakeside,North,2023-03-21
+7,CU-007,Granite Bay Group,Trade,Harborview,Coast,2018-08-08
+8,CU-008,Hazel Row,Retail,Willow Glen,South,2023-11-02
+9,CU-009,Iron Gate Trading,Trade,Pine Crest,Mountain,2020-05-25
+10,CU-010,Juniper House,Retail,Riverbend,South,2024-01-06

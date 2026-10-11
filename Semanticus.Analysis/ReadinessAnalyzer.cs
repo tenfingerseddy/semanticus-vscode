@@ -33,7 +33,7 @@ namespace Semanticus.Analysis
         public Scorecard Analyze(Model model) => AnalyzeCore(model, null, null, null);
 
         /// <summary>Score the model. When <paramref name="live"/> is supplied (the live scan path), the Dmv-kind
-        /// rules (cardinality vs the Q&A index ceiling) are evaluated too; offline (null) they don't run, so the
+        /// rules (cardinality vs Copilot's value index ceiling) are evaluated too; offline (null) they don't run, so the
         /// offline scorecard is byte-identical to before.</summary>
         public Scorecard Analyze(Model model, ReadinessLiveStats live) => AnalyzeCore(model, live, null, null);
 
@@ -56,7 +56,50 @@ namespace Semanticus.Analysis
         public Scorecard Reanalyze(Model model, ReadinessScanState state, ISet<string> touchedRefs)
             => AnalyzeCore(model, null, state, touchedRefs ?? new HashSet<string>(StringComparer.Ordinal));
 
+        /// <summary>How many score points fixing each open finding would add on its own, keyed by
+        /// <see cref="LiftKey"/>, read off the same scoring core the grade comes from: the finding's rule weight
+        /// inside its category, over the rule's population, times the category's share of the average. A finding of
+        /// a rule that holds a gate (more than half the visible measures undescribed) is listed in
+        /// <paramref name="gateHolders"/>, because clearing the gate lifts the grade more than any one point does.
+        /// The words queue orders by this (Plan "Give the words to your assistant"). Nothing is written.</summary>
+        public IReadOnlyDictionary<string, double> Lifts(Model model, out ISet<string> gateHolders)
+        {
+            Dictionary<string, double> lifts = null;
+            ISet<string> held = null;
+            AnalyzeCore(model, null, null, null, (evals, present, gated) =>
+            {
+                lifts = new Dictionary<string, double>(StringComparer.Ordinal);
+                held = new HashSet<string>(StringComparer.Ordinal);
+                var catWsum = present.Sum(c => c.Weight);
+                foreach (var cat in present)
+                {
+                    var catEvals = evals.Where(x => x.rule.Category.ToString() == cat.Category && x.ev.Applicable > 0 && !x.rule.GateOnly).ToList();
+                    double wsum = catEvals.Sum(x => (double)(int)x.rule.Severity);
+                    if (wsum <= 0 || catWsum <= 0) continue;
+                    foreach (var (rule, ev) in catEvals)
+                    {
+                        var points = 100.0 * (cat.Weight / catWsum) * ((int)rule.Severity / wsum) / ev.Applicable;
+                        foreach (var v in ev.Violations.Where(v => !v.Waived))
+                        {
+                            var key = LiftKey(v.RuleId, v.ObjectRef);
+                            lifts[key] = Math.Round(points, 3);
+                            if (gated && rule.Id == "DESC-MEASURE") held.Add(key);
+                        }
+                    }
+                }
+            });
+            gateHolders = held ?? new HashSet<string>(StringComparer.Ordinal);
+            return lifts ?? new Dictionary<string, double>(StringComparer.Ordinal);
+        }
+
+        /// <summary>The key <see cref="Lifts"/> files a finding under.</summary>
+        public static string LiftKey(string ruleId, string objectRef) => (ruleId ?? "") + "\u241f" + (objectRef ?? "");
+
         private Scorecard AnalyzeCore(Model model, ReadinessLiveStats live, ReadinessScanState state, ISet<string> touchedRefs)
+            => AnalyzeCore(model, live, state, touchedRefs, null);
+
+        private Scorecard AnalyzeCore(Model model, ReadinessLiveStats live, ReadinessScanState state, ISet<string> touchedRefs,
+            Action<List<(ReadinessRule rule, RuleEvaluation ev)>, List<CategoryScore>, bool> scored)
         {
             // Re-read the Prep-for-AI surface fresh each scan (the per-Model memo is otherwise stale after an
             // in-session LSDL write, e.g. set_ai_instructions). The memo still serves the 6 DAC rules within this scan.
@@ -87,25 +130,49 @@ namespace Semanticus.Analysis
             // Reset first: the scoped path CARRIES finding instances across scans, so a stale tag from the previous
             // scan (or a waiver removed mid-session) must not survive re-tagging. Fresh findings default false — no-op.
             var waivers = WaiverStore.Load(model);
-            foreach (var f in findings) { f.Waived = false; f.WaiverReason = null; f.WaiverRuleLevel = false; }
+            foreach (var f in findings) { f.Waived = false; f.WaiverReason = null; f.WaiverRuleLevel = false; f.WaivedAsTwin = false; f.CoveredBy = null; f.CoveredReason = null; }
             if (waivers.Count > 0)
                 foreach (var f in findings)
                 {
                     var w = WaiverStore.Match(waivers, "air", f.RuleId, f.ObjectRef);
-                    if (w != null) { f.Waived = true; f.WaiverReason = w.Reason; f.WaiverRuleLevel = WaiverStore.IsRuleLevel(w.ObjectRef); }
+                    if (w != null) { f.Waived = true; f.WaiverReason = w.Reason; f.WaiverRuleLevel = WaiverStore.IsRuleLevel(w.ObjectRef); continue; }
+                    // The same problem accepted on Model quality is accepted here too (one decision, two pages; PairedAcceptances).
+                    var twin = PairedAcceptances.TwinAcceptance(waivers, "air", f.RuleId, f.ObjectRef);
+                    if (twin != null)
+                    {
+                        f.Waived = true; f.WaiverReason = twin.Reason; f.WaiverRuleLevel = WaiverStore.IsRuleLevel(twin.ObjectRef);
+                        f.CoveredBy = "the same finding on Model quality"; f.CoveredReason = twin.Reason;
+                    }
+                }
+
+            // A waiver declines a CHANGE, not a rule id: a finding whose change another accepted finding declined (this rule's
+            // twin in either system) reads as accepted too, so the Findings pages, the score and the Model Plan agree.
+            var declined = DeclinedChanges.Read(model);
+            if (!declined.IsEmpty)
+                foreach (var f in findings)
+                {
+                    if (f.Waived) continue;
+                    var about = RuleAboutTable.ForReadiness(f.RuleId);
+                    if (about?.Property == null) continue;
+                    var cover = declined.CoverFor("air", f.RuleId, f.ObjectRef, about.Property);
+                    if (cover == null) continue;
+                    f.Waived = true; f.WaivedAsTwin = true; f.WaiverReason = DeclinedChanges.TwinReason;
+                    f.CoveredBy = cover.Label; f.CoveredReason = cover.Reason;
                 }
 
             var categories = new List<CategoryScore>();
+            const string NotScored = "Not scored: none of this category's rules found anything to check in this model, so it is not counted in the grade.";
             foreach (ReadinessCategory cat in Enum.GetValues(typeof(ReadinessCategory)))
             {
-                var catEvals = evals.Where(x => x.rule.Category == cat && x.ev.Applicable > 0).ToList();
+                var catEvals = evals.Where(x => x.rule.Category == cat && x.ev.Applicable > 0 && !x.rule.GateOnly).ToList();
                 var cs = new CategoryScore { Category = cat.ToString(), Weight = Weights[cat], HasRules = catEvals.Count > 0 };
+                if (!cs.HasRules) cs.NotScoredReason = NotScored;
                 if (catEvals.Count > 0)
                 {
                     double wsum = 0, wscore = 0; int appl = 0, viol = 0, waived = 0;
                     foreach (var (rule, ev) in catEvals)
                     {
-                        var active = ev.Violations.Count(v => !v.Waived);   // a waived finding counts as a pass
+                        var active = ev.Violations.Count(v => !v.IsAccepted());   // an accepted finding counts as a pass; a related one (left alone, not accepted) does not
                         var ruleScore = (double)(ev.Applicable - active) / ev.Applicable;
                         double w = (int)rule.Severity;
                         wscore += w * ruleScore; wsum += w;
@@ -130,6 +197,18 @@ namespace Semanticus.Analysis
             if (descM.ev != null && descM.ev.Applicable > 0 && (double)descM.ev.Violations.Count / descM.ev.Applicable > 0.5)
             { overall = Math.Min(overall, 69); gatedBy.Add(">50% of visible measures undescribed; capped at D"); }
 
+            // A formula that points at an object the model does not have cannot compute, whatever the average says. Like the scale ceiling it reads the raw
+            // violation count: a finding accepted for it does not lift the cap, because a number that cannot be computed is not made right by a reason.
+            var broken = evals.FirstOrDefault(x => x.rule.Id == "DAX-REFERENCE");
+            if (broken.ev != null && broken.ev.Violations.Count > 0)
+            {
+                overall = Math.Min(overall, 69);
+                gatedBy.Add(broken.ev.Violations.Count + (broken.ev.Violations.Count == 1 ? " object holds" : " objects hold") + " a formula that refers to an object the model does not have; capped at D");
+            }
+
+            scored?.Invoke(evals, present, descM.ev != null && descM.ev.Applicable > 0
+                && (double)descM.ev.Violations.Count / descM.ev.Applicable > 0.5);
+
             var coverage = new Dictionary<string, double>();
             void Cov(string key, string ruleId)
             {
@@ -147,7 +226,14 @@ namespace Semanticus.Analysis
             // retire a live-only rule. Built-in and current custom rules still come from the loaded set, so deleted
             // custom/unknown ids remain reportable without evaluating live rules or counting dormant waivers as active.
             var knownIds = rules.Select(r => r.Id).Concat(liveRules.Select(r => r.Id));
-            var orphans = WaiverStore.Orphans(waivers, "air", knownIds).ToArray();
+            var orphans = WaiverStore.Orphans(waivers, "air", knownIds, model).ToArray();
+
+            // An acceptance stays in force while it is stored, whether or not its finding still fires, so it is listed either
+            // way: a row for each stored per-object acceptance that declines a change and has no finding now.
+            var listed = findings;
+            var quiet = QuietAcceptances(model, declined, findings, rules);
+            quiet.AddRange(WholeRuleRows(waivers, findings, rules));   // a rule-level acceptance always has its row (round 7)
+            if (quiet.Count > 0) listed = findings.Concat(quiet).ToList();
 
             return new Scorecard
             {
@@ -157,9 +243,9 @@ namespace Semanticus.Analysis
                 GatedBy = gatedBy.ToArray(),
                 Categories = categories.ToArray(),
                 Coverage = coverage,
-                Findings = findings.ToArray(),
+                Findings = listed.ToArray(),
                 SafeFixCount = findings.Count(f => !f.Waived && f.Fix == nameof(FixKind.SafeFix)),
-                WaivedCount = findings.Count(f => f.Waived),
+                WaivedCount = listed.Count(f => f.IsAccepted()),
                 RuleErrors = ruleErrors.Distinct().ToArray(),
                 // Named from the eval itself, so the id is the rule's real id rather than something scraped back out
                 // of a message string. These are exactly the rules the dormant reset zeroed.
@@ -168,6 +254,55 @@ namespace Semanticus.Analysis
                 OrphanedWaivers = orphans,
                 OrphanedWaiverCount = orphans.Length,
             };
+        }
+
+        /// <summary>One row per stored per-object AI-readiness acceptance that keeps a change from being made and whose
+        /// finding does not fire now (its object still exists). Never counted in the score: the row is accepted and says so.</summary>
+        private static List<ReadinessFinding> QuietAcceptances(Model model, DeclinedChanges declined, List<ReadinessFinding> findings, IReadOnlyList<ReadinessRule> rules)
+        {
+            var rows = new List<ReadinessFinding>();
+            var stored = declined.Sources.Where(s => s.System == "air" && !s.RuleLevel && !s.TeIgnore).ToList();
+            if (stored.Count == 0) return rows;
+            var firing = new HashSet<string>(findings.Select(f => f.RuleId + "\u241f" + WaiverStore.CanonicalRef(f.ObjectRef)), StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, string> names = null;
+            foreach (var s in stored)
+            {
+                if (firing.Contains(s.RuleId + "\u241f" + s.ObjectRef)) continue;
+                var rule = rules.FirstOrDefault(r => string.Equals(r.Id, s.RuleId, StringComparison.OrdinalIgnoreCase));
+                if (rule == null) continue;
+                names ??= WaiverStore.AllObjects(model).OfType<ITabularNamedObject>()
+                    .GroupBy(o => WaiverStore.CanonicalRef(Refs.For(o)), StringComparer.OrdinalIgnoreCase).ToDictionary(g => g.Key, g => g.First().Name, StringComparer.OrdinalIgnoreCase);
+                if (!names.TryGetValue(s.ObjectRef, out var name)) continue;   // the object is gone: nothing left to keep
+                rows.Add(new ReadinessFinding
+                {
+                    RuleId = rule.Id, RuleTitle = rule.Title, Category = rule.Category.ToString(), Severity = rule.Severity.ToString(),
+                    Fix = rule.Fix.ToString(), ObjectRef = s.ObjectRef, ObjectName = name,
+                    Message = DeclinedChanges.NoLongerFiresText, Waived = true, WaiverReason = s.Reason, NoLongerFires = true,
+                });
+            }
+            return rows;
+        }
+
+        /// <summary>One row per stored rule-level AI-readiness acceptance whose rule fires nowhere on the model now (where it fires, the
+        /// accepted findings are listed already, each tagged "whole rule"). It says what the acceptance reaches and can be reopened
+        /// from there. Never counted in the score: it is an acceptance and says so.</summary>
+        private static List<ReadinessFinding> WholeRuleRows(List<WaiverRecord> waivers, List<ReadinessFinding> findings, IReadOnlyList<ReadinessRule> rules)
+        {
+            var rows = new List<ReadinessFinding>();
+            foreach (var w in waivers.Where(x => string.Equals(x.System, "air", StringComparison.OrdinalIgnoreCase) && WaiverStore.IsRuleLevel(x.ObjectRef)))
+            {
+                var rule = rules.FirstOrDefault(r => string.Equals(r.Id, w.RuleId, StringComparison.OrdinalIgnoreCase));
+                if (rule == null) continue;   // a retired rule id is an orphan, reported on its own
+                if (findings.Any(f => f.WaiverRuleLevel && string.Equals(f.RuleId, rule.Id, StringComparison.OrdinalIgnoreCase))) continue;
+                rows.Add(new ReadinessFinding
+                {
+                    RuleId = rule.Id, RuleTitle = rule.Title, Category = rule.Category.ToString(), Severity = rule.Severity.ToString(),
+                    Fix = rule.Fix.ToString(), ObjectRef = WaiverStore.ModelRef, ObjectName = DeclinedChanges.WholeModelName,
+                    Message = DeclinedChanges.WholeRuleMessage(RuleAboutTable.ForReadiness(rule.Id)),
+                    Waived = true, WaiverReason = w.Reason, WaiverRuleLevel = true, WholeRuleRow = true,
+                });
+            }
+            return rows;
         }
 
         private static string GradeFor(double s) => s >= 90 ? "A" : s >= 80 ? "B" : s >= 70 ? "C" : s >= 60 ? "D" : "F";

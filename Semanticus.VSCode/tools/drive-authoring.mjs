@@ -95,7 +95,9 @@ const newPage = async () => {
 };
 const refresh = (page) => page.evaluate(HELPERS);
 const open = async (page, query = '', settle = 2600) => {
-  await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html${query}`, { waitUntil: 'networkidle0', timeout: 30000 });
+  // Workflows is a Pro area (the area row shows it locked on the free plan), so every journey opens as Pro.
+  const withPro = /(^|[?&])tier=/.test(query) ? query : (query ? query + '&tier=pro' : '?tier=pro');
+  await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html${withPro}`, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 15000 });
   await wait(1000);
   await page.evaluate(() => { const b = [...document.querySelectorAll('nav button')].find((x) => (x.textContent || '').trim() === 'Workflows'); if (b) b.click(); });
@@ -121,7 +123,12 @@ const openWorkflow = async (page, name) => {
   await section(page, 'library', 1400);
   // Library remembers the last opened playbook, so it can land on that page instead of the list.
   const onList = await page.evaluate((n) => !!document.querySelector(`[data-workflow="${n}"]`), name);
-  if (!onList) { await click(page, 'Library', true, 1400); }
+  // The way back is the breadcrumb's "Library" link. The section row has a button with the same word, and
+  // pressing it while already in the Library does nothing, so the link is found by its own class.
+  if (!onList) {
+    await page.evaluate(() => { const b = [...document.querySelectorAll('button.sem-wf-link')].find((x) => (x.textContent || '').trim() === 'Library'); if (b) b.click(); });
+    await wait(1400); await refresh(page);
+  }
   const ok = await page.evaluate((n) => { const b = document.querySelector(`[data-workflow="${n}"] button`); if (b) { b.click(); return true; } return false; }, name);
   await wait(1600); await refresh(page);
   const edited = await click(page, 'Edit workflow', true, 2800);

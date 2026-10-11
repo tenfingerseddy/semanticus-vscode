@@ -1,7 +1,18 @@
 // Typed request/response + notification bridge between the Studio webview and the extension host.
 // The host is the SOLE engine client; the webview reaches the engine only through host-relayed RPC.
 
+import { studioErrorText } from './engineupdated.mjs';
+import { pageModelIdentity } from './pagemodel';
+
 const vscode = acquireVsCodeApi();
+
+/// The ONE place a message leaves this page for the host. Every message names the model the page shows (pagemodel.ts), because the host runs any message that can lead to a write
+/// as the person's action on THAT model (extension.ts pageScoped) and the engine refuses it when another model is open by then (join 11 solui, U1: a Studio Undo posted as
+/// runCommand named no model, so the host's newer one took its place and the Undo removed an edit from a model the person had not seen). A static test (test/solui-page-stamp.test.mjs)
+/// allows this ONE vscode.postMessage call in the webview, so a message type added tomorrow cannot skip the stamp.
+function postToHostStamped(message: { type: string } & Record<string, unknown>): void {
+  vscode.postMessage({ ...message, modelIdentity: pageModelIdentity() });
+}
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: number };
 const pending = new Map<number, Pending>();
@@ -13,12 +24,13 @@ let seq = 0;
 // the model (previewTable / runDax / runInterview / evaluateAndLog / explainValue / vertiPaqScan / verifyEquivalence),
 // whole-suite Tests runs (runTests can probe many model and source-SQL targets),
 // interactive-auth connections (connectLocal/connectXmla — a browser sign-in can take minutes), git network ops,
-// cross-model opens (compareModels/applyDiff), the daxLib network family, and whole-model builds. Names verified
+// cross-model opens (compareModels/applyDiff), the daxLib network family, and whole-model builds (a start plan's start reads
+// the source with its sign-in, and its build makes the whole model). Names verified
 // against the actual bridge callers (grep of webview/src rpc sites); matched as a PREFIX of the exact method name.
 // The host wire protocol is unchanged.
 const RPC_DEFAULT_TIMEOUT_MS = 30_000;
 const RPC_LONG_TIMEOUT_MS = 10 * 60_000;
-const LONG_RPC = /^(deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|runInterview|evaluateAndLog|explainValue|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib)/;
+const LONG_RPC = /^(deploy|cicd|analyze|listReports|listWorkspaces|listDataAgents|listDeploymentPipelines|getDataAgent|getPipelineStages|createDataAgent|updateDataAgent|publishDataAgent|deleteDataAgent|generateDataAgentConfig|autogenerateSpecFrom|buildModelFromSpec|previewDeploy|previewTable|runDax|runSql|runTests|runInterview|evaluateAndLog|explainValue|profileDax|benchmark|verifyEquivalence|refreshPartition|captureQueryPlan|optimizeMeasure|aiReadinessScanLive|vertiPaqScan|exportVpax|applySchemaUpdate|diffSchema|getSourceSchema|makeModelAiReady|proposePlan|applyPlanItems|getModelPlan|fabricGit|connectLocal|connectXmla|openLive|openLocal|prepareWorkingCopy|gitPush|gitPull|gitClone|compareModels|applyDiff|daxLib|startModelFromSql|buildStartPlan|publishNewModel)/;
 function rpcTimeoutMs(method: string): number {
   return LONG_RPC.test(method) ? RPC_LONG_TIMEOUT_MS : RPC_DEFAULT_TIMEOUT_MS;
 }
@@ -38,6 +50,8 @@ export type ChangeNotification = {
   origin: string;
   label?: string;
   deltas?: ChangeDelta[];
+  /** "undo" or "redo" when the commit walked the timeline (a redo of an add carries no delta for it). */
+  replay?: string;
 };
 
 // Multiple views subscribe independently; each returns an unsubscribe fn.
@@ -53,6 +67,31 @@ const planListeners = new Set<(v: unknown) => void>();
 export function onPlanChange(fn: (v: unknown) => void): () => void {
   planListeners.add(fn);
   return () => { planListeners.delete(fn); };
+}
+
+// A Run the plan press tells the page each step as it goes (plan/runProgress, round 1): which rows are being worked out,
+// applied, checked, done or skipped, and how long the step took. Each row of the plan shows its own step from it. The
+// agent door gets no push (golden rule 2); it reads the result of the same call.
+const planRunListeners = new Set<(v: unknown) => void>();
+export function onPlanRunProgress(fn: (v: unknown) => void): () => void {
+  planRunListeners.add(fn);
+  return () => { planRunListeners.delete(fn); };
+}
+
+// The start plan of a new model from a SQL source broadcasts on its own channel (startPlan/didChange, lane sf-studio): the
+// engine says the plan moved (Jev decided something, the assistant wrote words, either door edited it) and the page reads it again.
+const startPlanListeners = new Set<(v: unknown) => void>();
+export function onStartPlanChange(fn: (v: unknown) => void): () => void {
+  startPlanListeners.add(fn);
+  return () => { startPlanListeners.delete(fn); };
+}
+
+// A composer draft broadcasts on its own channel (draft/didChange, lane L4) with the whole draft view, so an open draft
+// follows its parts as the user's assistant claims and writes them on the other door.
+const draftListeners = new Set<(v: unknown) => void>();
+export function onDraftChange(fn: (v: unknown) => void): () => void {
+  draftListeners.add(fn);
+  return () => { draftListeners.delete(fn); };
 }
 
 export type OperationProgress = { opKey: string; runId: string; done: number; total: number; note?: string };
@@ -74,7 +113,8 @@ export function onSpecChange(fn: (v: unknown) => void): () => void {
 // (the user's Claude, or a second client) saves positions on the same model. Layout is engine-owned sidecar
 // state (.semanticus/layout.json, keyed by LineageTag), NOT a model edit — hence its own channel. Origin lets a
 // client ignore its own echo. Wire types mirror Semanticus.Engine/Protocol.cs (LayoutNode / LayoutChange).
-export type LayoutNode = { ref?: string; name: string; lineageTag?: string; x: number; y: number; width?: number; height?: number };
+// keep: the Diagram leaves this table where it is when it makes room for the lines (a put-back, or save_layout's keep).
+export type LayoutNode = { ref?: string; name: string; lineageTag?: string; x: number; y: number; width?: number; height?: number; keep?: boolean };
 export type LayoutData = { tables: LayoutNode[] };
 export type LayoutChange = { origin: string; tables: LayoutNode[] };
 export type WorkflowPositions = Record<string, { x: number; y: number }>;
@@ -122,8 +162,19 @@ export function onActivity(fn: (e: ActivityEvent) => void): () => void {
 // The host fires 'reconnected' when the engine reconnects OR a new model is opened (incl. a unified open from
 // the VS Code source picker). Studio re-reads sessionInfo on this so the connection bar reflects the SAME model
 // the tree now shows — never a stale/different one.
-const reconnectListeners = new Set<() => void>();
-export function onReconnect(fn: () => void): () => void {
+// The host fires 'entitlementChanged' when a licence change was swapped into the RUNNING engine (F-242): the
+// connection is the same one, so nothing reconnects, and the tier cache would otherwise keep the old grant.
+const entitlementListeners = new Set<() => void>();
+export function onEntitlementChange(fn: () => void): () => void {
+  entitlementListeners.add(fn);
+  return () => { entitlementListeners.delete(fn); };
+}
+/** Whose swap a 'reconnected' is. 'otherDoor' is one the person did not make in this window (their assistant, or
+ *  another window). 'restore' is the person's own History restore, which reopens the same model. Absent means the
+ *  person's own open, a reload, or an engine restart. */
+export type ReconnectBy = 'person' | 'otherDoor' | 'restore';
+const reconnectListeners = new Set<(by: ReconnectBy) => void>();
+export function onReconnect(fn: (by: ReconnectBy) => void): () => void {
   reconnectListeners.add(fn);
   return () => { reconnectListeners.delete(fn); };
 }
@@ -136,6 +187,37 @@ const navigateListeners = new Set<(m: NavigateMessage) => void>();
 export function onNavigate(fn: (m: NavigateMessage) => void): () => void {
   navigateListeners.add(fn);
   return () => { navigateListeners.delete(fn); };
+}
+
+// Navigate Studio from inside Studio, through the same listeners a host 'navigate' reaches. Every Unlock Pro uses
+// it to open the Semanticus Pro page: the button lives deep in a page that has no route setter of its own, and a
+// round trip through the host would add nothing but a hop. Unstamped, it is read as the current session's. A caller
+// that has just opened or created a model passes the NEW session's id, because Studio learns of that session only
+// after the host's 'reconnected' and a fresh sessionInfo, and an unstamped move made before then belongs to the
+// model being left (verifier H1: Connections' From a SQL source landed on the Plan).
+export function navigateInStudio(tab: string, target?: string, sessionId?: string): void {
+  const m: NavigateMessage = { tab };
+  if (target !== undefined) m.target = target;
+  if (sessionId) m.sessionId = sessionId;
+  dispatchNavigate(m);
+}
+/** Hand a navigation to Studio's listeners as if the host had sent it. Studio replays a held one through this. */
+export function dispatchNavigate(m: NavigateMessage): void {
+  navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
+}
+
+// The Semanticus Pro page. The host runs every licence flow (checkout, the wait, the key, the portal) and sends
+// the page where it stands as 'proState'; the page sends back only the person's clicks. No price id, no token
+// storage and no payment address ever live in the webview. The shape is propage-model.ts's ProPageState.
+export type ProPageStateMessage = import('./propage-model').ProPageState;
+const proStateListeners = new Set<(state: ProPageStateMessage) => void>();
+export function onProState(fn: (state: ProPageStateMessage) => void): () => void {
+  proStateListeners.add(fn);
+  return () => { proStateListeners.delete(fn); };
+}
+export type ProAction = 'hello' | 'buy' | 'reopen' | 'cancel' | 'activate' | 'manage' | 'remove';
+export function postProAction(action: ProAction, extra?: { plan?: string; token?: string }): void {
+  postToHostStamped({ type: 'pro', action, ...(extra ?? {}) });
 }
 
 // Native tree selection is context, not a navigation command. Model home may show actions for it while every
@@ -178,6 +260,15 @@ export function onEngineState(fn: (connected: boolean) => void): () => void {
   return () => { engineStateListeners.delete(fn); };
 }
 
+// A remembered published model that needs the person to sign in before it can open (a cold start). The host names it
+// ("Contoso") or sends null once it is open or gone, and answers this on studioReady like engineState, so a page that
+// mounts later still knows. Studio then shows that model with Sign in to reconnect instead of "Open a model to begin".
+const reconnectPendingListeners = new Set<(name: string | null) => void>();
+export function onReconnectPending(fn: (name: string | null) => void): () => void {
+  reconnectPendingListeners.add(fn);
+  return () => { reconnectPendingListeners.delete(fn); };
+}
+
 // Announce a registry change made through THIS webview's own door. The drawer's "Add a published model" runs
 // connect_xmla, which the engine remembers but does NOT surface as model/activity — so the host's 'connectionChanged'
 // relay never fires for it, and a mounted sibling (the Compare picker; the hub next) would go stale until a remount.
@@ -198,7 +289,56 @@ export function onStudioZoom(fn: (level: number) => void): () => void {
   return () => { studioZoomListeners.delete(fn); };
 }
 export function postStudioZoom(level: number): void {
-  vscode.postMessage({ type: 'setStudioZoom', level });
+  postToHostStamped({ type: 'setStudioZoom', level });
+}
+
+// Unsaved Author work (workflowheld.mjs) is also kept by the host for the workspace, because closing the Studio tab drops
+// this page's own state and a panel cannot ask before it closes (verifier on m11/sol-fixes-1 round 2). The page hands
+// every change over; the host gives its copy to the next Studio page it opens, as window.__semanticusHeldWorkflows.
+export function postToHost(message: { type: 'workflowHeld' | 'draftsHeld'; value: unknown }): void {
+  postToHostStamped(message);
+}
+/** Every typed, unsaved draft of Studio (drafts.ts) is kept by the host the same way; a Studio page opened afresh gets it as window.__semanticusHeldDrafts. */
+export function keptDraftsByTheExtension<T>(): T | null {
+  const kept = (window as unknown as { __semanticusHeldDrafts?: unknown }).__semanticusHeldDrafts;
+  return kept && typeof kept === 'object' ? kept as T : null;
+}
+export function keptByTheExtension<T>(): T | null {
+  const kept = (window as unknown as { __semanticusHeldWorkflows?: unknown }).__semanticusHeldWorkflows;
+  return kept && typeof kept === 'object' ? kept as T : null;
+}
+
+// The Plan's tour and What changed card remember that they have been seen in the host's context.globalState
+// (Plan-heart contract 10), so a person who closed the tour in one project never gets it again in another. The
+// Plan asks once when it mounts. An answer that never comes (a host older than this, a view closing) settles to
+// null, and null means show nothing: guidance that cannot remember being dismissed must not appear at all.
+export type GuideFlags = { planTour: boolean; whatChanged: boolean };
+const guideFlagsPending = new Map<number, (flags: GuideFlags | null) => void>();
+const GUIDE_FLAGS_WAIT_MS = 5_000;
+export function requestGuideFlags(cardId: string): Promise<GuideFlags | null> {
+  const id = ++seq;
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => { if (guideFlagsPending.delete(id)) resolve(null); }, GUIDE_FLAGS_WAIT_MS);
+    guideFlagsPending.set(id, (flags) => { window.clearTimeout(timer); resolve(flags); });
+    postToHostStamped({ type: 'getGuideFlags', id, cardId });
+  });
+}
+export function setGuideFlag(flag: 'planTour' | 'whatChanged', cardId?: string): void {
+  postToHostStamped({ type: 'setGuideFlag', flag, cardId });
+}
+
+// Whether the Pro permission card may ask about model `scope` now. The host keeps that memory for the window's run
+// (src/consentAsks.ts), because this page is rebuilt each time Studio is closed and reopened. An answer that never
+// comes settles to no: a card that cannot be remembered as asked must not interrupt anyone.
+const consentAskPending = new Map<number, (ask: boolean) => void>();
+const CONSENT_ASK_WAIT_MS = 5_000;
+export function claimConsentAsk(scope: string): Promise<boolean> {
+  const id = ++seq;
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => { if (consentAskPending.delete(id)) resolve(false); }, CONSENT_ASK_WAIT_MS);
+    consentAskPending.set(id, (ask) => { window.clearTimeout(timer); resolve(ask); });
+    postToHostStamped({ type: 'claimConsentAsk', id, scope });
+  });
 }
 
 // Resolvers for in-flight requestDropTables() calls (host hands back the Model-tree drag stash on drop).
@@ -206,10 +346,36 @@ const dropPending = new Map<number, (tables: string[]) => void>();
 const folderPending = new Map<number, (folder: string | null) => void>();
 const specFilePending = new Map<number, (path: string | null) => void>();
 const reportPathsPending = new Map<number, (paths: string[] | null) => void>();
+const savePending = new Map<number, (saved: boolean) => void>();
+
+/** Commit the Studio field the person is typing in, as clicking elsewhere would, and resolve once the writes that sets off have
+ *  landed. A save asks for this first (Ctrl+S from the host): fields that commit on blur never saw the keystroke the save
+ *  came from, so the model was saved with the word still only on screen. */
+export async function commitFocusedStudioField(): Promise<void> {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el || el === document.body || !el.matches?.('input, textarea, select, [contenteditable="true"]')) return;
+  const before = new Set(pending.keys());
+  el.blur();   // the field's own blur handler runs, so it commits exactly as it does when the person tabs away
+  await new Promise<void>((done) => window.setTimeout(done, 0));   // a handler that awaits before it writes gets its turn
+  const landed: Promise<void>[] = [];
+  for (const [id, p] of pending) {
+    if (before.has(id)) continue;
+    landed.push(new Promise<void>((done) => {
+      const { resolve, reject } = p;
+      p.resolve = (v) => { resolve(v); done(); };
+      p.reject = (err) => { reject(err); done(); };
+    }));
+  }
+  await Promise.all(landed);
+}
 
 window.addEventListener('message', (e: MessageEvent) => {
   const msg = e.data;
   if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'commitFocused') {
+    void commitFocusedStudioField().catch(() => undefined).then(() => postToHostStamped({ type: 'focusedCommitted', id: msg.id }));
+    return;
+  }
   if (msg.type === 'dropTables') {
     const r = dropPending.get(msg.id);
     if (r) { dropPending.delete(msg.id); r((msg.tables as string[]) ?? []); }
@@ -225,6 +391,21 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (r) { specFilePending.delete(msg.id); r(typeof msg.path === 'string' ? msg.path : null); }
     return;
   }
+  if (msg.type === 'guideFlags') {
+    const r = guideFlagsPending.get(msg.id);
+    if (r) { guideFlagsPending.delete(msg.id); r(msg.unavailable ? null : { planTour: msg.planTour === true, whatChanged: msg.whatChanged === true }); }
+    return;
+  }
+  if (msg.type === 'consentAsk') {
+    const r = consentAskPending.get(msg.id);
+    if (r) { consentAskPending.delete(msg.id); r(msg.ask === true); }
+    return;
+  }
+  if (msg.type === 'saveModelResult') {
+    const r = savePending.get(msg.id);
+    if (r) { savePending.delete(msg.id); r(msg.saved === true); }
+    return;
+  }
   if (msg.type === 'reportPaths') {
     const r = reportPathsPending.get(msg.id);
     if (r) { reportPathsPending.delete(msg.id); r(Array.isArray(msg.paths) ? (msg.paths as string[]) : null); }
@@ -235,7 +416,8 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (p) {
       pending.delete(msg.id);
       window.clearTimeout(p.timer);   // reply arrived — cancel the hang-guard timeout
-      if (msg.error) p.reject(new Error(msg.error));
+      // Never the engine's raw text for a missing method: an older host beside a newer page can still send it.
+      if (msg.error) p.reject(new Error(studioErrorText(msg.error)));
       else p.resolve(msg.result);
     }
   } else if (msg.type === 'didChange') {
@@ -243,6 +425,12 @@ window.addEventListener('message', (e: MessageEvent) => {
     listeners.forEach((l) => { try { l(n); } catch { /* a view's handler threw; isolate it */ } });
   } else if (msg.type === 'planDidChange') {
     planListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'planRunProgress') {
+    planRunListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'startPlanDidChange') {
+    startPlanListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'draftDidChange') {
+    draftListeners.forEach((l) => { try { l(msg.payload); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'progressDidChange') {
     const v = msg.payload as OperationProgress;
     progressListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
@@ -263,6 +451,9 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'navigate') {
     const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'proState') {
+    const state = msg.state as ProPageStateMessage;
+    if (state && typeof state === 'object') proStateListeners.forEach((l) => { try { l(state); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'treeSelection') {
     const selection: TreeSelectionMessage = { ref: typeof msg.ref === 'string' ? msg.ref : undefined, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
     treeSelectionListeners.forEach((l) => { try { l(selection); } catch { /* isolate a view */ } });
@@ -276,6 +467,11 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'engineState') {
     const connected = !!msg.connected;
     engineStateListeners.forEach((l) => { try { l(connected); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'reconnectPending') {
+    const name = typeof msg.name === 'string' && msg.name ? msg.name : null;
+    reconnectPendingListeners.forEach((l) => { try { l(name); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'entitlementChanged') {
+    entitlementListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'reconnected') {
     // The host swapped the engine connection (reconnect, or a new model opened). Requests in flight against the OLD
     // connection will never get an rpcResult, so abandon them, then let subscribers re-read. The rejection copy is
@@ -284,7 +480,8 @@ window.addEventListener('message', (e: MessageEvent) => {
     // NOTE: this also wires the previously-dead onReconnect() path — the host always posted 'reconnected', but the
     // webview never listened.
     rejectAll('Semanticus: the engine connection was lost while this request was in flight. The operation may still have completed. Verify its result before retrying.');
-    reconnectListeners.forEach((l) => { try { l(); } catch { /* isolate a view's handler */ } });
+    const by: ReconnectBy = msg.by === 'otherDoor' || msg.by === 'restore' ? msg.by : 'person';
+    reconnectListeners.forEach((l) => { try { l(by); } catch { /* isolate a view's handler */ } });
   }
 });
 
@@ -298,6 +495,12 @@ window.addEventListener('pagehide', () => {
   specFilePending.clear();
   for (const [, resolve] of reportPathsPending) resolve(null);
   reportPathsPending.clear();
+  for (const [, resolve] of savePending) resolve(false);
+  savePending.clear();
+  for (const [, resolve] of guideFlagsPending) resolve(null);
+  guideFlagsPending.clear();
+  for (const [, resolve] of consentAskPending) resolve(false);
+  consentAskPending.clear();
 });
 
 // Persisted webview state (survives hide/show + reloads — VS Code serializes it). A single state object is shared
@@ -314,7 +517,7 @@ export function saveState(key: string, value: unknown): void {
 // Ask the extension host to reveal + select an object in the Model tree (a webview→host command, not an
 // engine RPC). The host resolves the ref and calls treeView.reveal.
 export function revealInTree(ref: string): void {
-  vscode.postMessage({ type: 'revealInTree', ref });
+  postToHostStamped({ type: 'revealInTree', ref });
 }
 
 // Selection bus, Studio → Properties: tell the host a Studio navigator focused/selected a model object so
@@ -339,7 +542,7 @@ export function selectInProperties(ref: string | null | undefined): void {
   const fromFocus = ref === pendingFocusRef;   // the mouse-focus that just fired already posted this exact ref
   clearPendingFocus();
   if (fromFocus) return;
-  vscode.postMessage({ type: 'selectObject', ref });
+  postToHostStamped({ type: 'selectObject', ref });
 }
 
 // Focus-driven selection: focusing an object row (keyboard tab, or the focus half of a mouse click) selects it
@@ -354,32 +557,32 @@ export function focusSelectInProperties(ref: string | null | undefined): void {
   // Expire the token if no click follows THIS focus within one gesture: a keyboard walk (or a pointer that moved
   // on) leaves no click to consume it, and a stale token would later swallow a real click on the same ref.
   pendingFocusTimer = window.setTimeout(clearPendingFocus, 1000);
-  vscode.postMessage({ type: 'selectObject', ref });
+  postToHostStamped({ type: 'selectObject', ref });
 }
 
 // Move keyboard focus to the Model tree (Ctrl+Alt+T in Studio). Webview→host: only the host can move
 // focus OUT of a webview (the workbench owns cross-surface focus), so this relays to semanticusModel.focus.
 export function focusModelTree(): void {
-  vscode.postMessage({ type: 'focusModelTree' });
+  postToHostStamped({ type: 'focusModelTree' });
 }
 
 // Hand a workbench command to the host (D-149). Webview keydowns never reach VS Code's keybinding
 // service on their own; the host allow-lists the few chords we forward (save, undo, redo, palette).
 export function runHostCommand(command: string, ref?: string, sessionId?: string): void {
-  vscode.postMessage({ type: 'runCommand', command, ref, sessionId });
+  postToHostStamped({ type: 'runCommand', command, ref, sessionId });
 }
 
 // Tell the host the Studio webview has mounted and its message listeners are live, so the host can flush a
 // navigation it queued while opening the panel (e.g. a tree "Preview data" that opened Studio cold). Webview→host.
 export function signalReady(): void {
-  vscode.postMessage({ type: 'studioReady' });
+  postToHostStamped({ type: 'studioReady' });
 }
 
 // Ask the host to save built documentation to a file (webview→host command, not an engine RPC). The content
 // is fully rendered in the webview; the host just shows a Save dialog + writes it. Format picks the extension.
 export function exportDoc(format: 'html' | 'markdown' | 'json', content: string, suggestedName: string,
   labels?: { saveLabel?: string; successLabel?: string }): void {
-  vscode.postMessage({ type: 'exportDoc', format, content, suggestedName, ...labels });
+  postToHostStamped({ type: 'exportDoc', format, content, suggestedName, ...labels });
 }
 
 // Native folder selection is owned by the extension host. A local working copy is a real folder on disk, so the
@@ -388,7 +591,7 @@ export function pickWorkingCopyFolder(): Promise<string | null> {
   const id = ++seq;
   return new Promise<string | null>((resolve) => {
     folderPending.set(id, resolve);
-    vscode.postMessage({ type: 'pickWorkingCopyFolder', id });
+    postToHostStamped({ type: 'pickWorkingCopyFolder', id });
   });
 }
 
@@ -398,19 +601,29 @@ export function pickSpecFile(mode: 'open' | 'save', suggestedName = 'model.spec.
   const id = ++seq;
   return new Promise<string | null>((resolve) => {
     specFilePending.set(id, resolve);
-    vscode.postMessage({ type: 'pickSpecFile', id, mode, suggestedName });
+    postToHostStamped({ type: 'pickSpecFile', id, mode, suggestedName });
+  });
+}
+
+// Save the open model the way Ctrl+S does: the host runs its save command (a model never saved asks where, as a
+// folder or a file), and answers whether it saved. Webview to host, because only the host owns the save dialog.
+export function saveModelFromPage(): Promise<boolean> {
+  const id = ++seq;
+  return new Promise<boolean>((resolve) => {
+    savePending.set(id, resolve);
+    postToHostStamped({ type: 'saveModel', id });   // the model this page shows: the host saves it as that person's action (join 11, J-D1)
   });
 }
 
 export function openLocalModel(): void {
-  vscode.postMessage({ type: 'openLocalModel' });
+  postToHostStamped({ type: 'openLocalModel' });
 }
 
 // The standalone Connections hub (a dedicated webview panel when Studio is closed) asks the host to dispose its own
 // panel from the hub's close button. Webview→host: only the host owns the panel lifecycle. A no-op in the Studio
 // overlay (that path calls closeConnections() instead), so the message is safe to post from either host.
 export function closeConnectionsPanel(): void {
-  vscode.postMessage({ type: 'closePanel' });
+  postToHostStamped({ type: 'closePanel' });
 }
 
 // Native folder selection is owned by the extension host: local report analysis targets real folders on disk
@@ -428,7 +641,7 @@ export function pickReportPaths(): Promise<string[] | null> {
       if (reportPathsPending.delete(id)) reject(new Error('Semanticus: the folder dialog did not respond. Close it if it is still open, then try again.'));
     }, PICK_REPORT_PATHS_TIMEOUT_MS);
     reportPathsPending.set(id, (paths) => { window.clearTimeout(timer); resolve(paths); });
-    vscode.postMessage({ type: 'pickReportPaths', id });
+    postToHostStamped({ type: 'pickReportPaths', id });
   });
 }
 
@@ -436,30 +649,30 @@ export function pickReportPaths(): Promise<string[] | null> {
 // action. Webview→host: the host owns the reference model state (referenceRef) and the native Reference tree. Carries
 // the tenant so a cross-tenant reference targets its own tenant, not the default one.
 export function useAsReference(record: { endpoint: string; database?: string; authMode?: string; tenantId?: string }): void {
-  vscode.postMessage({ type: 'useAsReference', endpoint: record.endpoint, database: record.database, authMode: record.authMode, tenantId: record.tenantId });
+  postToHostStamped({ type: 'useAsReference', endpoint: record.endpoint, database: record.database, authMode: record.authMode, tenantId: record.tenantId });
 }
 
 // Print / save-as-PDF: window.print() is a no-op inside VS Code's webview host (Chromium suppresses the
 // dialog), so the host writes the rendered HTML to a temp file and opens it in the SYSTEM browser — the
 // user prints (or saves as PDF) there, with real page styling.
 export function printDoc(content: string, suggestedName: string): void {
-  vscode.postMessage({ type: 'printDoc', content, suggestedName });
+  postToHostStamped({ type: 'printDoc', content, suggestedName });
 }
 
 // Open an http(s) link in the user's browser. Links inside the sandboxed doc-preview iframe can't open
 // popups (no allow-popups), so the parent routes them through the host (vscode.env.openExternal).
 export function openExternal(url: string): void {
-  vscode.postMessage({ type: 'openExternal', url });
+  postToHostStamped({ type: 'openExternal', url });
 }
 
 // Licensing always routes through the native command. The host reads the engine-owned account URL and applies
 // the HTTPS guard; the sandboxed webview never owns or duplicates a checkout/customer-portal address.
 export function manageLicense(): void {
-  vscode.postMessage({ type: 'manageLicense' });
+  postToHostStamped({ type: 'manageLicense' });
 }
 
 export function showLicense(): void {
-  vscode.postMessage({ type: 'showLicense' });
+  postToHostStamped({ type: 'showLicense' });
 }
 
 // Ask the host which tables are being dragged from the Model tree (set at drag-start in handleDrag). A native tree
@@ -470,7 +683,7 @@ export function requestDropTables(): Promise<string[]> {
   const id = ++seq;
   return new Promise<string[]>((resolve) => {
     dropPending.set(id, resolve);
-    vscode.postMessage({ type: 'requestDropTables', id });
+    postToHostStamped({ type: 'requestDropTables', id });
     window.setTimeout(() => { if (dropPending.delete(id)) resolve([]); }, 1500);
   });
 }
@@ -482,7 +695,8 @@ export function rpc<T = unknown>(method: string, ...params: unknown[]): Promise<
       if (pending.delete(id)) reject(new Error(`Semanticus: no response to "${method}" within ${Math.round(rpcTimeoutMs(method) / 1000)}s. The engine may be busy or disconnected. If this was a change it may still complete. Check the Semanticus output before retrying.`));
     }, rpcTimeoutMs(method));
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
-    vscode.postMessage({ type: 'rpc', id, method, params });
+    // Every request names the model this page is showing; the engine refuses a write whose page is not on the open model (pagemodel.ts). One place, so no editor can forget it.
+    postToHostStamped({ type: 'rpc', id, method, params });
   });
 }
 

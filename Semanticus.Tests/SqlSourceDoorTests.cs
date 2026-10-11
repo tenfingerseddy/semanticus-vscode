@@ -43,6 +43,7 @@ namespace Semanticus.Tests
         {
             SqlSourceProbe.TokenForTests = null;
             SqlSourceProbe.QueryForTests = null;
+            ThrowawayPaths.RootsOverride = null;
             ConnectionRegistry.RootOverride = _safeRoot;
             try { Directory.Delete(_root, true); } catch { }
         }
@@ -54,7 +55,7 @@ namespace Semanticus.Tests
             await engine.CreateImportTableAsync("Sales",
                 "let Source = Sql.Database(\"fabric.example.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in t", "human");
             await engine.CreateMeasureAsync("Sales", "Total Rows", "COUNTROWS('Sales')", "human");
-            await engine.SaveAsync(_modelDir, "TMDL");
+            await engine.SaveAsync(_modelDir, "TMDL", false, "human");
             return engine;
         }
 
@@ -131,17 +132,102 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task With_no_model_open_the_delete_refuses_rather_than_guessing_that_nothing_uses_it()
+        public async Task With_no_model_open_a_source_no_saved_model_uses_is_removed()
         {
+            // Usage is counted across every saved model now (F-265), so no open model is needed to know it is unused.
             using var engine = new LocalEngine(new SessionManager());
             var source = SqlSourceRegistry.Save(null, "Contoso warehouse",
                 "contoso-sql.database.windows.net", "Warehouse", "interactive", null);
 
+            var removed = await engine.DeleteSqlSourceAsync(source.Id);
+
+            Assert.True(removed.Deleted);
+            Assert.Empty(SqlSourceRegistry.List());
+        }
+
+        // A model saved on disk and remembered in Connections, with one check and one table mapping on the source,
+        // then closed. Codex on pull request 394 (F-265): usage was counted in the open model only.
+        private async Task<SqlSourceRecord> ClosedModelUsingASourceAsync(bool check, bool mapping)
+        {
+            SqlSourceRecord source;
+            // A model opened under the temp folder is not saved to Connections (StateHomeTests), and a test may only
+            // write under temp, so move the throwaway roots away from this model instead of moving the model.
+            ThrowawayPaths.RootsOverride = new[] { Path.Combine(_root, "not-this-model") };
+            using (var first = await OpenModelAsync())
+            {
+                await first.OpenAsync(_modelDir);   // remembered as a saved model, the way the Open button does it
+                source = await McpTools.SaveSqlSource(first, "Contoso warehouse",
+                    "contoso-sql.database.windows.net", "Warehouse", "interactive");
+                if (check)
+                    await first.SaveTestDefinitionAsync(new TestDefinition
+                    {
+                        Kind = TestKinds.MeasureReconcile, Title = "revenue vs source", TargetRef = "Total Rows",
+                        ParamsJson = TestSuiteStore.Serialize(new ReconcileRequest
+                        {
+                            MeasureRef = "Total Rows", SqlSourceId = source.Id, Sql = "SELECT 1", BlankPolicy = "zero",
+                        }),
+                    }, "human");
+                if (mapping) await McpTools.SetTableSourceMapping(first, "Sales", source.Id, "sales", "orders");
+            }
+            return source;
+        }
+
+        [Fact]
+        public async Task With_no_model_open_a_closed_saved_models_check_blocks_the_delete_and_names_the_model()
+        {
+            var source = await ClosedModelUsingASourceAsync(check: true, mapping: false);
+            using var engine = new LocalEngine(new SessionManager(), new Pro());
+
+            // Both doors, one engine call.
+            foreach (var refused in new[] { await McpTools.DeleteSqlSource(engine, source.Id), await new EngineRpcTarget(engine).deleteSqlSource(source.Id) })
+            {
+                Assert.False(refused.Deleted);
+                Assert.Equal(1, refused.ChecksUsing);
+                Assert.Equal(new[] { "revenue vs source" }, refused.CheckTitles);
+                Assert.Equal(new[] { "Rows" }, refused.UsingModels);
+                Assert.Contains("Rows", refused.Note);
+                Assert.Contains("revenue vs source", refused.Note);
+                Assert.DoesNotContain("\u2014", refused.Note);
+            }
+            Assert.NotNull(SqlSourceRegistry.Find(source.Id));
+
+            // The Connections list counts the same use, and says the count covers every saved model.
+            var listed = Assert.Single((await engine.ListModelSqlEndpointsAsync()).NotLinked);
+            Assert.Equal(1, listed.ChecksUsing);
+            Assert.Equal(0, listed.TableMappingsUsing);
+            Assert.Equal("savedModels", listed.UsageScope);
+            Assert.Equal(new[] { "Rows" }, listed.UsingModels);
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task With_no_model_open_a_closed_saved_models_table_mapping_blocks_the_delete()
+        {
+            var source = await ClosedModelUsingASourceAsync(check: false, mapping: true);
+            using var engine = new LocalEngine(new SessionManager(), new Pro());
+
             var refused = await engine.DeleteSqlSourceAsync(source.Id);
 
             Assert.False(refused.Deleted);
-            Assert.Contains("Open the model first", refused.Note);
-            Assert.Single(SqlSourceRegistry.List());
+            Assert.Equal(new[] { "Sales" }, refused.MappedTables);
+            Assert.Equal(new[] { "Rows" }, refused.UsingModels);
+            Assert.Equal(1, Assert.Single((await engine.ListModelSqlEndpointsAsync()).NotLinked).TableMappingsUsing);
+        }
+
+        [Fact]
+        public async Task A_closed_models_check_blocks_the_delete_while_a_different_model_is_open()
+        {
+            var source = await ClosedModelUsingASourceAsync(check: true, mapping: false);
+            var otherDir = Path.Combine(_root, "other");
+            Directory.CreateDirectory(otherDir);
+            using var engine = new LocalEngine(new SessionManager(), new Pro());
+            await engine.CreateModelAsync("Other", 1604);
+            await engine.SaveAsync(otherDir, "TMDL", false, "human");
+
+            var refused = await engine.DeleteSqlSourceAsync(source.Id);
+
+            Assert.False(refused.Deleted);
+            Assert.Equal(new[] { "Rows" }, refused.UsingModels);
         }
 
         [Fact]

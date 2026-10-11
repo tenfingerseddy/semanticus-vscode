@@ -1,10 +1,8 @@
-// One word for the live write: Publish. Pure helpers so the status chip, the Ship page, and the confirm
-// card cannot drift, and so the UAT defects have host-free tests.
+// One word for the live write: Publish. Pure helpers so the status chip, the Publish page and its one button
+// cannot drift, and so the publish rules have host-free tests.
 
 export const PUBLISH_COMMAND_TITLE = 'Semanticus: Publish to Live Model';
 export const PUBLISH_TREE_TOOLTIP = 'Publish to the live model';
-export const FABRIC_GIT_EMPTY_ID = 'Enter a workspace id first.';
-export const UNKNOWN_ACCOUNT = 'As the account this model was opened with';
 
 export type PublishChipInput = {
   liveBound: boolean;
@@ -26,100 +24,209 @@ export function publishChipText(input: PublishChipInput): string | null {
   return input.changeCount === 1 ? 'Publish · 1 change' : `Publish · ${input.changeCount} changes`;
 }
 
-export type DeployHeaderInput = {
-  loading: boolean;
-  liveBound: boolean;
-  modelName: string;
-  targetName: string;
-  changeCount?: number | null;
-  previewError?: string | null;
-  lastRestore: string;
+// ── The change list ───────────────────────────────────────────────────────────────────────────────
+// The row shape is the engine's diff item (compare.tsx ModelDiffItem), restated here so these helpers stay
+// free of imports and a test can load this file on its own.
+export interface ChangeRow {
+  ref: string; objectType: string; name: string; table?: string | null; action: string;
+  leftText?: string | null; rightText?: string | null;
+}
+
+export const isRemoval = (row: ChangeRow): boolean => row.action === 'Delete';
+
+const KIND_WORD: Record<string, string> = {
+  Table: 'table', Column: 'column', Measure: 'measure', Hierarchy: 'hierarchy', Partition: 'partition',
+  Relationship: 'relationship', Role: 'role', Perspective: 'perspective', Culture: 'language',
+  DataSource: 'data source', Expression: 'shared expression',
 };
+const KIND_ORDER = ['Table', 'Column', 'Measure', 'Hierarchy', 'Partition', 'Relationship', 'Role', 'Perspective', 'Culture', 'DataSource', 'Expression'];
+const kindWord = (row: ChangeRow) => KIND_WORD[row.objectType] ?? row.objectType.toLowerCase();
 
-export type DeployHeaderState = { line: string; resolved: boolean };
+function parseObject(text?: string | null): Record<string, unknown> | null {
+  if (!text) return null;
+  const t = text.trim();
+  if (!t.startsWith('{')) return null;
+  try { const v = JSON.parse(t); return v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : null; }
+  catch { return null; }
+}
 
-/** Ship > Deploy header. Must resolve after the first load; it must never stay on a loading sentence. */
-export function deployHeaderState(input: DeployHeaderInput): DeployHeaderState {
-  const model = input.modelName || 'the open model';
-  const restore = `last restore point: ${input.lastRestore}`;
-  if (input.loading) {
-    return { line: `Editing ${model} · checking for changes · ${restore}`, resolved: false };
+// True when the only property that differs between the two sides is the formula.
+function onlyFormulaChanged(row: ChangeRow): boolean {
+  const l = parseObject(row.leftText), r = parseObject(row.rightText);
+  if (!l || !r) return false;
+  const keys = new Set([...Object.keys(l), ...Object.keys(r)]);
+  const changed = [...keys].filter((k) => JSON.stringify(l[k]) !== JSON.stringify(r[k]));
+  return changed.length === 1 && changed[0] === 'expression';
+}
+
+// Annotations the publish carries to the live model (the engine's LiveDeploy.IsOwnedAnnotation). Any other
+// annotation stays in your copy, so a change that is only that annotation can never go and is not listed.
+const CARRIED_ANNOTATIONS = new Set(['Semanticus_Waivers', 'BestPracticeAnalyzer_IgnoreRules', 'BestPractizeAnalyzer_IgnoreRules']);
+
+function annotationMap(o: Record<string, unknown>): Map<string, string> {
+  const out = new Map<string, string>();
+  const list = o.annotations;
+  if (Array.isArray(list)) for (const a of list) if (a && typeof a === 'object') out.set(String((a as { name?: unknown }).name), JSON.stringify((a as { value?: unknown }).value));
+  return out;
+}
+
+/** True when the row is an update whose only difference is annotations that the publish does not carry. */
+export function isUnpublishable(row: ChangeRow): boolean {
+  if (row.action !== 'Update') return false;
+  const l = parseObject(row.leftText), r = parseObject(row.rightText);
+  if (!l || !r) return false;
+  const keys = new Set([...Object.keys(l), ...Object.keys(r)]);
+  const changed = [...keys].filter((k) => JSON.stringify(l[k]) !== JSON.stringify(r[k]));
+  if (changed.length !== 1 || changed[0] !== 'annotations') return false;
+  const la = annotationMap(l), ra = annotationMap(r);
+  const names = [...new Set([...la.keys(), ...ra.keys()])].filter((n) => la.get(n) !== ra.get(n));
+  return names.length > 0 && names.every((n) => !CARRIED_ANNOTATIONS.has(n));
+}
+
+/** The rows the page lists: the changes that can go. */
+export function publishableRows<T extends ChangeRow>(rows: readonly T[]): T[] { return rows.filter((r) => !isUnpublishable(r)); }
+
+/** The few words beside a row: what kind of object it is and what happens to it. */
+export function rowNote(row: ChangeRow, destination: string): string {
+  if (row.action === 'Create') return `new ${kindWord(row)}`;
+  if (row.action === 'Delete') return `only on ${destination || 'the destination'}. Tick to remove it there`;
+  return onlyFormulaChanged(row) ? 'formula changed' : `${kindWord(row)} changed`;
+}
+
+/**
+ * The table a row needs and does not have: a child of a new table, or a relationship that points at one, where the
+ * new table is not ticked. Null when the row can go. Computed here, from the list and the ticks, so a tick never
+ * costs a read of the destination.
+ */
+export function neededParent(row: ChangeRow, rows: readonly ChangeRow[], ticked: ReadonlySet<string>): { name: string; ref: string } | null {
+  if (isRemoval(row)) return null;
+  let tables: string[] = [];
+  if (row.objectType === 'Relationship') {
+    const o = parseObject(row.leftText);
+    tables = [o?.fromTable, o?.toTable].filter((t): t is string => typeof t === 'string');
+  } else if (row.table && row.objectType !== 'Table') {
+    tables = [row.table];
   }
-  if (!input.liveBound) {
-    return { line: `Editing ${model} · no publish destination yet · ${restore}`, resolved: true };
+  for (const name of tables) {
+    const parent = rows.find((r) => r.objectType === 'Table' && r.action === 'Create' && r.name === name);
+    if (parent && !ticked.has(parent.ref)) return { name, ref: parent.ref };
   }
-  if (input.previewError) {
-    return { line: `Editing ${model} · publishing to ${input.targetName} · could not check for changes · ${restore}`, resolved: true };
+  return null;
+}
+
+/** Rows grouped as the page shows them: one group per table (the table's own row first), then "Model". */
+export function groupRows<T extends ChangeRow>(rows: readonly T[]): { key: string; label: string; rows: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = (row.objectType === 'Table' ? row.name : row.table) || '';
+    const list = groups.get(key); if (list) list.push(row); else groups.set(key, [row]);
   }
-  if (input.changeCount == null) {
-    return { line: `Editing ${model} · publishing to ${input.targetName} · click Publish to review changes · ${restore}`, resolved: true };
+  const rank = (row: T) => { const i = KIND_ORDER.indexOf(row.objectType); return i < 0 ? 99 : i; };
+  return [...groups.entries()]
+    .sort((a, b) => (a[0] === '' ? 1 : 0) - (b[0] === '' ? 1 : 0) || a[0].localeCompare(b[0]))
+    .map(([key, list]) => ({ key, label: key || 'Model', rows: [...list].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name)) }));
+}
+
+export function publishCounts(rows: readonly ChangeRow[], ticked: ReadonlySet<string>): { changes: number; removals: number } {
+  let changes = 0, removals = 0;
+  for (const row of rows) { if (!ticked.has(row.ref)) continue; if (isRemoval(row)) removals++; else changes++; }
+  return { changes, removals };
+}
+
+/**
+ * What the engine's failed list says about each row, in plain words. It matches by the row's ref, which is opaque
+ * and never taken apart: an entry is the ref alone (the dry run's refused republish) or the ref and a reason in brackets.
+ */
+export function failureReasons(failed: readonly string[] | null | undefined, rows: readonly ChangeRow[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const text of failed ?? []) {
+    const row = rows.find((r) => text === r.ref || text.startsWith(r.ref + ' ('));
+    if (!row) continue;
+    out.set(row.ref, plainFailure(text === row.ref ? '' : text.slice(row.ref.length + 2).replace(/\)$/, '')));
   }
-  const waiting = input.changeCount === 0
-    ? 'nothing to publish'
-    : input.changeCount === 1 ? '1 change waiting' : `${input.changeCount} changes waiting`;
-  return { line: `Editing ${model} · publishing to ${input.targetName} · ${waiting} · ${restore}`, resolved: true };
+  return out;
 }
 
-export type PublishEntryState = 'choose-destination' | 'review' | 'compare';
-
-// What the Publishing card shows below its header. Pure, because the review card must never render without a
-// resolved destination: a confirm with no target invites "Publish to No live target" and "Publish anyway with a
-// reason" against nothing. No destination outranks every other state, so there is one action on offer.
-// "What to publish" is the default view for a resolved destination: the embedded comparison, ticked and ready,
-// with no separate link to reach it.
-export function publishEntryState(input: { canPublish: boolean; publishOpen: boolean }): PublishEntryState {
-  if (!input.canPublish) return 'choose-destination';
-  if (input.publishOpen) return 'review';
-  return 'compare';
+/** The engine's reason, in plain words. A bare ref with no reason is the dry run's refused republish. */
+export function plainFailure(reason: string): string {
+  const r = (reason || '').toLowerCase();
+  if (!r || r.includes('republish')) return 'Power BI has a different object with this name, so this change cannot replace it.';
+  if (r.includes('did not carry it') || r.includes('object type') || r.includes('did not sync')) return 'Power BI does not take this kind of change from here.';
+  if (r.includes('delete refused')) return 'Power BI would not remove it. Compare again and try once more.';
+  return reason.trim();
 }
 
-export function publishAccountLine(account?: string | null): string {
-  const name = (account || '').trim();
-  return name ? `As ${name}` : UNKNOWN_ACCOUNT;
+/** The changes that did not go, named in one plain phrase: "1 change could not go (Model)". Up to two names, then a count. */
+export function couldNotGoLine(failed: ReadonlyMap<string, string>, rows: readonly ChangeRow[]): string {
+  const left = rows.filter((r) => failed.has(r.ref));
+  const count = failed.size;
+  const label = (r: ChangeRow) => r.name || r.ref;
+  const shown = left.slice(0, 2).map(label);
+  const rest = count - shown.length;
+  const named = shown.length === 0 ? '' : ` (${shown.join(', ')}${rest > 0 ? ` and ${rest} more` : ''})`;
+  return `${count === 1 ? '1 change' : `${count} changes`} could not go${named}.`;
 }
 
-export function publishButtonLabel(changeCount: number, targetName: string, deleteCount = 0): string {
-  // No copy invites a no-op write. When there is nothing to publish the confirm control is disabled anyway, but the
-  // label must not read as an invitation to write ("Publish 0 changes to V2").
-  if (changeCount <= 0 && deleteCount === 0) return 'Nothing to publish';
-  const target = targetName || 'the live model';
-  const changes = changeCount === 1 ? '1 change' : `${Math.max(0, changeCount)} changes`;
-  if (deleteCount > 0) {
-    const removed = deleteCount === 1 ? '1' : String(deleteCount);
-    return `Publish ${changes} and remove ${removed} from ${target}`;
-  }
-  return `Publish ${changes} to ${target}`;
+// ── The one button and the lines around it ────────────────────────────────────────────────────────
+export type PublishLabelInput = { changes: number; removals: number; target: string; busy?: boolean; checking?: boolean; empty?: boolean };
+
+/** The label is the guard: it names the count and the place, and says so when something is removed. */
+export function publishLabel(input: PublishLabelInput): string {
+  if (input.busy) return 'Publishing...';
+  if (input.checking) return 'Checking...';
+  if (input.empty) return 'Nothing to publish';
+  const target = input.target || 'the destination';
+  const { changes, removals } = input;
+  if (changes <= 0 && removals <= 0) return 'Nothing ticked';
+  const n = changes === 1 ? '1 change' : `${changes} changes`;
+  if (removals > 0 && changes > 0) return `Publish ${n} and remove ${removals} from ${target}`;
+  if (removals > 0) return `Remove ${removals} from ${target}`;
+  return `Publish ${n} to ${target}`;
 }
 
-export function fabricGitWorkspaceMessage(workspaceId: string): string | null {
-  return workspaceId.trim() ? null : FABRIC_GIT_EMPTY_ID;
+export function checkingCopy(target: string): string { return `Checking ${target || 'the destination'} for changes.`; }
+export function unreachableCopy(target: string): string { return `Could not reach ${target || 'the destination'}.`; }
+
+export function nothingToPublishCopy(target: string): string {
+  return `Nothing to publish. ${target || 'The destination'} already has everything in your copy.`;
 }
 
-export function shouldResetCompareOnSessionChange(previousSessionId?: string | null, nextSessionId?: string | null): boolean {
-  return !!previousSessionId && !!nextSessionId && previousSessionId !== nextSessionId;
+export function publishedLine(count: number, target: string): string {
+  const t = target || 'the destination';
+  return count <= 0
+    ? `Nothing needed to change. ${t} already had these.`
+    : `Published ${count === 1 ? '1 change' : `${count} changes`} to ${t}. Your copy did not change.`;
+}
+export function undoneLine(target: string, when: string): string { return `${target || 'The destination'} is back to how it was before ${when}.`; }
+export function notPublishedLine(target: string): string { return `Nothing was published to ${target || 'the destination'}.`; }
+
+/** The time of day, as "09:42", in the person's own clock. */
+export function clockTime(date: Date): string {
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(date.getHours())}:${two(date.getMinutes())}`;
+}
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** A saved version's time, as "2 Oct 14:15", in the person's own clock. */
+export function shortWhen(utc: string | Date): string {
+  const d = utc instanceof Date ? utc : new Date(utc);
+  if (!Number.isFinite(d.getTime())) return 'an earlier time';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${clockTime(d)}`;
 }
 
-export function nothingToPublishCopy(targetName: string, liveOnly: string[] = []): string {
-  const target = targetName || 'the live model';
-  if (liveOnly.length === 0) return `Nothing to publish. ${target} already has everything in your copy.`;
-  const extra = liveOnly.length === 1
-    ? `1 object is on ${target} that your copy does not have: ${liveOnly[0]}.`
-    : `${liveOnly.length} objects are on ${target} that your copy does not have.`;
-  return `Nothing new to publish. ${extra} Publishing never removes them unless you tick them.`;
+// ── Earlier versions and Promote ─────────────────────────────────────────────────────────────────
+export function restoreLabel(target: string, when: string): string { return `Restore ${target || 'the destination'} to ${when}`; }
+export function restoreDetail(restored: number, removed: number, target: string): string {
+  const t = target || 'The destination';
+  if (restored <= 0 && removed <= 0) return `${t} already matches this version.`;
+  const put = restored === 1 ? '1 object' : `${restored} objects`;
+  const gone = removed === 1 ? '1 object' : `${removed} objects`;
+  if (removed <= 0) return `This puts back ${put}.`;
+  if (restored <= 0) return `This removes ${gone} that came after this version.`;
+  return `This puts back ${put} and removes ${gone} that came after this version.`;
 }
-
-export function previewFailedCopy(targetName: string, error: string): string {
-  const target = targetName || 'the live model';
-  const reason = (error || '').trim() || 'the check did not finish';
-  return `Could not check ${target} for changes: ${reason}. Sign in and try again.`;
-}
-
-// The honest in-flight state: while the change check is still running there is no answer yet, so the summary must
-// never claim "Nothing to publish" (the three-second flicker where CHECKS reads "Checking this change" but the
-// summary already declared the target up to date).
-export function checkingCopy(targetName: string): string {
-  const target = targetName || 'the live model';
-  return `Checking ${target} for changes.`;
+export function promoteLabel(count: number, from: string, to: string): string {
+  if (count <= 0) return 'Nothing to promote';
+  return `Promote ${count === 1 ? '1 item' : `${count} items`} from ${from} to ${to}`;
 }
 
 // A rollback result is read from `applied` and `failedRefs`, never from the absence of an error: the engine returns
@@ -128,24 +235,14 @@ export function checkingCopy(targetName: string): string {
 export type RollbackOutcome = { applied: boolean; failedRefs?: string[] | null; note?: string | null; error?: string | null };
 export function rollbackResultLine(r: RollbackOutcome, target: string, when: string): string {
   if (r.error) return r.error;
-  if (!r.applied) return r.note || `${target} already matches this restore point. Nothing to roll back.`;
+  if (!r.applied) return r.note || `${target} already matches this version. Nothing to restore.`;
   const failed = r.failedRefs ?? [];
-  const base = `Restored ${target} to the point from ${when}`;
+  const base = `Restored ${target} to the version from ${when}`;
   if (failed.length > 0) {
     const names = failed.slice(0, 3).join(', ') + (failed.length > 3 ? ` and ${failed.length - 3} more` : '');
-    return `${base}, except ${failed.length} object${failed.length === 1 ? '' : 's'} that could not be restored: ${names}. Review changes to see what differs now.`;
+    return `${base}, except ${failed.length} object${failed.length === 1 ? '' : 's'} that could not be restored: ${names}.`;
   }
-  return `${base}. Your local model edits are unchanged; review changes to see what differs now.`;
-}
-
-// After a subset publish the grid is re-read. Only a fresh, successful comparison may claim that what is still shown is
-// unpublished; when the re-read fails the write summary stays and the list is marked as possibly out of date.
-export function publishedSubsetLine(input: { count: number; target: string; failed: number; refreshed: boolean }): string {
-  const changes = input.count === 1 ? '1 change' : `${input.count} changes`;
-  const head = `Published ${changes} to ${input.target}.`;
-  const failed = input.failed > 0 ? ` ${input.failed} could not be published.` : '';
-  if (!input.refreshed) return `${head}${failed} The comparison could not be refreshed, so the list below may be out of date. Run Compare again to see what remains.`;
-  return `${head}${failed} The differences still shown are not yet published.`;
+  return `${base}. Your copy did not change.`;
 }
 
 // The stage as a person writes it. The registry stores canonical ids, which read like a typo in a sentence
@@ -153,3 +250,25 @@ export function publishedSubsetLine(input: { count: number; target: string; fail
 // Display only: permission decisions still key off the raw label.
 const PUBLISH_STAGE_NAMES: Record<string, string> = { local: 'Local', dev: 'Development', uat: 'UAT', prod: 'Production' };
 export function publishStageName(label: string): string { return PUBLISH_STAGE_NAMES[label.trim().toLowerCase()] ?? label; }
+
+// ---- Publish as a new model (r1/newmodel) ----
+// A model with no destination yet can go to a workspace as a new model. It signs in the way this person last signed
+// in to a workspace or the model's source; with none saved, it signs in in a browser.
+export type SignInLike = { authMode?: string | null; tenantId?: string | null } | null | undefined;
+export function newModelSignIn(known: SignInLike[]): { authMode: string; tenantId: string | null } {
+  const k = known.find((r) => !!r && !!(r.authMode ?? '').trim());
+  return { authMode: (k?.authMode ?? '').trim() || 'interactive', tenantId: (k?.tenantId ?? '').trim() || null };
+}
+
+export function newModelLabel(input: { busy: boolean; workspace: string | null }): string {
+  if (input.busy) return 'Publishing...';
+  return input.workspace ? `Publish to ${input.workspace}` : 'Publish';
+}
+
+/** The name the new-model card offers: the model's own name, or the next free "Name 2", "Name 3" when the workspace already has it. Only a default: a name the person types is theirs,
+ *  and the engine refuses a taken one before anything is sent. */
+export function freeNewModelName(name: string, taken: string[]): string {
+  const has = new Set(taken.map((t) => t.trim().toLowerCase()));
+  if (!has.has(name.trim().toLowerCase())) return name;
+  for (let n = 2; ; n++) { const next = `${name.trim()} ${n}`; if (!has.has(next.toLowerCase())) return next; }
+}

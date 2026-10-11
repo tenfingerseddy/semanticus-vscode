@@ -98,14 +98,22 @@ namespace Semanticus.Tests
             return engine;
         }
 
-        // The unmarked-date-table model PLUS a visible measure with no format string, which is
-        // PROVIDE_FORMAT_STRING_FOR_MEASURES at severity 3 — a real error. So this fixture carries both levels and
-        // proves the copy reports them with different words.
+        // A severity 3 rule with no fix that one measure trips: a real error. Until 29 Sep the fixture used
+        // PROVIDE_FORMAT_STRING_FOR_MEASURES for this, but a measure the format fill rule leaves blank is advice and never
+        // blocks the gate (Kane: guardrails must not hurt the experience), so the error level is a probe rule of our own.
+        private const string ProbeError =
+            "[{\"ID\":\"SEM_PROBE_ERROR\",\"Name\":\"Measures must not be called unformatted\",\"Category\":\"Test\"," +
+            "\"Severity\":3,\"Scope\":\"Measure\",\"Expression\":\"Name.Contains(\\\"Unformatted\\\")\"}]";
+
+        // The unmarked-date-table model PLUS a visible measure with no format string (advice, never blocking) that also
+        // trips the probe error at severity 3. So this fixture carries both levels and proves the copy reports them with
+        // different words.
         private static async Task<LocalEngine> ErrorsAndWarningsAsync()
         {
             var engine = await DateTableOnlyAsync();
             var m = await engine.CreateMeasureAsync("table:Sales", "Unformatted Sales", "SUM ( Sales[Sales Amount] )", "human");
             await engine.SetDescriptionAsync(m, "A measure left without a format string on purpose.", "human");
+            await engine.LoadBpaRulesAsync(ProbeError, replace: false, "human");
             return engine;
         }
 
@@ -149,12 +157,14 @@ namespace Semanticus.Tests
 
             // The rule's own name, not its id, and the object it fired on.
             Assert.Contains("Date/calendar tables should be marked as a date table", msg, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Provide format string for measures", msg, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Measures must not be called unformatted", msg, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Provide format string for measures", msg, StringComparison.OrdinalIgnoreCase);   // advice, never a blocker
             Assert.Contains("Unformatted Sales", msg, StringComparison.Ordinal);
         }
 
         // ---- 2) no engine vocabulary, no raw ids, no em dash --------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Blocker_copy_speaks_no_engine_vocabulary()
         {
@@ -222,6 +232,7 @@ namespace Semanticus.Tests
 
         // ---- 2b) an unknown at two scopes is TWO checks, and the copy may not collapse them ------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_unknown_at_two_scopes_is_rendered_as_two_and_never_collapsed_by_name()
         {
@@ -271,6 +282,7 @@ namespace Semanticus.Tests
 
         // ---- 4) severity WORDS match severity NUMBERS --------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Severity_words_match_severity_numbers()
         {
@@ -280,7 +292,7 @@ namespace Semanticus.Tests
             // scan had just said, never that the split itself was right. Caught by Sol on review.
             //
             // dateTableOnly:      0 errors, 2 warnings (MODEL_SHOULD_HAVE_A_DATE_TABLE and DATE/CALENDAR..., both sev 2)
-            // errorsAndWarnings:  1 error,  4 warnings (PROVIDE_FORMAT_STRING_FOR_MEASURES sev 3; + AVOID_DUPLICATE x2)
+            // errorsAndWarnings:  1 error,  4 warnings (SEM_PROBE_ERROR sev 3; + AVOID_DUPLICATE x2)
             // withUnknown:        3 errors, 4 warnings (+ SEM_PROBE_UNEVALUABLE sev 3 on two measures)
 
             // Only severity-2 findings block here, so nothing may be called an error.
@@ -310,7 +322,7 @@ namespace Semanticus.Tests
         // the object ref together are what identifies a finding, and they are the two things a copy change must not
         // be able to touch.
         private static string[] BlockingSet(BpaScorecard card) => card.Violations
-            .Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.Waived)
+            .Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.Advice && !v.Waived)
             .Select(v => v.RuleId + "|" + v.ObjectRef)
             .OrderBy(s => s, StringComparer.Ordinal)
             .ToArray();
@@ -330,6 +342,7 @@ namespace Semanticus.Tests
         // inside the very test written to stop a behaviour change. Caught by Sol on review, and proved by mutation
         // rather than argued: renaming the fixture's "Date" table to "Calendar" keeps the count at 2 and still turns
         // this test red, on the object ref, exactly as it must.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verdict_and_blocking_set_did_not_move()
         {
@@ -339,7 +352,9 @@ namespace Semanticus.Tests
             Assert.Empty(c.Blockers);
             Assert.Equal(0, c.BpaBlocking);
             Assert.Equal(0, c.BpaUnknownBlocking);
-            Assert.Equal(8, c.BpaViolations);
+            // 8 before 27 Sep: the one move is DATECOLUMN_FORMATSTRING (severity 1, never blocking), which now accepts
+            // the fixture's ISO yyyy-mm-dd date format. The blocking set below is unchanged.
+            Assert.Equal(7, c.BpaViolations);
             Assert.Equal("Gate passed.", c.Note);
             Assert.Empty(BlockingSet(await clean.BpaScanAsync()));
 
@@ -350,7 +365,7 @@ namespace Semanticus.Tests
             Assert.Equal(2, d.BpaBlocking);          // the two severity-2 date rules, neither auto-fixable
             Assert.Equal(0, d.BpaUnknownBlocking);
             Assert.Equal(0, d.BpaWaivedBlocking);
-            Assert.Equal(10, d.BpaViolations);
+            Assert.Equal(9, d.BpaViolations);        // 10 before 27 Sep; the ISO date key no longer trips DATECOLUMN_FORMATSTRING
             Assert.Equal(new[]
             {
                 "DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE|table:Date",
@@ -365,14 +380,14 @@ namespace Semanticus.Tests
             // on BOTH measures on top of the format-string error and the two date rules. Measured, not assumed.
             Assert.Equal(5, m.BpaBlocking);
             Assert.Equal(0, m.BpaUnknownBlocking);
-            Assert.Equal(14, m.BpaViolations);
+            Assert.Equal(14, m.BpaViolations);       // 14 before 27 Sep, same reason; the probe rule adds one finding beside the advice
             Assert.Equal(new[]
             {
                 "AVOID_DUPLICATE_MEASURES|measure:Sales/Total Sales",
                 "AVOID_DUPLICATE_MEASURES|measure:Sales/Unformatted Sales",
                 "DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE|table:Date",
                 "MODEL_SHOULD_HAVE_A_DATE_TABLE|obj:Model/Model",
-                "PROVIDE_FORMAT_STRING_FOR_MEASURES|measure:Sales/Unformatted Sales",
+                "SEM_PROBE_ERROR|measure:Sales/Unformatted Sales",
             }, BlockingSet(await mixed.BpaScanAsync()));
 
             using var withUnknown = await WithUnevaluableRuleAsync();
@@ -381,7 +396,7 @@ namespace Semanticus.Tests
             Assert.Equal(7, u.BpaBlocking);
             Assert.Equal(1, u.BpaUnknownBlocking);   // severity 3, no auto-fix, so its unknown blocks
             Assert.Equal(2, u.Blockers.Length);      // one violation blocker, one unknown blocker
-            Assert.Equal(16, u.BpaViolations);
+            Assert.Equal(16, u.BpaViolations);       // 16 before 27 Sep, same reason; the probe rule adds one
             var uCard = await withUnknown.BpaScanAsync();
             Assert.Equal(new[]
             {
@@ -389,7 +404,7 @@ namespace Semanticus.Tests
                 "AVOID_DUPLICATE_MEASURES|measure:Sales/Unformatted Sales",
                 "DATE/CALENDAR_TABLES_SHOULD_BE_MARKED_AS_A_DATE_TABLE|table:Date",
                 "MODEL_SHOULD_HAVE_A_DATE_TABLE|obj:Model/Model",
-                "PROVIDE_FORMAT_STRING_FOR_MEASURES|measure:Sales/Unformatted Sales",
+                "SEM_PROBE_ERROR|measure:Sales/Unformatted Sales",
                 "SEM_PROBE_UNEVALUABLE|measure:Sales/Total Sales",
                 "SEM_PROBE_UNEVALUABLE|measure:Sales/Unformatted Sales",
             }, BlockingSet(uCard));

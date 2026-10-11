@@ -30,6 +30,11 @@ namespace Semanticus.Engine
         private readonly ChangeBus _bus;
         private List<ChangeDelta> _pending;   // non-null only while a tracked op runs (dispatcher thread)
 
+        // Every object a tracked commit of THIS session added, by reference, so a rename does not lose it. The Plan's
+        // cleanup row never offers to remove one (UAT plan statement check, 28 Sep): "nothing uses it" says nothing
+        // about a thing somebody built minutes ago. Dispatcher-thread only; a rehearsal never adds to it.
+        private readonly HashSet<ITabularObject> _builtHere = new HashSet<ITabularObject>(ReferenceEqualityComparer.Instance);
+
         // A caller can capture this session immediately before another door replaces it. Retiring the session
         // closes admission atomically, then waits for work that already started to drain before the dispatcher is
         // torn down. A late caller holding the stale reference is refused instead of enqueueing onto a dead worker.
@@ -41,6 +46,9 @@ namespace Semanticus.Engine
         internal bool RetiredForTest => System.Threading.Volatile.Read(ref _retired) != 0;
 
         public string Id { get; }
+        /// <summary>When this session opened. The History's seam for Plan decisions: one older than this is from
+        /// before this session (contract 8.9).</summary>
+        public DateTimeOffset OpenedUtc { get; } = DateTimeOffset.UtcNow;
         internal ModelDispatcher Dispatcher { get; }
         // The TE2 handler now lives behind the IModelSession seam (ModelSession.cs); the engine talks to the
         // interface, never the concrete handler — see Te2ModelSession for why (the Singleton dies here later).
@@ -54,12 +62,41 @@ namespace Semanticus.Engine
         /// read later on the deploy path.</summary>
         public LiveOrigin LiveOrigin { get; internal set; }
 
+        /// <summary>The published model this session's file is a cached snapshot of, read from the snapshot folder's origin marker when a
+        /// file under the snapshot root is opened as a plain model (a cold start reopens the cached snapshot). IDENTITY ONLY: it names the
+        /// model for a held draft (<c>SessionInfo.ModelIdentity</c>) and nothing else. It is NOT a <see cref="LiveOrigin"/>, so deploy never
+        /// reads it and it never makes the session live-bound.</summary>
+        public LiveModelExport.SnapshotOrigin SnapshotOf { get; internal set; }
+
+        /// <summary>A random key minted with the session, for a model that has no file, no live origin and no snapshot marker: two such
+        /// models must never share a draft key, and the session id cannot say so (it restarts at s1 in every engine process).</summary>
+        internal string InstanceKey { get; } = Guid.NewGuid().ToString("N");
+
+        // Identities this model had before a Save As moved it (file:<old path>). A page that was showing the model before the Save still names it, and it is the same model
+        // (drafts-sol round 3). Only ever added to, and only ever read by IdentityNames; the lock is for the fence, which reads it from the RPC thread.
+        private readonly object _formerLock = new object();
+        private readonly List<string> _formerIdentities = new List<string>();
+        internal void AddFormerIdentity(string identity)
+        {
+            if (string.IsNullOrEmpty(identity)) return;
+            lock (_formerLock) if (!_formerIdentities.Contains(identity)) _formerIdentities.Add(identity);
+        }
+        internal string[] FormerIdentities { get { lock (_formerLock) return _formerIdentities.ToArray(); } }
+
+        // The canonical form of SourcePath, read from disk once per path (Save As changes the path, and then it is read again).
+        internal (string Path, string Canon) CanonCache;
+
         /// <summary>The session's PRIMER identity, computed once on first use and pinned for the session's lifetime
         /// (LocalEngine.Primer.cs derives it from LiveOrigin/SourcePath — fields stamped once on the open path). A
         /// cached value means the primer's filename can NEVER move mid-session, whatever future identity inputs are
         /// added. Only a non-null identity is cached (null = "no durable anchor yet", e.g. the window between the
         /// session swap and the LiveOrigin stamp — recomputed until one exists).</summary>
         internal string PrimerIdentityCache;
+
+        /// <summary>The decision points switched on or off for this model while it has never been saved and is not live,
+        /// so it has nowhere on disk to keep them. They are this session's own, so no other model reads them, and the first
+        /// save writes them beside the model (LocalEngine.Decisions.cs). Guarded by the engine's decision gate.</summary>
+        internal readonly Dictionary<string, bool> UnsavedSwitches = new Dictionary<string, bool>(StringComparer.Ordinal);
 
         // ---- Live-auth reuse (in-memory only; never serialized) ------------------------------------------
         // The bug this fixes: each live op (open/deploy/refresh) built a NEW Azure.Identity credential whose
@@ -173,7 +210,22 @@ namespace Semanticus.Engine
         /// invisible to the checkpoint arithmetic TE2's dirty flag is built on), so without this bit an
         /// edit-then-undo session reads CLEAN and save/git/close silently drop the audit record — breaking
         /// append-only across the session boundary.</summary>
-        public bool HasUnsavedChanges => _model.HasUnsavedChanges || _auditDirty;
+        public bool HasUnsavedChanges => _model.HasUnsavedChanges || _auditDirty || _consentMarkerDirty;
+
+        /// <summary>Unsaved work of the model's writers: everything <see cref="HasUnsavedChanges"/> counts except the
+        /// consent marker a save writes back for itself (<see cref="MarkConsentMarkerDirty"/>). A save that writes only
+        /// that marker has saved nobody's changes, so it does not count toward <see cref="SaveCount"/>.</summary>
+        public bool HasUnsavedEdits => (_model.HasUnsavedChanges && !ConsentIsTheOnlyEdit) || _auditDirty;
+
+        // THE MARKER FOR JEV'S PERMISSION IS NOT THE PERSON'S WORK (Kane, 8 Oct 2026, K2). Giving permission writes an annotation into the model,
+        // and an undoable one (undo takes the permission back), so the model reads unsaved and the window said "unsaved edits are not included"
+        // under a model nobody had edited. The revision right after that write is remembered; while the model is still at it, the marker is the
+        // only change and nothing of the person's is unsaved. Any later change moves the revision and the marker counts with the rest.
+        private long _consentOnlyRevision = -1;
+        private bool ConsentIsTheOnlyEdit => System.Threading.Volatile.Read(ref _consentOnlyRevision) is long at && at >= 0 && Revision == at;
+
+        /// <summary>Called right after the consent marker is written, when nothing of the person's was unsaved before it.</summary>
+        public void NoteConsentMarkerIsTheOnlyEdit() => System.Threading.Volatile.Write(ref _consentOnlyRevision, Revision);
 
         // A checkout/pull changes the files backing this live session. Admission is assigned under one lock so an
         // edit/save either owns the state before Git intent (and may finish) or is refused; there is no semaphore
@@ -312,6 +364,16 @@ namespace Semanticus.Engine
         private volatile bool _auditDirty;
         public void MarkAuditDirty() => _auditDirty = true;
 
+        // Set on the dispatcher thread when a save writes the consent marker back without an undo step
+        // (LocalEngine.Decisions.cs, StampPendingConsentMarkerAsync): the model reads unsaved until that save lands.
+        private volatile bool _consentMarkerDirty;
+        public void MarkConsentMarkerDirty() => _consentMarkerDirty = true;
+
+        /// <summary>Set on the dispatcher thread when the Plan reads this model unsaved, so "Save the changes you have
+        /// made" is on the plan from then on. A save that writes changes after that records itself in the plan memory
+        /// (LocalEngine.SaveAsync), because the row it answers must still read as done after a restart.</summary>
+        public bool PlanSawUnsaved { get; set; }
+
         // ---- ambient commit observers ---------------------------------------------------------------------
         // The generalized probe seam (#82 follow-up): what used to be one settable health-probe slot is a small
         // REGISTRATION-ORDERED list, so a second ambient consumer can't evict the first. Copy-on-write array:
@@ -363,25 +425,105 @@ namespace Semanticus.Engine
             _bus = bus;
             SourcePath = sourcePath;
             _model.ObjectChanged += OnObjectChanged;
+            _model.ObjectDeleting += OnObjectDeleting;
+            _model.ObjectDeleted += OnObjectDeleted;
             _model.Undo.SetCheckpoint(); // freshly opened == clean
+        }
+
+        /// <summary>Hear every property change made to this session's model until the returned scope is disposed. Dispatcher thread only (it is for work inside a
+        /// mutation: the start plan's build asks afterwards which properties it set). It does not touch the Session's own change collector.</summary>
+        internal IDisposable Listen(ObjectChangedEventHandler handler)
+        {
+            _model.ObjectChanged += handler;
+            return new Subscription(() => _model.ObjectChanged -= handler);
+        }
+
+        private sealed class Subscription : IDisposable
+        {
+            private Action _off;
+            public Subscription(Action off) { _off = off; }
+            public void Dispose() { var o = _off; _off = null; try { o?.Invoke(); } catch { } }
         }
 
         private void OnObjectChanged(object sender, ObjectChangedEventArgs e)
         {
-            // Fires synchronously on the dispatcher thread during a tracked op.
+            // Fires synchronously on the dispatcher thread during a tracked op. The values are rendered, capped and
+            // redacted here, before they can reach the broadcast, the MCP fold or the ledger (contract 8.3).
             if (_pending == null) return;
+            var (before, after) = ChangeValues.For(e.TabularObject, e.PropertyName, e.OldValue, e.NewValue);
             _pending.Add(new ChangeDelta
             {
                 Kind = "update",
                 Ref = ObjectRefs.For(e.TabularObject),
-                Props = e.PropertyName == null ? null : new[] { e.PropertyName }
+                Props = e.PropertyName == null ? null : new[] { e.PropertyName },
+                Before = before,
+                After = after,
             });
+        }
+
+        // A deleted object may no longer be able to name itself (its parent link is gone), so its ref is taken while
+        // it is being deleted and handed to the deleted event. Dispatcher-thread-only, like _pending.
+        private readonly Dictionary<ITabularObject, string> _deleting = new Dictionary<ITabularObject, string>(ReferenceEqualityComparer.Instance);
+
+        private void OnObjectDeleting(object sender, ObjectDeletingEventArgs e)
+        {
+            if (_pending == null || e?.TabularObject == null) return;
+            try { _deleting[e.TabularObject] = ObjectRefs.For(e.TabularObject); } catch { /* named below, if it can be */ }
+        }
+
+        private void OnObjectDeleted(object sender, ObjectDeletedEventArgs e)
+        {
+            if (_pending == null || e?.TabularObject == null) return;
+            if (!_deleting.Remove(e.TabularObject, out var r))
+            {
+                try { r = ObjectRefs.For(e.TabularObject); } catch { r = null; }
+            }
+            if (string.IsNullOrEmpty(r)) return;
+            _pending.Add(new ChangeDelta { Kind = "remove", Ref = r });
+        }
+
+        // TOM fires no event for an add, so the undo actions the commit pushed are read for the objects it added,
+        // each written as an "add" delta ahead of that commit's other deltas (contract 8.3).
+        private List<ChangeDelta> WithAdds(List<ChangeDelta> deltas, int undoSizeBefore, bool builtHere = false)
+        {
+            var added = _model.Undo.ObjectsAddedSince(undoSizeBefore);
+            if (added.Count == 0) return deltas;
+            if (builtHere) foreach (var obj in added) if (obj != null) _builtHere.Add(obj);
+            var adds = new List<ChangeDelta>();
+            foreach (var obj in added)
+            {
+                string r;
+                try { r = ObjectRefs.For(obj); } catch { continue; }
+                if (string.IsNullOrEmpty(r) || adds.Exists(d => d.Ref == r)) continue;
+                adds.Add(new ChangeDelta { Kind = "add", Ref = r });
+            }
+            adds.AddRange(deltas);
+            return adds;
+        }
+
+        /// <summary>Dispatcher-thread only (inside <see cref="ReadAsync"/>): true when a tracked commit of this session
+        /// added <paramref name="obj"/>, or the table it sits on.</summary>
+        internal bool BuiltHere(ITabularObject obj)
+        {
+            if (obj == null) return false;
+            if (_builtHere.Contains(obj)) return true;
+            return obj is ITabularTableObject t && t.Table != null && _builtHere.Contains(t.Table);
         }
 
         public Task<T> ReadAsync<T>(Func<Model, T> work) => RunAsync(() => work(Model));
 
         /// <summary>Run arbitrary model-session work on the dispatcher under this session's lifetime lease.</summary>
-        internal Task<T> RunAsync<T>(Func<T> work) => WithLifetimeLeaseAsync(() => Dispatcher.RunAsync(work));
+        internal Task<T> RunAsync<T>(Func<T> work) => WithLifetimeLeaseAsync(() => OnDispatcher(work));
+
+        /// <summary>The ONE way a session's work reaches its dispatcher thread: "gate, pin this model's handler, work"
+        /// (<see cref="TabularEditor.TOMWrapper.Utils.WrapperGate"/>). The vendored wrapper binds every object it creates to a process-wide static
+        /// handler, so without the pin a second model on another dispatcher (a hidden scratch build, a replacement
+        /// built before the old session retires) could hand this model's new objects to itself. Reads, tracked commits,
+        /// rehearsals, undo, redo, walks and retracts all come through here, so no entry point can forget it.</summary>
+        private Task<T> OnDispatcher<T>(Func<T> work) => Dispatcher.RunAsync(() =>
+        {
+            using (_model.Pin()) return work();
+        });
 
         /// <summary>Apply a mutation as one undo step, collect deltas, and broadcast a change notification. Pass
         /// <paramref name="cascadeSink"/> to receive the LSDL-cascade advisories THIS batch produced: the retry
@@ -389,30 +531,60 @@ namespace Semanticus.Engine
         /// by this exact call — never drained by a concurrent request (a session-global list let whoever drained first
         /// steal another caller's advisory). Only the rename surfaces need it; every other caller passes null.</summary>
         public Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink = null)
+            => MutateAsync(origin, label, work, cascadeSink, keepsModelSaved: false);
+
+        /// <summary>A tracked change to something kept BESIDE the model (the Primer, F-353): one undo step and one
+        /// History entry like any edit, but the model itself is not edited, so a model that was saved stays saved.</summary>
+        public Task<long> MutateBesideModelAsync(string origin, string label, Action<Model> work)
+            => MutateAsync(origin, label, work, null, keepsModelSaved: true);
+
+        /// <summary>Dispatcher-thread only, inside a tracked commit's work: add a change the TOM events cannot see
+        /// (a sidecar's before and after) to the deltas this commit broadcasts and the History records.</summary>
+        internal void RecordDelta(ChangeDelta delta)
+        {
+            if (delta != null) _pending?.Add(delta);
+        }
+
+        private async Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink, bool keepsModelSaved)
         {
             // Read the ambient dry-run scope on the CALLER's thread, BEFORE the dispatcher hop — AsyncLocal need
             // not flow to the dispatcher's dedicated thread, so we capture the collector here and never rely on it
             // being visible inside RunAsync. Non-null ⇒ rehearse (RehearseAsync); null ⇒ the real mutation.
             var dry = DryRunScope.Current;
-            return WithLifetimeLeaseAsync(() => dry != null
+            return await WithLifetimeLeaseAsync(() => dry != null
                 ? RehearseAsync(dry, label, work, cascadeSink)
                 : TrackAsync(origin, label, () =>
                 {
                     var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
+                    var depth = _model.BatchDepth;
+                    var wasSaved = keepsModelSaved && depth == 0 && _model.Undo.AtCheckpoint;
                     _model.BeginUpdate(label);
                     // RetryPendingCascades runs INSIDE the batch (before EndUpdate) so retried LSDL writes join
                     // the same undo step as the renames that queued them. On a work throw the rollback reverts
                     // the renames themselves, so the pendings are moot — just cleared. RestoreRedo puts back the
                     // redo stack TE2 cleared when the first action of this now-refused batch was recorded.
-                    try { work(Model); RetryPendingCascades(cascadeSink); _model.EndUpdate(); }
+                    var structure = (_model as IStructureGuard)?.Capture();
+                    var sealedYet = false;
+                    try
+                    {
+                        work(Model); RetryPendingCascades(cascadeSink);
+                        sealedYet = true;
+                        (_model as IStructureGuard)?.Seal(structure);
+                        _model.EndUpdate();
+                        // TE2 counts "saved" by stack position, so the new step would read as an unsaved model edit.
+                        if (wasSaved) _model.Undo.SetCheckpoint();
+                    }
                     catch
                     {
                         _pendingCascades.Clear();
-                        try { _model.EndUpdate(undoable: true, rollback: true); }
+                        // A work that threw part way may have written values outside TE2's undo: seal what it did, so the
+                        // rollback below takes those back too.
+                        if (!sealedYet) { try { (_model as IStructureGuard)?.Seal(structure); } catch { } }
+                        try { RollBackTo(depth); }
                         finally { (_model.Undo as IRedoPreserve)?.RestoreRedo(redo); }
                         throw;
                     }
-                }));
+                })).ConfigureAwait(false);
         }
 
         /// <summary>Dry-run variant: run the REAL work on the dispatcher, then ALWAYS roll the batch back — the
@@ -422,18 +594,28 @@ namespace Semanticus.Engine
         /// doors. On a work exception the batch still rolls back and the exception rethrows, so the caller reports
         /// the failed rehearsal (a dry-run that finds the failure is still a successful rehearsal).</summary>
         private Task<long> RehearseAsync(DryRunCollector dry, string label, Action<Model> work, List<CascadeWarning> cascadeSink) =>
-            Dispatcher.RunAsync(() =>
+            OnDispatcher(() =>
             {
                 _pending = new List<ChangeDelta>();   // the same ObjectChanged collector the real path uses
                 var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
+                var sizeBefore = _model.Undo.UndoSize;
+                var depth = _model.BatchDepth;
                 try
                 {
                     _model.BeginUpdate(label);
                     ChangeDelta[] mutationDeltas;
                     // The retry runs in rehearsals too (same behavior as the real path, all rolled back below);
                     // the finally clears any pendings a work throw left so they can't leak into the next batch.
-                    try { work(Model); RetryPendingCascades(cascadeSink); mutationDeltas = _pending.ToArray(); }
-                    finally { _pendingCascades.Clear(); _model.EndUpdate(undoable: true, rollback: true); }   // ALWAYS undo — success OR exception
+                    try
+                    {
+                        var structure = (_model as IStructureGuard)?.Capture();
+                        // Sealed even when the work threw (the rollback below must take back what it wrote outside TE2's undo).
+                        try { work(Model); }
+                        catch { try { (_model as IStructureGuard)?.Seal(structure); } catch { } throw; }
+                        (_model as IStructureGuard)?.Seal(structure);
+                        RetryPendingCascades(cascadeSink); mutationDeltas = WithAdds(_pending, sizeBefore).ToArray();
+                    }
+                    finally { _pendingCascades.Clear(); _deleting.Clear(); RollBackTo(depth); }   // ALWAYS undo, success OR exception
                     // The snapshot is taken BEFORE the rollback: reverting re-fires ObjectChanged for every undone
                     // property (that's how a real undo broadcasts its deltas), so snapshotting after would report
                     // each edit twice — forward and reversed. The report must carry what the op WOULD have broadcast.
@@ -448,30 +630,110 @@ namespace Semanticus.Engine
                 return Revision;
             });
 
-        public Task<long> UndoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "undo", () => _model.Undo.Undo()));
-        public Task<long> RedoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "redo", () => _model.Undo.Redo()));
+        /// <summary>Roll back and close every edit batch opened since the batch depth was <paramref name="depth"/>,
+        /// innermost first. TE2 opens a batch of its own inside some edits and closes it only when the edit finishes:
+        /// a table rename opens one for FormulaFixup (Table.OnPropertyChanging) and closes it in OnPropertyChanged, and
+        /// TOM refuses a reserved name such as "Measures" between the two. One EndUpdate then closed only that inner
+        /// batch and left this call's batch open, so every later edit nested inside it, the next Undo drained the
+        /// whole stack and threw halfway, and TE2 was left recording nothing and rolling nothing back. A rehearsal
+        /// then applied for real, which hid key columns with no revision and no History row (UAT-S07b-1-007, 008),
+        /// and every later edit made no undo step and no History row (UAT-S07b-1-001, 004, 005, 006).</summary>
+        private void RollBackTo(int depth)
+        {
+            // The progress check stops the loop if TE2 ever declines to close a batch (it does while an undo is
+            // running), so a refusal can never spin.
+            int before;
+            do { before = _model.BatchDepth; _model.EndUpdate(undoable: true, rollback: true); }
+            while (_model.BatchDepth > depth && _model.BatchDepth < before);
+        }
+
+        /// <summary>Take back the newest commit and leave nothing to redo: for a change its caller refused after it
+        /// landed (a direct workflow step whose gate refused the submission, Sol 6 slice 8 finding 4). Refused, with
+        /// nothing changed, unless <paramref name="revision"/> is still the newest commit, so it never takes back an
+        /// edit someone else made in between. Published as an undo, so the ledger and both doors see the step go.</summary>
+        internal Task<long> RetractAsync(string origin, string label, long revision) =>
+            WithLifetimeLeaseAsync(() => TrackAsync(origin, label, () =>
+            {
+                if (Revision != revision || !_model.Undo.CanUndo)
+                    throw new InvalidOperationException("Another edit landed after it, so it was not taken back.");
+                RefuseIfSidecarMoved(redo: false, 1);
+                var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
+                _model.Undo.Undo();
+                (_model.Undo as IRedoPreserve)?.RestoreRedo(redo);
+            }, "undo"));
+
+        public Task<long> UndoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "undo", () => { RefuseIfSidecarMoved(redo: false, 1); _model.Undo.Undo(); }, "undo"));
+        public Task<long> RedoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "redo", () => { RefuseIfSidecarMoved(redo: true, 1); _model.Undo.Redo(); }, "redo"));
+
+        /// <summary>Refuse, before anything is walked, an undo or redo that would put back a file beside the model (the
+        /// Primer, its suggestion list) that was changed on disk since: undoing would overwrite that newer edit (Sol on
+        /// m11/integration 568435d3, finding 2). Throwing here, inside the commit and before the walk, changes nothing
+        /// and publishes nothing, as every refusal in TrackAsync does.</summary>
+        private void RefuseIfSidecarMoved(bool redo, int steps)
+        {
+            var why = (_model.Undo as ISidecarGuard)?.SidecarRefusal(redo, steps);
+            if (why != null) throw new InvalidOperationException(why);
+        }
+
+        /// <summary>The model was saved somewhere else (Save As carries the Primer to the new model's name): each sidecar
+        /// file an undo step owns follows to where <paramref name="follow"/> says it now is for this model, so the move is
+        /// never read as an edit made in another editor (verifier on m11/sol-fixes-1, D4), or is let go on null, so Undo
+        /// never writes another model's file (VR1). On the dispatcher, like every other touch of the timeline; it changes
+        /// no file and no revision.</summary>
+        internal Task RebaseSidecarsAsync(Func<string, string> follow) =>
+            follow == null ? Task.CompletedTask
+            : RunAsync(() => { (_model.Undo as ISidecarGuard)?.SidecarRebase(follow); return true; });
+
+        /// <summary>Undo (or redo) several steps as ONE commit: one revision bump, one broadcast, labelled
+        /// <paramref name="label"/> (contract 8.6, "Undo to here"). <paramref name="steps"/> runs ON the dispatcher,
+        /// inside the commit, so the count is worked out against the stack exactly as it stands when the walk
+        /// starts: no edit can land between reading the ledger and walking the stack. It throws to refuse, and a
+        /// refusal walks nothing and publishes nothing.</summary>
+        public Task<long> WalkAsync(string origin, bool redo, string label, Func<int> steps) =>
+            WithLifetimeLeaseAsync(() => TrackAsync(origin, label, () =>
+            {
+                var n = steps();
+                RefuseIfSidecarMoved(redo, n);
+                for (var i = 0; i < n; i++)
+                {
+                    if (redo) _model.Undo.Redo();
+                    else _model.Undo.Undo();
+                }
+            }, redo ? "redo" : "undo"));
 
         /// <summary>Serialize the model to <paramref name="target"/>. Engine-only (must run on the dispatcher
         /// thread); deliberately NOT a tracked mutation — saving is not an undoable edit.</summary>
         public void Save(string target, SaveFormat format, SerializeOptions options, bool resetCheckpoint)
         {
+            var edits = HasUnsavedEdits;
             _model.Save(target, format, options, resetCheckpoint);
             // A checkpoint-resetting save persisted everything, audit records included. A non-resetting save
             // (deploy_live's temp serialization) keeps the bit — the LOCAL file still hasn't been written.
-            if (resetCheckpoint) _auditDirty = false;
+            if (resetCheckpoint) MarkSavedToDisk(edits);
         }
 
+        /// <summary>How many saves this session has made that WROTE unsaved edits to its files. The Plan reads it to
+        /// tell saving the changes from throwing them away: both leave the model clean, and only one is "done". A save
+        /// of a model that was already clean (an Undo back to what the files hold, then Save) wrote nobody's changes
+        /// and is not counted (verifier round 5, D15).</summary>
+        public int SaveCount { get; private set; }
+
         /// <summary>Mark the in-memory model clean after a temp-tree save has been swapped onto the real path.
-        /// Must not run until that swap succeeds, or a failed save would hide unsaved edits.</summary>
-        public void MarkSavedToDisk()
+        /// Must not run until that swap succeeds, or a failed save would hide unsaved edits.
+        /// <paramref name="wroteEdits"/> is <see cref="HasUnsavedEdits"/> read in the dispatcher turn that serialized
+        /// what was written, so the count says what that save wrote and not what the model holds now.</summary>
+        public void MarkSavedToDisk(bool wroteEdits)
         {
             _model.Undo.SetCheckpoint();
             _auditDirty = false;
+            _consentMarkerDirty = false;
+            System.Threading.Volatile.Write(ref _consentOnlyRevision, -1);
+            if (wroteEdits) SaveCount++;
         }
 
         /// <summary>Rename via the FormulaFixup contract seam (<see cref="IRenameService"/>): rewrites every DAX /
         /// RLS reference, THEN cascades the rename into every JSON linguistic culture so the LSDL bindings follow the
-        /// object to its new name (an un-cascaded rename orphans them, and the next set_synonyms/enable_qna prunes
+        /// object to its new name (an un-cascaded rename orphans them, and the next set_synonyms/create_linguistic_schema prunes
         /// the orphan — silently deleting authored synonyms one write later). The single rename seam: rename_object,
         /// Find&amp;Replace's rename branch, apply_plan's rename item, and the property grid's Name writes
         /// (set_property / set_properties) all route through here. Must be called inside a <see cref="MutateAsync"/>
@@ -533,21 +795,58 @@ namespace Semanticus.Engine
             }
         }
 
-        private async Task<long> TrackAsync(string origin, string label, Action action)
+        /// <summary>The agent-permissions gate for a commit, set by the owning engine. Asked before anything is touched.</summary>
+        internal AgentWriteGate AgentWriteGate { get; set; }
+
+        // LEFT OVER (see OnObjectDeleting): no caller passes `fingerprint` any more, so neither flag is ever set. Dispatcher-thread only.
+
+        /// <summary>The sink's own question for an assistant's commit: the ticket in scope for THIS session (the commits made under it
+        /// move the revision it may start from), after refusing, with nothing touched, an assistant's commit that no ticket covers
+        /// while the policy asks or denies. The sink cannot name the change (it holds only the label), so the request it registers
+        /// is never one an approval can be spent on: the way through is the assistant's door, which asks in words made from the
+        /// request and mints the ticket.</summary>
+        private AssistantTicket ClearAssistantCommit(string origin, string label)
         {
+            var scoped = GateContext.Ticket;
+            var ticket = scoped != null && (string.IsNullOrEmpty(scoped.SessionId) || string.Equals(scoped.SessionId, Id, StringComparison.Ordinal)) ? scoped : null;
+            var gate = AgentWriteGate;
+            if (gate == null || !string.Equals(origin, "agent", StringComparison.Ordinal) || GateSeams.Off("commit") || !gate.Asks(origin)) return ticket;
+            if (ticket != null && ticket.Covers(AgentCapability.EditLocal, Id)) return ticket;
+            throw new InvalidOperationException(gate.Refuse(origin, label));
+        }
+
+        private async Task<long> TrackAsync(string origin, string label, Action action, string replay = null)
+        {
+            // THE ONE PLACE A MODEL EDIT COMMITS, and the sink every assistant edit ends at. An assistant's edit is asked about at
+            // the assistant's door (AssistantEngine), before the inner engine sees it, and arrives here carrying the person's
+            // approval as a ticket. With no ticket, and a policy that asks (Locked) or denies, it is refused here and nothing is
+            // touched: a call that reached this sink by another road fails closed. A person's own edit is never asked (the
+            // guard's first rule), and neither is the engine's own (origin "system").
+            var ticket = ClearAssistantCommit(origin, label);
             // Tool-call identity (health delta): read the ambient correlation id on the CALLER's thread, BEFORE
             // the dispatcher hop — AsyncLocal need not flow to the dispatcher's dedicated thread (the same
             // capture pattern MutateAsync uses for DryRunScope). Null outside an MCP tool call.
             var correlationId = HealthCorrelation.CurrentId;
+            // F-246: who is committing, captured the same way. A tool call of this process's MCP door carries a
+            // correlation id; a pipe request carries its connection id (RpcServer sets it around each dispatch).
+            var writer = correlationId != null ? ChangeJournal.InProcessReader : ChangeWriter.Current;
+            // Contract 8.4: the cause (plan item, run, draft, task) is captured the same way and stamped on THIS commit.
+            var cause = ChangeCause.Current;
             using var modelStateLease = await AcquireModelStateLeaseAsync("edited").ConfigureAwait(false);
-            return await Dispatcher.RunAsync(() =>
+            return await OnDispatcher(() =>
                 {
+                    // The approval is for the model as the person saw it: re-checked here, in the turn that commits, so an edit that
+                    // landed between the question and this commit is refused, not ridden over.
+                    if (ticket != null && ticket.ExpectedRevision >= 0 && Revision != ticket.ExpectedRevision)
+                        throw new InvalidOperationException("The open model changed after you approved this, so it was not applied. Ask again.");
                     // Observers see the commit twice: BEFORE the mutation (e.g. the health probe memoizes its
                     // pre-edit baseline on the first tracked commit) and post-commit/pre-broadcast below. One
                     // volatile read; the whole commit sees a stable registration snapshot.
                     var observers = _observers;
                     foreach (var o in observers) { try { o.BeforeCommit(Model); } catch { /* isolated: never fail an edit */ } }
                     _pending = new List<ChangeDelta>();
+                    var stepsBefore = _model.Undo.UndoSteps;
+                    var sizeBefore = _model.Undo.UndoSize;
                     try
                     {
                         action();
@@ -555,11 +854,15 @@ namespace Semanticus.Engine
                     catch
                     {
                         _pending = null;
+                        _deleting.Clear();
                         throw;
                     }
-                    var deltas = _pending;
+                    var deltas = replay == null ? WithAdds(_pending, sizeBefore, builtHere: true) : _pending;
                     _pending = null;
+                    _deleting.Clear();
                     var rev = System.Threading.Interlocked.Increment(ref _revision);
+                    // A call may commit more than once: its own commits move the revision it may start from, nobody else's.
+                    if (ticket != null && ticket.ExpectedRevision >= 0) ticket.ExpectedRevision = rev;
                     // Post-commit, pre-broadcast: an observer's contribution (the health delta) must ride THIS
                     // commit's model/didChange (the human chip) and be stashed for the agent door's tool-result
                     // block. Rehearsals never get here (MutateAsync short-circuits dry-runs to RehearseAsync), so a
@@ -581,9 +884,15 @@ namespace Semanticus.Engine
                         Revision = rev,
                         Origin = origin,
                         Label = label,
+                        By = ChangeBy.For(cause, origin),
+                        Cause = cause,
                         Deltas = deltas.ToArray(),
                         Undo = UndoStateNow(),
-                        Health = health
+                        Health = health,
+                        Writer = writer,
+                        IsCommit = true,
+                        StepsBefore = stepsBefore,
+                        Replay = replay,
                     });
                     return Revision;
                 }).ConfigureAwait(false);
@@ -593,7 +902,9 @@ namespace Semanticus.Engine
         {
             CanUndo = _model.Undo.CanUndo,
             CanRedo = _model.Undo.CanRedo,
-            AtCheckpoint = _model.Undo.AtCheckpoint
+            AtCheckpoint = _model.Undo.AtCheckpoint,
+            Steps = _model.Undo.UndoSteps,
+            RedoSteps = _model.Undo.RedoSteps,
         };
 
         // Dispose runs from three owners — SessionManager.Commit (the replaced session), a failed swap (the
@@ -630,6 +941,18 @@ namespace Semanticus.Engine
             }
         }
 
+        /// <summary>Open admission again after <see cref="RetireAsync"/> when the swap that retired this session was refused before it exchanged
+        /// anything (an approval for throwing away unsaved work that no longer matched): the session was never replaced, so it goes on being
+        /// the open model. Does nothing for a session that is already disposed or is waiting to be.</summary>
+        internal void ReopenAdmission()
+        {
+            lock (_lifetimeGate)
+            {
+                if (_disposeWhenDrained || System.Threading.Volatile.Read(ref _disposed) != 0 || _activeOperations != 0) return;
+                System.Threading.Volatile.Write(ref _retired, 0);
+            }
+        }
+
         internal void DisposeRetired() => DisposeCore();
 
         private void DisposeCore()
@@ -642,6 +965,7 @@ namespace Semanticus.Engine
             try
             {
                 try { _model.ObjectChanged -= OnObjectChanged; } catch { }
+                try { _model.ObjectDeleting -= OnObjectDeleting; _model.ObjectDeleted -= OnObjectDeleted; } catch { }
                 // Detach the ambient observers registered on this session (AttachObserver registers on the
                 // still-unpublished replacement, so a failed swap's dispose must tear that registration down
                 // too) — the probe and whatever it captured must not stay reachable through a dead session.

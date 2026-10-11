@@ -1,11 +1,12 @@
-// Focused browser proof for the integrated five-area shell. It drives the built React bundle through the same
+// Focused browser proof for the integrated six-area shell (seven until the Overview retired in slice 11, lane R1). It drives the built React bundle through the same
 // host-message bridge used by VS Code and asserts state transitions that source-pattern tests cannot prove.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findBrowser, requireSupportedNode } from './browser.mjs';
+import { checkScreen, screenFailures } from './screencheck.mjs';
 
 requireSupportedNode();
 const puppeteer = (await import('puppeteer-core')).default;
@@ -35,6 +36,13 @@ const clickText = async (page, label, within = 'body') => {
   assert.equal(clicked, true, `button ${label} exists`);
 };
 const waitText = (page, expected) => page.waitForFunction((value) => document.body.innerText.includes(value), { timeout: 15000 }, expected);
+// Land on an area and wait for its segment strip. Every journey that wants a segment has to say which area it
+// belongs to first: the Plan is the landing area (the Overview was, until slice 11) and has ONE tool, so its row
+// names the area and has no segments on it at all.
+const goArea = async (page, label) => {
+  await clickText(page, label, 'nav[aria-label="Studio areas"]');
+  await page.waitForSelector('.studio-arearow .area-tabs', { timeout: 15000 });
+};
 const activeArea = (page) => page.evaluate(() => document.querySelector('nav[aria-label="Studio areas"] button[aria-current="page"]')?.textContent?.trim());
 const openPage = async (query = 'live=1') => {
   const page = await browser.newPage();
@@ -52,10 +60,12 @@ const openPage = async (query = 'live=1') => {
 
 try {
   // Opening Studio with an existing native selection can deliver that selection before the model information.
+  // The Plan is the start page since slice 11, and the picked object filters it: "Showing Total Sales", with the
+  // object's actions on that line (contract 11.1).
   const cold = await openPage('live=1&initialSelection=measure%3ASales%2FTotal%20Sales');
-  await cold.page.waitForSelector('.overview-row');
+  await cold.page.waitForSelector('[data-testid="plan-page"]');
   await waitText(cold.page, 'Edit formula');
-  assert.ok((await cold.page.$eval('.object-actions', (node) => node.textContent)).includes('Total Sales'));
+  assert.ok((await cold.page.$eval('[data-testid="plan-list"] .pw-grp', (node) => node.textContent)).includes('Total Sales'));
   assert.deepEqual(cold.errors, []);
   await cold.page.close();
 
@@ -64,13 +74,13 @@ try {
   // below does not exist at all. The subject here is the seed hand-off, not the entitlement, so the journey
   // opens on a plan that can reach it. The free side of that boundary is driven by cp-pro-drive.mjs.
   const { page, errors } = await openPage('tier=pro');
-  await page.waitForSelector('.overview-row');
-  assert.equal(await activeArea(page), 'Model');
+  await page.waitForSelector('[data-testid="plan-page"]');
+  assert.equal(await activeArea(page), 'Plan');
 
   // An exact object action reaches the native host relay with the chosen ref, not whichever tree row is selected later.
   await dispatch(page, { type: 'treeSelection', sessionId: 'uishot', ref: 'measure:Sales/Total Sales' });
   await waitText(page, 'Edit formula');
-  await clickText(page, 'Edit formula', '.object-actions');
+  await clickText(page, 'Edit formula', '[data-testid="plan-object-actions"]');
   const editMessage = await page.evaluate(() => window.__uishotHarness.messages.filter((item) => item.type === 'runCommand').at(-1));
   assert.deepEqual(editMessage, { type: 'runCommand', command: 'semanticus.editDax', ref: 'measure:Sales/Total Sales', sessionId: 'uishot' });
 
@@ -78,15 +88,15 @@ try {
   const awkwardRef = 'measure:Sales/Net "Sales]';
   await dispatch(page, { type: 'navigate', sessionId: 'uishot', tab: 'daxlab', target: awkwardRef });
   await page.waitForFunction(() => window.__uishotHarness.state()['input:lab.bq.uishot'] === 'EVALUATE ROW("Net ""Sales]", [Net "Sales]]])');
-  assert.equal(await activeArea(page), 'Calculations');
+  assert.equal(await activeArea(page), 'Edit');
   const editor = await page.$('.cm-content');
   assert.ok(editor, 'DAX query editor mounted');
   await editor.click();
   await page.keyboard.down('Control'); await page.keyboard.press('KeyA'); await page.keyboard.up('Control');
   await page.keyboard.type('EVALUATE ROW("mine", 42)');
   await page.waitForFunction(() => window.__uishotHarness.state()['input:lab.bq.uishot'] === 'EVALUATE ROW("mine", 42)');
-  await clickText(page, 'Model', 'nav[aria-label="Studio areas"]');
-  await clickText(page, 'Calculations', 'nav[aria-label="Studio areas"]');
+  await clickText(page, 'Plan', 'nav[aria-label="Studio areas"]');
+  await clickText(page, 'Edit', 'nav[aria-label="Studio areas"]');
   assert.equal(await page.evaluate(() => window.__uishotHarness.state()['input:lab.bq.uishot']), 'EVALUATE ROW("mine", 42)');
 
   // A second Add test hand-off retargets the open draft without erasing fields the person already typed.
@@ -101,7 +111,7 @@ try {
   await dispatch(page, { type: 'navigate', sessionId: 'uishot', tab: 'tests', target: 'measure:Sales/Total Cost' });
   await page.waitForFunction(() => document.querySelector('aside select')?.value === 'measure:Sales/Total Cost');
   assert.equal(await page.evaluate(() => document.querySelectorAll('aside input')[0]?.value), '42');
-  assert.ok((await text(page)).includes('NEW CHECK'));
+  assert.ok(/New check/i.test(await text(page)), 'the drawer names itself New check (sentence case since One Visual Language)');
 
   // A visual calculation becomes a measure-backed saved check with contexts from three different tables.
   // The edited DAX text stays a lab draft; the saved definition pins only the accepted SQL endpoint.
@@ -124,9 +134,9 @@ try {
   await waitText(page, 'Save measure check');
   await clickText(page, 'Save measure check ▾');
   assert.equal(await page.evaluate(() => {
-    const choice = [...document.querySelectorAll('button')].find((item) => (item.textContent || '').trim().startsWith('Compare with source SQL'));
+    const choice = [...document.querySelectorAll('button')].find((item) => (item.textContent || '').trim().startsWith('Check against source SQL'));
     choice?.click(); return !!choice;
-  }), true, 'source SQL check choice exists');
+  }), true, 'check-against-source-SQL choice exists');
   await page.waitForSelector('aside select');
   await page.waitForFunction(() => document.querySelector('aside select')?.value === 'measure:Sales/Total Sales');
   await waitText(page, 'Product · Category');
@@ -178,16 +188,19 @@ try {
   assert.equal(savedParams.toleranceRelative, 0.01);
 
   // Run the known mismatch, edit and re-save its source, and keep the old failure visible under a stale banner.
-  await clickText(page, 'Open Tests');
+  await clickText(page, 'Open Validation');
   await waitText(page, 'Total Sales ties to source SQL');
   await page.evaluate(() => window.addEventListener('message', (event) => {
     const request = window.__uishotHarness.messages.find((item) => item.type === 'rpc' && item.id === event.data?.id);
     if (event.data?.type === 'rpcResult' && request?.method === 'runTests') window.__lastCheckResult = event.data.result;
   }));
-  await clickText(page, 'Run all enabled checks');
+  await clickText(page, 'Run checks');
   await waitText(page, 'Net Revenue ties to finance extract');
   await page.evaluate(() => document.querySelector('button[aria-label="More for Total Sales ties to source SQL"]')?.click());
-  await clickText(page, 'Edit');
+  // SCOPED to that row's own menu. Unscoped, this used to be the only Edit on screen; from 22 September 2026
+  // there is an area button called Edit in the header, it comes first in the document, and an unscoped click
+  // navigated away instead of opening the check.
+  await clickText(page, 'Edit', '[role="menu"][aria-label="Actions for Total Sales ties to source SQL"]');
   await waitText(page, 'Product · Category');
   assert.equal(await page.$eval('aside textarea', (input) => input.value), 'SELECT Category, Region, CalendarYear, SUM(SalesAmount) AS Value FROM fact.Sales GROUP BY Category, Region, CalendarYear');
   await page.click('aside textarea');
@@ -209,7 +222,7 @@ try {
 
   // An edit during an in-flight run cannot make the returned old result appear current.
   await page.evaluate(() => window.__uishotHarness.setResponse('runTests', '__uishotNever'));
-  await clickText(page, 'Run all enabled checks');
+  await clickText(page, 'Run checks');
   await dispatch(page, { type: 'didChange', payload: { sessionId: 'uishot', revision: 8, origin: 'agent', label: 'Measure changed during test', deltas: [] } });
   await waitText(page, 'The model changed. These results may be out of date');
   await page.evaluate(() => {
@@ -224,33 +237,34 @@ try {
   await page.evaluate((session) => window.__uishotHarness.setResponse('sessionInfo', session), sessionB);
   await dispatch(page, { type: 'reconnected' });
   await waitText(page, 'Second Model');
-  await page.waitForSelector('.overview-row');
-  assert.equal(await page.$('.object-actions'), null);
+  await page.waitForSelector('[data-testid="plan-page"]');
+  assert.equal(await page.$('[data-testid="plan-object-actions"]'), null);
   await dispatch(page, { type: 'treeSelection', sessionId: 'uishot', ref: 'measure:Sales/Total Sales' });
   await dispatch(page, { type: 'navigate', sessionId: 'uishot', tab: 'daxlab', target: 'measure:Sales/Total Sales' });
   await delay(100);
-  assert.equal(await activeArea(page), 'Model');
-  assert.equal(await page.$('.object-actions'), null);
+  assert.equal(await activeArea(page), 'Plan');
+  assert.equal(await page.$('[data-testid="plan-object-actions"]'), null);
   await dispatch(page, { type: 'treeSelection', sessionId: 'session-b', ref: 'measure:Sales/Total Sales' });
   await waitText(page, 'Try calculation');
 
   // The object hand-off still opens the complete tool. What it no longer leaves behind is a Back button: Kane retired
   // that on 2026-09-14 after hitting it himself ("The back button doesnt do anything"). Its replacement is narrower on
   // purpose and lives further down this file — one Done, on Settings pages only.
-  await clickText(page, 'Try calculation', '.object-actions');
-  await waitText(page, 'Calculations');
+  await clickText(page, 'Try calculation', '[data-testid="plan-object-actions"]');
+  await waitText(page, 'Queries');
   assert.equal(await page.$('.studio-arearow .studio-back'), null, 'a page reached by a hand-off carries no Back button');
   assert.doesNotMatch(await page.$eval('.studio-arearow', (node) => node.innerText), /Back/, 'and no Back text in the area row');
 
-  // The legacy Data Agent route keeps its Advanced subview, and Publish opens review from that mounted subview.
+  // The legacy Data Agent route lands on the Publish page (the Data Agent screen is hidden for now). On that page the
+  // header Publish button is hidden, because the page carries its own.
   await dispatch(page, { type: 'navigate', sessionId: 'session-b', tab: 'dataagent' });
-  await page.waitForFunction(() => document.body.innerText.includes('Data Agent') && document.body.innerText.includes('Delivery tools'));
-  assert.equal(await activeArea(page), 'Changes');
-  await page.click('.studio-publish');
-  await page.waitForSelector('[data-testid="publish-confirm"]');
+  await page.waitForFunction(() => document.body.innerText.includes('Earlier versions') && document.body.innerText.includes('Changes'));
+  assert.equal(await activeArea(page), 'Publish');
+  assert.equal(await page.$('.studio-publish'), null, 'the header Publish is hidden on the Publish page');
+  assert.equal(await page.$('[data-testid="publish-confirm"]'), null, 'no review card');
 
   // The header fold is MEASURED, so at this 1440-wide viewport the utilities belong on the header itself and More
-  // must be folded away. The old fixed 1500px container query hid them here, which was the defect.
+  // must be folded away. (Find a tool left the header on 8 Oct 2026: it is Help > All tools, so it is never "shown" here.) The old fixed 1500px container query hid them here, which was the defect.
   const readHeader = () => page.evaluate(() => {
     const header = document.querySelector('.studio-chrome');
     const shown = (label) => [...header.querySelectorAll('button')].some((b) => (b.textContent || '').trim() === label && b.getClientRects().length > 0);
@@ -263,33 +277,39 @@ try {
       areas: [...header.querySelectorAll('nav[aria-label="Studio areas"] button')].filter((b) => b.getClientRects().length > 0).length,
     };
   });
-  assert.deepEqual(await readHeader(), { fold: '0', findATool: true, connections: true, more: false, gear: false, assistant: true, areas: 5 });
+  assert.deepEqual(await readHeader(), { fold: '0', findATool: false, connections: true, more: false, gear: false, assistant: true, areas: 6 });
 
-  // Narrow the window and the utilities fold into More, while the five areas stay put.
+  // Narrow the window and the utilities fold into More, while the six areas stay put.
   await page.setViewport({ width: 1000, height: 800, deviceScaleFactor: 1 });
   await page.waitForFunction(() => document.querySelector('.studio-chrome')?.dataset.fold !== '0', { timeout: 10000 });
   const narrow = await readHeader();
   assert.equal(narrow.more, true, 'utilities fold into More on a narrow header');
   assert.equal(narrow.findATool, false, 'Find a tool leaves the header when it no longer fits');
-  assert.equal(narrow.areas, 5, 'the five areas fold LAST and are still on a 1000-wide header');
+  assert.equal(narrow.areas, 6, 'the six areas fold LAST and are still on a 1000-wide header');
 
   // Find a tool chooses the complete existing tool. Changes and Workflows retain primary-area highlighting.
   await clickText(page, 'More');
   await clickText(page, 'Find a tool');
   await page.click('[data-tool="docs"]');
   await page.waitForSelector('iframe[title="Documentation preview"]');
-  assert.equal(await activeArea(page), 'Model');
+  assert.equal(await activeArea(page), 'Review');
+  // The old Edit History id lands on the Plan, on its History view (slice 11, lane R2).
   await dispatch(page, { type: 'navigate', sessionId: 'session-b', tab: 'history' });
-  assert.equal(await activeArea(page), 'Changes');
+  await page.waitForFunction(() => document.querySelector('[data-testid="plan-page"]')?.dataset.view === 'hist', { timeout: 15000 });
+  assert.equal(await activeArea(page), 'Plan');
   await dispatch(page, { type: 'navigate', sessionId: 'session-b', tab: 'workflows' });
   assert.equal(await activeArea(page), 'Workflows');
 
-  // A current-session model change refreshes Model home instead of leaving a same-position stale graph.
-  const changedGraph = { tables: [{ ref: 'table:Only', name: 'Only', isHidden: false, isDateTable: false, isCalculated: false, isFieldParameter: false, columns: 2, measures: 1, keyColumns: [], hasDescription: true }], relationships: [] };
+  // A current-session model change refreshes the start page instead of leaving a stale plan. The old Overview id
+  // lands on the Plan (slice 11), and the plan it reads after the change is the one it shows.
   await dispatch(page, { type: 'navigate', sessionId: 'session-b', tab: 'modelhome' });
-  await page.evaluate((graph) => window.__uishotHarness.setResponse('getModelGraph', graph), changedGraph);
+  await page.waitForFunction(() => document.querySelector('[data-testid="plan-page"]')?.dataset.view === 'work', { timeout: 15000 });
+  const planReads = () => page.evaluate(() => window.__uishotHarness.messages.filter((m) => m.type === 'rpc' && m.method === 'getModelPlan').length);
+  await delay(400);
+  const readsBefore = await planReads();
   await dispatch(page, { type: 'didChange', payload: { sessionId: 'session-b', revision: 2, origin: 'human', label: 'edit', deltas: [] } });
-  await page.waitForFunction(() => document.querySelectorAll('.overview-row').length === 1 && document.body.innerText.includes('Only'));
+  await page.waitForFunction((n) => window.__uishotHarness.messages.filter((m) => m.type === 'rpc' && m.method === 'getModelPlan').length > n,
+    { timeout: 15000 }, readsBefore);
   assert.deepEqual(errors, []);
   await page.close();
 
@@ -367,15 +387,15 @@ try {
   {
     const compact = await openPage('live=1&conn=1');
     const shell = compact.page;
-    await shell.waitForSelector('.overview-row');
+    await shell.waitForSelector('[data-testid="plan-page"]');
     const rowHeights = () => shell.evaluate(() => {
       const h = (s) => { const el = document.querySelector(s); return el ? Math.round(el.getBoundingClientRect().height) : null; };
       return { header: h('header.studio-chrome'), arearow: h('.studio-arearow'), contextbar: h('.studio-contextbar'),
         breadcrumb: document.querySelector('.studio-breadcrumb') === null ? 'gone' : 'still here',
         guide: document.querySelector('aside[aria-label="Page guidance"]') === null ? 'gone' : 'still here' };
     });
-    assert.deepEqual(await rowHeights(), { header: 40, arearow: 40, contextbar: 34, breadcrumb: 'gone', guide: 'gone' },
-      'two 40px rows above the page and a 34px bar under it, with no breadcrumb row and no open guide');
+    assert.deepEqual(await rowHeights(), { header: 40, arearow: null, contextbar: 34, breadcrumb: 'gone', guide: 'gone' },
+      'one 40px row above the Plan (it has one tool, so no second row) and a 34px bar under it, with no breadcrumb row and no open guide');
 
     // Back is gone from every area page. This block used to assert the opposite — that it appeared the moment you
     // left the landing page — and that is exactly the behaviour Kane rejected: a control whose only promise is
@@ -387,29 +407,27 @@ try {
     assert.equal(await backShown(), false, 'no Back on the landing page');
     assert.equal(await backText(), false, 'and no Back text on the landing page');
     assert.equal(await doneShown(), false, 'and no Done: Done is a Settings control, not an every-page control');
+    // The Plan is the landing AREA and has one tool, so its row names the area and has no segments to click.
+    // Diagram lives under Explore, so this walks there the way a person would: the area, then the tab.
+    await goArea(shell, 'Explore');
     await clickText(shell, 'Diagram', '.studio-arearow');
     await shell.waitForFunction(() => !!document.querySelector('.react-flow'), { timeout: 10000 });
     assert.equal(await backShown(), false, 'and none once you have navigated');
     assert.equal(await backText(), false, 'and still no Back text');
     assert.equal(await doneShown(), false, 'and still no Done');
 
-    // The ⓘ opens the page notes as a real dialog, and Escape closes it and gives focus back.
-    await shell.click('.studio-page-notes');
-    await shell.waitForSelector('[role="dialog"][aria-label="Page notes"]');
-    const notes = await shell.$eval('[role="dialog"][aria-label="Page notes"]', (n) => n.innerText);
-    // innerText is what a person actually READS, so this also catches a CSS transform rewording the heading.
-    // The whole guide moves verbatim (Kane, 2026-09-14): lead sentence, heading, steps, closing line.
-    assert.ok(notes.startsWith('See how your tables connect. Arrange the map and create or edit the links between tables.'),
-      'the page sentence is the guide lead, word for word');
-    assert.ok(notes.includes('Getting started'), 'the heading still reads Getting started, not GETTING STARTED');
-    assert.ok(notes.includes('Open a model, then expand a table to see its columns.'),
-      'the numbered steps are the guide steps, word for word');
-    assert.ok(notes.includes('Open Help above for more detail, related tasks and explanations of common terms.'),
-      'and the closing line is the guide closing line');
+    // The page guide has one door now: Help > Help for this page (the area row's i left on 8 Oct 2026).
+    assert.equal(await shell.$('.studio-page-notes'), null, 'no page notes button on the row');
+    await clickText(shell, 'Help', 'header.studio-chrome');
+    await shell.waitForSelector('[role="menu"][aria-label="Help"]');
+    await clickText(shell, 'Help for this page', '[role="menu"][aria-label="Help"]');
+    await shell.waitForFunction(() => document.body.innerText.includes('See how your tables connect. Arrange the map and create or edit the links between tables.'), { timeout: 10000 });
+    const guide = await shell.evaluate(() => document.body.innerText);
+    assert.ok(guide.includes('Getting started'), 'the guide still reads Getting started');
+    assert.ok(guide.includes('Open a model, then expand a table to see its columns.'), 'with the numbered steps');
+    assert.ok(!guide.includes('When a page cannot continue'), 'and without the shared state block that repeated on every page');
     await shell.keyboard.press('Escape');
-    await shell.waitForFunction(() => document.querySelector('[role="dialog"][aria-label="Page notes"]') === null);
-    assert.equal(await shell.evaluate(() => document.activeElement?.className || ''), 'studio-page-notes',
-      'Escape returns focus to the ⓘ it came from');
+    await shell.waitForFunction(() => !document.body.innerText.includes('Getting started'), { timeout: 5000 });
 
     // Ctrl+wheel scales Studio, steps by 10, and clamps. The wheel is dispatched on a real element in the page.
     const zoom = () => shell.evaluate(() => getComputedStyle(document.querySelector('.studio-root')).zoom);
@@ -458,24 +476,24 @@ try {
     const settingsRow = (page) => page.evaluate(() => document.querySelector('.studio-arearow')?.innerText.replace(/\s+/g, ' ').trim());
     const doneAt = (page) => page.evaluate(() => {
       const done = document.querySelector('.studio-arearow [data-testid="settings-done"]');
-      const notes = document.querySelector('.studio-arearow .studio-page-notes');
-      if (!done || !notes) return null;
-      const d = done.getBoundingClientRect(); const n = notes.getBoundingClientRect();
+      if (!done) return null;
+      const d = done.getBoundingClientRect();
       const row = document.querySelector('.studio-arearow').getBoundingClientRect();
-      return { height: Math.round(d.height), beforeTheNotes: d.right <= n.left + 1,
+      return { height: Math.round(d.height),
         // Adjacent to the ⓘ, not stranded in mid-row: the gap between them is the row's own 8px, and the pair sits
         // at the right-hand end. Both halves are needed — the first build put Done exactly halfway, which satisfied
         // "before the notes" while looking nothing like the design.
-        nextToTheNotes: Math.round(n.left - d.right) <= 10, nearTheRightEdge: row.right - n.right < 40 };
+        nearTheRightEdge: row.right - d.right < 40 };
     });
 
     // The Lineage landmark is a control that is ON the page, not a sub-tab name: "Published reports" was a
     // sub-tab until Impact became one page, and a landmark that can be retired makes this journey fail for a
     // reason that has nothing to do with the shell.
-    // 1. WARM. Lineage, then Settings, then Done lands back on Lineage — not on Overview, which is what a fallback
+    // 1. WARM. Lineage, then Settings, then Done lands back on Lineage, not on the Plan, which is what a fallback
     //    would give and what would make the button look almost right while being wrong.
     const warm = await openPage('live=1');
-    await warm.page.waitForSelector('.overview-row');
+    await warm.page.waitForSelector('[data-testid="plan-page"]');
+    await goArea(warm.page, 'Explore');
     await clickText(warm.page, 'Lineage', '.studio-arearow');
     await waitText(warm.page, 'Impact');
     await openAssistantMenu(warm.page);
@@ -485,8 +503,8 @@ try {
     assert.doesNotMatch(await settingsRow(warm.page), /← Back/, 'and offers no Back');
     // The shared dense control step is 24px (styles.css --sem-control-h-sm), and Done sits at the right-hand end of
     // the row, ahead of the ⓘ. Measured, because "far right, before the i" is geometry.
-    assert.deepEqual(await doneAt(warm.page), { height: 24, beforeTheNotes: true, nextToTheNotes: true, nearTheRightEdge: true },
-      'Done is on the shared 24px step, at the right-hand end of the row, immediately ahead of the page notes');
+    assert.deepEqual(await doneAt(warm.page), { height: 24, nearTheRightEdge: true },
+      'Done is on the shared 24px step, at the right-hand end of the row');
     await clickText(warm.page, 'Done', '.studio-arearow');
     await waitText(warm.page, 'Impact');
     assert.equal(await warm.page.$('.studio-arearow [data-testid="settings-done"]'), null, 'and Done is gone once you are out of Settings');
@@ -515,16 +533,17 @@ try {
     await cold.page.waitForFunction(() => document.body.innerText.includes('Contoso (mock)'), { timeout: 10000 });
     assert.match(await settingsRow(cold.page), /^Settings › Assistant permissions/, 'and stays there once the session arrives');
     await clickText(cold.page, 'Done', '.studio-arearow');
-    await cold.page.waitForSelector('.overview-row', { timeout: 10000 });
+    await cold.page.waitForSelector('[data-testid="plan-page"]', { timeout: 10000 });
     assert.equal(await cold.page.$('.studio-arearow [data-testid="settings-done"]'), null,
       'Done leaves Settings even though the page it returns to was recorded before sessionInfo answered');
     assert.deepEqual(cold.errors, []);
     await cold.page.close();
 
-    // 4. A real model swap forgets the page you came from, so Done falls back to Model > Overview rather than
+    // 4. A real model swap forgets the page you came from, so Done falls back to the Plan rather than
     //    returning you into the model you no longer have open.
     const swap = await openPage('live=1');
-    await swap.page.waitForSelector('.overview-row');
+    await swap.page.waitForSelector('[data-testid="plan-page"]');
+    await goArea(swap.page, 'Explore');
     await clickText(swap.page, 'Lineage', '.studio-arearow');
     await waitText(swap.page, 'Impact');
     await openAssistantMenu(swap.page);
@@ -533,7 +552,7 @@ try {
     await swap.page.evaluate(() => window.__uishotHarness.setResponse('sessionInfo', {
       sessionId: 'session-c', modelName: 'Third Model', revision: 1, tables: 11, measures: 12, source: 'C:/Models/Third.Model' }));
     await dispatch(swap.page, { type: 'reconnected' });
-    await swap.page.waitForSelector('.overview-row', { timeout: 10000 });
+    await swap.page.waitForSelector('[data-testid="plan-page"]', { timeout: 10000 });
     await waitText(swap.page, 'Third Model');
     assert.deepEqual(swap.errors, []);
     await swap.page.close();
@@ -549,85 +568,111 @@ try {
   {
     const stuck = await openPage('live=1');
     const p = stuck.page;
-    await p.waitForSelector('.overview-row');
+    await p.waitForSelector('[data-testid="plan-page"]');
     const readRow = () => p.evaluate(() => {
       const bar = document.querySelector('.studio-arearow');
       const segments = [...bar.querySelectorAll('.area-tabs button')];
       return {
         strip: segments.length > 0,
         segments: segments.map((b) => b.textContent.replace(/\s+/g, ' ').trim()),
-        // Tab paints the open segment with an inline accent-soft background, and carries no other marker.
-        active: segments.find((b) => b.style.background === 'var(--sem-accent-soft)')?.textContent.replace(/\s+/g, ' ').trim() ?? null,
+        // The open segment says so with aria-current="page"; since Instrument (23 September 2026) its look is
+        // drawn from that attribute in styles.css, not from an inline background.
+        active: segments.find((b) => b.getAttribute('aria-current') === 'page')?.textContent.replace(/\s+/g, ' ').trim() ?? null,
         objectMarkup: bar.querySelectorAll('.studio-arearow-object, [data-testid="arearow-clear-object"]').length,
         tool: bar.querySelector('.studio-arearow-tool')?.textContent.trim() ?? null,
         height: Math.round(bar.getBoundingClientRect().height),
         text: bar.innerText.replace(/\s+/g, ' ').trim(),
       };
     });
-    // Kane's own route in: the chevron on an Overview table row IS "Preview data".
-    const previewTable = async (name) => {
-      const clicked = await p.evaluate((label) => {
-        const row = [...document.querySelectorAll('.overview-row')].find((item) => (item.innerText || '').includes(label));
-        const go = row && row.querySelector('.overview-go');
+    // Kane's own route in was the chevron on an Overview table row, which WAS "Preview data". The Overview retired in
+    // slice 11 (lane R1) and its table actions moved to the Plan's object line (contract 11.1): pick a table in the
+    // model tree and "Preview data" is the first action under "Showing <table>". The journey is about the
+    // HAND-OFF, so the table is read back off the line rather than trusted.
+    const previewTable = async () => {
+      await dispatch(p, { type: 'treeSelection', sessionId: 'uishot', ref: 'table:Promotion' });
+      await p.waitForSelector('[data-testid="plan-object-actions"]', { timeout: 15000 });
+      const picked = await p.evaluate(() => {
+        const line = document.querySelector('[data-testid="plan-list"] .pw-grp b');
+        const go = [...document.querySelectorAll('[data-testid="plan-object-actions"] button')].find((b) => b.textContent.trim() === 'Preview data');
         if (go) go.click();
-        return !!go;
-      }, name);
-      assert.equal(clicked, true, `the ${name} row offers Preview data`);
-      // The sidebar header is CSS-uppercased, so innerText reads "TABLES (11)": match it without regard to case.
-      await p.waitForFunction(() => /tables \(\d+\)/i.test(document.body.innerText), { timeout: 15000 });
+        return go && line ? (line.innerText || '').trim() : null;
+      });
+      assert.ok(picked, 'the object line under the picked table offers Preview data');
+      // Wait for the Data page itself: its preview title.
+      await p.waitForFunction(() => /Preview · |Data preview/.test(document.querySelector('main')?.innerText || ''), { timeout: 15000 });
+      return picked;
     };
+    // Matched as a whole word, and escaped: the assertions below say this table's name is NOT on the
+    // context row, and a bare substring would be answered by any longer word that happens to contain it.
+    const wholeWord = (name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
 
-    await previewTable('Promotion');
+    const previewed = await previewTable();
     const stranded = await readRow();
-    assert.equal(stranded.strip, true, `Data reached with a table in hand keeps the Model strip (row read "${stranded.text}")`);
+    assert.equal(stranded.strip, true, `Data reached with a table in hand keeps the Explore strip (row read "${stranded.text}")`);
     assert.equal(stranded.active, 'Data', 'and Data is the segment marked as open');
-    assert.ok(stranded.segments.includes('Overview'), 'so Overview is one click away on the row itself');
+    assert.ok(stranded.segments.includes('Diagram'), 'so the rest of Explore is one click away on the row itself');
     assert.equal(stranded.tool, null, 'the tool name is not repeated: the open segment already says it');
     assert.equal(stranded.objectMarkup, 0, 'and the table is not on the row at all, as a crumb or as a chip');
-    assert.doesNotMatch(stranded.text, /Promotion/, `nothing on the row names the table (row read "${stranded.text}")`);
+    assert.doesNotMatch(stranded.text, wholeWord(previewed), `nothing on the row names the table (row read "${stranded.text}")`);
     // The page is what names it, which is why the row does not have to.
-    assert.ok((await text(p)).includes('Preview · Promotion'), 'the PAGE says which table you are looking at');
+    assert.ok((await text(p)).includes(`Preview · ${previewed}`),
+      `the PAGE says which table you are looking at (expected "Preview · ${previewed}")`);
     assert.equal(stranded.height, 40, 'the row is still one compact 40px line');
 
     // Exit one: the strip itself. It is the thing that was missing.
-    await clickText(p, 'Overview', '.studio-arearow');
-    await p.waitForSelector('.overview-row', { timeout: 10000 });
-    assert.equal((await readRow()).active, 'Overview', 'a segment on the strip takes you off the page');
+    await clickText(p, 'Diagram', '.studio-arearow');
+    await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
+      .some((b) => b.getAttribute('aria-current') === 'page' && b.getAttribute('data-tab') === 'diagram'), { timeout: 15000 });
+    assert.equal((await readRow()).active, 'Diagram', 'a segment on the strip takes you off the page');
 
     // Exit two: the area you are ALREADY in goes to its home page, never back to the page you are looking at.
     // Walk into the trap again first, the way Kane walked into it.
-    await previewTable('Promotion');
+    await clickText(p, 'Plan', 'nav[aria-label="Studio areas"]');
+    await p.waitForSelector('[data-testid="plan-page"]', { timeout: 10000 });
+    await previewTable();
     assert.equal((await readRow()).active, 'Data', 'the hand-off is live again');
-    await clickText(p, 'Model', 'nav[aria-label="Studio areas"]');
-    await p.waitForSelector('.overview-row', { timeout: 10000 });
-    assert.equal((await readRow()).active, 'Overview', 'Model, pressed while you are already in Model, lands on Overview');
-
-    // The same exit on a multi-tool area that is not Model, so the rule is not read off one area's home.
-    await clickText(p, 'Checks', 'nav[aria-label="Studio areas"]');
-    await p.waitForFunction(() => document.querySelectorAll('.studio-arearow .area-tabs button').length > 0, { timeout: 10000 });
-    await clickText(p, 'Model quality', '.studio-arearow');
+    await clickText(p, 'Explore', 'nav[aria-label="Studio areas"]');
     await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
-      .some((b) => b.style.background === 'var(--sem-accent-soft)' && b.getAttribute('data-tab') === 'bpa'), { timeout: 10000 });
-    await clickText(p, 'Checks', 'nav[aria-label="Studio areas"]');
-    // Matched on data-tab, not on the words. From 2026-09-15 a locked segment wears a Pro pill inside the
-    // button, so this page (a FREE one) shows "TestsPro" and a text-equality match never fires. The stable id
-    // is what a check like this should always have used; readRow below still reads the label, so the pill is
-    // allowed for in the assertion instead of being matched against.
-    await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
-      .some((b) => b.style.background === 'var(--sem-accent-soft)' && b.getAttribute('data-tab') === 'tests'), { timeout: 10000 });
-    assert.match((await readRow()).active, /^Tests(Pro)?$/, 'Checks, pressed while you are in Checks, lands on Tests, not on the page you were reading');
+      .some((b) => b.getAttribute('aria-current') === 'page' && b.getAttribute('data-tab') === 'data'), { timeout: 10000 });
+    assert.equal((await readRow()).active, 'Data', 'Explore, pressed while you are already in Explore, lands on its home');
 
-    // The same trap on an area with ONE tool. There is no strip to show, so the row names the tool, and the
-    // measure it was opened with is still not on the row: the lab's own wells carry that.
+    // The same exit on a second multi-tool area, so the rule is not read off one area's home.
+    // Matched on data-tab, not on the words: a gated segment can wear a Pro pill inside the button, and a
+    // text-equality match never fires against "WorkflowsPro". readRow below still reads the label, so the
+    // pill is allowed for in the assertion instead of being matched against.
+    await clickText(p, 'Review', 'nav[aria-label="Studio areas"]');
+    await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
+      .some((b) => b.getAttribute('aria-current') === 'page' && b.getAttribute('data-tab') === 'bpa'), { timeout: 15000 });
+    await clickText(p, 'AI readiness', '.studio-arearow');
+    await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
+      .some((b) => b.getAttribute('aria-current') === 'page' && b.getAttribute('data-tab') === 'readiness'), { timeout: 15000 });
+    await clickText(p, 'Review', 'nav[aria-label="Studio areas"]');
+    await p.waitForFunction(() => [...document.querySelectorAll('.studio-arearow .area-tabs button')]
+      .some((b) => b.getAttribute('aria-current') === 'page' && b.getAttribute('data-tab') === 'bpa'), { timeout: 15000 });
+    assert.match((await readRow()).active, /^Model quality \(BPA\)(Pro)?$/,
+      'Review, pressed while you are in Review, lands on its home, not on the page you were reading');
+
+    // The same trap on an area with ONE tool. There is no strip to show, so the row names the tool. Workflows
+    // is that area now: Calculations was, and its one tool is a segment of Edit from 22 September 2026.
+    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'workflows' });
+    await p.waitForFunction(() => document.querySelector('.studio-arearow')?.innerText.includes('Workflows'), { timeout: 15000 });
+    // The pill is part of the button's text on a free plan, so this matches rather than compares. Workflows
+    // is the one paid area and it is the one area that has no segment strip, so the AREA button wears it.
+    assert.match(await activeArea(p), /^Workflows(Pro)?$/);
+    // An area with one tool has no second row at all (8 Oct 2026): the page title says it.
+    assert.equal(await p.$('.studio-arearow'), null, 'Workflows has no second row');
+
+    // And a measure hand-off into a MULTI-tool area still keeps the object off the row: the lab's own wells
+    // carry that, which is the fact the Calculations case used to prove here.
     await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'daxlab', target: 'measure:Sales/Total Sales' });
     await p.waitForSelector('.cm-content', { timeout: 15000 });
-    assert.equal(await activeArea(p), 'Calculations');
-    const lab = await readRow();
-    assert.equal(lab.strip, false, 'Calculations has one tool, so it has no strip');
-    assert.equal(lab.tool, 'DAX Lab', 'so the row names the tool itself');
-    assert.equal(lab.objectMarkup, 0, 'and still carries no object markup');
-    assert.doesNotMatch(lab.text, /Total Sales/, `the measure is not on the row (row read "${lab.text}")`);
-    assert.equal(lab.height, 40, 'still one 40px line');
+    assert.equal(await activeArea(p), 'Edit');
+    const queries = await readRow();
+    assert.equal(queries.strip, true, 'Queries is a segment of Edit, so the strip stays up');
+    assert.equal(queries.active, 'Queries', 'and Queries is the segment marked as open');
+    assert.equal(queries.objectMarkup, 0, 'the measure is not on the row as markup');
+    assert.doesNotMatch(queries.text, /Total Sales/, `nor as text (row read "${queries.text}")`);
+    assert.equal(queries.height, 40, 'still one 40px line');
     await p.close();
   }
 
@@ -637,7 +682,7 @@ try {
   {
     const spot = await openPage('live=1&conn=1&tier=pro&dirty=1&act=1');
     const p = spot.page;
-    await p.waitForSelector('.overview-row');
+    await p.waitForSelector('[data-testid="plan-page"]');
     const rootZoom = () => p.evaluate(() => getComputedStyle(document.querySelector('.studio-root')).zoom);
     // The wheel is dispatched on a real element, the same way the compact block above does it, so the window
     // listener sees exactly what a Ctrl+wheel gives it.
@@ -709,18 +754,79 @@ try {
     assert.equal(crowded.fold, '4', 'level 3 cannot cover the overflow at a 769px effective header, so the areas fold too');
     // The label above is read from aria-label first, so the More button reads "More Studio tools" here.
     assert.ok(crowded.targets.some((t) => t.label.startsWith('More')), 'the areas are still reachable, through More');
+    // The header's content must be the SAME on every run before its fold is read. ?act=1 fires its activity events on
+    // a 500ms timer after load, and when that timer beats the page subscribing, the events are lost and the Your
+    // assistant chip never draws its feed mark. The mark is about 10px, and 1250px sits between the two folds: with it,
+    // level 0 misses by 10.5px (fold 1); without it, level 0 fits with 0.1px to spare (fold 0). Measured on 9f0e6ec0,
+    // 10 runs of this path: the geometry was identical run to run, and only the mark's presence changed the fold.
+    // So the fold was right each time and the fixture was racing. The mark is now a badge on the chip's corner that
+    // takes no layout width (styles.css .studio-feed-mark), so activity no longer changes the header; this event
+    // stays as a guard.
+    await dispatch(p, { type: 'activity', payload: { seq: 99, kind: 'run_dax', origin: 'agent', label: 'Ran DAX query', ok: true } });
+    await p.waitForSelector('.studio-actions .studio-feed-mark[data-live]', { timeout: 10000 });
     await setZoom(80);
     const roomy = await headerIsUsable('1000px at 80%');
-    assert.equal(roomy.fold, '0', 'at 80% the same window has room for everything again');
+    // 1000px at 80% is a 1250px effective header, and on this build it is the knife edge: level 0 fits it with 0.125px
+    // to spare (999px is fold 1). Asserting a bare '0' there made any sub-pixel change to the header (a font, a
+    // Chromium update) fail the journey without anything being wrong (verifier, m11 header-stable round 2). So the
+    // check reads the room level 0 actually has at this width, with the same rule the fold uses (every area button's
+    // text ends left of the actions, 0.5px of rounding allowed, nothing sticks out of the header), and holds the fold
+    // to it EXACTLY: level 0 whenever level 0 fits, which is Kane's F1 rule (the areas and the model name show
+    // whenever they fit), and only the cheapest fold, the model-identity detail, when it misses. That is no weaker:
+    // an early fold, a stale fold or a deeper fold all still fail, at any width the threshold lands on.
+    const levelZero = await p.evaluate(() => {
+      const h = document.querySelector('header.studio-chrome');
+      const was = { fold: h.dataset.fold, brand: h.dataset.brandFolded };
+      h.dataset.fold = '0'; delete h.dataset.brandFolded;
+      const edge = h.querySelector('.studio-actions').getBoundingClientRect().left;
+      let slack = Infinity;
+      for (const b of h.querySelector('.studio-groups').children) {
+        if (!(b instanceof HTMLElement) || b.getClientRects().length === 0) continue;
+        slack = Math.min(slack, edge - (b.getBoundingClientRect().right - (parseFloat(getComputedStyle(b).paddingRight) || 0)));
+      }
+      const overflow = h.scrollWidth - h.clientWidth;
+      h.dataset.fold = was.fold; if (was.brand) h.dataset.brandFolded = was.brand;
+      return { slack, overflow };
+    });
+    const zeroFits = levelZero.slack >= -0.5 && levelZero.overflow <= 0;
+    assert.equal(roomy.fold, zeroFits ? '0' : '1',
+      `at 80% a 1250px header takes the shallowest fold that fits: level 0 has ${levelZero.slack.toFixed(3)}px of room and ${levelZero.overflow}px of overflow`);
+    // And the header has not grown. The fold above follows whatever the header holds, so this is the guard that the
+    // room for the six areas and the model name at 1250px is still there: it may move by rounding, never by a pixel.
+    // If a later change wants that pixel, the room has to come from the area labels, not from loosening this line.
+    assert.ok(levelZero.slack >= -1, `at 80% a 1250px header has room for level 0 to within a pixel (it has ${levelZero.slack.toFixed(3)}px)`);
+    // The live feed mark costs the header nothing at this width: with the mark taken out and the fold measured afresh,
+    // the header folds exactly as it does with the mark live (the mark is a badge inside the chip, styles.css).
+    const refold = async (hide) => {
+      await p.evaluate((off) => {
+        const h = document.querySelector('header.studio-chrome');
+        const mark = h.querySelector('.studio-feed-mark');
+        if (mark) mark.style.display = off ? 'none' : '';
+        h.firstElementChild.style.setProperty('--fold-probe', String(Math.random()));   // a mutation the fold re-measures on
+      }, hide);
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
+      return p.evaluate(() => { const h = document.querySelector('header.studio-chrome'); return h.dataset.fold + (h.dataset.brandFolded ? 'b' : ''); });
+    };
+    const withoutMark = await refold(true);
+    const withMark = await refold(false);
+    assert.equal(withMark, withoutMark, 'at 80% and 1000px the live feed mark changes no fold level');
+    assert.equal(withMark, roomy.fold, 'and a fresh measure agrees with the fold the header showed');
 
     // The areas nav never paints outside its own box, whatever the fold level decides.
-    assert.equal(await p.evaluate(() => getComputedStyle(document.querySelector('.studio-groups')).overflow), 'hidden',
+    // Clipped, with a clip margin of the header gap: it paints up to the actions' edge and never over them.
+    assert.equal(await p.evaluate(() => getComputedStyle(document.querySelector('.studio-groups')).overflow), 'clip',
       'the areas nav clips its own buttons rather than painting them over the actions');
+    assert.equal(await p.evaluate(() => {
+      const g = document.querySelector('.studio-groups'); const h = document.querySelector('header.studio-chrome');
+      // Compared as numbers: under Studio zoom (this block runs at 80%) each may be reported scaled or rounded.
+      return Math.abs(parseFloat(getComputedStyle(g).overflowClipMargin) - parseFloat(getComputedStyle(h).columnGap)) < 0.5;
+    }), true, 'and its clip margin is exactly the gap before the actions');
 
     // 2. The shared tool menu is placed in ONE coordinate space. Under CSS zoom a measured screen rect written
     // straight into a fixed left/top is multiplied by the zoom a second time: Astra measured the Lineage Tree
     // Show menu ending at x=1065.7 in a 1000px viewport, 46.7px below its button instead of beside it.
     await setZoom(100);
+    await goArea(p, 'Explore');
     await clickText(p, 'Lineage', '.studio-arearow');
     await p.waitForSelector('.sem-toolrow');
     const openShowMenu = async () => {
@@ -753,45 +859,7 @@ try {
     await setZoom(100);
     await p.setViewport({ width: 1366, height: 768, deviceScaleFactor: 1 });
 
-    // 3. Page notes and Live activity close when focus leaves them, and Escape works for their whole open life.
-    // Astra: Space, Tab, Escape left the notes over the canvas with focus in the tool behind them.
-    const notesState = () => p.evaluate(() => {
-      const a = document.activeElement;
-      const pop = document.querySelector('.studio-page-notes-pop');
-      return { open: !!pop, insidePop: !!pop && pop.contains(a),
-        focus: (a && a !== document.body ? (a.getAttribute('role') || a.className || a.tagName.toLowerCase()) : 'BODY') };
-    });
-    for (const tool of ['Overview', 'Diagram', 'Lineage']) {
-      await clickText(p, tool, '.studio-arearow');
-      await delay(400);
-      await p.evaluate(() => document.querySelector('.studio-page-notes').focus());
-      await p.keyboard.press('Space'); await delay(300);
-      assert.equal((await notesState()).open, true, `${tool}: Space opens the page notes`);
-      // Tab STAYS in the dialog. Nothing behind the notes may take the ring while they are over it.
-      await p.keyboard.press('Tab'); await delay(250);
-      const tabbed = await notesState();
-      assert.equal(tabbed.open, true, `${tool}: Tab does not close the notes`);
-      assert.equal(tabbed.insidePop, true, `${tool}: Tab keeps the ring inside the notes dialog`);
-      await p.keyboard.press('Escape'); await delay(300);
-      assert.equal((await notesState()).open, false, `${tool}: Escape still closes the notes after a Tab`);
-      assert.equal(await p.evaluate(() => document.activeElement?.className || ''), 'studio-page-notes',
-        `${tool}: and hands the ring back to the ⓘ`);
-      // Shift+Tab out of the dialog is the same contract from the other direction.
-      await p.keyboard.press('Space'); await delay(300);
-      await p.keyboard.down('Shift'); await p.keyboard.press('Tab'); await p.keyboard.up('Shift'); await delay(250);
-      const back = await notesState();
-      assert.equal(back.insidePop, true, `${tool}: Shift+Tab keeps the ring inside the notes dialog too`);
-      await p.keyboard.press('Escape'); await delay(300);
-      assert.equal((await notesState()).open, false, `${tool}: Escape closes after a Shift+Tab as well`);
-      // Focus taken by something else entirely dismisses the notes rather than stranding them.
-      await p.keyboard.press('Space'); await delay(300);
-      assert.equal((await notesState()).open, true, `${tool}: reopened for the focusout check`);
-      await p.evaluate(() => document.querySelector('.studio-page-notes-wrap').parentElement.querySelector('button')?.focus());
-      await p.evaluate(() => [...document.querySelectorAll('.sem-toolrow button, main button')].find((b) => b.getClientRects().length)?.focus());
-      await delay(250);
-      assert.equal((await notesState()).open, false, `${tool}: the notes close when focus lands outside them`);
-    }
-
+    // 3. (The page notes popover left on 8 Oct 2026, with its Tab trap and focusout rules.) Live activity below keeps its own.
     // The feed keeps native Tab through its entries, and closes the moment focus leaves the surface.
     const feedState = () => p.evaluate(() => {
       const chip = [...document.querySelectorAll('header [aria-haspopup="menu"]')].find((b) => (b.textContent || '').includes('Your assistant'));
@@ -818,6 +886,7 @@ try {
 
     // 4. A canvas that zooms itself owns its Ctrl+wheel. Astra: at 1000x768, x=70,y=450 on the Lineage Graph
     // canvas took Studio to 110%; x=700,y=400 on the same canvas did not, so it depended on where the pointer was.
+    await goArea(p, 'Explore');
     await clickText(p, 'Lineage', '.studio-arearow');
     await delay(400);
     await p.evaluate(() => [...document.querySelectorAll('.sem-toolrow button')].find((b) => (b.innerText || '').trim() === 'Graph')?.click());
@@ -840,81 +909,272 @@ try {
     await p.close();
   }
 
-  // --- the Create segment's menu must not live inside the strip that scrolls ------------------------------
-  // Kane hit this on the Yoga on his first click: Create opened, the strip scrolled itself to reveal the focused
-  // item, and the row was left showing a lone scrolled "Docs" with a scrollbar on two sides. .area-tabs is
-  // overflow-x: auto (styles.css) so the strip can shrink instead of wrapping; an absolutely positioned menu
-  // INSIDE it is therefore both clippable and able to move the row under itself.
+  // --- F1 (journey m11): the areas fold only when they genuinely do not fit, and come back when they do -------
+  // The fold used to be an ESTIMATE of each level's saving. It left out the actions' tighter gap and the nav's
+  // dropped margin, so after any resize it could land on 4 at a width where level 3 visibly fitted: measured
+  // on the harness, a 884px header read fold 4 while level 3 fitted, and 1036px read 3 while 2 fitted. The
+  // lane hit the same at 792px after opening a measure or pressing Ctrl+B twice. And content that grows without
+  // a resize (the Pro chip once the entitlement answers, the assistant count 250 ms after the header) was never
+  // re-measured at all.
+  // `fit` is the shallowest level at which nothing sticks out of the header and every area button's text (its
+  // content box) is inside the nav, left of the actions. GEOMETRY, not scrollWidth: the recheck on 9319becf
+  // (journey m11-2) found the nav's scrollWidth 6px over its clientWidth at level 3 while Workflows ended 2px
+  // before the actions. scrollWidth counts trailing space and sub-pixels nobody sees, and judging by it folded the
+  // six areas into More from the first frame at 1440 wide with the sidebar open (a 792px webview).
+  const fitProbe = () => {
+    const h = document.querySelector('header.studio-chrome');
+    const g = h.querySelector('.studio-groups');
+    const a = h.querySelector('.studio-actions');
+    const fits = () => {
+      if (h.scrollWidth > h.clientWidth) return false;
+      // The actions' left edge, not the nav's right edge: the nav paints into the gap before the actions, and the
+      // m11-3 lane (a real 792px Studio) folded because Workflows' content edge was 1.9px past the nav's box while
+      // it ended 6px clear of More, drawn whole.
+      const edge = a.getBoundingClientRect().left;
+      return [...g.children].filter((b) => b.getClientRects().length).every((b) => {
+        const r = b.getBoundingClientRect();
+        return r.right - (parseFloat(getComputedStyle(b).paddingRight) || 0) <= edge + 0.5;
+      });
+    };
+    const current = h.dataset.fold;
+    let fit = 4;
+    for (const level of ['0', '1', '2', '3']) { h.dataset.fold = level; if (fits()) { fit = Number(level); break; } }
+    h.dataset.fold = current;
+    const areas = [...g.children].filter((b) => b.getClientRects().length).length;
+    return { fold: Number(current), fit, width: h.clientWidth, areas };
+  };
+  // The layout of the recheck: no workflow run live, so no run chip on the header (the harness has one by default).
+  // Swept at the widths VS Code gives the Studio: 792 (1440 wide, sidebar open), 1040, and every 4px between.
+  {
+    const lane = await browser.newPage();
+    const laneErrors = [];
+    lane.on('pageerror', (error) => laneErrors.push(error.message));
+    await lane.evaluateOnNewDocument(() => {
+      let h; Object.defineProperty(window, '__uishotHarness', { configurable: true, get: () => h, set: (v) => {
+        h = v; v.setResponse('getWorkflowRun', null); v.setResponse('getOrientation', { activeWork: { workflows: [] } });
+      } });
+    });
+    await lane.setViewport({ width: 792, height: 800, deviceScaleFactor: 1 });
+    await lane.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?tier=pro`, { waitUntil: 'networkidle0', timeout: 30000 });
+    await lane.waitForSelector('[data-testid="plan-page"]');
+    await delay(800);
+    const first = await lane.evaluate(fitProbe);
+    assert.equal(first.fold, first.fit, `first frame at 792 (1440 wide, sidebar open): fold ${first.fold}, fits at ${first.fit}`);
+    assert.equal(first.areas, 6, 'and the six areas are on the header from the first frame');
+    const wrong = [];
+    const widths = [792, 1040]; for (let w = 1200; w >= 720; w -= 2) widths.push(w); widths.push(792, 1040);
+    for (const width of widths) {
+      await lane.setViewport({ width, height: 800, deviceScaleFactor: 1 });
+      await delay(120);
+      const read = await lane.evaluate(fitProbe);
+      if (read.fold !== read.fit) wrong.push(`${read.width}px fold ${read.fold}, fits at ${read.fit}`);
+      if ((width === 792 || width === 1040) && read.areas !== 6) wrong.push(`${width}px shows ${read.areas} areas`);
+    }
+    assert.deepEqual(wrong, [], 'with no run chip, every VS Code width folds to the shallowest level whose buttons visibly fit');
+    assert.deepEqual(laneErrors, []);
+    await lane.close();
+  }
+  {
+    const f1 = await openPage('tier=pro&hold=getEntitlement');
+    const p = f1.page;
+    await p.waitForSelector('header.studio-chrome');
+    const readFit = () => p.evaluate(fitProbe);
+    // Below 720 the areas fold by rule, not by fit, so the sweep stops there.
+    const sweep = async (widths) => {
+      const wrong = [];
+      for (const width of widths) {
+        await p.setViewport({ width, height: 800, deviceScaleFactor: 1 });
+        await delay(150);
+        const read = await readFit();
+        if (read.fold !== read.fit) wrong.push(`${read.width}px fold ${read.fold}, fits at ${read.fit}`);
+      }
+      return wrong;
+    };
+    const down = []; for (let w = 1200; w >= 720; w -= 8) down.push(w);
+    const noChip = {};
+    for (const width of down) { await p.setViewport({ width, height: 800, deviceScaleFactor: 1 }); await delay(100); noChip[width] = (await readFit()).fit; }
+    // The entitlement answers late, as it can in VS Code, and the Pro chip appears. Nothing resizes when it does.
+    await p.evaluate(() => window.__uishotHarness.release('getEntitlement'));
+    await p.waitForSelector('[data-testid="pro-chip"]', { timeout: 10000 });
+    assert.deepEqual(await sweep(down), [], 'shrinking the window: every width folds to the shallowest level that fits');
+    assert.deepEqual(await sweep([...down].reverse()), [], 'widening it again: the areas come back as soon as they fit (Ctrl+B twice)');
+    // A width where the late count changes what fits, found rather than hard-coded, so a fixture change moves it.
+    const withChip = {};
+    for (const width of down) { await p.setViewport({ width, height: 800, deviceScaleFactor: 1 }); await delay(100); withChip[width] = (await readFit()).fit; }
+    const tipping = down.find((width) => noChip[width] !== withChip[width]);
+    assert.ok(tipping, 'some width changes its fold when the Pro chip arrives');
+    await p.close();
+    const late = await openPage('tier=pro&hold=getEntitlement');
+    await late.page.setViewport({ width: tipping, height: 800, deviceScaleFactor: 1 });
+    await late.page.waitForSelector('header.studio-chrome');
+    await delay(600);
+    await late.page.evaluate(() => window.__uishotHarness.release('getEntitlement'));
+    await late.page.waitForSelector('[data-testid="pro-chip"]', { timeout: 10000 });
+    await delay(400);
+    const settled = await late.page.evaluate(fitProbe);
+    assert.equal(settled.fold, settled.fit, `${tipping}px: the header re-folds when its content grows without a resize`);
+    assert.deepEqual([...f1.errors, ...late.errors], []);
+    await late.page.close();
+  }
+
+  // --- the fold segment's menu must not live inside the strip that scrolls --------------------------------
+  // The Edit strip has NO menu now (Kane, 8 Oct 2026): Advanced modelling is a plain tab, and its page row lists Power
+  // Query with the six builders. So this checks the strip is plain at both widths and never scrolls.
   {
     const strip = await openPage('live=1&conn=1&tier=pro');
     const p = strip.page;
+    await p.waitForSelector('[data-testid="plan-page"]');
+    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'search' });
     await p.waitForSelector('.area-tabs');
-    const openCreate = () => p.evaluate(() => [...document.querySelectorAll('.area-tabs button')]
-      .find((b) => (b.textContent || '').trim().startsWith('Create'))?.click());
-    const readStrip = () => p.evaluate(() => {
-      const bar = document.querySelector('.area-tabs');
-      const menu = document.querySelector('[role="menu"][aria-label="Create"]');
-      const btn = [...bar.querySelectorAll('button')].find((b) => (b.textContent || '').trim().startsWith('Create'));
-      const bb = btn.getBoundingClientRect();
-      const mb = menu ? menu.getBoundingClientRect() : null;
-      const factor = parseFloat(getComputedStyle(document.querySelector('.studio-root')).zoom) || 1;
-      return {
-        menuOpen: !!menu, insideStrip: !!menu && bar.contains(menu),
-        scrollLeft: Math.round(bar.scrollLeft), scrollTop: Math.round(bar.scrollTop),
-        canScrollY: bar.scrollHeight > bar.clientHeight + 1,
-        segments: [...bar.querySelectorAll('button')].map((b) => (b.textContent || '').trim().split(' ')[0]),
-        gap: mb ? +(mb.top - bb.bottom).toFixed(1) : null,
-        leftOffset: mb ? +(mb.left - bb.left).toFixed(1) : null,
-        right: mb ? +mb.right.toFixed(1) : null, innerWidth: window.innerWidth, factor,
-      };
-    });
     for (const width of [1366, 1000]) {
       await p.setViewport({ width, height: 768, deviceScaleFactor: 1 });
       await delay(400);
-      const before = await readStrip();
-      assert.equal(before.menuOpen, false, `${width}px: the Create menu starts closed`);
-      await openCreate();
-      await p.waitForSelector('[role="menu"][aria-label="Create"]', { timeout: 5000 });
-      await delay(250);
-      const after = await readStrip();
-      assert.equal(after.insideStrip, false, `${width}px: the Create menu is not a descendant of the scrolling strip`);
-      assert.equal(after.scrollLeft, before.scrollLeft, `${width}px: opening Create does not scroll the strip sideways`);
-      assert.equal(after.scrollTop, 0, `${width}px: and the strip never scrolls vertically`);
-      assert.equal(after.canScrollY, false, `${width}px: nothing inside the strip gives it a vertical scrollbar`);
-      assert.deepEqual(after.segments, before.segments, `${width}px: every segment is still on the row`);
-      assert.ok(after.gap > 1 && after.gap < 4 * after.factor + 4, `${width}px: the menu sits under Create (gap ${after.gap})`);
-      assert.ok(Math.abs(after.leftOffset) < 2, `${width}px: and starts at Create's own left edge (offset ${after.leftOffset})`);
-      assert.ok(after.right <= after.innerWidth - 4, `${width}px: the whole menu is inside the viewport`);
-      // The keyboard contract is unchanged by the move: arrows walk it, Escape cancels back to the segment.
-      await p.keyboard.press('ArrowDown'); await delay(200);
-      assert.equal(await p.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitem',
-        `${width}px: ArrowDown still moves the ring onto a menu item`);
-      assert.equal((await readStrip()).scrollLeft, before.scrollLeft,
-        `${width}px: and focusing an item still does not move the strip`);
-      await p.keyboard.press('Escape'); await delay(250);
-      assert.equal((await readStrip()).menuOpen, false, `${width}px: Escape closes the Create menu`);
-      assert.equal(await p.evaluate(() => (document.activeElement?.textContent || '').trim().startsWith('Create')), true,
-        `${width}px: and returns the ring to the segment`);
+      const read = await p.evaluate(() => {
+        const bar = document.querySelector('.area-tabs');
+        return { segments: [...bar.querySelectorAll('button')].map((b) => (b.textContent || '').trim()),
+          menus: document.querySelectorAll('.area-tabs [role="menu"], .area-tabs [aria-haspopup]').length,
+          scrollLeft: Math.round(bar.scrollLeft), canScrollY: bar.scrollHeight > bar.clientHeight + 1 };
+      });
+      assert.deepEqual(read.segments, ['Find and replace', 'Queries', 'AI instructions', 'Advanced modelling'], `${width}px: a plain strip of four`);
+      assert.equal(read.menus, 0, `${width}px: no menu in the strip`);
+      assert.equal(read.canScrollY, false, `${width}px: and no vertical scrollbar`);
     }
-    // No open menu anywhere in the two rows that clip may live inside a container that scrolls or hides it.
-    await openCreate();
-    await p.waitForSelector('[role="menu"][aria-label="Create"]');
-    assert.equal(await p.evaluate(() => document.querySelectorAll('.area-tabs [role="menu"], .sem-toolrow [role="menu"], .area-tabs [role="dialog"], .sem-toolrow [role="dialog"]').length), 0,
-      'no menu or dialog is rendered inside the strip or the tool row');
+    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'advmodels' });
+    await p.waitForFunction(() => [...document.querySelectorAll('[aria-label="Advanced modelling"] button')].some((b) => (b.textContent || '').trim() === 'Power Query'), { timeout: 10000 });
+    await clickText(p, 'Power Query', '[aria-label="Advanced modelling"]');
+    await p.waitForFunction(() => [...document.querySelectorAll('[aria-label="Advanced modelling"] button[aria-pressed="true"]')].some((b) => (b.textContent || '').trim() === 'Power Query'), { timeout: 15000 });
+    assert.equal(await p.evaluate(() => document.querySelector('.area-tabs [aria-current="page"]')?.textContent.trim()), 'Advanced modelling',
+      'Power Query lights Advanced modelling on the strip');
     await p.keyboard.press('Escape');
     assert.deepEqual(strip.errors, []);
     await p.close();
   }
 
-  // Loading, failure, a real zero-table model, and no-model startup are four distinct states.
-  for (const [mode, expected] of [['loading', 'Loading model structure…'], ['error', 'Couldn’t load this model'], ['empty', 'This model is open and has no tables.'], ['nomodel', 'Open a model to begin']]) {
+
+  // --- one scene per area, at 1440, showing that area's second row -----------------------------------
+  // Six shots plus the Advanced modelling fold open, written to SHELL_SCENES_DIR when it is set. They are
+  // the evidence for the strip itself, which is the one thing a source-pattern test can describe but never
+  // show: whether six areas and their rows actually FIT, and whether a row reads as a sentence or as a
+  // pile of words. The block ASSERTS what each row contains before it shoots it, so a green run is not just
+  // eight pictures nobody looked at, and it runs whether or not the shots are being kept.
+  {
+    const scenesDir = process.env.SHELL_SCENES_DIR;
+    if (scenesDir) mkdirSync(scenesDir, { recursive: true });
+    const scenes = await openPage('live=1&conn=1&tier=pro');
+    const p = scenes.page;
+    await p.setViewport({ width: 1440, height: 980, deviceScaleFactor: 2 });
+    await p.waitForSelector('[data-testid="plan-page"]');
+    // One Visual Language: every area scene is also measured at 1440x900 against its screen baseline, shot or not.
+    const shoot = async (name) => {
+      await checkScreen(p, `shell:${name}`);
+      if (!scenesDir) return;
+      await p.screenshot({ path: join(scenesDir, `${name}-chrome.png`), clip: { x: 0, y: 0, width: 1440, height: 104 } });
+      await p.screenshot({ path: join(scenesDir, `${name}-page.png`) });
+    };
+    // The second row, as a person reads it: the area name, then either the segments or the tool's own name.
+    const readSecondRow = () => p.evaluate(() => {
+      const bar = document.querySelector('.studio-arearow');
+      if (!bar) return { area: null, segments: [], tool: null };
+      return {
+        area: bar.querySelector('.studio-arearow-area')?.textContent.replace(/\s*›\s*$/, '').trim() ?? null,
+        segments: [...bar.querySelectorAll('.area-tabs button')].map((b) => (b.textContent || '').replace(/\s+/g, ' ').trim()),
+        tool: bar.querySelector('.studio-arearow-tool')?.textContent.trim() ?? null,
+      };
+    });
+    const AREA_ROWS = [
+      // [button, the area name on row two, the segments it must show, the tool name when it has no segments]
+      // A one-tool area whose tool has the area's own name says it ONCE: null here, not 'Plan' again. Plan is
+      // ONE tool from 23 September, so its area has no segment row at all: the pending changes are a section of
+      // that page, the Model Spec is a panel on it, and since slice 11 History is a view on it too.
+      ['Plan', null, [], null],
+      // Ask your data is the Explore segment right after Data since 26 September (ask-data-page.test.mjs pins it).
+      ['Explore', 'Explore', ['Data', 'Ask your data', 'Diagram', 'Lineage', 'Size'], null],
+      ['Edit', 'Edit', ['Find and replace', 'Queries', 'AI instructions', 'Advanced modelling'], null],
+      ['Review', 'Review', ['Model quality (BPA)', 'AI readiness', 'Validation', 'Docs'], null],
+      // One tool since Edit History became the Plan's History (slice 11), so the row names it instead of a strip.
+      ['Publish', null, [], null],
+      ['Workflows', null, [], null],
+    ];
+    const headerAreas = await p.evaluate(() => [...document.querySelectorAll('nav[aria-label="Studio areas"] button')]
+      .map((b) => (b.textContent || '').trim()));
+    assert.deepEqual(headerAreas, AREA_ROWS.map(([label]) => label), 'the header carries the six areas in strip order');
+    for (const [index, [label, areaName, segments, tool]] of AREA_ROWS.entries()) {
+      await clickText(p, label, 'nav[aria-label="Studio areas"]');
+      // An area with one tool has no second row (8 Oct 2026), and a row that exists names no area: the lit header
+      // button says it. So wait on the header button being lit, then read the row if there is one.
+      await p.waitForFunction((want) => [...document.querySelectorAll('nav[aria-label="Studio areas"] button')]
+        .some((b) => b.getAttribute('aria-current') === 'page' && (b.textContent || '').trim().startsWith(want)), { timeout: 15000 }, label);
+      await delay(600);
+      const row = await readSecondRow();
+      assert.equal(row.area, areaName, `${label}: row two names no area (the lit header button does)`);
+      // A segment can carry a pill or a badge, so the comparison is on the label each segment STARTS with.
+      const seen = row.segments.map((text, i) => (segments[i] && text.startsWith(segments[i]) ? segments[i] : text));
+      assert.deepEqual(seen, segments, `${label}: row two shows exactly its own segments`);
+      assert.equal(row.tool, tool, `${label}: the row does not name the tool a second time`);
+      await shoot(`${String(index + 1).padStart(2, '0')}-${label.toLowerCase()}`);
+    }
+    // And the Advanced modelling page, whose own row lists Power Query and the six builders, in one order.
+    await clickText(p, 'Edit', 'nav[aria-label="Studio areas"]');
+    await p.waitForSelector('.area-tabs');
+    await p.evaluate(() => [...document.querySelectorAll('.area-tabs button')]
+      .find((b) => (b.textContent || '').trim().startsWith('Advanced modelling'))?.click());
+    await p.waitForFunction(() => [...document.querySelectorAll('[aria-label="Advanced modelling"] button')].some((b) => (b.textContent || '').trim() === 'Power Query'), { timeout: 10000 });
+    await delay(400);
+    const rowItems = await p.evaluate(() => [...document.querySelector('[aria-label="Advanced modelling"]').querySelectorAll('button')].map((b) => (b.textContent || '').replace(/\s+/g, ' ').trim()));
+    assert.deepEqual(rowItems, ['Power Query', 'Perspectives', 'Field parameters', 'Calculation groups', 'Calendars', 'RLS / OLS', 'DaxLib'],
+      'the page row lists Power Query and the six builders (the order of the builders is lane 3 s to set: E3)');
+    await shoot('08-edit-advanced-modelling');
+    await clickText(p, 'Calendars', '[aria-label="Advanced modelling"]');
+    // `.some`, not `.find` then compare: Validation is mounted for every open model and merely HIDDEN with a
+    // css class, and its own Checks/Reports strip uses the same .sem-seg-item, so the first pressed segment in
+    // the document belongs to a page nobody is looking at.
+    await p.waitForFunction(() => [...document.querySelectorAll('.sem-seg-item')]
+      .some((b) => b.getAttribute('aria-pressed') === 'true' && (b.textContent || '').trim() === 'Calendars'),
+    { timeout: 15000 });
+    await shoot('09-edit-advanced-modelling-calendars');
+    // Validation's two tabs, because Reports left the strip and became one of them.
+    await dispatch(p, { type: 'navigate', sessionId: 'uishot', tab: 'evidence' });
+    await p.waitForFunction(() => document.querySelector('[data-page-tab="reports"]')?.getAttribute('aria-pressed') === 'true',
+      { timeout: 15000 });
+    assert.equal(await activeArea(p), 'Review', 'a link to Reports opens Review');
+    assert.equal((await readSecondRow()).segments.find((t) => t.startsWith('Validation')), 'Validation',
+      'and the strip marks Validation, because Reports is a tab on it');
+    await shoot('10-review-validation-reports');
+    assert.deepEqual(scenes.errors, []);
+    await p.close();
+
+    // The one Pro tab, on a plan that does not reach it. Workflows is an area with ONE tool, so it has no
+    // segment strip to wear the pill and nothing on the free plan said it was paid at all; the AREA button
+    // carries it now, and this is the shot that shows it. Every other area must stay unmarked: a mixed area
+    // wearing a pill would be lying about the free half of itself.
+    const free = await openPage('live=1&conn=1');
+    await free.page.setViewport({ width: 1440, height: 980, deviceScaleFactor: 2 });
+    await free.page.waitForSelector('[data-testid="plan-page"]');
+    await free.page.waitForFunction(() => [...document.querySelectorAll('nav[aria-label="Studio areas"] button')]
+      .some((b) => (b.textContent || '').replace(/\s+/g, '').endsWith('Pro')), { timeout: 15000 });
+    const marked = await free.page.evaluate(() => [...document.querySelectorAll('nav[aria-label="Studio areas"] button')]
+      .filter((b) => (b.textContent || '').replace(/\s+/g, '').endsWith('Pro'))
+      .map((b) => (b.textContent || '').replace(/\s+/g, ' ').trim()));
+    assert.deepEqual(marked, ['WorkflowsPro'], 'Workflows is the only area marked Pro on a free plan');
+    if (scenesDir) {
+      await free.page.screenshot({ path: join(scenesDir, '11-free-workflows-pro-chrome.png'), clip: { x: 0, y: 0, width: 1440, height: 104 } });
+      await free.page.screenshot({ path: join(scenesDir, '11-free-workflows-pro-page.png') });
+    }
+    assert.deepEqual(free.errors, []);
+    await free.page.close();
+  }
+
+  // Loading, failure, an empty plan, and no-model startup are four distinct states of the start page (the Plan since
+  // slice 11; the Overview's graph read was the one these held before).
+  for (const [mode, expected] of [['loading', 'Reading the plan…'], ['error', 'The plan could not be read'], ['empty', 'Nothing to do on the plan'], ['nomodel', 'Open a model to begin']]) {
     const opened = await openPage(`home=${mode}`);
     await waitText(opened.page, expected);
     assert.deepEqual(opened.errors, []);
     await opened.page.close();
   }
 
-  console.log('integrated shell journey passed: native relay, one-use seeds, draft preservation, session fences, aliases, publish, tool chooser, Settings Done (warm, Escape, cold hand-off, model swap), the strip on a page reached with an object in hand, Model states and the assistant keyboard journey');
+  assert.deepEqual(screenFailures(), [], 'a page got worse than its screen-check baseline (tools/uishot/visual-baseline.json)');
+  console.log('integrated shell journey passed: native relay, one-use seeds, draft preservation, session fences, aliases, publish, tool chooser, Settings Done (warm, Escape, cold hand-off, model swap), the strip on a page reached with an object in hand, start page states and the assistant keyboard journey');
 } finally {
   await browser.close();
   await new Promise((done) => server.close(done));

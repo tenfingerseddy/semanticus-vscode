@@ -142,13 +142,21 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         assert.equal(none.code, 1, 'FIXED passed while naming no test at all');
         assert.match(none.output, /names a commit but no test.*golden rule 5/su);
 
-        // The mirror matrix now runs through T204. Use the real fulfillment selftest,
-        // which no workflow or extension test invokes, for the unrun-file refusal.
-        // Its named case exists, so an absent-case error cannot hide a widened suite match.
+        // THE UNRUN-FILE REFUSAL, AND WHY ITS EXAMPLE MOVED TWICE. The mirror matrix stopped being unrun at
+        // T204, so this plant switched to tools/fulfillment/worker/selftest.mjs; the linux leg of
+        // build-and-smoke now runs that too, so the example has to move again. It lands on the relay's
+        // helper module, which is the right example for a reason beyond availability: the relay entry's
+        // pattern is a `*.test.mjs` GLOB, exactly like the invocation, and fakes.mjs is the file in that same
+        // directory which `node --test` does NOT execute. Widen the pattern to the directory and this plant
+        // is what catches it.
+        //
+        // Its named literal really is in the file, so an absent-case error cannot hide a widened suite match:
+        // a widened pattern would read fakes.mjs, find the literal and PASS, which is the failure this
+        // assertion is watching for. Pick a literal that is not a test name, because it is not a test.
         const unrun = run(fixedRow(
-            '2eaaf95d it restored the exclusion. test: tools/fulfillment/worker/selftest.mjs::keygen produced a keypair'));
+            '2eaaf95d it restored the exclusion. test: tools/relay/test/fakes.mjs::export function makeLedgerNamespace'));
         assert.equal(unrun.code, 1, 'a test file in no CI-run suite was accepted as cover');
-        assert.match(unrun.output, /tools\/fulfillment\/worker\/selftest\.mjs is in no suite CI runs/u);
+        assert.match(unrun.output, /tools\/relay\/test\/fakes\.mjs is in no suite CI runs/u);
 
         // THE OTHER DIRECTION, and the correction this block used to have backwards. The gate battery WAS the
         // example above, because CI ran it nowhere (F-024). [T209] gave it the `ci-gate-battery` job, which runs
@@ -234,8 +242,24 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
     // line, so it needs its own entry before any row can cite one of its cases.
     assert.equal(runningSuite('tools/release/mirror-public.test.mjs')?.runner.includes('release-mirror-gate'), true,
         'the manifest-declared private gate is spawned under npm test, so its cases are citable');
-    assert.equal(runningSuite('tools/fulfillment/worker/selftest.mjs'), null,
-        'a real selftest that no CI job runs must still not count as a suite');
+    // THIS ASSERTION IS THE INVERSE OF THE ONE IT REPLACES, DELIBERATELY. Until the linux leg of
+    // build-and-smoke gained its two steps, the worker self-test and the relay suite were green locally and
+    // run by no CI job, so this file pinned the self-test as "must still not count as a suite" and seven
+    // slice-2 findings (F-178, F-182, F-183, F-184, F-185, F-196, F-197) could not be flipped to FIXED
+    // against fixes that were genuinely on main. ci.yml runs both suites now, so the old pin would refuse
+    // cases CI is itself executing, which is the F-024 and F-140 defect in reverse and just as wrong.
+    //
+    // The self-test's entry is the one that needs watching: that suite exits 0 when section A skips, so its
+    // proof binds the skip refusal as well as the invocation. verifySuites() below is what enforces that.
+    assert.equal(runningSuite('tools/fulfillment/worker/selftest.mjs')?.runner.includes('skips refused'), true,
+        'the linux leg of build-and-smoke runs the worker self-test and fails it on a skip, so its checks are citable');
+    assert.equal(runningSuite('tools/relay/test/relay.test.mjs')?.runner.includes('node --test'), true,
+        'the linux leg of build-and-smoke runs the relay suite by glob, so its cases are citable');
+    // The glob is `*.test.mjs`, so the helper module beside the suites is NOT run and must not be citable.
+    assert.equal(runningSuite('tools/relay/test/fakes.mjs'), null,
+        'node --test does not execute fakes.mjs, so naming a case in it would claim coverage nothing runs');
+    // Nothing runs the worker sources themselves; they are the code under test, not a suite.
+    assert.equal(runningSuite('tools/fulfillment/worker/stripe.mjs'), null);
     assert.equal(runningSuite('docs/findings.md'), null);
 
     // EVERY ALLOWLIST ENTRY IS BOUND TO A REAL INVOCATION. The `runner` field was descriptive prose at first, so a

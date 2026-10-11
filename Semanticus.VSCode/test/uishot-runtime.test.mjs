@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The two uishot runtime invariants that were asserted in comments and enforced nowhere.
+// The three uishot runtime invariants that were asserted in comments and enforced nowhere.
 //
 // 1. THE CACHED-SHELL PICKER MUST FILTER ON PLATFORM BEFORE IT COMPARES BUILDS. The cache directory is
 //    named `<platform>-<buildId>` (`win64-131.0.6778.204`), so "compare the numbers in the name" folded the
@@ -12,6 +12,11 @@
 //    `import puppeteer from 'puppeteer-core'`, which the runtime evaluates before the first statement of
 //    the file, so `requireSupportedNode()` could never fire on the Node versions it exists for. The guard
 //    was unreachable exactly when it was needed.
+//
+// 3. A DRIVER THAT CANNOT FAIL CANNOT PROVE ANYTHING. The consent driver recorded what it saw and exited
+//    zero whatever that was, so a card that never appeared, a grant that failed and a scene that threw all
+//    came back as a successful run with an interesting-looking results file. Its green exit was cited as
+//    acceptance evidence for F-176 and could not carry it (F-209).
 //
 // This file runs on the extension's Node (20 in CI), not on uishot's Node 22.12 floor. That is safe and
 // deliberate: it imports `browser.mjs`, which pulls in nothing but node builtins, and it never loads
@@ -197,4 +202,45 @@ test('the floor refusal fires without puppeteer being loaded, and the old shape 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── 3. The consent driver states what each scene must show, and fails when one does not ───────────
+//
+// F-209 (Astra 6, 2026-09-22). The driver is the acceptance evidence for F-176, and it exited zero
+// whatever it saw: a missing card, a refused grant and a thrown scene were all recorded as interesting
+// observations in a results file beside a successful exit.
+//
+// WHAT THIS PROVES AND WHAT IT DOES NOT, said plainly rather than left to be discovered. The driver needs
+// a real browser and uishot's Node 22.12 floor, so CI cannot run it and this cannot execute a scene. It
+// reads the source and pins the three things that make the run capable of failing: every scene declares
+// what it must show, a scene that declares nothing stops the run before the browser opens, and a scene
+// that did not show it sets a non-zero exit. A driver missing any of those is green by construction, which
+// is the defect. The scenes' CONTENT is not pinned here and is not meant to be.
+test('every consent driver scene states what it must show, and a broken scene fails the run', () => {
+  const driver = readFileSync(join(uishotDir, 'consent-drive.mjs'), 'utf8');
+
+  const jobs = driver.slice(driver.indexOf('const JOBS = ['), driver.indexOf('const noPromise'));
+  assert.ok(jobs.length > 0, 'the scene table moved; find it before trusting the counts below');
+  const scenes = (jobs.match(/^ {2}\{ slug: '/gmu) ?? []).length;
+  const promises = (jobs.match(/^ {4}must: \(s\) => \[/gmu) ?? []).length;
+  assert.ok(scenes > 0, 'no scenes were found, so the counts below would pass vacuously');
+  assert.equal(promises, scenes,
+    `${scenes - promises} of ${scenes} consent driver scenes say nothing about what they must show, so they `
+    + 'cannot prove anything and the run is green by construction (F-209)');
+
+  // A scene added without a promise must stop the run BEFORE the browser opens, so the gap cannot be
+  // discovered as a quiet pass halfway through a shot set.
+  assert.match(driver, /const noPromise = JOBS\.filter\(\(j\) => typeof j\.must !== 'function'\)/u,
+    'nothing refuses a scene that declares no expectation, so one can be added without saying what it is for');
+  assert.match(driver.slice(driver.indexOf('const noPromise')), /^\s*process\.exit\(1\);$/mu,
+    'a scene with no expectation must stop the run, not print a note and carry on');
+
+  // And a scene that ran but did not show what it promised must reach the exit code. A results file
+  // nobody has to justify is the thing F-209 is about.
+  assert.match(driver, /const broken = \(job\.must\(seen\) \|\| \[\]\)\.filter\(Boolean\)/u,
+    'the scenes are no longer judged against what they promised');
+  assert.match(driver, /const failed = results\.filter\(\(r\) => r\.broken\?\.length\);/u,
+    'the run no longer collects the scenes that failed');
+  assert.match(driver.slice(driver.indexOf('const failed = results')), /process\.exitCode = 1;/u,
+    'a failing scene does not reach the exit code, so the driver is green whatever it saw (F-209)');
 });

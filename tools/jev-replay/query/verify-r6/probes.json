@@ -1,0 +1,115 @@
+{
+ "point": "query.summarize",
+ "set": "verify-r6-probes",
+ "note": "Round-6 verifier probes (30 Sep 2026), written before any run. Reported, not a gate: every outcome is read by hand. accept is 'decline' only so the replay needs no reading shape; the grade is in 'aim'.",
+ "items": [
+  {
+   "id": "vp6-01",
+   "model": "contoso",
+   "words": "revenue in Q2 2024",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "R16: a calendar quarter asked of a model whose only quarter is Fiscal Quarter; a reading on Fiscal Quarter said as '(1 April to 30 June)' hides the gap (HIGH)",
+   "aim": "R16: a calendar quarter asked of a model whose only quarter is Fiscal Quarter; a reading on Fiscal Quarter said as '(1 April to 30 June)' hides the gap (HIGH)",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-02",
+   "model": "contoso",
+   "words": "total revenue for the second quarter of 2025 by country",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "R16 in words",
+   "aim": "R16 in words",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-03",
+   "model": "contoso-ai",
+   "words": "revenue in Q3 2025",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "R16 on the AI-ready copy",
+   "aim": "R16 on the AI-ready copy",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-04",
+   "model": "contoso",
+   "words": "revenue by quarter for 2025",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "R16 as a split: 'Fiscal Quarter (a calendar quarter)'",
+   "aim": "R16 as a split: 'Fiscal Quarter (a calendar quarter)'",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-05",
+   "model": "northstar",
+   "words": "net sales for the holiday period 2025",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "G4 honest limit: a plain word not on its list stops; must be friction (calendar reading one click away), not harm",
+   "aim": "G4 honest limit: a plain word not on its list stops; must be friction (calendar reading one click away), not harm",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-06",
+   "model": "northstar",
+   "words": "what percentage of units sold were returned",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "G5: a share of a count (units) answered by Return Rate % (amounts) should stop",
+   "aim": "G5: a share of a count (units) answered by Return Rate % (amounts) should stop",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-07",
+   "model": "northstar",
+   "words": "what share of revenue came from the Kitchen category in 2025",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "G5 must not stop a share of an amount",
+   "aim": "G5 must not stop a share of an amount",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-08",
+   "model": "northstar",
+   "words": "net sales in the financial yr 2025",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "G4 miss by an abbreviation; the dates must show calendar 2025",
+   "aim": "G4 miss by an abbreviation; the dates must show calendar 2025",
+   "harm": [],
+   "expect": "decline"
+  },
+  {
+   "id": "vp6-09",
+   "model": "northstar",
+   "words": "what percent of our customers made a return",
+   "type": "probe",
+   "accept": "decline",
+   "askOk": true,
+   "why": "G5: a share of customers answered by a ratio of amounts should stop",
+   "aim": "G5: a share of customers answered by a ratio of amounts should stop",
+   "harm": [],
+   "expect": "decline"
+  }
+ ]
+}

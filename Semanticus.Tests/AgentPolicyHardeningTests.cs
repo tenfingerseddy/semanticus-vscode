@@ -174,6 +174,7 @@ namespace Semanticus.Tests
 
         // ---- registry lock: timeout THROWS; a corrupt file is preserved aside, never silently rewritten -----------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void Registry_mutation_throws_when_the_lock_cannot_be_taken()
         {

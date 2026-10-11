@@ -44,7 +44,16 @@ namespace Semanticus.Engine
             public (string path, string error, ReportDefinitionReader.ParseResult result) Part { get; set; }
             public ReportScopeReport State { get; set; }
             public long RevisionAtCheck { get; set; }
+            /// <summary>True only when the report's definition was actually read and its use of the model taken from
+            /// it. A chosen report that was CHECKED but could not be read (a .pbix, a blocked published report) has
+            /// evidence too, and is not a report whose use of the model is known.</summary>
+            public bool UsageRead { get; set; }
+            /// <summary>Which reading this is: bumped by every check, so a report checked again is a different
+            /// reading even when the model revision and the selection did not move.</summary>
+            public long Stamp { get; set; }
         }
+
+        private static long _reportReadingStamp;
 
         /// <summary>Everything read in ONE session, against ONE selection.</summary>
         private sealed class ScopeEvidence
@@ -97,6 +106,7 @@ namespace Semanticus.Engine
         /// every choice comes back as not checked until check_reports is run.</summary>
         public async Task<ReportScopeResult> SetReportScopeAsync(ReportScopeChoice[] choices, string origin = "human")
         {
+            GuardOutsideWrite(origin);
             var s = _sessions.Current ?? throw new InvalidOperationException(
                 "No open model. Use open_model, connect_local or connect_xmla first, then choose the reports to check it against.");
             var identity = PaneIdentity(s, null);
@@ -104,6 +114,7 @@ namespace Semanticus.Engine
             var modelName = await s.ReadAsync(m => string.IsNullOrWhiteSpace(m.Database?.Name) ? m.Name : m.Database.Name);
 
             var normalized = NormalizeChoices(choices, identity, origin);
+            var reportScopeCheck = FileBasisCheck(nameof(SetReportScopeAsync), "list of reports");   // the ticket is taken here, the write runs on the dispatcher
             // B2. The write rides the SAME single-writer dispatcher the removal does. This used to happen on the
             // caller's own thread, so a selection could change part-way through a deletion's turn: the removal's
             // final check had already read the old basis and the delete then ran against a selection nothing had
@@ -116,7 +127,7 @@ namespace Semanticus.Engine
                     n = "This model has no durable identity yet, so the choice is kept for this session only. Save or open the model to keep it.";
                 else if (dir == null)
                     n = "This session has no place on disk to keep the choice, so it is kept for this session only. Save the model to keep it.";
-                else if (ReportScopeStore.Replace(dir, identity, normalized) == null)
+                else if (ReportScopeStore.Replace(dir, identity, normalized, reportScopeCheck) == null)
                     n = "The choice could not be written beside the model, so it is kept for this session only.";
 
                 lock (_reportScopeGate)
@@ -226,6 +237,9 @@ namespace Semanticus.Engine
                     reports.Add(new ReportScopeReport
                     {
                         Id = c.Id, Kind = c.Kind, Name = c.Name, Source = source,
+                        // The choice's own coordinates ride back out on every row, so a caller that edits this
+                        // list and saves it again cannot lose them.
+                        WorkspaceId = c.WorkspaceId, ReportId = c.ReportId,
                         State = stale && ev.State.State != ReportScopeStates.NotChecked ? ReportScopeStates.NeedsChecking : ev.State.State,
                         CheckedWhenUtc = ev.State.CheckedWhenUtc,
                         Note = stale && ev.State.State != ReportScopeStates.NotChecked
@@ -235,7 +249,12 @@ namespace Semanticus.Engine
                     });
                     continue;
                 }
-                reports.Add(new ReportScopeReport { Id = c.Id, Kind = c.Kind, Name = c.Name, Source = source, State = ReportScopeStates.NotChecked });
+                reports.Add(new ReportScopeReport
+                {
+                    Id = c.Id, Kind = c.Kind, Name = c.Name, Source = source,
+                    WorkspaceId = c.WorkspaceId, ReportId = c.ReportId,
+                    State = ReportScopeStates.NotChecked,
+                });
             }
 
             // R4: choices restored from disk into a session that has not chosen anything itself are a reopen.
@@ -314,7 +333,8 @@ namespace Semanticus.Engine
 
             var ordered = targets.Where(c => readings.ContainsKey(c.Id)).ToList();
             var parsedForAnalysis = ordered.Select(c => readings[c.Id]).ToList();
-            var analysis = await s.ReadAsync(m => LineageGraph.AnalyzeReports(m, parsedForAnalysis));
+            var analysisChoiceIds = ordered.Select(c => c.Id).ToList();
+            var analysis = await s.ReadAsync(m => LineageGraph.AnalyzeReports(m, parsedForAnalysis, analysisChoiceIds));
             var now = DateTime.UtcNow.ToString("o");
             var revision = s.Revision;
 
@@ -343,15 +363,19 @@ namespace Semanticus.Engine
                             ChoiceId = c.Id,
                             Part = part,
                             RevisionAtCheck = revision,
+                            UsageRead = usage.Read,
+                            Stamp = System.Threading.Interlocked.Increment(ref _reportReadingStamp),
                             State = new ReportScopeReport
                             {
                                 Id = c.Id, Kind = c.Kind, Name = c.Name,
                                 State = fullyRead ? ReportScopeStates.Checked : ReportScopeStates.CouldNotBeFullyChecked,
                                 CheckedWhenUtc = now,
+                                // The cause behind the state, never empty and never the wrong one. Three
+                                // separate things end here and they are not the same fact: the definition
+                                // could not be read at all, a PART of it could not be parsed, or it read
+                                // cleanly and some of what it shows could not be matched to this model.
                                 Note = fullyRead ? null
-                                    : usage.Read
-                                        ? "Part of this report could not be read, so its use of this model is not fully known."
-                                        : (usage.Error ?? "This report could not be read."),
+                                    : ReportCheckNotes.For(usage.Read, part.result.SkippedParts, usage.Unresolved, usage.Error),
                                 FieldsUsed = usage.FieldCount,
                                 Visuals = usage.Visuals?.Length ?? 0,
                             },
@@ -396,8 +420,14 @@ namespace Semanticus.Engine
         {
             public List<(string path, string error, ReportDefinitionReader.ParseResult result)> Parts { get; set; }
                 = new List<(string, string, ReportDefinitionReader.ParseResult)>();
+            /// <summary>The stable choice id behind each entry of <see cref="Parts"/>, same order, same length.
+            /// A display name is not an identity: two chosen reports in different workspaces can share one.</summary>
+            public List<string> ChoiceIds { get; set; } = new List<string>();
             public int Chosen { get; set; }
             public int Read { get; set; }
+            /// <summary>How many of the reports counted in <see cref="Read"/> had their definition actually read. A
+            /// report checked but unreadable (a .pbix) is in <see cref="Parts"/> and is not here.</summary>
+            public int UsageRead { get; set; }
             /// <summary>The names of the chosen reports whose reading is missing or out of date.</summary>
             public string[] Unchecked { get; set; } = Array.Empty<string>();
             public bool HasChoices => Chosen > 0;
@@ -429,6 +459,9 @@ namespace Semanticus.Engine
             /// <summary>Bumped by every change of the SELECTION, so a re-selection of an identical list still
             /// reads as a moved basis (its evidence was dropped and has to be established again).</summary>
             public long Generation { get; set; }
+            /// <summary>Which readings the coverage carries: each report's choice id, the check it came from and the
+            /// revision it was read at. Unlike <see cref="Signature"/> it moves when a report is checked again.</summary>
+            public string Reading { get; set; } = "";
 
             /// <summary>Has the basis moved since <paramref name="reviewed"/> was captured?</summary>
             public bool MovedSince(ScopeBasis reviewed) =>
@@ -454,12 +487,17 @@ namespace Semanticus.Engine
 
             var coverage = new ReportScopeCoverage { Chosen = choices.Count };
             var missing = new List<string>();
+            var readings = new List<string>();
             foreach (var c in choices)
             {
                 if (evidence != null && evidence.ByChoiceId.TryGetValue(c.Id, out var ev))
                 {
                     coverage.Parts.Add(ev.Part);
+                    coverage.ChoiceIds.Add(c.Id);
                     coverage.Read++;
+                    if (ev.UsageRead) coverage.UsageRead++;
+                    readings.Add(c.Id + "@" + ev.Stamp.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                        + "r" + ev.RevisionAtCheck.ToString(System.Globalization.CultureInfo.InvariantCulture));
                     // A reading of an older model is still a reading of THAT report's contents, so it is kept for
                     // protection; it is not counted as current coverage, because the model has moved under it.
                     //
@@ -481,19 +519,17 @@ namespace Semanticus.Engine
             var signature = choices.Count == 0 ? "none"
                 : string.Join("|", choices.Select(c => c.Id).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .Select(id => id + ":" + (evidence != null && evidence.ByChoiceId.ContainsKey(id) ? "read" : "unread")));
-            return new ScopeBasis { Coverage = coverage, Signature = signature, Generation = generation };
+            return new ScopeBasis
+            {
+                Coverage = coverage, Signature = signature, Generation = generation,
+                // The signature is blind to the time of a reading on purpose; a cache of what a reading SAID is not.
+                Reading = string.Join("|", readings.OrderBy(x => x, StringComparer.Ordinal)),
+            };
         }
 
         internal ReportScopeCoverage CheckedCoverageFor(Session s) => CaptureScopeBasis(s).Coverage;
 
         internal string ReportScopeSignature(Session s) => CaptureScopeBasis(s).Signature;
-
-        /// <summary>The report parts this model was last checked against, or null when nothing has been read.</summary>
-        internal List<(string path, string error, ReportDefinitionReader.ParseResult result)> CheckedReportPartsFor(Session s)
-        {
-            var coverage = CheckedCoverageFor(s);
-            return coverage.Parts.Count > 0 ? coverage.Parts : null;
-        }
 
         /// <summary>
         /// P1: a scope change moves every answer on the page, so it is broadcast as an ordinary model change

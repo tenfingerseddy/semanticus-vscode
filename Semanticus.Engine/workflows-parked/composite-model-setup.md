@@ -42,14 +42,14 @@ ops: [get_model_graph, set_property]
 ## Step 3: Wire and review every cross-source-group relationship
 
 Relate the facts to their dimensions with `create_relationship`, and confirm exactly one active path per
-pair with `set_relationship_active`. Then walk the graph with `model_graph_summary` and REVIEW every
+pair with `set_relationship_active`. Then walk the graph with `get_model_graph` (summary) and REVIEW every
 cross-source-group relationship it shows; those are the seams where a mis-set mode turns an efficient native
 join into a limited relationship. If a Dual dimension is still showing a limited relationship to its
 same-source DirectQuery fact, the mode is wrong upstream: go back to Step 2 and fix it with `set_property`
 before proceeding. The goal is that every DQ-fact-to-shared-dim edge resolves through a Dual dimension.
 
 ```yaml gate
-ops: [set_property, create_relationship, set_relationship_active, model_graph_summary]
+ops: [set_property, create_relationship, set_relationship_active, get_model_graph]
 inputs:
   - name: relationshipsReviewed
     question: "Have you reviewed every cross-source-group relationship in the graph and confirmed each same-source dimension on a DirectQuery fact is Dual (not Import), so the join is a single native query, not a limited relationship?"

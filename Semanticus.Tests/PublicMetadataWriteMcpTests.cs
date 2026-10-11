@@ -62,6 +62,7 @@ namespace Semanticus.Tests
             Assert.Equal("City", Column(await McpTools.ListColumns(engine), city).DataCategory);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Set_sort_by_column_is_public_broadcast_undoable_and_rejects_unknown_or_self_columns()
         {

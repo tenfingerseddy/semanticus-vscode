@@ -38,7 +38,7 @@ namespace Semanticus.Tests
             await engine.SetObjectPropertyAsync(dkey, "FormatString", "yyyy-mm-dd", "human");
             await engine.MarkDateTableAsync(dt, "Date", "human");
             var path = Path.Combine(Path.GetTempPath(), "sem-gate-scope-" + Guid.NewGuid().ToString("N") + ".bim");
-            await engine.SaveAsync(path, "bim");
+            await engine.SaveAsync(path, "bim", false, "human");
             engine.Dispose();
             return path;
         }
@@ -81,7 +81,43 @@ namespace Semanticus.Tests
             }
         }
 
+        // UAT-S08-1-001. With no edits in the session there is no change set to scope to, so the gate judges the whole
+        // model on purpose and still blocks on its findings: a publish then sends the whole model, and nothing says the
+        // target already has it. That verdict stays. The defect was the words: the line said "Checks on this change"
+        // for a model with no change, so older findings read as if this change had caused them.
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task With_no_edits_the_gate_says_it_checked_the_whole_model()
+        {
+            var (engine, path) = await OpenDirtyAsync();
+            using (engine)
+            {
+                try
+                {
+                    var gate = await engine.DeployGateAsync(null, "human");
+                    Assert.False(gate.Pass);                       // the safety verdict is unchanged
+                    Assert.NotEmpty(gate.Blockers);
+                    Assert.True(gate.WholeModel);
+                    Assert.StartsWith("No edits in this session yet, so the whole model was checked.", gate.CheckLine, StringComparison.Ordinal);
+                    Assert.DoesNotContain("this change", gate.CheckLine, StringComparison.OrdinalIgnoreCase);
+                    Assert.DoesNotContain("\u2014", gate.CheckLine, StringComparison.Ordinal);
+                    Assert.DoesNotContain("BPA", gate.CheckLine, StringComparison.OrdinalIgnoreCase);
+
+                    var agent = await McpTools.DeployGate(engine);
+                    Assert.Equal(gate.CheckLine, agent.CheckLine);
+                    Assert.True(agent.WholeModel);
+
+                    await engine.SetObjectPropertyAsync("measure:Sales/UAT Canary", "Expression", "2 + 2", "human");
+                    var scoped = await engine.DeployGateAsync(null, "human");
+                    Assert.False(scoped.WholeModel);
+                    Assert.StartsWith("Checks on this change:", scoped.CheckLine, StringComparison.Ordinal);
+                }
+                finally { File.Delete(path); }
+            }
+        }
+
         // Dual drive: the agent door reads the same scoped gate.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Agent_door_sees_the_same_scoped_gate()
         {
@@ -103,6 +139,7 @@ namespace Semanticus.Tests
         }
 
         // A finding this change introduces still blocks, and names the object.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_problem_this_change_introduces_still_blocks()
         {
@@ -130,6 +167,7 @@ namespace Semanticus.Tests
         }
 
         // D-005 live path: a one-measure commit against the recorded live double does not need an override.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Live_commit_of_one_measure_does_not_need_an_override_for_older_warnings()
         {

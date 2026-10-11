@@ -17,6 +17,8 @@ namespace Semanticus.Tests
     /// </summary>
     public sealed class DualDriveUndoTests : IAsyncLifetime
     {
+        // Lean suite: these tests ask what the engine does with one timeline, a broadcast and a rename, not what is in AdventureWorks.
+        private readonly string _dir = Path.Combine(Path.GetTempPath(), "sem-dualdrive-" + Guid.NewGuid().ToString("N").Substring(0, 8));
         private SessionManager _sessions = null!;
         private LocalEngine _engine = null!;
         private string _table = null!;
@@ -29,7 +31,7 @@ namespace Semanticus.Tests
             _table = (await _engine.ListMeasuresAsync()).First().Table;   // a real table to hang objects on
         }
 
-        public Task DisposeAsync() { _engine.Dispose(); return Task.CompletedTask; }
+        public Task DisposeAsync() { _engine.Dispose(); try { Directory.Delete(_dir, true); } catch { } return Task.CompletedTask; }
 
         [Fact]
         public async Task Undo_then_redo_round_trips_a_measure_create()
@@ -131,7 +133,7 @@ namespace Semanticus.Tests
             var outDir = Path.Combine(Path.GetTempPath(), "semanticus_fftest_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             try
             {
-                await _engine.SaveAsync(outDir, "TMDL");
+                await _engine.SaveAsync(outDir, "TMDL", false, "human");
                 var tmdl = Directory.EnumerateFiles(outDir, "*.tmdl", SearchOption.AllDirectories).Select(File.ReadAllText).ToList();
                 Assert.Contains(tmdl, f => f.Contains("FF_Role") && f.Contains("FF_Col_Renamed"));
                 Assert.DoesNotContain(tmdl, f => f.Contains("FF_Role") && f.Contains("[FF_Col] >"));   // old RLS ref is gone
@@ -169,6 +171,6 @@ namespace Semanticus.Tests
             finally { engine.Dispose(); }
         }
 
-        private static string FindTestBim() => TestModels.FindBim();
+        private string FindTestBim() => TinyBim.Write(Path.Combine(_dir, Guid.NewGuid().ToString("N").Substring(0, 6), "Tiny.bim"));
     }
 }

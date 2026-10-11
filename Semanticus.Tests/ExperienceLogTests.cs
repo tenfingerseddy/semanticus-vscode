@@ -87,6 +87,7 @@ namespace Semanticus.Tests
                 Assert.Contains(r.GetProperty("op").GetString(), new[] { "run_dax", "health_delta" }));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Apply_plan_report_is_captured_instead_of_discarded()
         {
@@ -171,7 +172,7 @@ namespace Semanticus.Tests
         {
             // The worst case the fix targets: an EPHEMERAL anchor (live/XMLA/unsaved) AND no workspace open. Capture used
             // to be silently DROPPED (_fallbackFile == null) — the single highest-value session (a live XMLA model, no
-            // folder open) captured nothing. It must now land in the durable GLOBAL %USERPROFILE%/.semanticus log instead.
+            // folder open) captured nothing. It must now land in the durable GLOBAL SEMANTICUS_HOME log instead.
             var snapDir = Path.Combine(Path.GetTempPath(), "semanticus-live", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(snapDir);
             var bim = Path.Combine(snapDir, "Model.bim");
@@ -179,11 +180,11 @@ namespace Semanticus.Tests
             Assert.True(ExperienceStore.IsEphemeralAnchor(bim));
 
             var home = Path.Combine(Path.GetTempPath(), "smx-xp-home-" + Guid.NewGuid().ToString("N"));
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             try
             {
                 Directory.CreateDirectory(home);
-                Environment.SetEnvironmentVariable("USERPROFILE", home);   // redirect global before the tee resolves its fallback
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));   // redirect global before the tee resolves its fallback
 
                 var sessions = new SessionManager();
                 using var tee = new ExperienceTee(sessions);   // NO workspaceDir → the previously-dropped case
@@ -199,7 +200,7 @@ namespace Semanticus.Tests
             }
             finally
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", origHome);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome);
                 try { Directory.Delete(home, true); } catch { }
                 try { Directory.Delete(snapDir, true); } catch { }
             }
@@ -209,7 +210,7 @@ namespace Semanticus.Tests
         public void Fallback_resolution_pins_the_three_targets_beside_workspace_global()
         {
             // Pure path resolution (no model, no live connection): a file anchor stays beside the model; the ephemeral
-            // %TEMP%\semanticus-* prefix is classified live; and the global fallback resolves under %USERPROFILE%.
+            // %TEMP%\semanticus-* prefix is classified live; and the global fallback resolves under SEMANTICUS_HOME.
             var fileAnchor = Path.Combine(Path.GetTempPath(), "smx-xp-fa-" + Guid.NewGuid().ToString("N"), "Model.bim");
             Assert.False(ExperienceStore.IsEphemeralAnchor(fileAnchor));   // durable → beside the model
             Assert.Equal(Path.Combine(Path.GetDirectoryName(fileAnchor), ".semanticus", ExperienceStore.FileName),
@@ -219,13 +220,13 @@ namespace Semanticus.Tests
             Assert.True(ExperienceStore.IsEphemeralAnchor(ephAnchor));   // ephemeral → workspace or global fallback
 
             var home = Path.Combine(Path.GetTempPath(), "smx-xp-gh-" + Guid.NewGuid().ToString("N"));
-            var origHome = Environment.GetEnvironmentVariable("USERPROFILE");
+            var origHome = Environment.GetEnvironmentVariable(SemanticusHome.Variable);
             try
             {
-                Environment.SetEnvironmentVariable("USERPROFILE", home);
+                Environment.SetEnvironmentVariable(SemanticusHome.Variable, Path.Combine(home, ".semanticus"));
                 Assert.Equal(Path.Combine(home, ".semanticus", ExperienceStore.FileName), ExperienceStore.GlobalFile());
             }
-            finally { Environment.SetEnvironmentVariable("USERPROFILE", origHome); }
+            finally { Environment.SetEnvironmentVariable(SemanticusHome.Variable, origHome); }
         }
 
         [Fact]

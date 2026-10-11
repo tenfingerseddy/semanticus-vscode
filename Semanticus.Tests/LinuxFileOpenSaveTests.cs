@@ -28,7 +28,7 @@ namespace Semanticus.Tests
             var root = Path.Combine(Path.GetTempPath(), "semanticus-d032-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             var bim = Path.Combine(root, "parallel-b.bim");
-            File.Copy(TestModels.FindBim(), bim);
+            TinyBim.Write(bim);
             var before = File.ReadAllBytes(bim);
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions);
@@ -38,7 +38,7 @@ namespace Semanticus.Tests
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "1 + 1", "human");
 
-                var saved = await engine.SaveAsync(null, "TMDL");
+                var saved = await engine.SaveAsync(null, "TMDL", false, "human");
 
                 Assert.Equal(bim, saved.Path);
                 Assert.Equal("ModelSchemaOnly", saved.Format);
@@ -64,7 +64,7 @@ namespace Semanticus.Tests
             var root = Path.Combine(Path.GetTempPath(), "semanticus-d032-mcp-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             var bim = Path.Combine(root, "parallel-c.bim");
-            File.Copy(TestModels.FindBim(), bim);
+            TinyBim.Write(bim);
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions);
             try
@@ -99,11 +99,11 @@ namespace Semanticus.Tests
             var engine = new LocalEngine(sessions);
             try
             {
-                await engine.OpenAsync(TestModels.FindBim());
+                await engine.OpenAsync(TinyBim.Write(Path.Combine(root, "src", "Tiny.bim")));
                 var measure = (await engine.ListMeasuresAsync()).First();
                 await engine.SetDaxAsync(measure.Ref, "3 + 3", "human");
 
-                var saved = await engine.SaveAsync(folder, "folder");
+                var saved = await engine.SaveAsync(folder, "folder", false, "human");
                 Assert.Equal("TabularEditorFolder", saved.Format);
                 Assert.True(Directory.Exists(folder), "save_model must create a real directory, not a file whose name contains a backslash");
                 Assert.True(File.Exists(Path.Combine(folder, "database.json")));
@@ -132,8 +132,8 @@ namespace Semanticus.Tests
             var engine = new LocalEngine(sessions);
             try
             {
-                await engine.OpenAsync(TestModels.FindBim());
-                await engine.SaveAsync(folder, "TabularEditorFolder");
+                await engine.OpenAsync(TinyBim.Write(Path.Combine(root, "src", "Tiny.bim")));
+                await engine.SaveAsync(folder, "TabularEditorFolder", false, "human");
                 Assert.True(File.Exists(Path.Combine(folder, "database.json")));
                 engine.Dispose();
 
@@ -159,7 +159,7 @@ namespace Semanticus.Tests
             // for a method whose parameter names match the object's keys (kind, path, ...) and
             // reports "Unable to find method 'listR...'". The UI door must still load a local file
             // or TMDL folder as a reference model.
-            var pipeName = "semanticus-d035-" + Guid.NewGuid().ToString("N");
+            var pipeName = TestPipe.Mint("semanticus-d035-");
             var sessions = new SessionManager();
             var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
             using var server = new RpcServer(sessions, engine, pipeName, Challenge);
@@ -169,7 +169,7 @@ namespace Semanticus.Tests
             var tmp = Path.Combine(Path.GetTempPath(), "semanticus-d035-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tmp);
             var bim = Path.Combine(tmp, "ref.bim");
-            File.Copy(TestModels.FindBim(), bim);
+            TinyBim.Write(bim);
             try
             {
                 ui = await RpcClient.ConnectAsync(pipeName, "human", Challenge);

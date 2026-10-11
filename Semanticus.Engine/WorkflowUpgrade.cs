@@ -62,11 +62,14 @@ namespace Semanticus.Engine
                 result.Reason = "The saved workflow does not parse. Repair it before upgrading. " + result.ParseError;
                 return result;
             }
-            if (document.Metadata.SchemaVersion == 2)
+            if (document.Metadata.SchemaVersion >= WorkflowParser.MaxSchemaVersion)
             {
-                result.Reason = "This workflow already uses version 2. Nothing was written.";
+                result.Reason = $"This workflow already uses version {document.Metadata.SchemaVersion}. Nothing was written.";
                 return result;
             }
+            // One version per call: a version 1 file becomes version 2 below, and a version 2 file becomes
+            // version 3 here. Each step is its own reviewed preview, so a person sees one kind of change at a time.
+            if (document.Metadata.SchemaVersion == 2) return PreviewV3(document, result);
             var text = document.ExactText;
             var parserText = text.Length > 0 && text[0] == (char)0xfeff ? text.Substring(1) : text;
             var original = WorkflowParser.Parse(parserText);
@@ -137,7 +140,88 @@ namespace Semanticus.Engine
             return result;
         }
 
-        private static Line PromoteVersion(Line line)
+        /// <summary>Composer contract 11.3: version 2 to version 3 is mechanical. It sets schemaVersion: 3 and
+        /// `performer: assistant` on every step and changes nothing else, because a guided step is an assistant
+        /// step in the composer's words (11.2). A v3 file of all-assistant steps runs exactly like the v2 file
+        /// did; converting a step to one Semanticus runs is an author's act, never this upgrade's.</summary>
+        private static WorkflowUpgradeResult PreviewV3(WorkflowDocumentResult document, WorkflowUpgradeResult result)
+        {
+            var text = document.ExactText;
+            var parserText = text.Length > 0 && text[0] == (char)0xfeff ? text.Substring(1) : text;
+            var original = WorkflowParser.Parse(parserText);
+            var lines = ReadLines(text);
+            var (versionLine, steps) = WorkflowParser.UpgradeV3Anchors(parserText);
+            if (versionLine < 0 || steps.Length != original.Steps.Length)
+                throw new InvalidOperationException("The workflow's parsed version line or step boundaries do not match its source.");
+            var defaultEnding = lines.FirstOrDefault(line => line.Ending.Length > 0)?.Ending ?? ((char)10).ToString();
+            var fenceLines = steps.Where(s => s.Fence >= 0).Select(s => s.Fence).ToHashSet();
+            var bareHeadings = steps.Where(s => s.Fence < 0).Select(s => s.Heading).ToHashSet();
+            var performer = "performer: " + WorkflowPerformers.Assistant;
+            var diff = new List<DiffLine>();
+            for (var i = 0; i < lines.Count; i++)
+            {
+                var line = lines[i];
+                if (i == versionLine)
+                {
+                    diff.Add(new DiffLine('-', line));
+                    diff.Add(new DiffLine('+', Promote(line, '2', '3')));
+                    continue;
+                }
+                if (fenceLines.Contains(i))
+                {
+                    // Into the step's own fence, as its first key. A fence at EOF with no closing line would not
+                    // have parsed, so this line always has an ending.
+                    diff.Add(new DiffLine(' ', line));
+                    diff.Add(new DiffLine('+', new Line(performer, line.Ending.Length > 0 ? line.Ending : defaultEnding)));
+                    continue;
+                }
+                if (bareHeadings.Contains(i))
+                {
+                    var ending = line.Ending.Length > 0 ? line.Ending : defaultEnding;
+                    if (line.Ending.Length == 0)
+                    {
+                        // A heading at EOF still needs a delimiter before its new fence; keep EOF unterminated.
+                        diff.Add(new DiffLine('-', line));
+                        diff.Add(new DiffLine('+', line with { Ending = defaultEnding }));
+                    }
+                    else diff.Add(new DiffLine(' ', line));
+                    diff.Add(new DiffLine('+', new Line("```yaml step", ending)));
+                    diff.Add(new DiffLine('+', new Line(performer, ending)));
+                    diff.Add(new DiffLine('+', new Line("```", line.Ending.Length > 0 ? ending : "")));
+                    continue;
+                }
+                diff.Add(new DiffLine(' ', line));
+            }
+            result.ProposedText = string.Concat(diff.Where(line => line.Kind != '-').Select(line => line.Line.Text + line.Line.Ending));
+            result.Diff = RenderDiff(document.Name, diff);
+            result.AddedLines = diff.Count(line => line.Kind == '+');
+            var proposedParserText = result.ProposedText.Length > 0 && result.ProposedText[0] == (char)0xfeff
+                ? result.ProposedText.Substring(1) : result.ProposedText;
+            var upgraded = WorkflowParser.Parse(proposedParserText);
+            if (upgraded.Error != null)
+            {
+                result.ParseError = upgraded.Error;
+                result.Reason = "Version 3 refuses this source. Nothing was written. " + upgraded.Error;
+                return result;
+            }
+            var difference = SemanticDifference(original, upgraded, "workflow", promotedVersion: false);
+            if (difference != null)
+            {
+                result.Reason = "Upgrading would change existing workflow content or gate settings at " + difference + ". Nothing was written.";
+                return result;
+            }
+            result.CanApply = document.Library == "user";
+            result.Reason = result.CanApply
+                ? "The preview preserves the workflow's existing meaning. Apply it with this document's path and byteHash."
+                : "Stock workflows are read-only. Create a project copy, then preview that copy.";
+            return result;
+        }
+
+        private static Line PromoteVersion(Line line) => Promote(line, '1', '2');
+
+        /// <summary>Rewrite the version value's last digit from <paramref name="from"/> to <paramref name="to"/>,
+        /// keeping its quotes, spacing and any trailing comment byte for byte.</summary>
+        private static Line Promote(Line line, char from, char to)
         {
             var start = line.Text.IndexOf(':') + 1;
             while (start < line.Text.Length && char.IsWhiteSpace(line.Text[start])) start++;
@@ -153,9 +237,9 @@ namespace Semanticus.Engine
                 if (comment >= 0) end = comment;
             }
             while (end > start && char.IsWhiteSpace(line.Text[end - 1])) end--;
-            if (end <= start || line.Text[end - 1] != '1')
-                throw new InvalidOperationException("The active version 1 declaration cannot be promoted without rewriting its value.");
-            return line with { Text = line.Text.Substring(0, end - 1) + "2" + line.Text.Substring(end) };
+            if (end <= start || line.Text[end - 1] != from)
+                throw new InvalidOperationException($"The active version {from} declaration cannot be promoted without rewriting its value.");
+            return line with { Text = line.Text.Substring(0, end - 1) + to + line.Text.Substring(end) };
         }
 
         private static List<Line> ReadLines(string text)

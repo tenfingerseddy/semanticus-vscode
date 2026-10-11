@@ -137,6 +137,7 @@ namespace Semanticus.Tests
         // =========================================================================================
         // R2. A proposal binds the scope and evidence version it was reviewed against.
         // =========================================================================================
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task R2_a_proposal_reviewed_against_other_reports_is_refused_at_apply()
         {
@@ -174,6 +175,7 @@ namespace Semanticus.Tests
             finally { x.Sessions.Dispose(); try { Directory.Delete(x.Root, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task R2_an_unchanged_basis_still_applies()
         {
@@ -205,6 +207,7 @@ namespace Semanticus.Tests
         // =========================================================================================
         // R3. Identity and freshness per report, keyed by its stable choice id.
         // =========================================================================================
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task R3_rechecking_one_report_after_a_model_edit_leaves_the_other_needing_checking()
         {
@@ -284,7 +287,7 @@ namespace Semanticus.Tests
                     await x.Engine.OpenAsync(x.Model);
                     var table = (await x.Engine.ListMeasuresAsync()).First().Table;
                     await x.Engine.CreateMeasureAsync("table:" + table, "R4 Shown", "1", "human");
-                    await x.Engine.SaveAsync(x.Model, "bim", overwrite: true);
+                    await x.Engine.SaveAsync(x.Model, "bim", true, "human");
                     var path = WriteReport(x.Root, "R4", table, "R4 Shown");
                     await x.Engine.SetReportScopeAsync(new[] { Local("Reopen me", path) }, "human");
                     await x.Engine.CheckReportsAsync(null, true, null, null, null, "human");
@@ -385,6 +388,7 @@ namespace Semanticus.Tests
 
         private const string SelectionChanged = "The report selection changed. Check it again and review this removal.";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("rpc", "remove")]
         [InlineData("rpc", "plan")]
@@ -492,12 +496,23 @@ namespace Semanticus.Tests
             foreach (var (file, marker) in new[]
                      {
                          ("LocalEngine.RemoveSafe.cs", "var atApply = CaptureScopeBasis(s);"),
-                         ("LocalEngine.cs", "var applyBasis = CaptureScopeBasis(s);"),
+                         ("Plan/PlanLineExecutor.cs", "_removals.Begin(_engine.CaptureScopeBasis(s));"),
                      })
             {
                 var body = File.ReadAllText(Path.Combine(RepoRoot(), "Semanticus.Engine", file));
                 Assert.Contains(marker, body, StringComparison.Ordinal);
             }
+            // apply_plan's re-check lives in RemovalRecheck now (Run the plan, lane E5), and the basis it judges
+            // against is re-taken INSIDE the single-writer delegate, after the approval guards and before the lines. The delegate is
+            // the shared line executor's (Plan/PlanLineExecutor.cs, lane sf-exec); apply_plan's write must still run through it.
+            var engineSource = File.ReadAllText(Path.Combine(RepoRoot(), "Semanticus.Engine", "LocalEngine.cs"));
+            Assert.Contains("rev = await s.MutateAsync(origin, \"apply change plan\", m => executor.ApplyInBatch(m, toApply), executor.Cascade);", engineSource, StringComparison.Ordinal);
+            var apply = Between(File.ReadAllText(Path.Combine(RepoRoot(), "Semanticus.Engine", "Plan", "PlanLineExecutor.cs")),
+                "public void ApplyInBatch(Model m, List<ChangeItem> lines)", "foreach (var it in toApply)");
+            Assert.Contains("_removals.Begin(_engine.CaptureScopeBasis(s));", apply, StringComparison.Ordinal);
+            Assert.True(apply.IndexOf("g.Refusal(s,", StringComparison.Ordinal) is var guardAt and >= 0
+                        && guardAt < apply.IndexOf("_removals.Begin(", StringComparison.Ordinal),
+                "the approval guards run before the basis is re-taken");
         }
 
         private static string Between(string source, string from, string to)

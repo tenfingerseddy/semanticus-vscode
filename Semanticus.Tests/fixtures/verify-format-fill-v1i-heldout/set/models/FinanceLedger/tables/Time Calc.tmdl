@@ -1,0 +1,18 @@
+table 'Time Calc'
+	calculationGroup
+		precedence: 20
+		calculationItem Current = SELECTEDMEASURE()
+		calculationItem PriorYear = CALCULATE(SELECTEDMEASURE(), DATEADD(FiscalCalendar[Date], -1, YEAR))
+
+	column Name
+		dataType: string
+		sourceColumn: Name
+		summarizeBy: none
+
+	/// calculation item sort ordinal
+	column Ordinal
+		dataType: int64
+		sourceColumn: Ordinal
+		summarizeBy: none
+
+	partition 'Time Calc' = calculationGroup

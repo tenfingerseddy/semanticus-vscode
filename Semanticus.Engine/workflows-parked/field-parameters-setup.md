@@ -40,7 +40,7 @@ ops: [create_field_parameter, set_column_hidden, set_description, set_ai_data_sc
 
 ## Step 3: Confirm the structure and the advisory
 
-Read the shape back with `model_graph_summary`: the parameter table shows as INTENTIONALLY disconnected (no
+Read the shape back with `get_model_graph` (summary): the parameter table shows as INTENTIONALLY disconnected (no
 relationship to any fact), and that is correct, not a modelling error. Run `ai_readiness_scan` and expect the
 `DAC-FIELD-PARAM-COMPLEXITY` advisory (Info) to appear; the point is that you UNDERSTAND it, not that you make
 it vanish. If the team accepts the trade-off (they want the report flexibility despite the AI caveat), record
@@ -48,7 +48,7 @@ that decision with `waive_finding` and a reason so the readiness score stays hon
 carrying an unexplained finding.
 
 ```yaml gate
-ops: [model_graph_summary, ai_readiness_scan, waive_finding]
+ops: [get_model_graph, ai_readiness_scan, waive_finding]
 inputs:
   - name: disconnectionUnderstood
     question: "Do you confirm the parameter table is intentionally disconnected, and have you either accepted (and waived, with a reason) or acted on the DAC-FIELD-PARAM-COMPLEXITY advisory?"

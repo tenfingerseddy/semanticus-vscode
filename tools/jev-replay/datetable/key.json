@@ -1,0 +1,825 @@
+{
+ "version": 1,
+ "round": 3,
+ "derivedBy": "derive-key.mjs",
+ "items": [
+  {
+   "id": "ns-1",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats",
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "ns-2",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "repeats",
+    "Store/CloseDate": "repeats",
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "ns-3",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats",
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "ns-4",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "repeats",
+    "Store/CloseDate": "repeats",
+    "Date/Date": "day",
+    "Date/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "ns-5",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "gaps",
+    "Store/CloseDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": true
+  },
+  {
+   "id": "ns-6",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "repeats",
+    "Store/CloseDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": true
+  },
+  {
+   "id": "ns-7",
+   "needed": true,
+   "table": "Period",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "repeats",
+    "Store/CloseDate": "repeats",
+    "Period/Date": "day",
+    "Period/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "ns-8",
+   "needed": true,
+   "table": "Period",
+   "mark": true,
+   "facts": {
+    "Customer/JoinDate": "repeats",
+    "Store/OpenDate": "repeats",
+    "Store/CloseDate": "repeats",
+    "Period/Date": "day",
+    "Period/MonthStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-1",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-2",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-3",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-4",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-5",
+   "needed": true,
+   "table": "Calendar Table",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats",
+    "Calendar Table/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "cm-6",
+   "needed": true,
+   "table": "Days",
+   "mark": true,
+   "facts": {
+    "Sales/Date": "repeats",
+    "Days/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-1",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Customer/DateFirstPurchase": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-2",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Customer/DateFirstPurchase": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-3",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-4",
+   "needed": true,
+   "table": "Time Period",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats",
+    "Time Period/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-5",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Customer/DateFirstPurchase": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "aw-6",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Internet Sales/OrderDate": "repeats",
+    "Internet Sales/DueDate": "repeats",
+    "Internet Sales/ShipDate": "repeats",
+    "Customer/BirthDate": "repeats",
+    "Product/StartDate": "repeats",
+    "Product/EndDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-1",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Trades/TradeDate": "repeats",
+    "Calendar/Date": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-2",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Orders/OrderDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-3",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Orders/OrderDate": "repeats",
+    "Orders/ShipDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-4",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Orders/OrderDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-5",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Product/LaunchDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-6",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Employee/HireDate": "repeats",
+    "Employee/BirthDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-7",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Date/Date": "day",
+    "Report Date/Report Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-8",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Date/Date": "day",
+    "Fiscal Calendar/Fiscal Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-9",
+   "needed": true,
+   "table": "Dim Period",
+   "mark": true,
+   "facts": {
+    "Sales/PeriodDate": "repeats",
+    "Budget/PeriodDate": "repeats",
+    "Dim Period/Period Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-10",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sales/SaleDate": "repeats",
+    "Holidays/Date": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-11",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sales/SaleDate": "repeats",
+    "Holidays/Date": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-12",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Readings/Timestamp": "repeats",
+    "Device/InstalledOn": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-13",
+   "needed": true,
+   "table": "DimDate",
+   "mark": true,
+   "facts": {
+    "DimDate/FullDate": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-14",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "Calendar/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-15",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Date/Date": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "s-16",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Date/Date": "day",
+    "Update Log/Updated At": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-1",
+   "needed": true,
+   "table": "Dates",
+   "mark": true,
+   "facts": {
+    "GL Entries/PostingDate": "repeats",
+    "Dates/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-2",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "GL Entries/PostingDate": "repeats",
+    "Account/OpenedOn": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-3",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "GL Entries/PeriodStart": "repeats",
+    "Fiscal Periods/PeriodStart": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-4",
+   "needed": true,
+   "table": "DimCalendar",
+   "mark": true,
+   "facts": {
+    "Shipments/ShipDate": "repeats",
+    "DimCalendar/CalendarDate": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-5",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Shipments/ShipDate": "repeats",
+    "Shipments/DeliveredDate": "repeats",
+    "Carrier/ContractStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-6",
+   "needed": true,
+   "table": "Date Dimension",
+   "mark": true,
+   "facts": {
+    "Shipments/ShipDate": "repeats",
+    "Date Dimension/Date": "day",
+    "Public Holidays/Holiday Date": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-7",
+   "needed": true,
+   "table": "Calendar",
+   "mark": true,
+   "facts": {
+    "Sessions/SessionStart": "repeats",
+    "Calendar/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-8",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Sessions/SessionStart": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-9",
+   "needed": true,
+   "table": "Date",
+   "mark": true,
+   "facts": {
+    "Subscriptions/StartDate": "repeats",
+    "Subscriptions/EndDate": "repeats",
+    "Date/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-10",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Subscriptions/StartDate": "repeats",
+    "Subscriptions/EndDate": "repeats",
+    "Plan/LaunchedOn": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-11",
+   "needed": true,
+   "table": "Shift Calendar",
+   "mark": true,
+   "facts": {
+    "Production/RunDate": "repeats",
+    "Shift Calendar/Day": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-12",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Production/RunDate": "repeats",
+    "Maintenance Log/Serviced On": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-13",
+   "needed": true,
+   "table": "Term Dates",
+   "mark": true,
+   "facts": {
+    "Enrolments/EnrolDate": "repeats",
+    "Term Dates/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-14",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Course/Published": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-15",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Readings/ReadingAt": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-16",
+   "needed": true,
+   "table": "Day",
+   "mark": true,
+   "facts": {
+    "Readings/ReadingDay": "repeats",
+    "Day/Day": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-17",
+   "needed": true,
+   "table": "Kalender",
+   "mark": true,
+   "facts": {
+    "Umsatz/Datum": "repeats",
+    "Kalender/Datum": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-18",
+   "needed": true,
+   "table": "Calendar",
+   "mark": true,
+   "facts": {
+    "Sales/SaleDate": "repeats",
+    "Calendar/Date": "day",
+    "Promotion Calendar/Campaign Start": "gaps"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-19",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Orders/OrderDate": "repeats",
+    "Order Dates/OrderDate": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-20",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "Store/Opened": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": true
+  },
+  {
+   "id": "h-21",
+   "needed": true,
+   "table": "Time",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Time/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-22",
+   "needed": true,
+   "table": "Periods",
+   "mark": true,
+   "facts": {
+    "Sales/OrderDate": "repeats",
+    "Periods/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-23",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "Currency/Adopted": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-24",
+   "needed": true,
+   "table": "Dates",
+   "mark": true,
+   "facts": {
+    "Actuals/Date": "repeats",
+    "Budget/Date": "repeats",
+    "Dates/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-25",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Stock Snapshot/Snapshot Date": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-26",
+   "needed": true,
+   "table": "Calendar",
+   "mark": true,
+   "facts": {
+    "Tickets/Opened": "repeats",
+    "Tickets/Closed": "repeats",
+    "Agent/HiredOn": "repeats",
+    "Calendar/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-27",
+   "needed": true,
+   "table": "generate",
+   "mark": true,
+   "facts": {
+    "Tickets/Opened": "repeats",
+    "Tickets/Closed": "repeats",
+    "Agent/HiredOn": "repeats"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  },
+  {
+   "id": "h-28",
+   "needed": false,
+   "table": null,
+   "mark": null,
+   "facts": {
+    "DateTable/Date": "day"
+   },
+   "ambiguous": false,
+   "unverifiable": false
+  }
+ ]
+}

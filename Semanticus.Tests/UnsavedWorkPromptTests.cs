@@ -155,10 +155,10 @@ namespace Semanticus.Tests
                 File.WriteAllText(bim, File.ReadAllText(bim) + "\n");
                 Assert.True((await engine.SessionInfoAsync()).DiskDiverged);
 
-                var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "BIM"));
+                var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SaveAsync(null, "BIM", false, "human"));
                 Assert.Contains("files on disk changed", blocked.Message, StringComparison.OrdinalIgnoreCase);
 
-                await engine.SaveAsync(null, "BIM", overwrite: true);
+                await engine.SaveAsync(null, "BIM", true, "human");
                 Assert.False((await engine.SessionInfoAsync()).DiskDiverged);
                 Assert.False((await engine.SessionInfoAsync()).HasUnsavedChanges);
             }

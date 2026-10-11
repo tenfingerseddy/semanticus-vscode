@@ -69,17 +69,17 @@ test('the tools are chips inside the canvas, in the named order', () => {
     'every one of the five tool chips must be that shared control, not four of five');
 });
 
+// Contract 21.5 (lane W2): the header is the mockup's one row, title, Required mark, Saved, then Undo, Run, Save,
+// Settings and one menu; the built-in "Copy to this project" and its tooltip went with row 60 (Use copies a starter).
 test('the Author header is one row', () => {
-  assert.match(designer, /className="sem-wf-author-head"/,
+  assert.match(designer, /className="sem-wf-ahead"/,
     'the Author header must be one named row, not a Panel of stacked notices');
-  assert.match(block('.sem-wf-author-head {'), /flex-wrap:\s*nowrap/,
-    'the Author header must never wrap to a second row');
-  assert.match(block('.sem-wf-author-head {'), /min-height:\s*40px/,
-    'the Author header is one 40px row on the shared control scale');
-  assert.doesNotMatch(designer, /sem-wf-stock-note/,
-    'the built-in explanation sentence moves into the Copy button tooltip; it is not a row of its own');
-  assert.match(designer, /title=\{[^}]*STOCK_COPY_WHY|STOCK_COPY_WHY\}/,
-    'the explanation must survive as the tooltip on Copy to this project, not just be deleted');
+  assert.match(block('.sem-wf-ahead {'), /align-items:\s*center/,
+    'the Author header lines its parts up on one row');
+  assert.doesNotMatch(designer, /sem-wf-stock-note|Copy to this project/,
+    'a starter explains itself once, beside its title; there is no Copy to this project any more');
+  assert.match(designer, /A starter\. Use it to make a copy you can change\./,
+    'a starter opened in Author says what Use does, in one line');
 });
 
 test('the editor renders only when a step is selected or pinned', () => {
@@ -124,7 +124,8 @@ test('the drawer header carries the named controls', () => {
 test('full screen hides the rest of the tab, and Escape leaves it', () => {
   const FULL = 'body[data-studio-fullscreen="workflow-canvas"]';
   const hidden = css.slice(css.indexOf(FULL), css.indexOf(FULL) + 1400);
-  for (const part of ['.studio-chrome', '.studio-arearow', '.studio-contextbar', 'aside:has(button[data-section])', '.sem-wf-author-head']) {
+  // The one-page Workflows has no rail; Author's own back link, head and summary line are what full screen hides.
+  for (const part of ['.studio-chrome', '.studio-arearow', '.studio-contextbar', '.sem-wf-author-top', '.sem-wf-ahead', '.sem-wf-summary']) {
     assert.ok(hidden.includes(part), `full screen must hide ${part}, or the canvas is not the whole tab`);
   }
   assert.match(hidden, /display:\s*none/, 'the hidden parts must actually be hidden');

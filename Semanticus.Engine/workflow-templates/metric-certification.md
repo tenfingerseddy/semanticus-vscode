@@ -3,7 +3,7 @@ kind: template
 name: metric-certification
 title: Certify {{surface_name}} against the business's numbers
 description: Check every KPI on {{surface_name}} against its owner's signed-off figure, raise any gaps with the named owner (never silently "fix" a certified number), and record where each passing measure's number comes from, so trust in the surface is evidence, not guesswork.
-whenToUse: "A recurring certification of a business-critical surface using YOUR KPI dictionary. For a one-off single measure verified against a known-good number, use new-measure."
+whenToUse: "A recurring certification of a business-critical surface using YOUR KPI dictionary. For a one-off single measure verified against a known-good number, describe the task in words instead (Workflows, New)."
 version: 1
 strictness: hard
 slots:

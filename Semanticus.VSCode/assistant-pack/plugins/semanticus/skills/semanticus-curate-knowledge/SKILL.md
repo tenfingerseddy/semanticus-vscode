@@ -6,7 +6,7 @@ description: Review and tidy Semanticus model knowledge by merging duplicate ins
 # Maintain model knowledge
 
 Read `list_insights` for the requested project or global scope. Inspect provenance, content and
-use counters; pending insights are separate from approved knowledge. Read relevant Primer
+use counters; pending insights are separate from approved knowledge. Read the relevant Model notes
 sections when deciding whether a lesson still fits.
 
 Merge true duplicates into a clear survivor with `edit_insight`, retaining useful keys and source
@@ -18,5 +18,6 @@ alone does not prove a lesson wrong or useless. Do not schedule maintenance or c
 knowledge merely because a project cleanup was requested.
 
 Use these tools to preserve append-only history. Do not rewrite knowledge JSONL files by hand.
-Review Primer suggestions through the Primer tools. Existing user authorization determines which
-proposals can be accepted. Report merges, corrections, retirements and unresolved evidence conflicts.
+Review Model notes suggestions with `list_primer_suggestions`, then `accept_primer_suggestion` or
+`reject_primer_suggestion`. Existing user authorization determines
+which suggestions can be accepted. Report merges, corrections, retirements and unresolved conflicts.

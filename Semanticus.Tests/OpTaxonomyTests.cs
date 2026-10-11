@@ -30,33 +30,43 @@ namespace Semanticus.Tests
         };
 
         // T215 placements plus the workflow document, preview, layout and upgrade operations.
-        // 25+41+93+15+30+14+36+32+36+6 = 328 (the Tests shelf took get_test_run, record_test_run and get_unmatched_rows;
-        // the Reports shelf took list_report_scope, set_report_scope and check_reports with the one report scope;
+        // 27+42+101+27+30+14+37+28+47+6 = 359 (publish_new_model joined Ship it out > Publishing and deployment in lane r1/newmodel2, 24 to 25 and 358 to 359; before that 358: the eight spec-first start tools joined Change the model > The model spec in lane m11/sf-doors, 8 to 16 and 350 to 358; before that 350: get_words_queue joined Findings and fixes in lane m11/plan-rows, the Plan's "Give the words to your assistant" row, 93 to 94 and 349 to 350; pick_chart_kind joined See what is in the model > Measures, DAX and queries on 28 Sep, D6: 41 to 42 and 348 to 349). Before that 348 (ask_data and list_data_questions joined See what is in the model > Measures,
+        // DAX and queries on 26 Sep, Jev question-to-DAX: 39 to 41 and 346 to 348). Before that 346 (describe_workflow_steps joined Workflows and rules on 25 Sep, Kane's UAT:
+        // describing a workflow opens Author; 46 to 47 and 345 to 346). Before that 345 (the composer's four draft ops joined Workflows and rules in lane L4,
+        // compose_task, get_draft, edit_draft and run_draft, 42 to 46 and 341 to 345 after slice C; before that:
+        // get_plan_history joined Findings and fixes in Plan-heart E4 and the four queue ops in E3; the slice 6 merge folded fourteen tools into their survivors and
+        // put load_rules and reset_rules on Findings and fixes; the Tests shelf took get_test_run, record_test_run
+        // and get_unmatched_rows; the Reports shelf took list_report_scope, set_report_scope and check_reports;
         // Connections took list_sql_source_usage, the shared free projection the Pro Tests feature made necessary).
+        // Plan at the heart, lane E3: Findings and fixes took the four queue ops (list_assistant_requests,
+        // claim_request, complete_request, decline_request), 22 to 26 and 334 to 338 after E4.
+        // Slice C added set_model_sql_endpoint, list_model_sql_endpoints and list_workspace_models to Connections
+        // (contract 19), 24 to 27 and 338 to 341.
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
         {
-            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 25 },
+            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 27 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 7, ["Reports and what uses this model"] = 10, ["Speed and size"] = 7,
-                ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 5,
-                ["Relationships and the diagram"] = 4, ["Tests, numbers and evidence"] = 3,
+                ["Measures, DAX and queries"] = 10, ["Reports and what uses this model"] = 9, ["Speed and size"] = 6,
+                ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 6,
+                ["Relationships and the diagram"] = 3, ["Tests, numbers and evidence"] = 3,
             },
             ["Change the model"] = new Dictionary<string, int>
             {
                 ["Measures, DAX and queries"] = 19, ["Where the data comes from"] = 14, ["The model as a whole"] = 14,
                 ["Tables, columns and hierarchies"] = 14, ["How the model looks and reads"] = 12,
-                ["The model spec"] = 8, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
+                ["The model spec"] = 16, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
             },
-            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 15 },
+            // 23 = 21 plus add_plan_target and remove_plan_target, the target half of the living plan.
+            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 27 },
             ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 30 },
             ["Track versions and compare"] = new Dictionary<string, int> { ["Versions and history"] = 14 },
             ["Ship it out"] = new Dictionary<string, int>
             {
-                ["Publishing and deployment"] = 24, ["Who can see what"] = 8, ["The model write-up"] = 4,
+                ["Publishing and deployment"] = 25, ["Who can see what"] = 8, ["The model write-up"] = 4,
             },
-            ["Teach the AI about this model"] = new Dictionary<string, int> { ["Teach the AI"] = 32 },
-            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 36 },
+            ["Teach the AI about this model"] = new Dictionary<string, int> { ["Teach the AI"] = 28 },
+            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 47 },
             ["Look things up"] = new Dictionary<string, int> { ["Reference lists and instruction sheets"] = 6 },
         };
 
@@ -116,8 +126,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(328, catalog.Length);
-            Assert.Equal(328, OpTaxonomy.Count);
+            Assert.Equal(359, catalog.Length);
+            Assert.Equal(359, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -250,7 +260,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(328, cat.Length);
+                Assert.Equal(359, cat.Length);
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

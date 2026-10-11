@@ -8,14 +8,12 @@ namespace Semanticus.Engine
 {
     /// <summary>
     /// The deploy-to-stage safety decision, factored out as a PURE function so the whole gate matrix is unit-testable
-    /// offline (no tenant, no HTTP). Two orthogonal protections:
+    /// offline (no tenant, no HTTP). One protection (the readiness-gate half left on 8 Oct: it scanned the model open in
+    /// Studio, not what the pipeline moves):
     ///  • A PRODUCTION target needs a <see cref="MintToken"/> confirm token that is bound to the exact (pipeline,
     ///    source→target, item-set) intent. The token is surfaced ONLY by the human door's dry-run (the engine
     ///    withholds it from the agent door), AND an agent can never commit a prod promotion — so an agent literally
     ///    cannot satisfy a prod deploy alone; a human must read the token from the preview and confirm.
-    ///  • A failing readiness gate (BPA + AI-readiness) blocks any commit unless <c>forceOverride</c> — which is
-    ///    an ACCOUNTABLE override, not a flag: it must carry an overrideReason (recorded in the model's audit
-    ///    trail by the caller). An unexplained override is a silent suppression; a reasoned one is a decision.
     /// </summary>
     internal static class DeployGuard
     {
@@ -43,17 +41,13 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Returns null when the deploy is allowed to proceed, else the (human-readable) refusal reason.</summary>
-        internal static string Refusal(bool targetIsProd, bool commit, string origin, string confirmToken, string expectedToken, bool gatePass, bool forceOverride, bool hasOverrideReason)
+        internal static string Refusal(bool targetIsProd, bool commit, string origin, string confirmToken, string expectedToken)
         {
             if (!commit) return null;   // a dry-run is a preview — never blocked
             if (targetIsProd && IsAgent(origin))
                 return "An agent cannot promote to a production stage. A human must confirm this deploy from the Deploy tab.";
             if (targetIsProd && !string.Equals(confirmToken, expectedToken, StringComparison.Ordinal))
                 return "A production deploy needs the confirmToken shown by the dry-run preview. Run the preview, then deploy with that exact token.";
-            if (!gatePass && !forceOverride)
-                return "Deploy is blocked by the readiness gate (BPA / AI-readiness). Pass forceOverride=true AND an overrideReason to deploy anyway (the override is recorded).";
-            if (!gatePass && forceOverride && !hasOverrideReason)
-                return "forceOverride needs an overrideReason: say why you're shipping past the gate (it is recorded in the audit trail).";
             return null;
         }
     }

@@ -1,16 +1,28 @@
+import { friendlyHeader, columnFormatter } from './resultformat.mjs';
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ColumnFilter, FilterPopover, FunnelIcon, compile, describe, distinctValues, familiesOf, isActive } from './gridfilter';
+import { formatNumber, dateText } from './gridformat';
+import { ColumnFilter, FilterFamily, FilterPopover, FunnelIcon, compile, describe, distinctValues, familiesOf, isActive } from './gridfilter';
 
-export interface GridColumn { name: string; type?: string }
+export interface GridColumn {
+  name: string; type?: string;
+  /** The model's own format string for a measure column (0.0068 as 0.7%, 36111492.86 as $36,111,492.86); sorting and filtering still see the number. */
+  format?: string;
+}
 
 const COL_W = 168;
 const MIN_FIT_COL_W = 118;   // narrower than this and squeezing to fit hurts more than scrolling does
+const SPREAD_COL_W = 360;   // the widest a column grows to when a narrow result spreads across its box
 const ROW_H = 26;
 const POP_W = 280;
 
 function isNum(v: unknown): boolean { return typeof v === 'number'; }
-function cell(v: unknown): string { return v === null || v === undefined ? '' : String(v); }
+function cell(v: unknown, format?: string): string {
+  if (v === null || v === undefined) return '';
+  const pct = typeof v === 'number' ? formatNumber(v, format) : null;
+  // A date arrives as text ("2025-01-01T00:00:00"): it shows in the column's format, or as a plain short date.
+  return pct ?? dateText(v, format) ?? String(v);
+}
 
 // A compact, always-rendering type glyph for a column header (opt-in via `showTypeGlyph`). Single safe
 // Unicode chars so headless Chromium renders them without font fallback tofu. Order matters: date/time is
@@ -27,8 +39,8 @@ function TypeGlyph({ type }: { type?: string }) {
   const g = typeGlyph(type);
   if (!g) return null;
   return (
-    <span className="shrink-0 grid place-items-center rounded text-[9px] font-semibold tnum" title={g.label}
-      style={{ width: 14, height: 14, background: 'var(--sem-surface)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>{g.ch}</span>
+    <span className="shrink-0 grid place-items-center sem-num text-(length:--sem-text-label)" title={g.label}
+      style={{ width: 14, height: 14, color: 'var(--sem-muted)' }}>{g.ch}</span>
   );
 }
 
@@ -54,8 +66,16 @@ interface Sort { col: number; dir: 1 | -1 }
  * view-only — `rows` are never mutated, and nothing re-queries the engine. `filterable={false}` hides the
  * whole filter bar (and the funnels) — used for tiny embedded grids.
  */
-export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false }: {
+export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false, framed = true, friendly = false }: {
   columns: GridColumn[]; rows: unknown[][]; height?: number | string; filterable?: boolean; truncated?: boolean;
+  // A grid on the page is its own card: a hairline box whose first column starts one card padding in. Inside a
+  // card that already frames it (DAX Lab's result, the Power Query preview) it draws no box of its own, because
+  // a card never sits inside a card (One Visual Language, 23 September).
+  framed?: boolean;
+  // Queries (27 Sep): friendly headers, formatted dates, and columns that spread across the width the result is
+  // given, so a short result is not a strip on the left. Display only; sorting, filtering and onCellMenu still
+  // read the raw values.
+  friendly?: boolean;
   // Opt-in header affordances (used by the M Code sample so its preview headers double as the column-op surface):
   showTypeGlyph?: boolean;                                            // a small type badge before each column name
   onColumnMenu?: (colIndex: number, anchor: HTMLElement) => void;     // ⌄ / right-click → open the caller's column-ops menu
@@ -71,17 +91,47 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
   const [sort, setSort] = useState<Sort | null>(null);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Record<number, ColumnFilter>>({});
-  const [open, setOpen] = useState<{ col: number; x: number; y: number } | null>(null);
-
-  // Filters are bound by column INDEX, so a schema change (new query) would mis-apply them — reset on the
-  // column signature, not on every render (a same-shape refresh keeps the user's filters).
-  const colSig = useMemo(() => JSON.stringify(columns.map((c) => [c.name, c.type || ''])), [columns]);
-  useEffect(() => { setFilters({}); setOpen(null); }, [colSig]);
+  // The open filter box remembers its column's name and kind, so it can stay open (with what was typed in it) when the columns change under it. col -1 = not in this result.
+  const [open, setOpen] = useState<{ col: number; x: number; y: number; name: string; family: FilterFamily } | null>(null);
+  // Filters set aside when the result's columns changed: kept by column name, named on the page, and used again only when the person says so.
+  const [aside, setAside] = useState<{ name: string; filter: ColumnFilter }[]>([]);
 
   const fams = useMemo(() => familiesOf(columns, rows), [columns, rows]);
+  // Filters are bound by column INDEX, so a schema change (a new query, maybe the assistant's) would mis-apply them. A change of the column set never drops what the
+  // person set or typed (sweep 3, site 6): applied filters are SET ASIDE by column name and the page says so, and an open filter box stays open on its column (found
+  // again by name) or, when that column is gone, on its own, so the value typed in it is kept. A same-shape refresh keeps everything as it was.
+  const colSig = useMemo(() => JSON.stringify(columns.map((c) => [c.name, c.type || ''])), [columns]);
+  const shownCols = useRef<GridColumn[] | null>(null);
+  useEffect(() => {
+    const before = shownCols.current;
+    shownCols.current = columns;
+    if (!before) return;
+    const kept = Object.keys(filters).map(Number).filter((ci) => isActive(filters[ci]) && before[ci]).map((ci) => ({ name: before[ci].name, filter: filters[ci] }));
+    if (kept.length) setAside((cur) => [...cur.filter((a) => !kept.some((k) => k.name === a.name)), ...kept]);
+    setFilters({});
+    setOpen((o) => {
+      if (!o) return o;
+      const at = columns.findIndex((c, i) => c.name === o.name && fams[i] === o.family);
+      return { ...o, col: at };
+    });
+  }, [colSig]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const asideFor = (name: string) => aside.find((a) => a.name === name)?.filter;
+  const putAside = (name: string, f: ColumnFilter | null) => setAside((cur) => [...cur.filter((a) => a.name !== name), ...(f ? [{ name, filter: f }] : [])]);
+  // Use them again: each filter goes back on the column of its name when that column is here with the same kind; the rest stay set aside.
+  const useAsideAgain = () => {
+    const back: Record<number, ColumnFilter> = {};
+    const rest = aside.filter((a) => {
+      const at = columns.findIndex((c, i) => c.name === a.name && fams[i] === a.filter.kind);
+      if (at < 0) return true;
+      back[at] = a.filter; return false;
+    });
+    setFilters((p) => ({ ...p, ...back }));
+    setAside(rest);
+  };
+  const formatters = useMemo(() => (friendly ? columns.map((c, ci) => columnFormatter(rows, ci, c.name)) : []), [friendly, columns, rows]);
 
   // Distinct value list for the open text column's checklist (loaded rows only; capped inside).
-  const distinct = useMemo(() => (open && fams[open.col] === 'text' ? distinctValues(rows, open.col) : null), [open, fams, rows]);
+  const distinct = useMemo(() => (open && open.col >= 0 && fams[open.col] === 'text' ? distinctValues(rows, open.col) : null), [open, fams, rows]);
 
   const activeCols = useMemo(
     () => Object.keys(filters).map(Number).filter((ci) => isActive(filters[ci])),
@@ -120,10 +170,14 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
   }, []);
   const colW = useMemo(() => {
     if (!boxW || columns.length === 0) return COL_W;
-    if (columns.length * COL_W <= boxW) return COL_W;
+    // A narrow result spreads across the box instead of sitting in a strip on its left (the space rule, 27
+    // September 2026), up to SPREAD_COL_W a column so two columns do not end a screen apart. The friendly grids
+    // (the Queries redesign) fill the box, as their picked mockup draws them.
+    if (columns.length * COL_W <= boxW)
+      return friendly ? Math.floor(boxW / columns.length) : Math.min(SPREAD_COL_W, Math.floor(boxW / columns.length));
     const perCol = Math.floor(boxW / columns.length);
     return perCol >= MIN_FIT_COL_W ? perCol : COL_W;
-  }, [boxW, columns.length]);
+  }, [boxW, columns.length, friendly]);
   const totalW = Math.max(columns.length * colW, 1);
 
   // Cycle a header: unsorted → asc → desc → unsorted.
@@ -133,11 +187,11 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
   const openAt = (e: React.MouseEvent, ci: number, toggle = false) => {
     e.stopPropagation();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setOpen((o) => (toggle && o?.col === ci ? null : { col: ci, x: rect.left, y: rect.bottom + 4 }));
+    setOpen((o) => (toggle && o?.col === ci ? null : { col: ci, x: rect.left, y: rect.bottom + 4, name: columns[ci]?.name ?? '', family: fams[ci] }));
   };
   const setCol = (ci: number, f: ColumnFilter) => setFilters((p) => ({ ...p, [ci]: f }));
   const clearCol = (ci: number) => setFilters((p) => { const n = { ...p }; delete n[ci]; return n; });
-  const resetAll = () => { setQuery(''); setSort(null); setFilters({}); setOpen(null); };
+  const resetAll = () => { setQuery(''); setSort(null); setFilters({}); setOpen(null); setAside([]); };
 
   const dirty = !!query || !!sort || activeCols.length > 0;
 
@@ -145,44 +199,51 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
     <div className="flex flex-col min-h-0" style={{ height }}>
       {filterable && (
         <>
-          <div className="flex items-center gap-2 pb-1.5 shrink-0">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter rows…" spellCheck={false}
-              className="text-[12px] px-2 py-1 rounded-md outline-none w-56" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-            <span className="text-[11px] tnum" style={{ color: 'var(--sem-muted)' }}>
+          <div className="flex items-center gap-2 pb-2 shrink-0">
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter rows…" spellCheck={false} aria-label="Filter rows"
+              className="sem-field sem-field-sm w-56" />
+            <span className="sem-text-meta sem-num">
               {view.length === rows.length ? `${rows.length.toLocaleString()} rows` : `${view.length.toLocaleString()} of ${rows.length.toLocaleString()}`}
               {truncated ? '. More rows exist.' : ''}
             </span>
             {dirty && (
-              <button onClick={resetAll} className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>Reset</button>
+              <button onClick={resetAll} className="sem-btn sem-btn-sm sem-btn-quiet">Reset</button>
             )}
           </div>
           {activeCols.length > 0 && (
-            <div className="flex items-center flex-wrap gap-1.5 pb-1.5 shrink-0">
+            <div className="flex items-center flex-wrap gap-2 pb-2 shrink-0">
               {activeCols.map((ci, idx) => (
                 <Fragment key={ci}>
-                  {idx > 0 && <span className="text-[9px] font-bold tracking-wider" style={{ color: 'var(--sem-muted)' }}>AND</span>}
-                  <span className="inline-flex items-center gap-1.5 rounded-full text-[11.5px] pl-2.5 pr-1 py-0.5"
-                    style={{ background: 'var(--sem-accent-soft)', border: '1px solid color-mix(in srgb,var(--sem-accent) 55%, transparent)', color: 'var(--sem-fg)' }}>
+                  {idx > 0 && <span className="sem-text-meta">and</span>}
+                  <span className="sem-chip sem-chip-outline">
                     <button onClick={(e) => openAt(e, ci)} className="inline-flex items-center gap-1" style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }} title="Edit filter">
                       <b className="font-semibold">{columns[ci]?.name}</b>
-                      <span style={{ color: 'color-mix(in srgb,var(--sem-fg) 72%, var(--sem-accent))' }}>{describe(filters[ci])}</span>
+                      <span style={{ color: 'var(--sem-muted)' }}>{describe(filters[ci])}</span>
                     </button>
-                    <button onClick={() => clearCol(ci)} title="Remove" className="grid place-items-center rounded-full text-[10px] leading-none" style={{ width: 15, height: 15, background: 'rgba(255,255,255,.08)', color: 'var(--sem-muted)', border: 'none', cursor: 'pointer' }}>✕</button>
+                    <button onClick={() => clearCol(ci)} title="Remove" className="grid place-items-center rounded-full text-(length:--sem-text-label) leading-none" style={{ width: 'var(--sem-chip-h)', height: 'var(--sem-chip-h)', background: 'transparent', color: 'var(--sem-muted)', border: 'none', cursor: 'pointer' }}>✕</button>
                   </span>
                 </Fragment>
               ))}
-              <button onClick={() => setFilters({})} className="text-[11px] ml-1" style={{ color: 'var(--sem-muted)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 2 }}>Clear all</button>
+              <button onClick={() => setFilters({})} className="sem-btn sem-btn-sm sem-btn-quiet">Clear all</button>
+            </div>
+          )}
+          {aside.length > 0 && (
+            <div role="status" data-testid="grid-filters-aside" className="flex items-center flex-wrap gap-2 pb-2 shrink-0 sem-text-meta">
+              <span>The columns changed, so {aside.length === 1 ? 'this filter is' : 'these filters are'} kept but not used:</span>
+              {aside.map((a) => <span key={a.name} className="sem-chip sem-chip-outline"><b className="font-semibold">{a.name}</b> <span style={{ color: 'var(--sem-muted)' }}>{describe(a.filter)}</span></span>)}
+              <button onClick={useAsideAgain} className="sem-btn sem-btn-sm sem-btn-quiet">Use them again</button>
+              <button onClick={() => setAside([])} className="sem-btn sem-btn-sm sem-btn-quiet">Drop them</button>
             </div>
           )}
         </>
       )}
 
-      <div ref={parentRef} className="sem-grid-scroll overflow-auto rounded-lg flex-1 min-h-0" style={{ border: '1px solid var(--sem-border)' }}>
+      <div ref={parentRef} className={'sem-grid-scroll overflow-auto flex-1 min-h-0' + (framed ? ' xe-grid-framed' : '')}>
         <div style={{ minWidth: totalW, position: 'relative' }}>
           {/* sticky header — click to sort, funnel to filter, ⌄/right-click for column ops (opt-in), + an optional
               second (profiling) row that scroll- and width-syncs because it lives in the same sticky wrapper */}
-          <div className="sticky top-0 z-10" style={{ background: 'var(--sem-surface-2)' }}>
-            <div className="flex" style={{ borderBottom: subHeader ? undefined : '1px solid var(--sem-border)' }}>
+          <div className="sticky top-0 z-10" style={{ background: 'var(--sem-ground)' }}>
+            <div className="flex" style={{ borderBottom: subHeader ? undefined : '1px solid var(--sem-rule)' }}>
               {columns.map((c, i) => {
                 const active = sort?.col === i;
                 const filtered = activeCols.includes(i);
@@ -191,20 +252,22 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
                   <div key={i} onClick={() => onHeader(i)}
                     onContextMenu={onColumnMenu ? (e) => { e.preventDefault(); e.stopPropagation(); onColumnMenu(i, e.currentTarget as HTMLElement); } : undefined}
                     title={(c.type ? `${c.name} · ${c.type}` : c.name) + ' · click to sort' + (onColumnMenu ? ' · ⌄ or right-click for column operations' : '')}
-                    className="group px-2 py-1 text-[11px] font-semibold cursor-pointer select-none flex items-center gap-1"
-                    style={{ width: colW, color: active ? 'var(--sem-accent)' : 'var(--sem-fg)', boxShadow: menuHere ? 'inset 0 0 0 1px var(--sem-accent)' : undefined }}>
+                    className="xe-gcell group px-2 py-1 sem-text-meta cursor-pointer select-none flex items-center gap-1"
+                    style={{ width: colW, color: active || menuHere ? 'var(--sem-fg)' : 'var(--sem-muted)', fontWeight: active ? 'var(--sem-weight-strong)' : undefined, boxShadow: menuHere ? 'inset 0 0 0 1px var(--sem-border)' : undefined }}>
                     {showTypeGlyph && <TypeGlyph type={c.type} />}
-                    <span className="truncate flex-1 min-w-0">{c.name}</span>
-                    {active && <span className="shrink-0 text-[9px]">{sort!.dir === 1 ? '▲' : '▼'}</span>}
+                    {/* A spread column's number sits at its right edge, so its header does too: a left header over a
+                        right number read as the next column's (verify-queries-redesign D10). */}
+                    <span className={'truncate flex-1 min-w-0' + (friendly && fams[i] === 'number' ? ' text-right' : '')}>{friendly ? friendlyHeader(c.name) : c.name}</span>
+                    {active && <span className="shrink-0 text-(length:--sem-text-label)">{sort!.dir === 1 ? '▲' : '▼'}</span>}
                     {onColumnMenu && (
                       <button onClick={(e) => { e.stopPropagation(); onColumnMenu(i, e.currentTarget as HTMLElement); }} title="Column operations" data-colmenu={i}
-                        className={'shrink-0 grid place-items-center transition-opacity ' + (menuHere ? 'opacity-100' : 'opacity-60 group-hover:opacity-100')}
-                        style={{ width: 16, height: 16, padding: 0, background: 'none', border: 'none', cursor: 'pointer', color: menuHere ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>⌄</button>
+                        className="shrink-0 grid place-items-center"
+                        style={{ width: 'var(--sem-space-4)', height: 'var(--sem-chip-h)', padding: 0, background: 'none', border: 'none', cursor: 'pointer', color: menuHere ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>⌄</button>
                     )}
                     {filterable && (
                       <button onClick={(e) => openAt(e, i, true)} title="Filter this column" data-funnel={i}
                         className={'shrink-0 grid place-items-center transition-opacity ' + (filtered ? 'opacity-100' : 'opacity-0 group-hover:opacity-70')}
-                        style={{ width: 16, height: 16, padding: 0, background: 'none', border: 'none', cursor: 'pointer', color: filtered ? 'var(--sem-accent)' : 'var(--sem-muted)' }}>
+                        style={{ width: 'var(--sem-space-4)', height: 'var(--sem-chip-h)', padding: 0, background: 'none', border: 'none', cursor: 'pointer', color: filtered ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>
                         <FunnelIcon on={filtered} />
                       </button>
                     )}
@@ -213,9 +276,9 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
               })}
             </div>
             {subHeader && (
-              <div className="flex" style={{ borderBottom: '1px solid var(--sem-border)' }}>
+              <div className="flex" style={{ borderBottom: '1px solid var(--sem-rule)' }}>
                 {columns.map((_, i) => (
-                  <div key={i} className="px-2 py-0.5 overflow-hidden" style={{ width: colW }}>{subHeader(i)}</div>
+                  <div key={i} className="xe-gcell px-2 py-0 overflow-hidden" style={{ width: colW }}>{subHeader(i)}</div>
                 ))}
               </div>
             )}
@@ -225,19 +288,19 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
             {virtualizer.getVirtualItems().map((vr) => {
               const row = view[vr.index];
               return (
-                <div key={vr.key} className="flex absolute left-0" style={{ top: vr.start, height: ROW_H, width: totalW, background: vr.index % 2 ? 'transparent' : 'color-mix(in srgb,var(--sem-fg) 3%, transparent)' }}>
+                <div key={vr.key} className="flex absolute left-0" style={{ top: vr.start, height: ROW_H, width: totalW }}>
                   {columns.map((_, ci) => {
                     const v = row?.[ci];
                     return (
-                      <div key={ci} className={'px-2 py-1 text-[12px] truncate ' + (isNum(v) ? 'tnum text-right' : '')}
+                      <div key={ci} className={'xe-gcell px-2 py-1 text-xs truncate ' + (isNum(v) ? 'sem-num text-right' : '')}
                         onContextMenu={onCellMenu && row ? (e) => {
                           // Suppress the default menu ONLY when the caller actually handled the cell — a
                           // dimension/label cell has no explanation, so it keeps the normal context menu.
                           if (onCellMenu(row, ci, { x: e.clientX, y: e.clientY })) { e.preventDefault(); e.stopPropagation(); }
                         } : undefined}
-                        style={{ width: colW, borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-fg)' }}
-                        title={cell(v) + (onCellMenu && isNum(v) ? '\nRight-click: explain this number' : '')}>
-                        {cell(v)}
+                        style={{ width: colW, borderBottom: '1px solid var(--sem-rule)', color: 'var(--sem-fg)' }}
+                        title={cell(v, columns[ci]?.format) + (onCellMenu && isNum(v) ? '\nRight-click: explain this number' : '')}>
+                        {friendly && !(isNum(v) && formatNumber(v as number, columns[ci]?.format)) ? (columns[ci]?.format && dateText(v, columns[ci]?.format)) || formatters[ci](v) : cell(v, columns[ci]?.format)}
                       </div>
                     );
                   })}
@@ -248,14 +311,15 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
         </div>
       </div>
 
-      {open && fams[open.col] && (
+      {open && (open.col >= 0 ? fams[open.col] : open.family) && (
         <>
           <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setOpen(null)} />
           <div className="fixed" style={{ zIndex: 50, top: open.y, left: Math.max(8, Math.min(open.x, (typeof window !== 'undefined' ? window.innerWidth : 1200) - POP_W - 8)) }} onClick={(e) => e.stopPropagation()}>
+            {open.col < 0 && <div role="status" data-testid="grid-filter-col-gone" className="sem-text-meta mb-1">{open.name} is not in this result now. What you set here is kept, and Apply sets it aside.</div>}
             <FilterPopover
-              family={fams[open.col]} name={columns[open.col]?.name ?? ''} initial={filters[open.col]} distinct={distinct}
-              onApply={(f) => { setCol(open.col, f); setOpen(null); }}
-              onClear={() => { clearCol(open.col); setOpen(null); }}
+              family={open.col >= 0 ? fams[open.col] : open.family} name={open.name} initial={open.col >= 0 ? filters[open.col] : asideFor(open.name)} distinct={distinct}
+              onApply={(f) => { if (open.col >= 0) setCol(open.col, f); else putAside(open.name, f); setOpen(null); }}
+              onClear={() => { if (open.col >= 0) clearCol(open.col); else putAside(open.name, null); setOpen(null); }}
             />
           </div>
         </>

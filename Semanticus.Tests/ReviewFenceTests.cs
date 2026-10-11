@@ -60,10 +60,12 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("\u2014", ReviewFence.Stale, StringComparison.Ordinal);
         }
 
+        private string OpenTiny() => TinyBim.Write(Path.Combine(_root, "open-" + Guid.NewGuid().ToString("N").Substring(0, 6), "Tiny.bim"));
+
         private static string CopyBim(string suffix)
         {
             var target = Path.Combine(Path.GetTempPath(), $"sem-fence-{suffix}-{Guid.NewGuid():N}.bim");
-            File.Copy(TestModels.FindBim(), target);
+            TinyBim.Write(target);   // lean suite: the fence asks about the token and the session, not about AdventureWorks
             return target;
         }
 
@@ -279,7 +281,7 @@ namespace Semanticus.Tests
         public async Task Dry_run_of_set_publish_destination_is_refused_and_writes_nothing()
         {
             using var engine = new LocalEngine(new SessionManager(), new Free());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var remembered = ConnectionRegistry.Remember(
                 "xmla", "powerbi://example/review-fence", "Sales", "Sales model");
 
@@ -302,7 +304,7 @@ namespace Semanticus.Tests
         public async Task File_merge_without_review_token_refuses_and_rewrites_nothing()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("no-token");
@@ -329,7 +331,7 @@ namespace Semanticus.Tests
         public async Task File_merge_refuses_when_the_target_changed_after_preview()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("stale");
@@ -356,7 +358,7 @@ namespace Semanticus.Tests
         public async Task File_merge_with_zero_changes_rewrites_nothing()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("zero");
@@ -382,7 +384,7 @@ namespace Semanticus.Tests
         public async Task File_merge_with_matching_review_token_writes_the_selected_change()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("ok");
@@ -407,7 +409,7 @@ namespace Semanticus.Tests
         public async Task File_merge_refuses_when_the_session_changed_after_preview()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("session-stale");
@@ -434,7 +436,7 @@ namespace Semanticus.Tests
         public async Task Mcp_file_merge_without_review_token_refuses_and_rewrites_nothing()
         {
             using var engine = new LocalEngine(new SessionManager(), new Pro());
-            await engine.OpenAsync(TestModels.FindBim());
+            await engine.OpenAsync(OpenTiny());
             var table = (await engine.ListTreeAsync(null)).First(t => t.Kind == "table");
             await engine.CreateMeasureAsync(table.Ref, "Fence Merge A", "1", "human");
             var target = CopyBim("mcp-no-token");

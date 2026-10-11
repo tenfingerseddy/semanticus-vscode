@@ -136,12 +136,17 @@ namespace Semanticus.Tests
         [Fact]
         public void Editing_the_local_copy_and_writing_a_file_are_allowed_regardless_of_label()
         {
-            // These never touch a live target, so the label on them is meaningless — allowed in every preset.
+            // These never touch a live target, so the label on them is meaningless — allowed in every preset but Locked,
+            // whose card says even local writes ask first (Sol UAT S10-mA2-011); there they ask at every label.
             foreach (var name in AgentPolicyPresets.Names)
             {
                 var p = AgentPolicyPresets.Build(name);
-                Assert.Equal(GateOutcome.Allow, AgentPolicyGuard.Decide(AgentCapability.EditLocal, "prod", "agent", true, p).Outcome);
-                Assert.Equal(GateOutcome.Allow, AgentPolicyGuard.Decide(AgentCapability.DeployFile, "prod", "agent", true, p).Outcome);
+                var expected = name == "locked" ? GateOutcome.Ask : GateOutcome.Allow;
+                foreach (var label in new[] { "local", "dev", "uat", "prod" })
+                {
+                    Assert.Equal(expected, AgentPolicyGuard.Decide(AgentCapability.EditLocal, label, "agent", true, p).Outcome);
+                    Assert.Equal(expected, AgentPolicyGuard.Decide(AgentCapability.DeployFile, label, "agent", true, p).Outcome);
+                }
             }
         }
 

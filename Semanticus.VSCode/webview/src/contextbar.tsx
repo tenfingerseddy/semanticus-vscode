@@ -47,11 +47,16 @@ function sameInstance(s: SessionInfo, conn: ConnectionStatus | null): boolean {
 // and we can't prove equality without a diff; the bar offers that diff instead). "Connected?" comes from `conn` (the
 // live query engine), not the session's lagging copy.
 type SyncTone = 'neutral' | 'warn';
-function syncVerdict(s: SessionInfo | null, conn: ConnectionStatus | null): { tone: SyncTone; label: string; detail: string } {
+/** Exported so the Overview can ask the ONE question it needs about this bar: is the warning showing?
+ *  A warning makes this bar two lines instead of one and takes 22px off the page pane (35px to 57px,
+ *  measured 2026-09-23), which is the difference between the landing page fitting on one screen and not.
+ *  The Overview reads this verdict rather than re-deriving it from `hasUnsavedChanges`, because a second
+ *  copy of the rule is a second answer waiting to disagree with the bar a person is looking at. */
+export function syncVerdict(s: SessionInfo | null, conn: ConnectionStatus | null): { tone: SyncTone; label: string; detail: string } {
   if (!s || !conn?.connected) return { tone: 'neutral', label: 'Offline', detail: 'No live connection, so queries are unavailable.' };
   // A live connection + staged edits is the real hazard: the staged changes are NOT in the model you're querying — even
   // when you're querying the very instance you opened, because unsaved changes haven't been pushed to it yet.
-  if (s.hasUnsavedChanges) return { tone: 'warn', label: 'Unsaved edits not queried', detail: "Unsaved edits are not in the model you're querying." };
+  if (s.hasUnsavedEdits ?? s.hasUnsavedChanges) return { tone: 'warn', label: 'Unsaved edits not queried', detail: "Unsaved edits are not in the model you're querying." };
   if (sameInstance(s, conn)) return { tone: 'neutral', label: 'Same instance', detail: 'Editing and querying the same instance.' };
   // An attached LOCAL engine (Power BI Desktop) is not a published model — the "reflects the last deploy" line is
   // only true of an XMLA endpoint. Same verdict logic as the native status-bar chip (extension.ts renderSyncChip);
@@ -91,7 +96,7 @@ export function compareSeedFromSession(s: SessionInfo, conn: ConnectionStatus | 
 }
 
 // A full-width FOOTER pinned to the bottom of the Studio panel. Each identity is its own keyboard-reachable drawer
-// shortcut; Review changes is deliberately separate so changing a connection never reads like publishing. Only the
+// shortcut; the review of a publish lives on the Publish page, so changing a connection never reads like publishing. Only the
 // sync chip is tinted. Names wrap when room is tight; secondary hints yield before a model identity disappears.
 // THREE roles, not four: the Reference slot left this bar on 2026-09-14. It is not a role of the session the way
 // editing, testing and publishing are, it read as a fourth thing to configure before you could start, and it was
@@ -99,7 +104,7 @@ export function compareSeedFromSession(s: SessionInfo, conn: ConnectionStatus | 
 // in becomes an action ("Copy from another model...") rather than a permanent seat in the footer.
 // State comes from the shared connection context (the single source of truth), NOT an App prop — an App-held copy went
 // stale on attach/disconnect (those don't fire model/didChange) and left the footer disagreeing with the live tabs.
-// Under 900px the three roles, the pill and Review changes stop fitting on one line. Tests is the slot that folds:
+// Under 900px the three roles and the pill stop fitting on one line. Tests is the slot that folds:
 // it is the one people set once and read least, and the pill beside it is already about querying, so the fact has
 // a natural home in that pill's tooltip. The breakpoint is written in TWO places on purpose and they must stay
 // equal — the stylesheet hides the button, this decides what the tooltip then has to say.
@@ -117,7 +122,7 @@ function useTestsFolded(): boolean {
   return folded;
 }
 
-export function ContextBar({ onConnections, onReview }: { onConnections: (section?: HubView) => void; onReview: () => void }) {
+export function ContextBar({ onConnections }: { onConnections: (section?: HubView) => void }) {
   const { session, conn, context } = useConnection();
   const testsFolded = useTestsFolded();
   if (!session?.sessionId) return null;
@@ -127,47 +132,38 @@ export function ContextBar({ onConnections, onReview }: { onConnections: (sectio
   const publishing = context?.publishing;
   const connected = !!querying?.available || !!conn?.connected;
   const editMain = editing?.modelName || s.modelName || 'Model';
-  const editSub = editing?.sourceControlled ? 'local files · source controlled'
-    : editing?.live ? 'live model' : (editing?.source ? basename(editing.source) : 'local files');
   const queryMain = querying?.available ? (querying.modelName || querying.database || shortEndpoint(querying.source) || 'Connected model') : 'Not connected';
   const querySub = querying?.available ? (querying.kind === 'localDesktop' || querying.kind === 'local' ? 'local running model' : 'published model') : 'tests and queries unavailable';
   const publishMain = publishing?.available ? (publishing.modelName || publishing.database || 'Published model') : 'Not linked';
-  const publishSub = publishing?.available ? 'XMLA destination' : 'choose before publishing';
   const v = syncVerdict(s, conn);
   const warn = v.tone === 'warn';
   // Folded, the pill carries the Tests fact so nothing about the session becomes unreadable at a narrow width.
   const pillTitle = testsFolded ? `${v.detail} Tests: ${queryMain} (${querySub}).` : v.detail;
-  const kicker = { color: 'var(--sem-muted)', fontSize: 9, letterSpacing: '0.06em' } as const;
-  const segment = 'connection-role flex items-baseline gap-1.5 min-w-0 px-1.5 py-1 rounded outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-[color:var(--sem-accent)] hover:bg-[color:var(--sem-surface-2)]';
+  // Kane kept this bar on 8 October 2026 and asked for it shorter: the model, then "Tests: x", then "Publish: y", and
+  // the sync word with its dot. No "Editing" label (the header names the model), no per-slot hints and no
+  // second review button (the Publish button opens the review). Only a warning gives the dot a colour.
+  const segment = 'connection-role';
 
   return (
-    <div className="studio-contextbar flex items-center gap-1.5 w-full px-2.5 text-left shrink-0" style={{ minHeight: 34, background: 'var(--sem-surface)', color: 'var(--sem-fg)', borderTop: '1px solid var(--sem-border)' }}>
-      <button type="button" data-testid="connections-editing" onClick={() => onConnections('open')} title="Choose what to edit" className={segment}>
-        <span className="uppercase font-semibold shrink-0" style={kicker}>Editing</span>
-        <span className="connection-value text-[12px] font-medium truncate min-w-0" title={editing?.source}>{editMain}</span>
-        {s.hasUnsavedChanges && <span className="text-[10px] shrink-0" style={{ color: 'var(--sem-warn)' }}>● unsaved</span>}
-        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{editSub}</span>
+    <div className="studio-contextbar" style={{ minHeight: 34 }}>
+      <button type="button" data-testid="connections-editing" onClick={() => onConnections('open')} title={`Editing ${editMain}. Choose what to edit.`} className={segment}>
+        <span className="connection-value" title={editing?.source}>{editMain}</span>
+        {(s.hasUnsavedEdits ?? s.hasUnsavedChanges) && <span className="sem-chip sem-chip-warn connection-unsaved">unsaved</span>}
       </button>
-      <span className="connection-separator text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
-      <button type="button" data-testid="connections-querying" onClick={() => onConnections('setup')} title="Choose the model used for tests and queries" className={segment}>
-        <span className="uppercase font-semibold shrink-0" style={kicker}>Tests</span>
-        <span className="connection-value text-[12px] font-medium truncate min-w-0" style={{ color: connected ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{queryMain}</span>
-        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{querySub}</span>
+      <span className="connection-separator" aria-hidden="true">→</span>
+      <button type="button" data-testid="connections-querying" onClick={() => onConnections('setup')} title={`Tests and queries use ${queryMain} (${querySub}). Choose the model.`} className={segment}>
+        <span className="connection-kicker">Tests:</span>
+        <span className={connected ? 'connection-value' : 'connection-value connection-value-none'}>{queryMain}</span>
       </button>
-      <span className="connection-separator text-[11px] shrink-0" style={{ color: 'var(--sem-muted)' }}>›</span>
+      <span className="connection-separator" aria-hidden="true">→</span>
       <button type="button" data-testid="connections-publishing" onClick={() => onConnections('setup')} title="Choose the live model that will receive published changes" className={segment}>
-        <span className="uppercase font-semibold shrink-0" style={kicker}>Publish to</span>
-        <span className="connection-value text-[12px] font-medium truncate min-w-0" style={{ color: publishing?.available ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>{publishMain}</span>
-        <span className="connection-hint text-[10px] truncate min-w-0" style={{ color: 'var(--sem-muted)' }}>{publishSub}</span>
+        <span className="connection-kicker">Publish:</span>
+        <span className={publishing?.available ? 'connection-value' : 'connection-value connection-value-none'}>{publishMain}</span>
       </button>
-      <span className={`connection-sync${warn ? ' connection-sync-warn' : ''} flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-medium shrink-0 max-w-[46%]`}
-        style={warn
-          ? { background: 'color-mix(in srgb, var(--sem-warn) 18%, transparent)', color: 'var(--sem-warn)', border: '1px solid color-mix(in srgb, var(--sem-warn) 45%, transparent)' }
-          : { background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>
-        <span className="shrink-0">{warn ? '!' : '●'}</span>
-        <span className="truncate" title={pillTitle}>{warn ? v.detail : v.label}</span>
-      </span>
-      <button type="button" onClick={onReview} title="Review differences before updating a test model or publishing" className="connection-review ml-auto text-[11px] font-semibold shrink-0 rounded px-2 py-1" style={{ color: 'var(--sem-accent)' }}>Review changes →</button>
+      {/* The unsaved-edits warning is said once, where it matters: beside Ask answers and query results (QueryStalenessChip). */}
+      {!warn && <span className="connection-sync sem-chip sem-chip-dot">
+        <span className="truncate" title={pillTitle}>{v.label}</span>
+      </span>}
     </div>
   );
 }
@@ -179,7 +175,7 @@ export function QueryStalenessChip({ className = '' }: { className?: string }) {
   const { session, conn } = useConnection();
   // The one condition under which query results omit your staged work: a live query connection AND unsaved edits. Read
   // "connected?" from `conn` (the query engine), not the session copy, so an attach/disconnect is reflected at once.
-  const divergent = !!(conn?.connected && session?.hasUnsavedChanges);
+  const divergent = !!(conn?.connected && (session?.hasUnsavedEdits ?? session?.hasUnsavedChanges));
   const sid = session?.sessionId;
   const [dismissed, setDismissed] = useState(false);
   // Re-arm on every FRESH divergence — otherwise one dismissal silences the warning for the whole webview session,
@@ -191,11 +187,10 @@ export function QueryStalenessChip({ className = '' }: { className?: string }) {
   if (dismissed || !divergent) return null;
   return (
     <div className={className}>
-      <div className="flex items-center gap-2 text-[11px] px-2.5 py-1.5 rounded-md"
-        style={{ background: 'color-mix(in srgb, var(--sem-warn) 14%, transparent)', color: 'var(--sem-warn)', border: '1px solid color-mix(in srgb, var(--sem-warn) 40%, transparent)' }}>
-        <span className="shrink-0">!</span>
-        <span>Results come from the connected {conn?.kind === 'local' ? 'local test model' : 'published model'}. Your unsaved edits are not included.</span>
-        <button type="button" aria-label="Dismiss this notice" onClick={() => setDismissed(true)} className="ml-auto shrink-0" style={{ color: 'var(--sem-warn)', opacity: 0.8 }} title="Dismiss">✕</button>
+      {/* Instrument: a warning is a line with an amber dot, in the text colour so it reads in every theme. */}
+      <div className="query-stale">
+        <span className="sem-chip sem-chip-warn query-stale-text">Results come from the connected {conn?.kind === 'local' ? 'local test model' : 'published model'}. Your unsaved edits are not included.</span>
+        <button type="button" aria-label="Dismiss this notice" onClick={() => setDismissed(true)} className="query-stale-dismiss" title="Dismiss">✕</button>
       </div>
     </div>
   );

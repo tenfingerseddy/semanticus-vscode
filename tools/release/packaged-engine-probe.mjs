@@ -153,6 +153,8 @@ function callEngineOverMcp(exe, engineRoot, timeoutMs = 120_000) {
     env.DOTNET_ROOT = path.join(engineRoot, '__no_global_dotnet__');
     env.DOTNET_MULTILEVEL_LOOKUP = '0';
     env.SEMANTICUS_ENTRA_CLIENT_ID = DEAD_CLIENT_ID;      // the whole isolation mechanism
+    // A probe run keeps its per-user state in a scratch folder, never the real ~/.semanticus (27 Sep).
+    env.SEMANTICUS_HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'sem-home-probe-'));
 
     const child = spawn(exe, ['--mcp'], { cwd: engineRoot, env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let stdout = '';

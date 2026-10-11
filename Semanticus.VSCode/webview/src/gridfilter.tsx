@@ -298,7 +298,7 @@ const POP = 280; // popover width
 const sel: CSSProperties = { background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' };
 
 function Field({ children }: { children: ReactNode }) {
-  return <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
+  return <div className="text-(length:--sem-text-label) mb-1" style={{ color: 'var(--sem-muted)' }}>{children}</div>;
 }
 
 /**
@@ -317,10 +317,10 @@ export function FilterPopover(props: {
     family === 'date' ? 'D' : family === 'number' ? '#' : family === 'boolean' ? '◑' : 'T';
 
   return (
-    <div className="rounded-[11px] overflow-hidden flex flex-col text-[12px]"
+    <div className="rounded-(--sem-radius-card) overflow-hidden flex flex-col text-xs"
       style={{ width: POP, background: 'var(--sem-surface)', border: '1px solid var(--sem-border-strong, var(--sem-border))', boxShadow: '0 16px 40px -22px rgba(0,0,0,.85)' }}>
-      <div className="flex items-center gap-2 px-3 py-2.5" style={{ borderBottom: '1px solid var(--sem-border)' }}>
-        <span style={{ color: 'var(--sem-accent)', fontWeight: 700 }}>{headIcon}</span>
+      <div className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: '1px solid var(--sem-border)' }}>
+        <span style={{ fontWeight: 700 }}>{headIcon}</span>
         <span className="font-semibold truncate">{name}</span>
         <span style={{ color: 'var(--sem-muted)' }}>· {family}</span>
       </div>
@@ -333,10 +333,9 @@ export function FilterPopover(props: {
       </div>
 
       {family !== 'boolean' && (
-        <div className="flex items-center gap-2 px-3 py-2.5" style={{ borderTop: '1px solid var(--sem-border)' }}>
-          <button onClick={onClear} className="text-[11px]" style={{ color: 'var(--sem-muted)', background: 'none', border: 'none', cursor: 'pointer' }}>Clear</button>
-          <button onClick={apply} className="ml-auto text-[12px] font-semibold rounded-md px-4 py-1.5"
-            style={{ color: '#fff', background: 'var(--sem-accent)', border: 'none', cursor: 'pointer' }}>Apply</button>
+        <div className="flex items-center gap-2 px-3 py-2" style={{ borderTop: '1px solid var(--sem-border)' }}>
+          <button onClick={onClear} className="sem-btn sem-btn-sm sem-btn-quiet">Clear</button>
+          <button onClick={apply} className="ml-auto sem-btn sem-btn-sm sem-btn-primary">Apply</button>
         </div>
       )}
     </div>
@@ -349,11 +348,10 @@ function DateBody({ draft, setDraft, commit }: { draft: Extract<ColumnFilter, { 
   const isRange = draft.mode === 'range';
   return (
     <>
-      <div className="inline-flex rounded-md p-0.5 self-start" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+      <div className="sem-seg self-start">
         {(['rel', 'range'] as const).map((m) => (
           <button key={m} onClick={() => setDraft(m === 'range' ? { kind: 'date', mode: 'range', from: null, to: null } : { kind: 'date', mode: 'rel', n: 6, unit: 'month' })}
-            className="text-[11.5px] px-3 py-1 rounded"
-            style={(isRange ? m === 'range' : m === 'rel') ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', fontWeight: 600, border: 'none' } : { background: 'none', color: 'var(--sem-muted)', border: 'none', cursor: 'pointer' }}>
+            className="sem-seg-item" aria-pressed={isRange ? m === 'range' : m === 'rel'}>
             {m === 'rel' ? 'Relative' : 'Range'}
           </button>
         ))}
@@ -363,13 +361,13 @@ function DateBody({ draft, setDraft, commit }: { draft: Extract<ColumnFilter, { 
         <>
           <div>
             <Field>Quick ranges</Field>
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {DATE_PRESETS.map((p) => {
                 const pf = p.make();
                 const on = eqJSON(pf, draft);
                 return (
-                  <button key={p.label} onClick={() => commit(pf)} className="text-[11.5px] rounded-full px-2.5 py-1"
-                    style={on ? { background: 'var(--sem-accent-soft)', border: '1px solid var(--sem-accent)', color: 'var(--sem-fg)', cursor: 'pointer' } : { background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)', cursor: 'pointer' }}>
+                  <button key={p.label} onClick={() => commit(pf)} className="text-xs rounded-full px-3 py-1"
+                    style={on ? { background: 'var(--sem-surface-2)', border: '1px solid var(--sem-strong-border)', color: 'var(--sem-fg)', cursor: 'pointer' } : { background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)', color: 'var(--sem-fg)', cursor: 'pointer' }}>
                     {p.label}
                   </button>
                 );
@@ -381,9 +379,9 @@ function DateBody({ draft, setDraft, commit }: { draft: Extract<ColumnFilter, { 
             <div className="flex items-center gap-2">
               <span style={{ color: 'var(--sem-muted)' }}>Last</span>
               <input type="number" min={1} value={draft.mode === 'rel' ? draft.n : 6} onChange={(e) => setDraft({ kind: 'date', mode: 'rel', n: Math.max(1, Number(e.target.value) || 1), unit: draft.mode === 'rel' ? draft.unit : 'month' })}
-                className="w-16 text-right rounded-md px-2 py-1 outline-none tnum" style={sel} />
+                className="w-16 text-right rounded-(--sem-radius-control) px-2 py-1 outline-none tnum" style={sel} />
               <select value={draft.mode === 'rel' ? draft.unit : 'month'} onChange={(e) => setDraft({ kind: 'date', mode: 'rel', n: draft.mode === 'rel' ? draft.n : 6, unit: e.target.value as RelUnit })}
-                className="rounded-md px-2 py-1 outline-none flex-1" style={sel}>
+                className="rounded-(--sem-radius-control) px-2 py-1 outline-none flex-1" style={sel}>
                 <option value="day">days</option><option value="week">weeks</option><option value="month">months</option><option value="quarter">quarters</option><option value="year">years</option>
               </select>
             </div>
@@ -394,10 +392,10 @@ function DateBody({ draft, setDraft, commit }: { draft: Extract<ColumnFilter, { 
       {isRange && (
         <>
           <div><Field>From</Field>
-            <input type="date" value={draft.from ?? ''} onChange={(e) => setDraft({ ...draft, from: e.target.value || null })} className="w-full rounded-md px-2 py-1 outline-none" style={sel} /></div>
+            <input type="date" value={draft.from ?? ''} onChange={(e) => setDraft({ ...draft, from: e.target.value || null })} className="w-full rounded-(--sem-radius-control) px-2 py-1 outline-none" style={sel} /></div>
           <div><Field>To</Field>
-            <input type="date" value={draft.to ?? ''} onChange={(e) => setDraft({ ...draft, to: e.target.value || null })} className="w-full rounded-md px-2 py-1 outline-none" style={sel} /></div>
-          <p className="text-[11px]" style={{ color: 'var(--sem-muted)' }}>Leave either side blank for an open-ended range.</p>
+            <input type="date" value={draft.to ?? ''} onChange={(e) => setDraft({ ...draft, to: e.target.value || null })} className="w-full rounded-(--sem-radius-control) px-2 py-1 outline-none" style={sel} /></div>
+          <p className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>Leave either side blank for an open-ended range.</p>
         </>
       )}
     </>
@@ -417,18 +415,18 @@ function NumberBody({ draft, setDraft }: { draft: Extract<ColumnFilter, { kind: 
     <>
       <div>
         <Field>Condition</Field>
-        <select value={draft.op} onChange={(e) => setDraft({ ...draft, op: e.target.value as NumOp })} className="w-full rounded-md px-2 py-1.5 outline-none" style={sel}>
+        <select value={draft.op} onChange={(e) => setDraft({ ...draft, op: e.target.value as NumOp })} className="w-full rounded-(--sem-radius-control) px-2 py-1 outline-none" style={sel}>
           {NUM_OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
         </select>
       </div>
       {!noInput && (
         <div className="flex items-center gap-2">
           <input type="number" value={draft.a ?? ''} onChange={(e) => setDraft({ ...draft, a: num(e.target.value) })} placeholder={draft.op === 'between' ? 'min' : 'value'}
-            className="rounded-md px-2 py-1.5 outline-none tnum text-right flex-1 min-w-0" style={sel} />
+            className="rounded-(--sem-radius-control) px-2 py-1 outline-none tnum text-right flex-1 min-w-0" style={sel} />
           {draft.op === 'between' && <>
             <span style={{ color: 'var(--sem-muted)' }}>to</span>
             <input type="number" value={draft.b ?? ''} onChange={(e) => setDraft({ ...draft, b: num(e.target.value) })} placeholder="max"
-              className="rounded-md px-2 py-1.5 outline-none tnum text-right flex-1 min-w-0" style={sel} />
+              className="rounded-(--sem-radius-control) px-2 py-1 outline-none tnum text-right flex-1 min-w-0" style={sel} />
           </>}
         </div>
       )}
@@ -451,23 +449,23 @@ function TextBody({ draft, setDraft, distinct }: { draft: Extract<ColumnFilter, 
     <>
       <div>
         <Field>Condition</Field>
-        <select value={draft.op} onChange={(e) => setDraft({ ...draft, op: e.target.value as TextOp })} className="w-full rounded-md px-2 py-1.5 outline-none" style={sel}>
+        <select value={draft.op} onChange={(e) => setDraft({ ...draft, op: e.target.value as TextOp })} className="w-full rounded-(--sem-radius-control) px-2 py-1 outline-none" style={sel}>
           {TEXT_OPS.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
         </select>
       </div>
       {!noInput && <input value={draft.value} onChange={(e) => setDraft({ ...draft, value: e.target.value })} placeholder="Type a value…" spellCheck={false}
-        className="w-full rounded-md px-2 py-1.5 outline-none" style={sel} />}
+        className="w-full rounded-(--sem-radius-control) px-2 py-1 outline-none" style={sel} />}
       {distinct && distinct.length > 0 && (
         <div>
           <Field>Or pick values</Field>
-          <div className="rounded-md overflow-auto" style={{ maxHeight: 132, background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+          <div className="rounded-(--sem-radius-control) overflow-auto" style={{ maxHeight: 132, background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
             {distinct.slice(0, 500).map((d) => {
               const on = draft.picked.includes(d.value);
               return (
-                <label key={d.value} className="flex items-center gap-2 px-2.5 py-1.5 cursor-pointer" style={{ borderBottom: '1px solid color-mix(in srgb,var(--sem-border) 60%, transparent)' }} onClick={() => toggle(d.value)}>
-                  <span className="grid place-items-center rounded-[4px] text-[10px]" style={{ width: 14, height: 14, color: '#fff', background: on ? 'var(--sem-accent)' : 'transparent', border: `1px solid ${on ? 'var(--sem-accent)' : 'var(--sem-border)'}` }}>{on ? '✓' : ''}</span>
+                <label key={d.value} className="flex items-center gap-2 px-3 py-1 cursor-pointer" style={{ borderBottom: '1px solid color-mix(in srgb,var(--sem-border) 60%, transparent)' }} onClick={() => toggle(d.value)}>
+                  <span className="grid place-items-center rounded-sm text-(length:--sem-text-label)" style={{ width: 14, height: 14, color: '#fff', background: on ? 'var(--sem-accent)' : 'transparent', border: `1px solid ${on ? 'var(--sem-accent)' : 'var(--sem-border)'}` }}>{on ? '✓' : ''}</span>
                   <span className="truncate flex-1">{d.value}</span>
-                  <span className="tnum text-[11px]" style={{ color: 'var(--sem-muted)' }}>{d.count}</span>
+                  <span className="tnum text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{d.count}</span>
                 </label>
               );
             })}
@@ -480,11 +478,10 @@ function TextBody({ draft, setDraft, distinct }: { draft: Extract<ColumnFilter, 
 
 function BooleanBody({ value, commit, clear }: { value: boolean; commit: (f: ColumnFilter) => void; clear: () => void }) {
   const opt = (label: string, on: boolean, onClick: () => void) => (
-    <button onClick={onClick} className="text-[11.5px] px-3 py-1 rounded"
-      style={on ? { background: 'var(--sem-accent)', color: 'var(--sem-on-accent)', fontWeight: 600, border: 'none', cursor: 'pointer' } : { background: 'none', color: 'var(--sem-muted)', border: 'none', cursor: 'pointer' }}>{label}</button>
+    <button onClick={onClick} className="sem-seg-item" aria-pressed={on}>{label}</button>
   );
   return (
-    <div className="inline-flex rounded-md p-0.5 self-start" style={{ background: 'var(--sem-surface-2)', border: '1px solid var(--sem-border)' }}>
+    <div className="sem-seg self-start">
       {opt('Any', false, clear)}
       {opt('True', value === true, () => commit({ kind: 'boolean', value: true }))}
       {opt('False', value === false, () => commit({ kind: 'boolean', value: false }))}
