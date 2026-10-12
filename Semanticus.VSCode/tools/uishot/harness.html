@@ -3568,6 +3568,10 @@
       RESPONSES.runTests = function (params) {
         // The engine's runTests(persist, origin, only, sections). This mock read only from [1] and sections from [2] while the
         // page sent the same wrong shape, which is how "Run this one" shipped broken (UAT-F-S06b-2-012).
+        // The page names its own run (params[4]); a driver reads it back to send that run progress. ?testrun=hang leaves the run
+        // in flight, so the "312 of 691" state can be looked at.
+        window.__uishotLastRunId = params && params[4];
+        if (new URLSearchParams(location.search).get('testrun') === 'hang') return '__uishotNever';
         var only = (params && params[2]) || null;
         var sections = (params && params[3]) || null;
         var selected = !!(only && only.length);

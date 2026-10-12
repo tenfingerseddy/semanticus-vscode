@@ -127,6 +127,15 @@ namespace Semanticus.Engine.Lineage
         /// reads nothing, and handing back the last reading there would let a stale answer look fresh. The page
         /// uses it to draw the report layer on the graph, so the picture and the list share one reading.</summary>
         public ReportAnalysisResult Usage { get; set; }
+        /// <summary>Set by a check: how many report measures (formulas the report itself holds) were read, and how many
+        /// model names in them were checked. Null on a plain list, which reads nothing.</summary>
+        public string ReportMeasures { get; set; }
+
+        /// <summary>The one sentence both doors say about report measures after a check.</summary>
+        public static string DescribeReportMeasures(int measures, int references) =>
+            measures == 0
+                ? "These reports hold no report measures."
+                : "Read " + Count(measures, "report measure") + " and checked " + Count(references, "reference") + " in their formulas.";
 
         public static ReportScopeResult From(string modelName, IEnumerable<ReportScopeReport> reports, string note = null)
         {

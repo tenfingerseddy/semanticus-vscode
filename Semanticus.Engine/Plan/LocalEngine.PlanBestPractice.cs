@@ -54,11 +54,13 @@ namespace Semanticus.Engine
     public sealed class WordsQueueItem
     {
         public string Kind { get; set; }            // "describe" | "name" | "synonym" | "instructions" | "format"
-        /// <summary>The MCP tool that writes it: set_description, rename_object, set_synonyms, create_linguistic_schema,
-        /// set_ai_instructions, set_measure_format, or set_property (FormatString) for a key or date column's format.</summary>
+        /// <summary>The MCP tool for this tier: write_words or edit_objects on Pro for supported edits;
+        /// single tools on Free. Schema creation and model instructions keep their single tools.</summary>
         public string Tool { get; set; }
         public string RuleId { get; set; }
         public string ObjectRef { get; set; }
+        /// <summary>The write_words input key, so an authored queue item can be sent back unchanged.</summary>
+        public string ObjRef => ObjectRef;
         public string ObjectName { get; set; }
         public string Message { get; set; }
         /// <summary>Score points fixing this one alone adds to the model as it is now (ReadinessAnalyzer.Lifts). It is a
@@ -110,8 +112,10 @@ namespace Semanticus.Engine
         /// hands it the whole list (verify, 28 Sep, M6): the task's own brief lists only the first objects.</summary>
         internal const string WordsTaskLine =
             "Call get_words_queue for the whole list, most grade first, a page at a time (pass offset = next until next "
-            + "is null), and again after each round you write: creating the synonym store opens the AI instructions. Each "
-            + "item names the tool that writes it.";
+            + "is null). Read every page before writing, or read again from offset 0 after a write; writes change the queue. "
+            + "Creating the synonym store opens the AI instructions. Each item names the tool for your tier. "
+            + "On Pro, write a whole page with write_words for descriptions and synonyms, then edit_objects for names and static formats. "
+            + "Send calls one after another. Parallel calls wait for the same writer and are not faster.";
 
         /// <summary>The page get_words_queue returns when the caller names none, and the most it returns at once. The
         /// count is a ceiling; the size is the real limit (<see cref="WordsPageChars"/>), because an item with its
@@ -272,7 +276,7 @@ namespace Semanticus.Engine
             var suggests = string.IsNullOrEmpty(after) ? "" : " The rule suggests " + after + ".";
             return obj is Measure
                 ? "Semanticus cannot prove it holds whole numbers: a ratio or an amount of money written as a whole number "
-                  + "would read wrong." + suggests + " Its format is a choice, so the words row hands it to your assistant."
+                  + "would read wrong." + suggests + " Its format is a choice, so the words task gives it to your assistant."
                 : "Its format is a choice Semanticus cannot prove." + suggests + " It was left for you to choose.";
         }
 
@@ -329,7 +333,7 @@ namespace Semanticus.Engine
             // One touch per object, naming every fix on it, so the table detail counts what Touches counts.
             var touches = lines.GroupBy(l => l.ObjectRef ?? "", StringComparer.Ordinal)
                 .Select(g => Touch(g.Key, g.First().ObjectName, "~ ",
-                    ": " + string.Join(", ", g.Select(l => Lower(l.Title ?? "a best-practice fix")).Distinct(StringComparer.Ordinal))))
+                    ": " + string.Join(", ", g.Select(l => Lower(PlainRuleTitle(l.Title) ?? "a best-practice fix")).Distinct(StringComparer.Ordinal))))
                 .ToArray();
             var why = new List<string>
             {
@@ -346,8 +350,8 @@ namespace Semanticus.Engine
             {
                 Id = BpaFixItemId,
                 Section = ModelPlanSections.Structure,
-                Title = "Fix " + CountOf(lines.Count, "best-practice issue", "best-practice issues"),
-                Sub = Join(lines.Select(l => l.ObjectName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase), 4),
+                Title = "Fix " + CountOf(lines.Count, "Model quality finding", "Model quality findings"),
+                Sub = Join(lines.Select(l => PlainRuleTitle(l.Title)).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase), 4),
                 Value = "fewer best-practice issues",
                 Rules = lines.Select(l => l.RuleId).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 Goal = PlanGoals.Quality,
@@ -442,10 +446,10 @@ namespace Semanticus.Engine
                 Id = WordsItemId,
                 Section = ModelPlanSections.Meaning,
                 // ONE words row (round 1, 8 Oct 2026): the descriptions that used to have a row of their own are in it. The title says
-                // what the words are ("Write 3 descriptions and 1 synonym"); the sub line names the objects.
-                Title = "Write " + AndList(parts.Take(3).ToList()) + (parts.Count > 3 ? " and more" : ""),
-                Sub = Join(words.Select(x => x.ObjectName).Concat(formats.Select(x => x.ObjectName))
-                               .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase), 4),
+                // whether the task includes words, formats, or both; the sub line lists every kind and count.
+                Title = words.Length > 0 ? "Write words for Copilot" + (measureFormats + columnFormats > 0 ? " and choose formats" : "")
+                    : "Choose formats for the model",
+                Sub = AndList(parts),
                 Value = "assistants stop guessing",
                 // The readiness words are AI readiness; a row of only best-practice formats is quality.
                 Rules = RuleIdsOf(words).Concat(formats.Select(x => x.RuleId).Where(r => !string.IsNullOrWhiteSpace(r)))
@@ -471,7 +475,7 @@ namespace Semanticus.Engine
         /// <summary>The whole words queue from one call, most grade first. Read only; free on every tier, like the
         /// scan it reads. <paramref name="max"/> is the page size (0 = everything from <paramref name="offset"/> on) and
         /// never changes <see cref="WordsQueue.Total"/>; the MCP door always pages it (McpTools.GetWordsQueue).</summary>
-        public Task<WordsQueue> GetWordsQueueAsync(int max = 0, int offset = 0) => ReadWordsQueueAsync(_sessions.Require(), max, offset);   // the reading is Plan/WordsQueueCore.cs
+        public Task<WordsQueue> GetWordsQueueAsync(int max = 0, int offset = 0) => ReadWordsQueueAsync(_sessions.Require(), max, offset, Entitlement.FeatureGrants.IsProTier(_entitlement));   // the reading is Plan/WordsQueueCore.cs
 
         /// <summary>The best-practice rule that asks every visible number or date column for a format (Rules/BPARules-PowerBI.json).
         /// It has no fix of its own: a key's or a date's format is a choice.</summary>

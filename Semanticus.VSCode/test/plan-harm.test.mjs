@@ -85,9 +85,9 @@ const cleanupRow = {
 const cleanupHtml = renderToStaticMarkup(React.createElement(R.PlanRow, {
   item: cleanupRow, items: [cleanupRow], open: false, busy: null, onToggle: () => {}, onAction: () => {}, onDoer: () => {}, onGo: () => {},
 }));
-assert.match(cleanupHtml, /class="pw-sub[^"]*"[^>]*>Optional · Waits for: <b>Fix 10 names and 1 more<\/b>/,
+assert.match(cleanupHtml, /class="pw-sub[^"]*"[^>]*>(?:<span[^>]*>)?Optional · Waits for: <b>Fix 10 names; Describe 71 things<\/b>/,
   'the optional row\'s collapsed line drops the word Optional while it waits');
-const plainWaiting = { ...cleanupRow, id: 'describe/model', optional: false, sub: 'Waits for: Fix 10 names and 1 more' };
+const plainWaiting = { ...cleanupRow, id: 'describe/model', optional: false, sub: 'Waits for: Fix 10 names; Describe 71 things' };
 assert.doesNotMatch(renderToStaticMarkup(React.createElement(R.PlanRow, {
   item: plainWaiting, items: [plainWaiting], open: false, busy: null, onToggle: () => {}, onAction: () => {}, onGo: () => {},
 })), /Optional/, 'a row that is not optional must not say Optional');
@@ -107,7 +107,7 @@ assert.match(plan, /case 'save':[^\n]*\n?[^\n]*saveModelFromPage\(\)/, 'the Plan
 const consent = readFileSync(join(src, 'consent.tsx'), 'utf8');
 const hook = consent.slice(consent.indexOf('export function useConsentCard'), consent.indexOf('export function ConsentCard'));
 assert.match(hook, /onDidChange\(/, 'useConsentCard does not listen for the save that gives a new model an identity');
-assert.match(hook, /\}, \[missing, tier, again\]\);/, 'useConsentCard does not run its check again after a first save');
+assert.match(hook, /\}, \[missing, tier, again(, learn\.phase)?\]\);/, 'useConsentCard does not run its check again after a first save');
 const line = consent.slice(consent.indexOf('export function ProAdviceLine'));
 assert.match(line, /onDidChange\(\(\) => read\(\)\)/, 'the permission line does not read again after a first save');
 

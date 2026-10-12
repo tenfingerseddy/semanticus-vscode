@@ -379,6 +379,7 @@ namespace Semanticus.Engine
                 StaleAtProposal = reusable && stored.StaleAtProposal,
                 ProposedAt = reusable ? stored.ProposedAt : DateTimeOffset.UtcNow,
                 Refused = reusable ? stored.Refused : Array.Empty<ModelPlanChangeRefusal>(),
+                FailureReason = reusable ? stored.FailureReason : null,
                 Lines = reusable ? stored.Lines : Array.Empty<ModelPlanChangeLine>(),
             };
         }
@@ -412,6 +413,7 @@ namespace Semanticus.Engine
                 Checkpoint = header.Checkpoint,
                 Lines = lines,
                 Refused = header.Refused ?? Array.Empty<ModelPlanChangeRefusal>(),
+                FailureReason = header.FailureReason,
                 KeptCount = lines.Count(l => l.Kept),
                 // The previous run, carried BESIDE this proposal rather than folded into it, so a person can
                 // see that something landed here before without the new work being reported as landed too.
@@ -630,7 +632,7 @@ namespace Semanticus.Engine
                     if (total == 0) return "Nothing to change here.";
                     return CountOf(total, "change", "changes") + " worked out, "
                          + set.KeptCount.ToString("N0", CultureInfo.InvariantCulture)
-                         + " kept. Nothing has been written yet.";
+                         + " kept. Nothing is changed yet.";
             }
         }
 

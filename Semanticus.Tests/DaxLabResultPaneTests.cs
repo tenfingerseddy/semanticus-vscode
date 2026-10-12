@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using ModelContextProtocol.Protocol;
 using Semanticus.Engine;
 using Xunit;
 
@@ -12,6 +13,7 @@ namespace Semanticus.Tests
     /// name the query that produced it, stop a running query, and refuse to present a 0 ms time as
     /// a measured round trip. Proven on the recorded live double (ForTest), never a real endpoint.
     /// </summary>
+    [Collection("restore-root")]
     public sealed class DaxLabResultPaneTests
     {
         private static ResultSet TwentyRows() => new ResultSet
@@ -101,6 +103,36 @@ namespace Semanticus.Tests
             var r = await run.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.True(r.Cancelled);
             Assert.Equal(ResultSet.StoppedMessage, r.Error);
+        }
+
+        [Fact]
+        public async Task Cancel_query_stops_the_running_query_through_the_MCP_door()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var (host, client) = await ToolMergeTests.StartDoorAsync(engine, gated: true);
+            using (host)
+            await using (client)
+            {
+                Assert.Contains(await client.ListToolsAsync(), t => t.Name == "cancel_query");
+                var entered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                engine.SetLiveConnectionForTest(LiveConnection.ForTest("local", "cancel-door", "cancel-door", (query, ct) =>
+                {
+                    entered.TrySetResult(true);
+                    if (!ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(5))) throw new TimeoutException("Query was not stopped");
+                    throw new OperationCanceledException(ct);
+                }));
+                var run = engine.RunDaxAsync("EVALUATE {1}", 10, "human");
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                var result = await client.CallToolAsync("cancel_query");
+                Assert.False(result.IsError == true);
+                var json = Newtonsoft.Json.Linq.JObject.Parse(result.Content.OfType<TextContentBlock>().First().Text);
+                Assert.True(json["stopped"].ToObject<bool>());
+                Assert.True((await run.WaitAsync(TimeSpan.FromSeconds(2))).Cancelled);
+                Assert.NotNull(sessions.Current);
+                await host.StopAsync();
+            }
         }
 
         // D-072: a 0 ms figure is not presented as a measured round trip.

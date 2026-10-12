@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import { chipHealthFor } from './healthChip';
+import { createTreeSelectionGuard } from './treeSelectionGuard';
 import { GUARD_SCHEME, GUARD_VIEW_TYPE, UnsavedGuard } from './unsavedGuard';
+import { recoveryMessage, type FileRecovery } from './fileRecoveryText';
 import { healthText, modelItem } from './statusBarText';
 import { chipAfterDraft, chipAfterModelChange, type UndoChip } from './draftUndoChip';
 import * as cp from 'child_process';
@@ -76,7 +78,10 @@ import { normFolder, folderParts, folderRef, parentFolderPath, leafFolderName, g
 import { migrateLegacyXmlaEntries, type LegacyRecentXmla } from './legacyXmlaMigration';
 import { getUiChallenge, RpcHandshakeRejectedError, rpcRolePreamble, waitForRpcHandshake } from './rpcAuth';
 import { readGuideFlags, writeGuideFlag } from './guideFlags';
+import { choiceFor, connectAssistant, driveModeFor, markFirstRun, modeAfterConnect, readFirstRun, runFirstRunConnect, writeDriveMode, type FirstRunChoice } from './firstRun';
 import { ConsentAsks } from './consentAsks';
+import { StudioNotes } from './studioNotes';
+import { createLearn, type LearnDeps } from './learnHost';
 import { scriptToResend, type ScriptSource } from './scriptResend';
 import { draftModelKeyOf } from './draftKey';
 import { gridSetCalls, mergePropDescs, type PropDesc } from './propSet';
@@ -105,12 +110,14 @@ interface UndoStateDto { canUndo: boolean; canRedo: boolean; atCheckpoint: boole
 // Mirrors Semanticus.Engine HealthDelta (feature #4): the health movement one commit caused. Pro-only and
 // threshold-suppressed — absent on free, on health-neutral edits, and from pre-feature engines (additive field).
 interface HealthDelta { grade?: string; new?: string[]; findings?: number; impact?: number; warn?: boolean; }
-interface ChangeNotification { sessionId: string; revision: number; origin: string; label?: string; /** "undo" or "redo" on a walk through the history (ChangeNotification.Replay). */ replay?: string; deltas?: ChangeDelta[]; undo?: UndoStateDto; health?: HealthDelta; }
+interface ChangeNotification { sessionId: string; revision: number; origin: string; by?: string | null; label?: string; /** "undo" or "redo" on a walk through the history (ChangeNotification.Replay). */ replay?: string; deltas?: ChangeDelta[]; undo?: UndoStateDto; health?: HealthDelta; }
+// The driver owns the decision to move the screen. Until it reports, edits only mark existing rows.
+let saidMayMoveTree = false;
 // Mirrors Semanticus.Engine SessionChangeNotification: a different model became the open one through ANOTHER client
 // (the engine never echoes a swap to the connection that asked for it, which refreshes from its own answer).
 interface SessionChangeNotification { sessionId: string; revision: number; modelName?: string; source?: string; tables: number; measures: number; liveConnected?: boolean; reason: string; }
 interface OpenResult { sessionId: string; revision: number; modelName: string; tables: number; measures: number; source: string; liveConnected?: boolean; account?: string; }
-interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean; diskDiverged?: boolean; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; modelIdentity?: string; modelLabel?: string; }
+interface SessionInfo { sessionId?: string; revision: number; modelName?: string; source?: string; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean; keepsUnsavedWork?: boolean; diskDiverged?: boolean; tables?: number; measures?: number; liveBound?: boolean; liveEndpoint?: string; liveDatabase?: string; liveConnected?: boolean; liveKind?: string; liveDataSource?: string; currentAccount?: string; currentTenant?: string; modelIdentity?: string; modelLabel?: string; }
 interface ModelConnectionRecord { id: string; kind: string; endpoint: string; database?: string; modelName?: string; tenantId?: string; authMode?: string; label?: string; workingFolder?: string; publishConnectionId?: string; lastUsedUtc?: string; lastAccount?: string; }
 // One target's silently-probed account (mirrors Engine ConnectionAccountProbe). `account` is who the NEXT open signs in
 // as (the tenant-wide record wins); `previousAccount` names the target's last-used account when it differs ("was <x>").
@@ -183,6 +190,73 @@ function postToPanels(msg: unknown): void {
     }
 }
 let studioReady = false;                            // the Studio webview has posted 'studioReady' (its listeners are live)
+// Driver-bar lane: the show-tool lane reads these when deciding whether to open a closed Studio.
+type StudioDriveMode = 'claudeDrives' | 'iDrive';
+type StudioDriverState = 'idle' | 'claudeDriving' | 'personHasWheel';
+const STUDIO_DRIVE_MODE_KEY = 'semanticus.studio.driveMode';
+let studioDriveMode: StudioDriveMode = 'iDrive';
+let studioDriverState: StudioDriverState = 'idle';
+let studioLastPersonInput: number | null = null;
+let studioLastAssistantCall: number | null = null;   // when the assistant's latest call began; the quiet gap before a call is the 'next prompt' (driver-store.ts QUIET_GAP_MS)
+let studioTreeRevealDepth = 0;
+let lastTreeSelectionBy: 'assistant' | 'human' = 'human';
+const treeSelectionGuard = createTreeSelectionGuard();   // the tree's own refresh is not the person's click (N10)
+function isStudioDriveMode(mode: unknown): mode is StudioDriveMode {
+    return mode === 'claudeDrives' || mode === 'iDrive';
+}
+function isStudioDriverState(state: unknown): state is StudioDriverState {
+    return state === 'idle' || state === 'claudeDriving' || state === 'personHasWheel';
+}
+function reportStudioDriver(): void {
+    // Before the Studio has read the saved mode, the host's own default (I drive) is not the person's choice: read it first, or say nothing wrong.
+    if (!studioDriveModeLoaded && extCtx) { studioDriveMode = resolveStudioDriveMode(); studioDriveModeLoaded = true; }
+    void conn?.sendRequest('setStudioDriver', studioDriveMode, studioDriverState)
+        .catch((e: any) => out.appendLine('Studio driver report failed: ' + String(e?.message ?? e)));
+}
+function noteStudioPersonInput(): void {
+    studioLastPersonInput = Date.now();
+    studioDriverState = studioDriveMode === 'claudeDrives' ? 'personHasWheel' : 'idle';
+    try { studioPanel?.webview.postMessage({ type: 'personInput', at: studioLastPersonInput }); } catch { /* disposing */ }
+    reportStudioDriver();
+}
+// The assistant/call notification calls this before buffering the webview message. The same rule as the webview's driver store: the first call
+// after a quiet gap of 8 s (counted from the last call or the person's last input) is the next prompt. A closed panel has no mounted store, so
+// keep its last report current until it can reopen. The state is also reported again on every call, so an engine that missed a report (it
+// restarted, or a message was lost) hears who has the wheel before the assistant's next show.
+function noteStudioAssistantCall(at: string): void {
+    const quietGapMs = 8_000;   // driver-store.ts QUIET_GAP_MS
+    const started = Date.parse(at);
+    if (!Number.isFinite(started)) { reportStudioDriver(); return; }
+    const since = Math.max(studioLastAssistantCall ?? -Infinity, studioLastPersonInput ?? -Infinity);
+    if (!studioPanel && studioDriveMode === 'claudeDrives' && studioDriverState === 'personHasWheel'
+        && studioLastPersonInput !== null && started > studioLastPersonInput && started - since >= quietGapMs) {
+        studioDriverState = 'claudeDriving';
+    }
+    studioLastAssistantCall = Math.max(studioLastAssistantCall ?? -Infinity, started);
+    reportStudioDriver();
+}
+// What the assistant says to the Studio (studio/show, studio/suggest, assistant/call): posted at once when the Studio is ready,
+// else held (the last 20) and flushed on 'studioReady'. A note may open a closed Studio, in Claude drives mode only.
+const studioNotes = new StudioNotes({
+    isReady: () => !!studioPanel && studioReady,
+    isOpen: () => !!studioPanel,
+    post: (m) => { try { studioPanel?.webview.postMessage({ type: m.type, payload: m.payload }); } catch { /* disposing */ } },
+    open: () => { if (extCtx) openStudio(extCtx); },
+});
+// The mode the person chose for this workspace (saved), else Claude drives when an assistant is connected. A Studio that has not been
+// opened yet in this window has not read it, and a note that wants to open it needs it.
+let studioDriveModeLoaded = false;
+function resolveStudioDriveMode(): StudioDriveMode {
+    const assistantConnected = hasSemanticusMcpEntry(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+    const saved = extCtx?.workspaceState.get<unknown>(STUDIO_DRIVE_MODE_KEY);
+    return isStudioDriveMode(saved) ? saved : assistantConnected ? 'claudeDrives' : 'iDrive';
+}
+function pushStudioMessage(type: 'studioShow' | 'studioSuggest' | 'studioAnswer' | 'assistantCall', payload: unknown): void {
+    if (!studioPanel && !studioDriveModeLoaded) { studioDriveMode = resolveStudioDriveMode(); studioDriveModeLoaded = true; }
+    if (type === 'assistantCall') { const at = (payload as { at?: unknown } | null)?.at; if (typeof at === 'string') noteStudioAssistantCall(at); }
+    studioNotes.setDriver({ mode: studioDriveMode, state: studioDriverState });
+    studioNotes.push({ type, payload });
+}
 let currentSessionId: string | undefined;            // stamps host navigation/selection so delayed model-A messages cannot affect model B
 let hostModelIdentity: string | undefined;           // the model the host showed at its last read of sessionInfo (setStatusFromInfo, the ONLY place it is set); an action starts on this
 
@@ -246,6 +320,7 @@ export async function activate(context: vscode.ExtensionContext) {
     cancelScheduledReconnect();
     connectionEpoch++;
     extCtx = context;
+    const learn = learnTour = createLearn(learnDeps(context));   // Learn Semanticus (1.4 lane tour): the closures read the tree and the engine when they run
     // CRITICAL 2: drop any pending-rename record (incl. a tombstone) whose editor is no longer open — e.g. the user closed
     // the tab while the extension was inactive, so the clean-close handler never fired. Deferred so restored tabs/docs are
     // present first: a record whose dirty doc IS restored must be KEPT (its editor can still save), so the sweep only
@@ -291,7 +366,6 @@ export async function activate(context: vscode.ExtensionContext) {
     aiConnectStatus.tooltip = 'Wire your assistant to this Semanticus session. Writes .mcp.json in this folder.';
     context.subscriptions.push(aiConnectStatus, vscode.workspace.onDidChangeWorkspaceFolders(() => refreshAiConnectStatus()));
     refreshAiConnectStatus();
-    void maybeOfferConnectAiAssistant(context);
 
     // canSelectMany: the explorer supports multi-select so "Script ▸", Delete, Hide/Show and Create-hierarchy
     // can operate on a whole selection in one undoable gesture (the agent door already batches; now the UI does too).
@@ -299,11 +373,15 @@ export async function activate(context: vscode.ExtensionContext) {
     // Folder nodes carry no properties of their own. An empty/objectless selection means the model itself — model
     // settings are always reachable without adding a synthetic root node to the native tree.
     treeView.onDidChangeSelection((e) => {
+        // A redraw after a model edit (Claude renamed the shown object) drops or re-puts the selection. Only a real click takes the wheel.
+        const byPerson = treeSelectionGuard.classify([...e.selection].map((n) => n.ref)) === 'person' && studioTreeRevealDepth === 0;
+        lastTreeSelectionBy = byPerson ? 'human' : 'assistant';
+        if (byPerson) noteStudioPersonInput();
         const selected = [...e.selection].filter((n) => n.kind !== 'dfolder' && n.kind !== 'modelIdentity');
         void propGrid.showObjects(selected);
         // Selection is context only. It updates Model home's action strip without navigating away from a draft.
         const ref = selected.length === 1 ? selected[0].ref : undefined;
-        try { studioPanel?.webview.postMessage({ type: 'treeSelection', ref, sessionId: currentSessionId }); } catch { /* panel is disposing */ }
+        try { studioPanel?.webview.postMessage({ type: 'treeSelection', ref, sessionId: currentSessionId, by: lastTreeSelectionBy }); } catch { /* panel is disposing */ }
     });
 
     context.subscriptions.push(
@@ -358,6 +436,9 @@ export async function activate(context: vscode.ExtensionContext) {
         registerPersonCommand('semanticus.signInToReconnect', () => signInToReconnect()),
         registerPersonCommand('semanticus.manageConnections', () => openConnectionsManager('setup')),
         registerPersonCommand('semanticus.openStudio', () => openStudio(context)),
+        // Learn Semanticus (1.4 lane tour): the Studio's Learn list asks for these through runHostCommand.
+        registerPersonCommand('semanticus.learn.start', (chapter: unknown) => learn.start(chapter)),
+        registerPersonCommand('semanticus.learn.end', () => learn.end()),
         // The native sync chip's click: open Studio → Compare, seeded with what you're editing vs querying (the
         // webview computes the seed from its live connection state — 'seed' is the pseudo-target it recognises).
         registerPersonCommand('semanticus.openCompareSeeded', () => navigateStudio(context, 'compare', 'seed')),
@@ -1729,6 +1810,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         const live = connected;
         guardEngineRequests(connected, (method) => { void handleOutdatedEngine(context, live, method); });
         conn = connected;
+        reportStudioDriver();   // a new engine starts from its own defaults (Claude drives, idle): tell it who has the wheel now
         tree.attach(connected);
         daxFs.attach(connected);
         await migrateLegacyXmlaHistory();
@@ -1736,6 +1818,11 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         connected.onNotification('model/didChange', (n: ChangeNotification) => {
             out.appendLine(`didChange rev=${n.revision} origin=${n.origin} label=${n.label ?? ''}`);
             tree.refresh();
+            if (!n.replay && (n.by ?? (n.origin === 'agent' ? 'assistant' : n.origin)) === 'assistant') {
+                const refs = (n.deltas ?? []).filter((d) => d.kind !== 'remove').map((d) => d.ref);
+                tree.flashAssistant(refs);
+                if (saidMayMoveTree && refs[0]) void revealAssistantRefInTree(refs[0]);
+            }
             scheduleDaxSymbolRebuild();   // keep DAX IntelliSense in sync with renames/creates/deletes
             void propGrid.refresh();   // live-update the property grid when the selected object changes (incl. agent edits)
             for (const d of n.deltas ?? []) {
@@ -1756,6 +1843,8 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         // opens a Studio the person closed: marking the session as already auto-opened is what maybeAutoOpenStudio
         // checks. A closed Studio shows the new model the next time it is opened (coordinator, 27 Sep).
         connected.onNotification('session/didChange', (n: SessionChangeNotification) => {
+            tree.clearAssistantFlash();
+            saidMayMoveTree = false;
             out.appendLine(`sessionDidChange reason=${n.reason} session=${n.sessionId} model=${n.modelName ?? ''}`);
             if (n.sessionId) autoOpenedSessionId = n.sessionId;
             // At once, before any await: a page that mounts on the new model asks about the Pro card straight away.
@@ -1808,6 +1897,12 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         connected.onNotification('workflow/libraryDidChange', (v: unknown) => {
             try { studioPanel?.webview.postMessage({ type: 'workflowLibraryDidChange', payload: v }); } catch { /* disposing */ }
         });
+        // The assistant talks to the Studio (1.4): a note (show_in_studio), next steps (suggest_next), and the start of each tool
+        // call (the Studio reads the first call after 8 quiet seconds as the person's next prompt).
+        connected.onNotification('studio/show', (n: unknown) => pushStudioMessage('studioShow', n));
+        connected.onNotification('studio/suggest', (n: unknown) => pushStudioMessage('studioSuggest', n));
+        connected.onNotification('studio/answer', (n: unknown) => pushStudioMessage('studioAnswer', n));
+        connected.onNotification('assistant/call', (n: unknown) => pushStudioMessage('assistantCall', n));
         // A NON-mutating run by the user's Claude (run_dax / profile_dax / debug / …) broadcasts so Studio
         // reflects what the agent is doing live — the read counterpart of model/didChange. Relay only (no
         // tree/grid side effects); the webview routes it to the matching tab + the live activity feed.
@@ -2375,6 +2470,13 @@ async function restartEngineCmd(context: vscode.ExtensionContext): Promise<void>
             if (go !== 'Restart anyway') return;
         }
     } catch { /* no run to protect */ }
+    if (decision === 'discard' && conn) {
+        const info = await conn.sendRequest<SessionInfo>('sessionInfo');
+        if (info?.sessionId && !info.liveBound) {
+            try { await conn.sendRequest('resolveFileRecovery', info.sessionId, false); }
+            catch (e) { if (!isMethodNotFound(e)) throw e; }   // older owners have no recovery copy to discard
+        }
+    }
     await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: 'Semanticus: restarting engine' },
         async (progress) => {
@@ -3321,8 +3423,19 @@ function stampModel(nodes: TreeNode[], model: string | undefined): TreeNode[] {
 }
 
 class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
+    private readonly assistantRefs = new Set<string>();
+    private assistantTimer: ReturnType<typeof setTimeout> | undefined;
+    flashAssistant(refs: string[]) {
+        if (!refs.length) return;
+        for (const ref of refs) this.assistantRefs.add(ref);
+        clearTimeout(this.assistantTimer);
+        this._emitter.fire();
+        this.assistantTimer = setTimeout(() => { this.assistantRefs.clear(); this._emitter.fire(); }, 3000);
+    }
     private readonly _emitter = new vscode.EventEmitter<TreeNode | undefined | void>();
     readonly onDidChangeTreeData = this._emitter.event;
+    // Registered before the view subscribes, so every redraw is noted before the selection event it causes.
+    private readonly _noteRefresh = this._emitter.event(() => treeSelectionGuard.noteRefresh());
     private connection: MessageConnection | undefined;
     // The FLAT engine fan per table ref — folder nodes are synthesized from each member's displayFolder, and
     // the folder fans + getParent + the folder pickers all read this cache. Cleared on every refresh (didChange).
@@ -3332,7 +3445,8 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
     // undefined means no model, and then the tree has no identity row at all.
     private identity?: ModelIdentity;
 
-    attach(c: MessageConnection) { this.connection = c; }
+    attach(c: MessageConnection) { this.clearAssistantFlash(); this.connection = c; }
+    clearAssistantFlash() { clearTimeout(this.assistantTimer); this.assistantRefs.clear(); }
     refresh() { this.flat.clear(); this._emitter.fire(); }
 
     /// Tell the tree what the open model is. Accepts a PARTIAL so the sync-chip path can flip just the dirty
@@ -3408,6 +3522,10 @@ class ModelTreeProvider implements vscode.TreeDataProvider<TreeNode> {
             item.tooltip = n.kind === 'function' ? 'Edit function (DAX UDF)' : 'Edit DAX';
         }
         if (n.kind === 'dfolder') item.tooltip = 'Display folder: a label on its members, not a container (it lives in each member’s Display Folder property)';
+        if (this.assistantRefs.has(n.ref)) {
+            item.iconPath = new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor('charts.purple'));
+            item.tooltip = `${n.name}. Your assistant changed this.`;
+        }
         return item;
     }
 
@@ -3649,26 +3767,48 @@ const SELECTABLE_REF_KINDS = new Set(['table', 'measure', 'column', 'hierarchy',
 // Selection bus, Studio → Properties: repopulate the Properties view for an object a Studio navigator
 // focused/selected — exactly the update a native-tree selection triggers (the same showObject path), but
 // WITHOUT focusing the view: Studio keeps the keyboard, Properties just follows.
+//
+// While Claude walks the person through the model, each note moves the tree to its object and opens a page, and that page may focus
+// its own first row a moment later. That focus is not the person's choice, so it does not move Properties off the object the tree now
+// has selected (hero16 N7). A click the person makes after the reveal still does.
+let followRef: string | null = null;
+let followAt = 0;
+const FOLLOW_HOLD_MS = 2500;
 function selectRefInProperties(ref: unknown): void {
     if (typeof ref !== 'string' || !ref.includes(':')) return;
     const p = refParts(ref);
     if (!p.kind || !p.name || !SELECTABLE_REF_KINDS.has(p.kind)) return;   // untrusted input: only known-resolvable kinds
+    if (followRef && ref !== followRef && Date.now() - followAt < FOLLOW_HOLD_MS && (studioLastPersonInput ?? 0) < followAt) return;
     void propGrid.showObject({ ref, name: p.name, kind: p.kind, hasChildren: false });
 }
 
 // Reveal + select an object in the Model tree by its ref (driven from the Studio webview's right-click).
-async function revealRefInTree(ref: string): Promise<void> {
+async function revealRefInTree(ref: string, follow = false): Promise<void> {
     if (!treeView) return;
     const p = refParts(ref);
     const node: TreeNode = { ref, name: p.name, kind: p.kind, hasChildren: false };
+    if (follow) { followRef = ref; followAt = Date.now(); }
+    studioTreeRevealDepth++;
     try {
         await vscode.commands.executeCommand('semanticusModel.focus');   // make sure the view is visible
         await treeView.reveal(node, { select: true, focus: true, expand: false });
+        // Properties shows what the tree has selected, even when a later reveal or a page's own focus raced the tree's selection event.
+        if (follow && followRef === ref) await propGrid.showObject(node);
     } catch (e: any) {
         out.appendLine('revealInTree failed for ' + ref + ': ' + (e?.message ?? e));
         const parent = await tree.getParent(node);                        // fallback: at least surface the parent (getParent is async — resolves the folder chain)
         if (parent) { try { await treeView.reveal(parent, { select: false, focus: true, expand: true }); } catch { /* give up */ } }
+    } finally {
+        studioTreeRevealDepth--;
     }
+}
+
+// Reveal without selecting or taking keyboard focus. A model edit never changes the person's Properties selection.
+async function revealAssistantRefInTree(ref: string): Promise<void> {
+    if (!treeView) return;
+    const p = refParts(ref);
+    try { await treeView.reveal({ ref, name: p.name, kind: p.kind, hasChildren: false }, { select: false, focus: false, expand: false }); }
+    catch { /* a removed or collapsed object still has its live feed entry */ }
 }
 
 // Kinds whose objects carry an editable DAX expression (single-click → Monaco).
@@ -5110,8 +5250,11 @@ async function saveLiveModelToWorkspace(info: SessionInfo): Promise<boolean> {
     }
 }
 
+// The Learn tour, so a model opening anywhere can end it (learnHost.modelChanged). Set in activate.
+let learnTour: ReturnType<typeof createLearn> | undefined;
 function setStatusFromInfo(info?: SessionInfo): void {
     currentSessionId = info?.sessionId;
+    learnTour?.modelChanged(info?.sessionId);
     hostModelIdentity = info?.sessionId ? info.modelIdentity : undefined;   // the model an action that starts from now on is for
     settlePendingReconnect(info);
     // Gate the Publish toolbar button on a live-bound session (opened via Power BI Desktop / XMLA).
@@ -5151,9 +5294,30 @@ function setStatusFromInfo(info?: SessionInfo): void {
     } : undefined);
     // A model session just became available, so bring Studio up. Deferred to the next tick so a window reload
     // that is still handing back a restored Studio panel wins the race and no second one is created.
-    if (extensionContext) { const ctx = extensionContext; setTimeout(() => maybeAutoOpenStudio(ctx, info?.sessionId), 0); }
+    if (extensionContext) {
+        const ctx = extensionContext;
+        setTimeout(() => {
+            maybeAutoOpenStudio(ctx, info?.sessionId);
+            const recovery = info as (SessionInfo & { fileRecovery?: FileRecovery }) | undefined;
+            if (recovery?.fileRecovery) void offerFileRecovery(recovery);
+        }, 0);
+    }
     if (!info?.sessionId) { setStatusPlain('$(database) Semanticus: no model. Run "Open Model…"'); return; }
     // The model item (name, tooltip, warning tint) is drawn above by renderSyncChip, from this same SessionInfo.
+}
+
+let offeredFileRecoverySession: string | undefined;
+async function offerFileRecovery(info: SessionInfo & { fileRecovery?: FileRecovery }): Promise<void> {
+    // Studio carries the offer itself. A person who disabled automatic Studio opening still receives it.
+    if (studioPanel || !info.fileRecovery || !info.sessionId || offeredFileRecoverySession === info.sessionId) return;
+    offeredFileRecoverySession = info.sessionId;
+    const connected = conn;
+    const choice = await vscode.window.showInformationMessage(recoveryMessage(info.fileRecovery), 'Restore them', 'Discard');
+    if (!choice || !connected || connected !== conn || currentSessionId !== info.sessionId) return;
+    try {
+        await connected.sendRequest('resolveFileRecovery', info.sessionId, choice === 'Restore them');
+        await refreshStatus(); tree.refresh(); await propGrid?.reload(info.modelName);
+    } catch (e) { vscode.window.showErrorMessage('The kept changes could not be restored. ' + String((e as Error).message || e)); }
 }
 
 // The ONE model item (r1 min4, V1 and V2): the model's name, with the editing-versus-querying verdict folded in. It was
@@ -5231,9 +5395,8 @@ async function quickOpenModelCommand(tree: ModelTreeProvider) {
     const xmlaRow = (r: ModelConnectionRecord): OpenPick => {
         const account = accountOf(r);
         const was = probeOf(r)?.previousAccount;
-        // An unlabelled cloud target reads "Production safeguards", not "prod": fail-closed governance is a different
-        // fact from a declared production label (the label is null; the safeguards still apply).
-        const description = r.label || 'Production safeguards';
+        // An unlabelled cloud target counts as test (Kane, 10 Oct 2026); it reads "No label", not a declared label.
+        const description = r.label || 'No label';
         // Who the next open will actually sign in as. When that's unknown (no live sign-in record) we say so — and only
         // name the last-used account as provenance ("last opened as <x>"), never as the prediction (HIGH 3).
         const identity = account
@@ -5359,6 +5522,7 @@ async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): P
 // (the Pro permission card) comes back because of it.
 async function bindGridAndTree(modelName: string | undefined, tree: ModelTreeProvider, by: 'person' | 'otherDoor' = 'person'): Promise<void> {
     consentAsks.noteSwap(by);
+    tree.clearAssistantFlash();
     await propGrid.showModel(modelName);   // a model swap never inherits an old object's property target
     tree.refresh();
     const info = await refreshStatus();
@@ -5955,28 +6119,18 @@ function refreshAiConnectStatus(): void {
     if (ws && !hasSemanticusMcpEntry(ws)) aiConnectStatus.show(); else aiConnectStatus.hide();
 }
 
-/// First-run nudge: the one time Semanticus is used in a folder that isn't wired yet, offer to connect the AI
-/// Assistant. Once handled it never re-prompts for that folder (the always-on view-title button + status chip
-/// carry it from there), so this is a gentle offer, not a nag.
-async function maybeOfferConnectAiAssistant(context: vscode.ExtensionContext): Promise<void> {
+/// Writes the folder's connection file. `quiet` is the first-run press: a failure comes back as text for the
+/// card to show instead of an error toast, and nothing else is shown. The Replace question for a different
+/// existing entry stays in both: it would overwrite something the person wrote.
+async function writeMcpConnection(quiet: boolean): Promise<{ ok: boolean; error?: string; target?: string }> {
+    const fail = (message: string, ...items: string[]): Thenable<string | undefined> | undefined => quiet ? undefined : vscode.window.showErrorMessage(message, ...items);
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!ws || hasSemanticusMcpEntry(ws) || context.workspaceState.get('semanticus.connectPromptDone')) return;
-    const pick = await vscode.window.showInformationMessage(
-        'Connect your assistant to this Semanticus session? This writes .mcp.json so it drives the same live model as the editor.',
-        'Connect', 'Not now', "Don't ask again",
-    );
-    if (pick === 'Connect') await connectClaudeCodeCmd();
-    if (pick) await context.workspaceState.update('semanticus.connectPromptDone', true);
-}
-
-async function connectClaudeCodeCmd(): Promise<void> {
-    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!ws) { vscode.window.showErrorMessage('Open a folder first. Semanticus writes the connection for your assistant into your open folder.'); return; }
+    if (!ws) { fail('Open a folder first. Semanticus writes the connection for your assistant into your open folder.'); return { ok: false, error: 'Open a folder first. Semanticus writes the connection for your assistant into your open folder.' }; }
 
     // Resolve the engine the SAME way ensureEngine() launches it (dev DLL → dotnet, else the bundled exe).
     let engine: ResolvedEngine;
     try { engine = resolveEngine(); }
-    catch (e: any) { vscode.window.showErrorMessage(e?.message ?? String(e)); return; }
+    catch (e: any) { fail(e?.message ?? String(e)); return { ok: false, error: e?.message ?? String(e) }; }
 
     // Reconcile any leftover plaintext token. The assistant's entry does not carry the token on argv.
     await getLicenseToken();
@@ -5987,15 +6141,15 @@ async function connectClaudeCodeCmd(): Promise<void> {
     if (fs.existsSync(target)) {
         let raw: string;
         try { raw = fs.readFileSync(target, 'utf8'); }
-        catch (e: any) { vscode.window.showErrorMessage(`Could not read ${target}: ${e?.message ?? e}`); return; }
+        catch (e: any) { fail(`Could not read ${target}: ${e?.message ?? e}`); return { ok: false, error: `Could not read the connection file: ${e?.message ?? e}` }; }
         let parsed: unknown;
         try { parsed = JSON.parse(raw); }
         catch {
             // Fail LOUD, write NOTHING: overwriting an unparseable .mcp.json would silently destroy whatever
             // (possibly hand-edited) servers it holds. Offer to open it so the user can fix the syntax.
-            const pick = await vscode.window.showErrorMessage(`${target} is not valid JSON. Fix it, then run Connect AI Assistant again. Nothing was written.`, 'Open .mcp.json');
+            const pick = await fail(`${target} is not valid JSON. Fix it, then run Connect AI Assistant again. Nothing was written.`, 'Open .mcp.json');
             if (pick === 'Open .mcp.json') void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(target));
-            return;
+            return { ok: false, error: 'The connection file in this folder is not valid JSON, so nothing was written. Fix it and press Connect again.' };
         }
         const res = mergeMcpConfig(parsed, entry);
         if (res.conflict) {
@@ -6004,7 +6158,7 @@ async function connectClaudeCodeCmd(): Promise<void> {
                 { modal: true, detail: 'The existing entry points elsewhere. Replace it to connect your assistant to this Semanticus session and workspace, or keep it unchanged.' },
                 'Replace', 'Keep existing',
             );
-            if (pick !== 'Replace') return;
+            if (pick !== 'Replace') return { ok: false, error: 'The connection was left as it was.' };
         }
         merged = res.merged;
     } else {
@@ -6013,22 +6167,55 @@ async function connectClaudeCodeCmd(): Promise<void> {
 
     // 2-space indent + trailing newline (matches how a human/formatter would leave the file).
     try { fs.writeFileSync(target, JSON.stringify(merged, null, 2) + '\n', 'utf8'); }
-    catch (e: any) { vscode.window.showErrorMessage(`Could not write ${target}: ${e?.message ?? e}`); return; }
+    catch (e: any) { fail(`Could not write ${target}: ${e?.message ?? e}`); return { ok: false, error: `Could not write the connection file: ${e?.message ?? e}` }; }
     refreshAiConnectStatus();   // the folder is wired now — drop the call-to-action chip
+    return { ok: true, target };
+}
 
-    // The token is not written into .mcp.json. Entitlement follows the owner engine over the pipe.
+/// Connect from the header and the palette does the same full job as the first-run card: the connection file, the skills,
+/// the mode (Claude drives) and the say card. The card runs its own say stage, so this door asks the Studio for it.
+async function connectClaudeCodeCmd(): Promise<void> {
+    if (!extCtx) return;
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const wasWired = hasSemanticusMcpEntry(ws);
+    await connectAssistant({
+        writeConnection: () => writeMcpConnection(false),
+        installSkill: installClaudeCodeSkill,
+        markDone: async () => {
+            const mode = modeAfterConnect(wasWired, extCtx.workspaceState.get<unknown>(STUDIO_DRIVE_MODE_KEY));
+            await finishFirstRun(mode === 'claudeDrives' ? 'assistant' : 'hand');
+        },
+        showSay: (result) => postFirstRunSay(result.note),
+    });
+}
 
-    // The restart is the step users miss: an .mcp.json change is only picked up on your assistant's next start,
-    // so lead with it (a fresh assistant process discovers the server; a running one needs a tools refresh).
-    // Honest on purpose: this command wrote a file. Nothing is connected until your assistant next starts in
-    // this folder, so the toast says what happened rather than what the user is hoping for (D-210).
-    const pick = await vscode.window.showInformationMessage(
-        'Wrote the connection file for your assistant. Nothing is connected yet: restart it in this folder (or refresh its tools) so it reads the file. Keep VS Code open so Studio holds the shared live session.',
-        'Open .mcp.json',
-        'Install assistant skills',
-    );
-    if (pick === 'Open .mcp.json') void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(target));
-    if (pick === 'Install assistant skills') await installAssistantSkillsCmd();
+/// Asks the Studio to draw the say card. A Studio that is closed is opened and told once it is ready.
+let pendingFirstRunSay: { note?: string } | null = null;
+function postFirstRunSay(note?: string): void {
+    if (studioPanel && studioReady) { try { studioPanel.webview.postMessage({ type: 'firstRunSay', note }); } catch { /* disposing */ } return; }
+    pendingFirstRunSay = { note };
+    if (!studioPanel && extCtx) openStudio(extCtx);
+}
+
+/// The first-run choice is finished: the once-flag, and the driver mode in the workspace (the key the driver bar reads).
+async function finishFirstRun(choice: FirstRunChoice): Promise<void> {
+    if (!extCtx) return;
+    await markFirstRun(extCtx.globalState, choice);
+    await writeDriveMode(extCtx.workspaceState, choice);
+    // An open Studio read its mode before the choice, so tell it now: the bar flips to the person's pick without a reload.
+    const mode = driveModeFor(choice);
+    if (!mode) return;
+    studioDriveMode = mode;
+    studioDriveModeLoaded = true;
+    studioDriverState = 'idle';
+    const assistantConnected = hasSemanticusMcpEntry(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+    try { studioPanel?.webview.postMessage({ type: 'driveMode', mode, assistantConnected }); } catch { /* disposing */ }
+}
+
+/// Installs the Semanticus skill for Claude Code (all projects), the same installer the skills command runs, with no picker.
+async function installClaudeCodeSkill(): Promise<{ ok: boolean; error?: string }> {
+    try { installAssistantSkills(path.join(extCtx.extensionPath, 'assistant-pack'), path.join(os.homedir(), '.claude', 'skills')); return { ok: true }; }
+    catch (e: any) { return { ok: false, error: e?.message ?? String(e) }; }
 }
 
 async function installAssistantSkillsCmd(): Promise<void> {
@@ -6722,10 +6909,14 @@ async function applyDaxScriptCmd() {
 /// Set IsHidden on the whole selection (skips objects that can't be hidden).
 async function setHiddenCmd(hidden: boolean, node?: TreeNode, nodes?: TreeNode[]) {
     if (!conn) { warnNoEngine(); return; }
-    for (const t of selectionRefs(node, nodes)) {
-        try { await conn.sendRequest('setObjectProperty', t.ref, 'IsHidden', String(hidden), 'human'); } catch { /* not hideable */ }
-    }
-    tree.refresh();
+    const refs = selectionRefs(node, nodes)
+        .filter((t) => ['table', 'calcgroup', 'measure', 'column', 'calcColumn', 'hierarchy'].includes(t.kind))
+        .map((t) => t.ref);
+    if (!refs.length) return;
+    try {
+        await conn.sendRequest('setObjectProperties', refs, 'IsHidden', String(hidden), 'human');
+        tree.refresh();
+    } catch (e: any) { vscode.window.showErrorMessage('Hide / Show failed: ' + (e?.message ?? e)); }
 }
 
 async function showDependentsCmd(n: TreeNode) {
@@ -7269,7 +7460,10 @@ function adoptStudioPanel(panel: vscode.WebviewPanel, context: vscode.ExtensionC
         enableScripts: true,
         localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'media')],
     };
-    panel.onDidDispose(() => { if (studioPanel === panel) { studioPanel = undefined; studioReady = false; } });
+    panel.onDidDispose(() => { if (studioPanel === panel) {
+        noteStudioPersonInput();
+        studioPanel = undefined; studioReady = false;
+    } });
     panel.webview.onDidReceiveMessage(pageScoped(studioRelayHandler(panel, false)));
     panel.webview.html = studioHtml(panel.webview, context);
 }
@@ -7310,7 +7504,48 @@ const WEBVIEW_HOST_COMMANDS = new Set(['semanticus.save', 'semanticus.undo', 'se
 // something, which is why they can be reached from typed words at all.
 const WEBVIEW_CREATE_COMMANDS = new Set(['semanticus.newMeasure', 'semanticus.newCalcColumn',
     'semanticus.newCalcTable', 'semanticus.newCalcItem', 'semanticus.newFunction']);
+// Learn Semanticus (1.4 lane tour). The Studio's Learn list starts a chapter and leaves the tour through the host-command relay, with the
+// chapter id as the ref. They are not in the allowlist below: they take an argument, and learn.ts refuses any id that is not a chapter.
+function learnDeps(context: vscode.ExtensionContext): LearnDeps {
+    return {
+        assetsDir: path.join(context.extensionPath, 'assets'),
+        storageDir: context.globalStorageUri.fsPath,
+        open: async (folder) => {
+            if (!conn) throw new Error('The engine is not connected.');
+            const r = await confirmAndSendOpen<OpenResult>('open', 'Opening the demo model throws those changes away unless you save first.', folder);
+            if (!r) return undefined;
+            await bindGridAndTree(r.modelName, tree);
+            return { modelName: r.modelName, sessionId: r.sessionId };
+        },
+        remembered: () => readLastModel(context),
+        // The demo copy is scratch, so its edits are thrown away (discard true) when the person's own model comes back.
+        restore: async (previous) => {
+            if (!conn) return;
+            const last = previous as LastModel;
+            writeLastModel(last);
+            if (last.kind === 'file' && last.path && fs.existsSync(last.path)) {
+                const r = await conn.sendRequest<OpenResult>('open', last.path, true);
+                await bindGridAndTree(r?.modelName, tree);
+            } else {
+                const info = await reopenLastModel(context, conn, { restarted: true });
+                if (info) await bindGridAndTree(info.modelName, tree);
+            }
+        },
+        forget: () => forgetLastModel(),
+        currentSessionId: () => currentSessionId,
+        postToStudio: async (message) => {
+            if (!studioPanel) openStudio(context);
+            for (let waited = 0; !(studioPanel && studioReady) && waited < 5000; waited += 100) await new Promise((r) => setTimeout(r, 100));
+            try { void studioPanel?.webview.postMessage(message); } catch { /* disposing */ }
+        },
+        log: (line) => out.appendLine(line),
+    };
+}
 function runWebviewHostCommand(command: unknown, targetRef?: unknown, targetSessionId?: unknown): void {
+    if (typeof command === 'string' && (command === 'semanticus.learn.start' || command === 'semanticus.learn.end')) {
+        void vscode.commands.executeCommand(command, typeof targetRef === 'string' ? targetRef : undefined);
+        return;
+    }
     // WITH a ref this is the tree's own gesture relayed from a webview row, and the ref has to be checked
     // against the live session or a stale row would write to the wrong model. With NO ref it is the ask
     // box, which never claims to have a table, and that falls through to the create allowlist below.
@@ -7341,9 +7576,30 @@ async function undoRedoCmd(kind: 'undo' | 'redo'): Promise<void> {
 
 function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): (msg: any) => Promise<void> {
     return async (msg: any) => {
+        if (msg?.type === 'driverState') saidMayMoveTree = msg.mode === 'claudeDrives' && msg.state !== 'personHasWheel';
+        if (msg?.type === 'setDriveMode') {
+            if (!isStandalone && isStudioDriveMode(msg.mode)) {
+                if (studioDriveMode !== msg.mode) studioDriverState = 'idle';
+                studioDriveMode = msg.mode;
+                void extCtx?.workspaceState.update(STUDIO_DRIVE_MODE_KEY, msg.mode);
+                reportStudioDriver();
+            }
+            return;
+        }
+        if (msg?.type === 'driverState') {
+            if (!isStandalone && isStudioDriveMode(msg.mode) && isStudioDriverState(msg.state)) {
+                studioDriveMode = msg.mode;
+                studioDriverState = msg.mode === 'iDrive' ? 'idle' : msg.state;
+                if (typeof msg.lastPersonInput === 'number' && Number.isFinite(msg.lastPersonInput)) {
+                    studioLastPersonInput = msg.lastPersonInput;
+                }
+                reportStudioDriver();
+            }
+            return;
+        }
         if (msg?.type === 'runCommand') { runWebviewHostCommand(msg.command, msg.ref, msg.sessionId); return; }
         if (msg?.type === 'closePanel') { panel.dispose(); return; }   // the standalone Connections hub's close button
-        if (msg?.type === 'revealInTree') { void revealRefInTree(msg.ref); return; }   // Studio "Reveal in Model tree"
+        if (msg?.type === 'revealInTree') { void revealRefInTree(msg.ref, msg.follow === true); return; }   // Studio "Reveal in Model tree"
         if (msg?.type === 'selectObject') { selectRefInProperties(msg.ref); return; }  // selection bus: Properties follows a Studio row focus (no focus steal)
         if (msg?.type === 'focusModelTree') { void vscode.commands.executeCommand('semanticusModel.focus'); return; }   // Ctrl+Alt+T in Studio — only the host can move focus out of a webview
         if (msg?.type === 'focusedCommitted') { studioCommitWaiters.get(msg.id)?.(); return; }
@@ -7420,6 +7676,20 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             return;
         }
         if (msg?.type === 'studioReady') {
+            if (!isStandalone) {
+                const assistantConnected = hasSemanticusMcpEntry(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
+                studioDriveMode = resolveStudioDriveMode();
+                studioDriveModeLoaded = true;
+                // Capture before posting: the webview answers driveMode with its initial state.
+                const restoreWheel = studioDriveMode === 'claudeDrives' && studioDriverState === 'personHasWheel';
+                const restoreAt = studioLastPersonInput;
+                panel.webview.postMessage({ type: 'driveMode', mode: studioDriveMode, assistantConnected });
+                if (restoreWheel && restoreAt !== null) panel.webview.postMessage({ type: 'personInput', at: restoreAt });
+            }
+            if (pendingFirstRunSay) {   // a Connect from the header or palette opened this Studio: show its say card now
+                try { panel.webview.postMessage({ type: 'firstRunSay', note: pendingFirstRunSay.note }); } catch { /* disposing */ }
+                pendingFirstRunSay = null;
+            }
             // Studio text size is a per-PROJECT preference (a big model on a big screen, a small one on a laptop),
             // so it rides workspaceState and is answered here rather than being asked for: the webview has nothing
             // to wait on, and one that never hears back simply stays at 100%.
@@ -7429,9 +7699,9 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // Likewise a model that is waiting for a sign-in: the page shows its name, not "Open a model to begin".
             try { panel.webview.postMessage({ type: 'reconnectPending', name: pendingReconnect ? (pendingReconnect.modelName || pendingReconnect.database || 'your model') : null }); } catch { /* disposing */ }
             if (!isStandalone) {
-            studioReady = true; flushNav(); flushOpenConnections();
+            studioReady = true; flushNav(); flushOpenConnections(); studioNotes.flush();
             const selected = [...(treeView?.selection ?? [])].filter((n) => n.kind !== 'dfolder');
-            panel.webview.postMessage({ type: 'treeSelection', ref: selected.length === 1 ? selected[0].ref : undefined, sessionId: currentSessionId });
+            panel.webview.postMessage({ type: 'treeSelection', ref: selected.length === 1 ? selected[0].ref : undefined, sessionId: currentSessionId, by: lastTreeSelectionBy });
         } return; }     // webview mounted → flush queued nav / hub-open (the studio panel only)
         if (msg?.type === 'setStudioZoom') { void setStudioZoom(Number(msg.level)); return; }
         // Unsaved Author work, kept for the workspace (WORKFLOW_HELD_KEY). Only the Studio page holds Author.
@@ -7446,6 +7716,26 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             return;
         }
         if (msg?.type === 'setGuideFlag') { if (extCtx) void writeGuideFlag(extCtx.globalState, msg); return; }
+        // The first-run choice (src/firstRun.ts): asked for when the Studio mounts. One press writes the connection and
+        // installs the skill; By hand only writes the once-flag. Both write the chosen mode to its setting.
+        if (msg?.type === 'getFirstRun') {
+            const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            const state = extCtx ? readFirstRun(extCtx.globalState, hasSemanticusMcpEntry(ws)) : null;
+            try { panel.webview.postMessage({ type: 'firstRun', id: msg.id, ...(state ?? { unavailable: true }) }); } catch { /* disposing */ }
+            return;
+        }
+        if (msg?.type === 'firstRunConnect') {
+            void (async () => {
+                const result = extCtx ? await runFirstRunConnect({
+                    writeConnection: () => writeMcpConnection(true),
+                    installSkill: installClaudeCodeSkill,
+                    markDone: () => finishFirstRun('assistant'),
+                }) : { ok: false, error: 'Semanticus is not ready yet. Try again in a moment.' };
+                try { panel.webview.postMessage({ type: 'firstRunConnected', id: msg.id, ...result }); } catch { /* disposing */ }
+            })();
+            return;
+        }
+        if (msg?.type === 'firstRunClose') { void finishFirstRun(choiceFor(msg.mode)); return; }
         // Whether the Pro permission card may ask about a model now (src/consentAsks.ts). One memory for every panel.
         if (msg?.type === 'claimConsentAsk') {
             try { panel.webview.postMessage({ type: 'consentAsk', id: msg.id, ask: consentAsks.claim(msg.scope) }); } catch { /* disposing */ }

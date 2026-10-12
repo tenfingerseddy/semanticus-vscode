@@ -119,6 +119,7 @@ namespace Semanticus.Tests
 
         // ================================================================== A: item 4, a refused measure stays refused when its column is renamed by the words
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -148,6 +149,7 @@ namespace Semanticus.Tests
 
         // ================================================================== B: item 6, a keep survives the person's own table rename
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task B_a_keep_survives_the_persons_own_rename_of_the_table_in_the_start_plan()
         {
@@ -172,6 +174,7 @@ namespace Semanticus.Tests
 
         // ================================================================== C: item 1, the whole build (structure and lines) writes nothing the review does not show
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]

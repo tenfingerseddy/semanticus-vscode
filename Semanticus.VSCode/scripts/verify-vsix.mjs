@@ -47,6 +47,7 @@ const EXACT_FILES = new Set([
 ]);
 
 const ALLOWED_PREFIXES = [
+  'extension/assets/learn/',
   'extension/engine/',
   'extension/language/',
   'extension/media/',

@@ -49,20 +49,20 @@ namespace Semanticus.Tests
             await Assert.ThrowsAsync<ArgumentException>(() => engine.RememberXmlaConnectionAsync("powerbi://x/bad", null, null, "password", "human"));
         }
 
-        // ---- FAIL CLOSED. An unlabelled target is production. This is the ONE inference we make, and it is safe
-        // because it is the strictest. ----
+        // ---- An unlabelled target counts as TEST (Kane, 10 Oct 2026): production rules apply only to a target the person labelled
+        // production. This is the ONE inference we make. ----
         [Fact]
-        public void An_unlabelled_target_is_production()
+        public void An_unlabelled_target_counts_as_test()
         {
             var r = Remember("powerbi://api.powerbi.com/v1.0/myorg/Anything");
             Assert.True(ConnectionRegistry.IsUnlabelled(r));
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(r));
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(r));
         }
 
         [Fact]
-        public void A_null_record_is_also_production_never_a_permissive_default()
+        public void A_null_record_is_unlabelled_too_so_it_counts_as_test()
         {
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(null));
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(null));
         }
 
         // ---- NEVER infer a label from an endpoint's NAME. Kane's real client endpoint is `.../UAT_SEM`, and for that
@@ -75,24 +75,23 @@ namespace Semanticus.Tests
         [InlineData("localhost:51234")]
         public void A_label_is_never_inferred_from_the_endpoint_name(string endpoint)
         {
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(Remember(endpoint)));
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(Remember(endpoint)));   // unlabelled is test, whatever the name says
         }
 
-        // ---- An agent cannot label a target. Its own permissions are gated on the label, so relabelling prod as dev
-        // would defeat the matrix that restrains it. ----
+        // Both doors can set the first environment label under the engine local-write policy.
         [Fact]
-        public void An_agent_cannot_label_a_target()
+        public void An_agent_can_label_a_target()
         {
             var r = Remember("powerbi://x/prod");
-            var ex = Assert.Throws<InvalidOperationException>(() => ConnectionRegistry.SetLabel(r.Id, "dev", origin: "agent"));
-            Assert.Contains("Only a human can label", ex.Message);
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));   // unchanged
+            var changed = ConnectionRegistry.SetLabel(r.Id, "dev", origin: "agent");
+            Assert.Equal("dev", changed.Label);
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));
         }
 
         // ---- The origin default is FAIL-CLOSED: a caller that omits it is treated as the agent, not the human. A
         // forgotten argument must never grant human privileges. ----
         [Fact]
-        public void Labelling_with_an_unrecognised_origin_is_refused_like_an_agent()
+        public void Labelling_with_an_unrecognised_origin_is_refused()
         {
             var r = Remember("powerbi://x/origin");
             Assert.Throws<InvalidOperationException>(() => ConnectionRegistry.SetLabel(r.Id, "dev", origin: null));
@@ -107,7 +106,7 @@ namespace Semanticus.Tests
             Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));
 
             ConnectionRegistry.SetLabel(r.Id, null, "human");                                   // cleared
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));   // back to strictest
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));   // back to the default, test
         }
 
         // ---- A typo must not silently become a label nobody's policy matches. ----
@@ -125,12 +124,20 @@ namespace Semanticus.Tests
         [InlineData("root")]
         [InlineData("Production")]   // ToLower → "production", not the whitelisted "prod"
         [InlineData("staging")]
-        [InlineData("")]
         public void An_out_of_whitelist_label_on_disk_reads_as_prod(string raw)
         {
             var rec = new ModelConnectionRecord { Label = raw };
             Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(rec));
             Assert.True(ConnectionRegistry.IsUnlabelled(rec));   // ...and counts as unlabelled for retention/telemetry
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData(null)]
+        public void A_blank_label_is_no_label_and_counts_as_test(string raw)
+        {
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(new ModelConnectionRecord { Label = raw }));
         }
 
         [Fact]
@@ -223,9 +230,9 @@ namespace Semanticus.Tests
             var b = ConnectionRegistry.Remember("xmla", "powerbi://x/ws", "SalesScratch");
             Assert.NotEqual(a.Id, b.Id);
 
-            ConnectionRegistry.SetLabel(b.Id, "dev", "human");
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(a.Id)));
-            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(b.Id)));
+            ConnectionRegistry.SetLabel(b.Id, "uat", "human");
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(a.Id)));   // unlabelled: test
+            Assert.Equal("uat", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(b.Id)));
         }
 
         // ---- Retention must never evict a target the user LABELLED. Dropping a `prod` declaration would silently turn
@@ -355,7 +362,7 @@ namespace Semanticus.Tests
 
             Assert.Empty(ConnectionRegistry.List());
             var r = Remember("powerbi://x/after-corruption");   // must not throw
-            Assert.Equal("prod", ConnectionRegistry.EffectiveLabel(r));
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(r));
         }
 
         [Fact]

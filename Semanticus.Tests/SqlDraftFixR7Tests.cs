@@ -165,6 +165,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The same draft built on the engine: no error, no table marked as a date table, and the note reaches the report.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_source_with_no_date_table_builds_with_no_marked_table_and_the_report_carries_the_note()
         {
@@ -361,6 +362,7 @@ namespace Semanticus.Tests
         [InlineData("refresh the model we made from the warehouse")]
         [InlineData("create a new report from this warehouse model")]
         [InlineData("publish the model we built from SQL")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task An_ask_the_words_settle_never_reaches_the_intent_question(string ask)
         {
             var (f, oracle) = await WithService(AskRoutePoint.IntentNewModel, 0.99);
@@ -375,6 +377,11 @@ namespace Semanticus.Tests
                 else Assert.NotEqual("spec", result.Tool);
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("make a new model from the data warehouse")]
+        public Task An_ask_the_words_settle_never_reaches_the_intent_question_sample(string ask) => An_ask_the_words_settle_never_reaches_the_intent_question(ask);
 
         /// <summary>With no service the unsure ask is routed like any other, and nothing is sent.</summary>
         [Fact]

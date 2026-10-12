@@ -23,6 +23,73 @@ namespace Semanticus.Tests
         private static IEnumerable<PlanHistoryRow> Work(PlanHistoryView v) =>
             v.Rows.Where(r => r.Kind != "decision");
 
+        [Fact]
+        public async Task Said_undo_preserves_later_assistant_edits_and_is_itself_undoable()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("SaidUndo.bim");
+            await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", "first group", "agent");
+            var first = f.Sessions.Ledger.Entries(f.Sessions.Current.Id).Last();
+            await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", "second commit in the group", "agent");
+            var lastRevision = f.Sessions.Current.Revision;
+            await f.Engine.SetDescriptionAsync("column:Sales/Amount", "later group", "agent");
+            await f.Engine.UndoToEntryAsync(first.EntryId, "human", lastRevision);
+            var values = await f.Sessions.Current.ReadAsync(m => new[] { m.Tables["Sales"].Measures["Total Sales"].Description, m.Tables["Sales"].Columns["Amount"].Description });
+            Assert.NotEqual("first group", values[0]);
+            Assert.NotEqual("second commit in the group", values[0]);
+            Assert.Equal("later group", values[1]);
+            await f.Engine.UndoAsync("human");
+            Assert.Equal("second commit in the group", await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures["Total Sales"].Description));
+            await f.Engine.RedoAsync("human");
+            Assert.NotEqual("first group", await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures["Total Sales"].Description));
+        }
+
+        [Theory]
+        [InlineData("agent", "measure:Sales/Total Sales")]
+        [InlineData("human", "column:Sales/Amount")]
+        public async Task Said_undo_opens_history_for_a_conflict_or_a_person_edit(string origin, string objRef)
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("SaidConflict.bim");
+            await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", "first group", "agent");
+            var first = f.Sessions.Ledger.Entries(f.Sessions.Current.Id).Last();
+            await f.Engine.SetDescriptionAsync(objRef, "later group", origin);
+            var revision = f.Sessions.Current.Revision;
+            Assert.True((await f.Engine.UndoToEntryAsync(first.EntryId, "human", first.Revision)).HistoryRequired);
+            Assert.Equal(revision, f.Sessions.Current.Revision);
+        }
+
+        [Fact]
+        public async Task Said_undo_of_an_add_preserves_other_objects_and_can_be_taken_back()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("SaidAdd.bim");
+            await f.Engine.CreateMeasureAsync("table:Sales", "New measure", "1", "agent");
+            var first = f.Sessions.Ledger.Entries(f.Sessions.Current.Id).Last();
+            await f.Engine.SetDescriptionAsync("column:Sales/Amount", "later group", "agent");
+            await f.Engine.UndoToEntryAsync(first.EntryId, "human", first.Revision);
+            Assert.False(await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures.Contains("New measure")));
+            await f.Engine.UndoAsync("human");
+            Assert.True(await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures.Contains("New measure")));
+            Assert.Equal("later group", await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Columns["Amount"].Description));
+        }
+
+        [Fact]
+        public async Task Said_revert_keeps_the_file_guard_when_it_is_undone()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("SaidSidecar.bim");
+            var starter = (await f.Engine.GetPrimerAsync()).Markdown;
+            var initial = await f.Engine.SetPrimerAsync(starter, "human");
+            var before = await File.ReadAllTextAsync(initial.FilePath);
+            var changed = starter.Replace("_Add what people and the AI Assistant should know._", "Sales uses the Date table.");
+            await f.Engine.SetPrimerAsync(changed, "agent");
+            var first = f.Sessions.Ledger.Entries(f.Sessions.Current.Id).Last(e => e.Origin == "agent");
+            await f.Engine.SetDescriptionAsync("column:Sales/Amount", "later group", "agent");
+            await f.Engine.UndoToEntryAsync(first.EntryId, "human", first.Revision);
+            Assert.Equal(before, await File.ReadAllTextAsync(initial.FilePath));
+            var external = before + Environment.NewLine + "A newer note.";
+            await File.WriteAllTextAsync(initial.FilePath, external);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Engine.UndoAsync("human"));
+            Assert.Equal(external, await File.ReadAllTextAsync(initial.FilePath));
+        }
+
         /// <summary>The person edits, the assistant edits, the plan applies a batch: three rows.</summary>
         private static async Task<(string Person, string Assistant, string[] Items)> ThreeDoersAsync(DecisionFixture f)
         {
@@ -40,6 +107,7 @@ namespace Semanticus.Tests
             return (person, assistant, ids);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_merged_view_nests_by_cause_and_undo_to_the_first_takes_all_three_back_in_one_commit()
         {
@@ -73,6 +141,7 @@ namespace Semanticus.Tests
             Assert.All(after, r => Assert.True(r.Undone && r.Redoable && !r.Undoable));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task One_object_and_one_doer_can_be_asked_about()
         {
@@ -97,6 +166,7 @@ namespace Semanticus.Tests
             Assert.All(next.Rows, r => Assert.True(r.When < page.Rows[1].When));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task After_an_engine_restart_the_rows_sit_under_the_seam_with_no_Undo()
         {
@@ -125,6 +195,7 @@ namespace Semanticus.Tests
             Assert.True(top.Undoable);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_restore_draws_its_own_seam_and_a_saved_version_is_a_flag_row()
         {
@@ -192,6 +263,7 @@ namespace Semanticus.Tests
             Assert.NotEqual(started.RunId, second.RunId);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_history_file_never_shows_as_a_change_in_the_models_git_repo()
         {
@@ -228,6 +300,7 @@ namespace Semanticus.Tests
             finally { try { Directory.Delete(dir, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Disposing_the_sessions_waits_for_the_ledger_write_so_the_folder_can_be_deleted()
         {
@@ -350,6 +423,7 @@ namespace Semanticus.Tests
         /// batch open, a field parameter, a calculation group from the builder (create, then its precedence) and an ISO
         /// calendar each landed without an undoable History row. Every builder must leave a row that undoes it, with or
         /// without an earlier refusal in the session.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("field parameter", false)]
         [InlineData("field parameter", true)]
@@ -553,6 +627,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "a1", "a2", "b1" }, LabelsOnDisk(file, identity));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_ledger_entry_written_by_another_process_inside_this_write_is_kept()
         {

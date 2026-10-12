@@ -161,9 +161,10 @@ namespace Semanticus.Engine
                     Id = w.Id,
                     Title = w.Title,
                     WaitsFor = w.WaitsFor?.FirstOrDefault()?.Title,
+                    WaitsForWho = PlanTaskQueue.WhoWord(w.WaitsFor?.FirstOrDefault()?.Doer),
                 }).ToArray(),
                 Sentence = paused ? PlanTaskQueue.PausedSentence
-                    : listed.Count == 0 ? "Nothing on the Plan is ready for you. Carry on with what the person asks you directly."
+                    : listed.Count == 0 ? "No task on the Plan is ready for you. Do what the person asks you directly."
                     : PlanTaskQueue.Header(offer, listed.Count),
             };
         }
@@ -211,9 +212,9 @@ namespace Semanticus.Engine
         // ---- the assistant's side: claim_request, complete_request, decline_request --------------------------
 
         internal const string QueuePausedSentence =
-            "The person has paused tasks for you. Carry on with what they ask you directly.";
+            "The person paused your tasks. Do what they ask you directly.";
         internal const string RestartSentence =
-            "Semanticus restarted while your assistant had this. It is offered again.";
+            "Semanticus restarted while your assistant had this. It is ready for your assistant again.";
 
         /// <summary>claim_request. Refused while the switch is paused, while the row is held, waits for another
         /// row or is the person's to do. Otherwise the claim is written onto the task (the token hashed), the
@@ -253,7 +254,7 @@ namespace Semanticus.Engine
                         return Refused(HandoffRefusal.NotReady, "The person paused this task. Take another, or ask them.", task, row);
                     if (row?.WaitsFor is { Length: > 0 } waits)
                         return Refused(HandoffRefusal.NotReady, "This task is not ready yet. It waits for " + waits[0].Title
-                            + ". Take another, or come back when that is done.", task, row);
+                            + " first. Take another, or come back when that is done.", task, row);
                 }
 
                 var token = "ct-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
@@ -317,7 +318,7 @@ namespace Semanticus.Engine
                 t.DoneUtc = now;
                 t.DoneBy = PlanDoers.Assistant;
             }, t => t.DoneWhen == PlanDoneWhen.ModelCheck || t.DoneWhen == PlanDoneWhen.HasWords
-                ? "Thanks. Semanticus checks the model, and the task shows as done once the check passes."
+                ? "Thanks. The task shows as done once Semanticus finds the model really has it."
                 : "Marked done. The person sees your reply on the Plan.",
                 // Nothing can have been done to an object that is not there (UAT S12-5-006).
                 GoneRefusalAsync).ConfigureAwait(false);

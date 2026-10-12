@@ -116,6 +116,7 @@ namespace Semanticus.Tests
         /// (dropped) for words that hold an adding verb, so this counts kept adds only: rewritten, rule line version 5 item 2.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task No_words_of_version_four_draft_an_add(string door, string jev)
         {
             using var f = await ProAsync("R6No" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -128,10 +129,18 @@ namespace Semanticus.Tests
             Assert.True(wrong.Count == 0, string.Join("\n", wrong));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> No_words_of_version_four_draft_an_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(No_words_of_version_four_draft_an_add_SampleRows))]
+        public Task No_words_of_version_four_draft_an_add_sample(string door, string jev) => No_words_of_version_four_draft_an_add(door, jev);
+
         /// <summary>The adds version 4 must keep (its controls, and the two lead-ins the verifier's fixture keeps, p4 and p9):
         /// each still drafts its add, kept, on both doors.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Version_four_keeps_the_adds_it_has_no_reason_to_lose(string door, string jev)
         {
             using var f = await ProAsync("R6Keep" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -163,11 +172,19 @@ namespace Semanticus.Tests
             }
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> Version_four_keeps_the_adds_it_has_no_reason_to_lose_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(Version_four_keeps_the_adds_it_has_no_reason_to_lose_SampleRows))]
+        public Task Version_four_keeps_the_adds_it_has_no_reason_to_lose_sample(string door, string jev) => Version_four_keeps_the_adds_it_has_no_reason_to_lose(door, jev);
+
         /// <summary>j: words kept before permission are read again with the sentence they were typed in, with Jev saying no
         /// and with Jev sure of every add (VR11), and an add in kept words with nothing that takes away in their sentence
         /// stays.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Kept_words_keep_their_sentences_when_they_are_read_again(string door, string jev)
         {
             using var f = await ProAsync("R6Kept" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -190,12 +207,20 @@ namespace Semanticus.Tests
             Assert.Contains("Add a role (kept)", Adds(v));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> Kept_words_keep_their_sentences_when_they_are_read_again_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(Kept_words_keep_their_sentences_when_they_are_read_again_SampleRows))]
+        public Task Kept_words_keep_their_sentences_when_they_are_read_again_sample(string door, string jev) => Kept_words_keep_their_sentences_when_they_are_read_again(door, jev);
+
         /// <summary>Add more words after a closed take-away sentence (version 5; k is retired): the rule reads the new words as
         /// typed. A NEW add of a named kind is kept, whatever the draft's last sentence took away; an add that puts the thing
         /// on that list ("to that list too") is unticked. Rewritten from "the draft's last closed sentence vetoes an add of the
         /// same kind", rule line version 5 item 4 (and K3 for the second).</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Add_more_words_reads_the_new_words_as_typed(string door, string jev)
         {
             using var f = await ProAsync("R6More" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -214,6 +239,13 @@ namespace Semanticus.Tests
             Assert.Empty(KeptAdds(v));
             Assert.Contains("Add a role (dropped)", Adds(v));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> Add_more_words_reads_the_new_words_as_typed_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(Add_more_words_reads_the_new_words_as_typed_SampleRows))]
+        public Task Add_more_words_reads_the_new_words_as_typed_sample(string door, string jev) => Add_more_words_reads_the_new_words_as_typed(door, jev);
 
         /// <summary>L2: the note kept with a clause says what is true of it. "Total Cost out" of a take-away is not called
         /// words that "do not ask to add anything", "e.g." is never a clause of its own, and no note names "e" or "g".</summary>

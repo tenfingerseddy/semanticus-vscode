@@ -321,7 +321,8 @@ namespace Semanticus.Tests
                 var dir = Path.GetDirectoryName(path)!;
                 var scratch = Path.Combine(dir, "scratch.out");
                 var gate = AssistantEngine.For(engine);
-                var rows = GateRegistry.All.Where(r => r.Choose != null).OrderBy(r => r.Method, StringComparer.Ordinal).ToList();
+                // LabelConnectionAsync is decided by its arguments but has no pass branch: it always holds, or refuses to change an existing label (ConnectionPublicDoorTests).
+                var rows = GateRegistry.All.Where(r => r.Choose != null && r.Method != "LabelConnectionAsync").OrderBy(r => r.Method, StringComparer.Ordinal).ToList();
                 Assert.True(rows.Count >= 15, "only " + rows.Count + " rows are decided by their arguments");
                 var calls = new List<(GateEntry, MethodInfo, object[])>();
                 var notPass = new List<string>();

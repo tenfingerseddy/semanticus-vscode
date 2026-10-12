@@ -1,5 +1,7 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { onActivity, runHostCommand, type ActivityEvent } from './bridge';
+import { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
+import { onActivity, onDidChange, runHostCommand, type ActivityEvent } from './bridge';
+import type { SaidGroup } from './studio/said-model';
+import { appendEdit, saidCopy } from './studio/said-model';
 
 export type { ActivityEvent };
 
@@ -35,12 +37,13 @@ const FEED_MARK = '•';
  *  again (already reflected) must still re-fire, so identity can't be the seq. */
 interface PinnedActivity { event: ActivityEvent; nonce: number; }
 interface ActivityState {
+  addEdit: (group: SaidGroup) => void;
   feed: ActivityEvent[];
   latestByKind: Record<string, ActivityEvent>;
   pinned: PinnedActivity | null;
   pin: (e: ActivityEvent) => void;
 }
-const Ctx = createContext<ActivityState>({ feed: [], latestByKind: {}, pinned: null, pin: () => {} });
+const Ctx = createContext<ActivityState>({ feed: [], latestByKind: {}, pinned: null, pin: () => {}, addEdit: () => {} });
 
 // Subscribes once to the live `model/activity` stream and keeps a recent feed + the latest event per op kind,
 // so the header indicator, the deep-link feed, and each tab's "Claude ran this" reflection share one source.
@@ -51,12 +54,27 @@ export function ActivityProvider({ children }: { children: React.ReactNode }) {
   // to it — it must be able to read the clicked run when it first renders.
   const [pinned, setPinned] = useState<PinnedActivity | null>(null);
   const pinNonce = useRef(0);
+  const editSeq = useRef(0);
+  const editEpoch = useRef(0);
+  const editBoundaries = useRef<{ sessionId: string; revision: number; epoch: number }[]>([]);
+  useEffect(() => onDidChange(n => {
+    if (n.replay || ((n.by ?? (n.origin === 'agent' ? 'assistant' : n.origin)) !== 'assistant'
+      && n.cause?.approvedBy !== 'assistant')) {
+      editBoundaries.current.push({ sessionId: n.sessionId, revision: n.revision, epoch: ++editEpoch.current });
+      editBoundaries.current = editBoundaries.current.slice(-64);
+    }
+  }), []);
+  const addEdit = useCallback((group: SaidGroup) => {
+    const epoch = [...editBoundaries.current].reverse().find(b => b.sessionId === group.sessionId && b.revision <= group.lastRevision)?.epoch ?? 0;
+    const event: ActivityEvent = { seq: --editSeq.current, kind: 'edit', origin: 'agent', label: saidCopy(group), target: group.id, ok: true, words: group.words, editEpoch: `${group.sessionId}:${epoch}` };
+    setFeed((f) => appendEdit(f, event));
+  }, []);
   const pin = (e: ActivityEvent) => setPinned({ event: e, nonce: ++pinNonce.current });
   useEffect(() => onActivity((e) => {
     setFeed((f) => [e, ...f].slice(0, 60));
     setLatest((m) => (m[e.kind] && m[e.kind].seq >= e.seq ? m : { ...m, [e.kind]: e }));   // newest-per-kind, by server Seq
   }), []);
-  return <Ctx.Provider value={{ feed, latestByKind, pinned, pin }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ feed, latestByKind, pinned, pin, addEdit }}>{children}</Ctx.Provider>;
 }
 export function useActivity() { return useContext(Ctx); }
 
@@ -190,7 +208,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
   };
   return (
     <div ref={wrap} className="relative flex shrink-0 items-center gap-1" onBlur={closeOnFocusLeaving}>
-      <button ref={chipRef} type="button" aria-haspopup="menu" aria-expanded={open}
+      <button ref={chipRef} type="button" data-tour="assistant-chip" aria-haspopup="menu" aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); setOpen(true); }

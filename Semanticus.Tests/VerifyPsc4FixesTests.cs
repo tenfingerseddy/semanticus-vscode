@@ -271,6 +271,7 @@ namespace Semanticus.Tests
 
         private static string[] Broken(Model m) => FormulaReferences.Scan(m).Select(b => b.Object.Name + ": " + FormulaReferences.Describe(b)).ToArray();
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]

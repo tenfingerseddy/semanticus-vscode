@@ -69,6 +69,7 @@ namespace Semanticus.Tests
             ["server"] = Server, ["database"] = Db, ["folder"] = Path.Combine(Root, folderName), ["name"] = "Uplift",
         };
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J1_start_model_from_sql_is_held_under_Locked_and_makes_nothing_until_the_person_says_yes()
         {
@@ -95,6 +96,7 @@ namespace Semanticus.Tests
             finally { await client.DisposeAsync(); await host.StopAsync(); host.Dispose(); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J1_every_other_start_verb_is_held_under_Locked_and_leaves_the_plan_as_it_was()
         {
@@ -139,6 +141,7 @@ namespace Semanticus.Tests
             finally { await client.DisposeAsync(); await host.StopAsync(); host.Dispose(); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J1_below_Locked_the_start_verbs_ask_nothing_and_the_reads_never_ask()
         {
@@ -161,11 +164,12 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void J1_approving_the_start_plan_is_the_persons_and_every_start_method_has_a_row()
+        public void J1_approving_the_start_plan_is_an_edit_row_and_every_start_method_has_a_row()
         {
-            Assert.Equal(GateKind.Person, GateRegistry.Find("ApproveStartPlanAsync").Kind);
+            Assert.Equal(GateKind.Hold, GateRegistry.Find("ApproveStartPlanAsync").Kind);
+            Assert.Equal(AgentCapability.EditLocal, GateRegistry.Find("ApproveStartPlanAsync").Capability);   // Kane, 10 Oct 2026: the person's word in chat is enough
             // the plan lives outside the model (Write model files); only the build commits to the model (Edit the open model); the start does both
-            Assert.Equal(GateKind.Consent, GateRegistry.Find("GrantStartDisclosureAsync").Kind);   // the person's own question in every preset, like set_consent (Sol item 1)
+            Assert.Equal(GateKind.Consent, GateRegistry.Find("GrantStartDisclosureAsync").Kind);   // a consent row in every preset, like set_consent; the assistant's call grants after the person's yes in chat (chatyes)
             foreach (var (m, cap) in new[] { ("StartModelFromSqlAsync", AgentCapability.EditLocal), ("EditStartPlanAsync", AgentCapability.DeployFile),
                                               ("WriteStartWordsAsync", AgentCapability.DeployFile), ("BuildStartPlanAsync", AgentCapability.EditLocal), ("DiscardStartPlanAsync", AgentCapability.DeployFile) })
             {

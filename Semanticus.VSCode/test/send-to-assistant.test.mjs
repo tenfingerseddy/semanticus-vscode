@@ -264,7 +264,8 @@ assert.match(ruleBox, /disabled=""[^>]*>Give to your assistant|Give to your assi
 // 5. The wiring: every kept control mounts the shared component; the DAX field keeps Copy only.
 // ===================================================================================================
 const wired = {
-  'bpa.tsx': [/<GiveToAssistant/, /findingBuilder\('bpa'/],
+  // A Model quality finding a plan row already carries says On the plan (Kane, 11 Oct); the rest offer Give (GiveOrOnPlan).
+  'bpa.tsx': [/<GiveOrOnPlan/, /findingBuilder\('bpa'/],
   'documentation.tsx': [/<GiveToAssistant/, /docsTask\(/],
   'explainpanel.tsx': [/<GiveToAssistant/, /explainTask\(/],
   'optimize.tsx': [/<GiveToAssistant/, /slotTask\(/],

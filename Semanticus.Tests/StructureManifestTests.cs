@@ -159,6 +159,7 @@ namespace Semanticus.Tests
         // Fails first (L3): a key of several columns
         // ============================================================================================================
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(2)]
         [InlineData(3)]
@@ -473,6 +474,7 @@ namespace Semanticus.Tests
             return sb.ToString();
         });
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_same_seed_twice_gives_identical_relationship_names_and_lineage_tags()
         {
@@ -499,6 +501,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_different_seed_gives_different_identities_and_no_seed_gives_the_models_own()
         {
@@ -589,6 +592,7 @@ namespace Semanticus.Tests
             Assert.Empty(m.ToSpec().Relationships);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("diamond")]
         [InlineData("diamond-no-fact-key-to-geography")]
@@ -677,6 +681,7 @@ namespace Semanticus.Tests
         // Verifier (sf-manifest) note 1: undo then redo of a seeded build used to bring the links back under fresh GUIDs,
         // because the fixed name was set on the raw TOM relationship AFTER the add was recorded, so the undo record held the
         // random one. Same plan, same bytes has to hold after a redo too.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Redo_of_a_seeded_build_keeps_the_fixed_relationship_names()
         {

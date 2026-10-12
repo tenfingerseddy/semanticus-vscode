@@ -61,7 +61,8 @@ export function StateWord({ item, step, note: extra }: { item: P.PlanItem; step?
   const word = P.stateWordOf(item);
   // A row another change closed says so in the word's place, with the reason (which change) on hover.
   const closed = P.closedByOther(item);
-  const note = closed ? null : extra ?? (item.stateNote && word !== 'needs_you' && item.stateNote.length <= 28 ? item.stateNote : null);
+  const stateNote = item.stateNote === 'when your assistant next checks the Plan' ? 'when your assistant checks' : item.stateNote;
+  const note = closed ? null : extra ?? (stateNote && word !== 'needs_you' && stateNote.length <= 28 ? stateNote : null);
   return <span className={`pw-state pw-state-${closed ? 'faint' : P.stateTone(word)}`} data-state={word}
     title={closed ? item.why?.[item.why.length - 1] : item.stateNote ?? undefined}>
     <span className="pw-state-mark" aria-hidden="true" />
@@ -175,7 +176,7 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
   const source = P.sourceOf(item);
   const doer = P.doerOf(item);
   const word = P.stateWordOf(item);
-  const sub = P.subLine(item);
+  const sub = P.subLine(item, items);
   const main = P.mainAction(item, free);
   const steps = word === 'on_it' ? stepCount(item) : null;
   const draft = P.draftOwnState(item);
@@ -192,8 +193,8 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
     <button type="button" className="pw-title" aria-expanded={open} data-testid={`plan-row-open-${item.id}`} onClick={onToggle}>
       <b className="pw-trunc">{lead && <span className="pw-lead sem-num" data-testid="plan-row-lead">{lead}</span>}{item.title}</b>
       {sub.waits
-        ? <span className="pw-sub pw-trunc">{sub.optional ? 'Optional · ' : ''}Waits for: <b>{sub.waits}</b></span>
-        : <span className="pw-sub pw-trunc">{sub.text}</span>}
+        ? <span className="pw-sub pw-waits" title={`${sub.waits}. This task needs the changes that task makes, so it comes second.`}><span className="pw-trunc">{sub.optional ? 'Optional · ' : ''}{sub.who}: <b>{sub.waits}</b></span>{sub.why && <span className="pw-why">· {sub.why}</span>}</span>
+        : <span className="pw-sub pw-trunc">{sub.aside && sub.optional ? 'Optional · ' : ''}{sub.text}</span>}
     </button>
     <span className="pw-doer" {...(first ? { 'data-tour': 'doer' } : {})}>
       <DoerMenu item={item} busy={busy} onDoer={onDoer} word={word} />
@@ -210,6 +211,8 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
       {draft && <span className="pw-steps" data-testid="plan-row-draft" title={draft.title}>{draft.text}</span>}
       {/* Open is the way in; once the row is open its own controls are right under it. */}
       {main && !(open && main.id === 'open') && <ActionButton item={item} action={main} busy={busy} onAction={onAction} />}
+      {!main && sub.aside && <ActionButton item={sub.aside} busy={busy} onAction={onAction}
+        action={{ id: 'putback', label: P.ACTION_WORD.putback, title: `Put back '${sub.aside.title}'` }} />}
       <PlanRowMenu item={item} items={items} busy={busy} onAction={onAction} grant={grant} canRepeat={canRepeat} />
     </span>
   </div>;
@@ -307,6 +310,10 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
         <dt>Why</dt><dd>{why.length ? why.join(' ')
           : P.sourceOf(item) === 'words' || P.sourceOf(item) === 'you' ? 'You asked for it.' : 'Semanticus gave no reason for this one.'}</dd>
         <dt>Done when</dt><dd>{item.doneText || 'You mark it done.'}</dd>
+        {!!item.waitsFor?.length && <><dt>Finish these tasks first</dt><dd>
+          {item.waitsFor.map((w) => <div key={w.id}>{w.title}</div>)}
+          <span className="plan-muted">This task needs the changes these tasks make, so it comes second. For example, a measure must exist before its format can be set.</span>
+        </dd></>}
         {item.fullText && <><dt>Your text</dt><dd className="pw-fulltext" data-testid="plan-detail-fulltext">{item.fullText}</dd></>}
         <dt>Objects</dt><dd className="pw-objects">{P.objectsLine(item)}</dd>
         {item.stateWord === 'needs_you' && item.stateNote && <><dt>Needs</dt><dd>{item.stateNote}</dd></>}

@@ -28,14 +28,25 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    public sealed class ModelPlanChangesTests
+    public sealed class ModelPlanChangesTests : IClassFixture<ModelTemplates>
     {
+        // Lean suite (10 Oct): the gappy model is built once per class (ModelTemplates) and each test opens its own copy.
+        private readonly ModelTemplates _templates;
+        public ModelPlanChangesTests(ModelTemplates templates) => _templates = templates;
+
         /// <summary>A model with real, deterministic gaps: an unhidden foreign key (VIS-FK), a geographic
         /// column with no data category (CAT-GEO) and a measure nothing uses (the cleanup sweep). Small on
         /// purpose, so a failure names one thing.</summary>
-        private static async Task<DecisionFixture> GappyAsync(string file, bool pro = true)
+        private async Task<DecisionFixture> GappyAsync(string file, bool pro = true)
         {
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
+            await _templates.OpenCopyAsync(f, "gappy", BuildGappyAsync, file);
+            f.UseNull();
+            return f;
+        }
+
+        private static async Task BuildGappyAsync(DecisionFixture f)
+        {
             await f.Engine.CreateModelAsync("Contoso", 1604);
             await f.Engine.CreateTableAsync("Sales", "human");
             await f.Engine.CreateColumnAsync("table:Sales", "Amount", "Double", null, "human");
@@ -56,9 +67,6 @@ namespace Semanticus.Tests
             await f.Engine.SetColumnMetadataAsync("column:Sales/ProductKey", null, "Sum", null, null, "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Total Sales", "SUM ( Sales[Amount] )", "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Old Total", "SUM ( Sales[Amount] )", "human");
-            await f.SaveAsAsync(file);
-            f.UseNull();
-            return f;
         }
 
         private static ModelPlanItem SafeFixRow(ModelPlanView plan) =>
@@ -93,9 +101,10 @@ namespace Semanticus.Tests
             Assert.False(string.IsNullOrWhiteSpace(after.ChangeSet.Digest));
             Assert.Equal(revisionBefore, after.ChangeSet.Revision);
             Assert.False(after.ChangeSet.Stale);
-            Assert.Contains("Nothing has been written", after.ChangeSet.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("Nothing is changed yet", after.ChangeSet.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_line_carries_a_before_an_after_and_where_it_came_from()
         {
@@ -120,6 +129,7 @@ namespace Semanticus.Tests
             });
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_second_propose_replaces_the_first_rather_than_stacking()
         {
@@ -137,6 +147,7 @@ namespace Semanticus.Tests
 
         // ---- keep and drop ----------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dropping_a_line_changes_the_digest_and_nothing_else()
         {
@@ -198,6 +209,7 @@ namespace Semanticus.Tests
 
         // ---- approve ----------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_applies_exactly_the_kept_lines_in_one_undo_step()
         {
@@ -217,7 +229,7 @@ namespace Semanticus.Tests
 
             Assert.True(result.Performed);
             Assert.NotEqual(revisionBefore, result.Revision);
-            Assert.Contains("Undo puts", result.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("One undo takes", result.Sentence, StringComparison.OrdinalIgnoreCase);
 
             // ONE undo entry: a SINGLE undo puts every one of the applied lines back, so the row that had
             // gone (or shrunk) is open again with the same id. Two undo steps would mean two batches.
@@ -233,6 +245,7 @@ namespace Semanticus.Tests
                 StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_closes_the_gap_and_the_item_reads_done_on_the_next_compose()
         {
@@ -253,6 +266,7 @@ namespace Semanticus.Tests
                 Assert.Equal(ModelPlanStatuses.Done, after.Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_refuses_when_the_model_moved_and_applies_nothing()
         {
@@ -275,6 +289,7 @@ namespace Semanticus.Tests
             Assert.Contains("Nothing was applied", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_refuses_a_digest_that_is_not_the_one_on_the_plan()
         {
@@ -301,6 +316,7 @@ namespace Semanticus.Tests
             Assert.Contains("Name the exact set", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_with_nothing_proposed_applies_nothing()
         {
@@ -310,9 +326,10 @@ namespace Semanticus.Tests
             var result = await f.Engine.ModelPlanActionAsync(row.Id, "approve", "human", "anything");
 
             Assert.False(result.Performed);
-            Assert.Contains("No changes have been worked out", result.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("this task has no changes yet", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approving_the_same_digest_twice_applies_it_once()
         {
@@ -337,6 +354,7 @@ namespace Semanticus.Tests
             Assert.Equal(revisionAfterFirst, second.Revision);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_kept_line_that_cannot_be_made_puts_the_whole_set_back()
         {
@@ -401,6 +419,7 @@ namespace Semanticus.Tests
             Assert.Contains("Nothing was applied", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_says_the_way_back_out_loud_and_it_is_one_undo_step()
         {
@@ -413,7 +432,7 @@ namespace Semanticus.Tests
 
             // The promise is the session undo timeline and the sentence says so in those words. It must
             // never imply a durable checkpoint, because approve does not make one.
-            Assert.Contains("Undo puts", result.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("One undo takes", result.Sentence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("checkpoint", result.Sentence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("commit", result.Sentence, StringComparison.OrdinalIgnoreCase);
 
@@ -424,6 +443,7 @@ namespace Semanticus.Tests
 
         // ---- the digest names one model in one session ------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void The_digest_covers_which_model_and_which_job_and_not_only_the_content()
         {
@@ -632,7 +652,7 @@ namespace Semanticus.Tests
             // a set that could not be made.
             Assert.True(first.Performed);
             Assert.False(second.Performed);
-            Assert.Contains("already in", second.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("already made", second.Sentence, StringComparison.OrdinalIgnoreCase);
 
             // The receipt the first one wrote is still a receipt. The second must never have reached the
             // rollback path and stamped this set as put back, because it was not put back: it is in.
@@ -772,6 +792,7 @@ namespace Semanticus.Tests
 
         // ---- cancel -----------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cancel_drops_the_set_and_changes_nothing()
         {
@@ -795,6 +816,7 @@ namespace Semanticus.Tests
             Assert.False(later.Performed);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cancelling_something_already_applied_says_to_undo_it_instead()
         {
@@ -815,6 +837,7 @@ namespace Semanticus.Tests
 
         // ---- the assistant's own proposals -------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_assistant_proposal_lands_on_the_item_it_serves()
         {
@@ -831,6 +854,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanItemStates.Proposed, after.State);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_assistant_change_no_item_claims_opens_an_item_of_its_own()
         {
@@ -856,6 +880,7 @@ namespace Semanticus.Tests
 
         // ---- free and Pro ------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_can_propose_keep_drop_and_cancel()
         {
@@ -875,6 +900,7 @@ namespace Semanticus.Tests
             Assert.Null(Row(cancelled.Plan, row.Id).ChangeSet);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Only_pro_can_approve_a_row_the_engine_runs_for_you()
         {
@@ -892,6 +918,7 @@ namespace Semanticus.Tests
             Assert.Equal(revisionBefore, result.Revision);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_can_approve_a_row_that_was_always_yours_to_do()
         {
@@ -920,6 +947,7 @@ namespace Semanticus.Tests
 
         // ---- the refusals that are most of the behaviour ----------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Proposing_on_a_words_item_hands_off_to_the_assistant()
         {
@@ -935,6 +963,7 @@ namespace Semanticus.Tests
             Assert.Null(Row(result.Plan, "words/model").ChangeSet);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Proposing_on_a_set_aside_item_refuses_and_says_to_put_it_back()
         {
@@ -948,6 +977,7 @@ namespace Semanticus.Tests
             Assert.Contains("set aside", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_unknown_action_names_all_four_verbs()
         {
@@ -965,6 +995,7 @@ namespace Semanticus.Tests
 
         // ---- the story ---------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_history_records_proposed_approved_and_cancelled()
         {
@@ -987,6 +1018,7 @@ namespace Semanticus.Tests
             Assert.Contains(cancelled.Plan.History, h => h.Kind == ModelPlanHistoryKinds.Cancelled && h.ItemId == other.Id);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Proposing_does_not_make_the_plan_gather_again()
         {
@@ -1025,6 +1057,7 @@ namespace Semanticus.Tests
             return secondPath;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Propose_records_itself_on_neither_model_when_the_open_model_is_exchanged()
         {
@@ -1097,6 +1130,7 @@ namespace Semanticus.Tests
             Assert.All(onB.Items, i => Assert.Null(i.ChangeSet));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cancel_records_itself_on_neither_model_when_the_open_model_is_exchanged()
         {
@@ -1171,6 +1205,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(onB.History, h => h.Kind == ModelPlanHistoryKinds.Refused);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_records_its_refusal_on_neither_model_when_the_open_model_is_exchanged()
         {
@@ -1190,12 +1225,13 @@ namespace Semanticus.Tests
 
             Assert.True(swapped, "the seam never fired, so this test proved nothing");
             Assert.False(result.Performed);
-            Assert.Contains("No changes have been worked out", result.Sentence, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("this task has no changes yet", result.Sentence, StringComparison.OrdinalIgnoreCase);
 
             var onB = await f.Engine.GetModelPlanAsync();
             Assert.DoesNotContain(onB.History, h => h.Kind == ModelPlanHistoryKinds.Refused);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Cancel_records_its_refusal_on_neither_model_when_the_open_model_is_exchanged()
         {
@@ -1246,6 +1282,7 @@ namespace Semanticus.Tests
             return (first, second, sent, ready);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bulk_apply_makes_two_items_in_one_step_and_one_undo_puts_both_back()
         {
@@ -1279,6 +1316,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_failing_line_in_the_second_item_leaves_the_first_untouched()
         {
@@ -1343,6 +1381,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanItemStates.Proposed, Row(await f.Engine.GetModelPlanAsync(), first).State);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Applying_the_same_set_twice_applies_nothing_twice()
         {
@@ -1360,6 +1399,7 @@ namespace Semanticus.Tests
             Assert.Contains("second time", twice.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bulk_apply_on_free_refuses_a_row_the_engine_runs_for_you_and_writes_nothing()
         {
@@ -1375,7 +1415,7 @@ namespace Semanticus.Tests
 
         /// <summary>A free session with the one row that is yours to do proposed and one line kept: what a
         /// free person can approve on its own.</summary>
-        private static async Task<(DecisionFixture F, PlanItemDigest[] Sent, long Revision)> FreeYoursReadyAsync(string file)
+        private async Task<(DecisionFixture F, PlanItemDigest[] Sent, long Revision)> FreeYoursReadyAsync(string file)
         {
             var f = await GappyAsync(file, pro: false);
             await PlanHarmKit.AsExistingModelWithAReportReadAsync(f, file);
@@ -1413,6 +1453,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_still_approves_a_row_that_is_yours_to_do_on_its_own_on_both_doors()
         {
@@ -1433,6 +1474,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bulk_apply_on_pro_applies_a_row_that_is_yours_to_do()
         {
@@ -1450,6 +1492,7 @@ namespace Semanticus.Tests
             Assert.Equal("Applied 1 change as one step you can undo.", result.Sentence);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Both_doors_reach_the_same_bulk_apply()
         {
@@ -1517,6 +1560,7 @@ namespace Semanticus.Tests
             Assert.Equal("applied", report.Items.Single(i => i.Id == planItemId).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_bulk_apply_refused_before_the_write_leaves_every_line_pending_and_applyable()
         {

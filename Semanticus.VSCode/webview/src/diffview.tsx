@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { propertyDelta, type ModelDiffItem } from './compare';
+import { roleMemberLines } from './publishcopy';
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════════
 // How one changed object reads: a property digest (what moved, old to new) or, when there is no clean
@@ -96,14 +97,32 @@ function WordDelta({ item, leftLabel, rightLabel }: { item: ModelDiffItem; leftL
 const Add = ({ v }: { v: string | null }) => v == null ? <span style={{ color: 'var(--sem-muted)' }}>Not present</span> : <span style={{ background: 'var(--sem-diff-add-word)', color: 'var(--sem-fg)', borderRadius: 'var(--sem-radius-chip)', padding: '0 var(--sem-space-1)' }}>{v}</span>;
 const Del = ({ v }: { v: string | null }) => v == null ? <span style={{ color: 'var(--sem-muted)' }}>Not present</span> : <span style={{ background: 'var(--sem-diff-del-word)', color: 'var(--sem-fg)', borderRadius: 'var(--sem-radius-chip)', padding: '0 var(--sem-space-1)' }}>{v}</span>;
 
+// A role's members in words: who is added and who is removed, never the stored JSON.
+function RoleMembers({ added, removed }: { added: string[]; removed: string[] }) {
+  const list = (label: string, names: string[], tone: 'add' | 'del') => names.length === 0 ? null : (
+    <div data-testid={`role-members-${tone}`}>
+      <span style={{ color: 'var(--sem-muted)' }}>{label}: </span>
+      {names.map((n, i) => <span key={n + i}>{i > 0 && ', '}{tone === 'add' ? <Add v={n} /> : <Del v={n} />}</span>)}
+    </div>
+  );
+  return <div className="px-1 py-1" data-testid="role-members">{list('Added', added, 'add')}{list('Removed', removed, 'del')}</div>;
+}
+
 export function ReviewCardBody({ item, leftLabel, rightLabel }: { item: ModelDiffItem; leftLabel: string; rightLabel: string }) {
   const props = useMemo(() => propertyDelta(item.leftText, item.rightText), [item.leftText, item.rightText]);
+  const members = useMemo(() => {
+    const lines = item.objectType === 'Role' ? roleMemberLines(item.leftText, item.rightText) : null;
+    return lines && (lines.added.length > 0 || lines.removed.length > 0) ? lines : null;
+  }, [item.objectType, item.leftText, item.rightText]);
   if (!props) return <WordDelta item={item} leftLabel={leftLabel} rightLabel={rightLabel} />;
   // Create = source-only (added); Delete = target-only (removed); Update = only the changed keys, target → source.
-  const rows = item.action === 'Update' ? props.filter((p) => p.changed) : props;
-  if (rows.length === 0) return <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>No property-level differences.</div>;
+  // A role's members are told in words above the table, so the raw list is left out of the property rows.
+  const rows = (item.action === 'Update' ? props.filter((p) => p.changed) : props).filter((p) => !members || p.key !== 'members');
+  if (rows.length === 0 && !members) return <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>No property-level differences.</div>;
   return (
-    <table className="w-full text-(length:--sem-text-label) border-collapse">
+    <>
+    {members && <RoleMembers added={members.added} removed={members.removed} />}
+    {rows.length > 0 && <table className="w-full text-(length:--sem-text-label) border-collapse">
       <tbody>
         {rows.map((p) => (
           <tr key={p.key}>
@@ -116,6 +135,7 @@ export function ReviewCardBody({ item, leftLabel, rightLabel }: { item: ModelDif
           </tr>
         ))}
       </tbody>
-    </table>
+    </table>}
+    </>
   );
 }

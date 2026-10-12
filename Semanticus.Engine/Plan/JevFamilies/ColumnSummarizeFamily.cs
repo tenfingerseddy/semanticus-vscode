@@ -100,6 +100,8 @@ namespace Semanticus.Engine
             public string ColumnFormat;
             public bool Whole;
             public bool IsHidden;
+            /// <summary>The table is hidden, so a new measure in it is hidden from Copilot too.</summary>
+            public bool TableHidden;
 
             /// <summary>The column's Excel/MDX attribute is on and nothing needs it (no sort-by either way, no hierarchy, no
             /// variation), so once hidden it can go off, as BPA's "Set IsAvailableInMdx to false" asks of a hidden column.</summary>
@@ -184,6 +186,7 @@ namespace Semanticus.Engine
                         ColumnFormat = string.IsNullOrWhiteSpace(c.FormatString) ? null : c.FormatString,
                         Whole = c.DataType == DataType.Int64 || measured?.WholeNumbers == true,
                         IsHidden = c.IsHidden,
+                        TableHidden = table.IsHidden,
                         KeepsSummarize = declined.Declines(ObjectRefs.For(c), "summarizeBy"),
                         KeepsVisibility = declined.Declines(ObjectRefs.For(c), "isHidden"),
                         KeepsExcel = declined.Declines(ObjectRefs.For(c), "isAvailableInMDX"),
@@ -289,7 +292,9 @@ namespace Semanticus.Engine
             var flag = sure && isSum && FlagOrOrdinal(ask.ColumnName);
             // A key, a relationship end or a part of a calculated key is never totalled, whoever asks (Sol 6.1, 1 Oct): the
             // principled rule refuses it too, so the fallback cannot pick the total Jev's answer was not sure of.
-            var key = sure && isSum && StarterMeasureTemplates.IsKeyShaped(ask.IsKey, ask.Role, ask.KeyPart);
+            // A count over a key is the same: "Count of OrderDateKey" counts dates people never asked about (Kane, 11 Oct).
+            var counts = pick == StarterMeasureTemplates.Count || pick == StarterMeasureTemplates.DistinctCount;
+            var key = sure && (isSum || counts) && StarterMeasureTemplates.IsKeyShaped(ask.IsKey, ask.Role, ask.KeyPart);
             if (flag || key) sure = false;
             return (sure ? pick : PrincipledRule(ask), sure, flag, key && !flag);
         }
@@ -469,7 +474,7 @@ namespace Semanticus.Engine
                 refused?.Add(new ModelPlanChangeRefusal
                 {
                     Target = ask.Ref,
-                    Reason = ask.ColumnName + " is part of a key, and adding up a key means nothing, so Jev's pick of a total was left out.",
+                    Reason = ask.ColumnName + " is part of a key or a link between tables, so Jev's pick of a total or count was left out.",
                 });
             var sure = chosen.Sure;
             pick = chosen.Pick;
@@ -491,10 +496,10 @@ namespace Semanticus.Engine
                 {
                     ObjectRef = ask.Ref, ObjectName = ask.ColumnName, Kind = "set_summarize_by", Source = JevFamily.Source,
                     Category = "Formatting", Severity = "Info", Risk = "safe", Target = "summarizeBy",
-                    Title = "Stop adding up by itself", Rationale = off, Before = ask.Current ?? "Default", After = nameof(AggregateFunction.None),
+                    Title = "Set to Don't summarize", Rationale = off, Before = ask.Current ?? "Default", After = nameof(AggregateFunction.None),
                     Status = "approved", JevItem = itemId, DecisionPoint = DecisionRegistry.ColumnSummarize, RuleId = OffRuleId,
                     Reason = off,
-                    CheckText = "None is a summarize setting Power BI offers for a number column, and the readiness rules ask for it.",
+                    CheckText = "Power BI lets a number column be set to not add up (Summarize by: None). The AI readiness checks ask for this.",
                 });
             }
 
@@ -532,7 +537,8 @@ namespace Semanticus.Engine
                 (Kind: "set_description", Target: "description", Title: "Describe it", After: Description(pick, BaseMeasures.Humanize(ask.ColumnName), ask.TableName),
                  Check: "Semanticus wrote this description from the measure's own formula."),
             }.ToList();
-            if (ask.HasLinguistic)
+            // A new measure is visible by default, but a hidden table still hides it from Copilot, and set_synonyms refuses it.
+            if (ask.HasLinguistic && !ask.TableHidden)
                 created.Add((Kind: "set_synonyms", Target: "synonyms", Title: "Give it the words people use", After: Synonyms(pick, ask.ColumnName),
                              Check: "Semanticus made these words from the measure's own name, so Copilot knows other ways people ask for it."));
             foreach (var c in created)
@@ -638,9 +644,8 @@ namespace Semanticus.Engine
 
         /// <summary>The first "why" line of a row.</summary>
         internal static string Missing(int n, string table) =>
-            "Number columns in " + table + " add up by themselves on a chart. Good practice for Copilot is that a column does "
-            + "not, and an explicit measure does the adding instead, so each column is set not to add up and gets one measure "
-            + "where it needs one.";
+            "Number columns in " + table + " add themselves up when you put them on a chart. Copilot works better when "
+            + "a measure does the adding instead. So each column is set to stop adding up, and gets a measure where it needs one.";
 
         /// <summary>A row's title from its lines: the measures it adds, or the columns it stops adding up. Only the lines
         /// still kept count, so dropping one of two measures reads "Add 1 measure"; a row with every line dropped is named
@@ -653,7 +658,7 @@ namespace Semanticus.Engine
             var columns = counted.Where(l => l.Kind == "set_summarize_by").Select(l => l.ObjectRef).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             return measures > 0
                 ? "Add " + JevFamily.Count(measures, "measure", "measures") + " for the numbers in " + table
-                : "Stop " + JevFamily.Count(columns, "column", "columns") + " adding up by " + (columns == 1 ? "itself" : "themselves") + " in " + table;
+                : "Set " + JevFamily.Count(columns, "column", "columns") + " to Don't summarize in " + table;
         }
 
         /// <summary>Who chose what, in one sentence. The None lines are good practice applied to every column, so they
@@ -844,9 +849,11 @@ namespace Semanticus.Engine
         {
             var function = StarterMeasureTemplates.Function(option);
             var words = table == null ? Humanize(column) : Humanize(table) + " " + Humanize(column);
-            return function != null && _pattern.TryGetValue(function, out var pattern)
+            var name = function != null && _pattern.TryGetValue(function, out var pattern)
                 ? string.Format(System.Globalization.CultureInfo.InvariantCulture, pattern.Replace("{", "{{").Replace("}", "}}").Replace("{{0}}", "{0}"), words)
                 : StarterMeasureTemplates.Name(option, words);
+            // A column already named "Total Sales" must not become "Total Total Sales" (Kane, 11 Oct).
+            return ColumnSummarizeFamily.Plainer(name);
         }
 
         private static readonly Regex Hump = new Regex(@"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])", RegexOptions.CultureInvariant);

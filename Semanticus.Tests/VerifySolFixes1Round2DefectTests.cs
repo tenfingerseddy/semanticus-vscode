@@ -40,6 +40,7 @@ namespace Semanticus.Tests
         /// Primer save then deletes the Primer of the model saved in folder b, and the session still shows the Primer the
         /// History says was undone. Before D4 the step named folder a's file all along, and this Undo was right.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR1_after_save_as_to_another_folder_and_back_undo_takes_back_the_primer_the_session_shows()
         {
             var dir = Path.Combine(Path.GetTempPath(), "sem-verify-sf1r2", Guid.NewGuid().ToString("N"));
@@ -161,6 +162,7 @@ namespace Semanticus.Tests
         /// words already resolved) and, Jev being sure, adds a second Hide an object. Before D3 the hand add let the words go.
         /// Seen with the menu's own id "hide".</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR2_words_the_person_resolved_by_picking_their_step_are_not_asked_again_however_far_down_they_are()
         {
             var (f, jev) = await ProAsync("VR2Hand.bim", (w, q) =>
@@ -185,6 +187,7 @@ namespace Semanticus.Tests
         /// them." The next Add more words asks no one either, so that promise is false, the one D5 removed from the note
         /// and from WordsKeptUnread. Seen live in lane o (u1-04).</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR3_the_waiting_words_sentence_promises_nothing_while_Jev_cannot_be_asked()
         {
             var (f, jev) = await ProAsync("VR3NoConsent.bim", (w, q) => ("yes", 0.99), consent: false);

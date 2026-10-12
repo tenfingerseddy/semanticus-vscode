@@ -226,6 +226,7 @@ namespace Semanticus.Tests
             DecidedBy = by, Word = word, Kept = true, Round = 1,
         };
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_round_run_while_a_column_is_out_or_a_pick_is_replaced_keeps_every_hand_made_line_and_they_return_with_their_object()
         {
@@ -317,6 +318,38 @@ namespace Semanticus.Tests
 
         private static string[] SourceTables(StartPlanDoc d) => d.Manifest.Tables.Where(t => t.Include).Select(StartPlanDecide.SourceNameOf).ToArray();
 
+        [Fact]
+        public async Task Bulk_start_choices_write_once_keep_good_edits_and_name_a_bad_target()
+        {
+            Engine.StartDecideKickDisabledForTest = true;
+            var before = await StartAsync(consent: false);
+            var doc = StartPlanStore.Read(before.Id);
+            var tables = doc.Manifest.Tables.Where(t => t.Include).Take(2).ToArray();
+            Assert.Equal(2, tables.Length);
+            var announced = 0;
+            _f.Sessions.Bus.StartPlanChanged += _ => announced++;
+            var result = await Engine.EditStartPlansAsync(new[] {
+                new StartPlanEdit { Op = "include_table", Target = tables[0].Name, Value = "false" },
+                new StartPlanEdit { Op = "include_table", Target = "missing-table", Value = "false" },
+                new StartPlanEdit { Op = "include_table", Target = tables[1].Name, Value = "false" },
+            }, "human");
+            Assert.Equal(2, result.Applied);
+            Assert.Single(result.Rejected);
+            Assert.Equal("missing-table", result.Rejected[0].ObjRef);
+            var after = StartPlanStore.Read(before.Id);
+            Assert.Equal(doc.Version + 1, after.Version);
+            Assert.False(after.Manifest.Tables.Single(t => t.Name == tables[0].Name).Include);
+            Assert.False(after.Manifest.Tables.Single(t => t.Name == tables[1].Name).Include);
+            Assert.Equal(1, announced);
+            Assert.Null(after.Approval);
+            var noop = await Engine.EditStartPlansAsync(new[] {
+                new StartPlanEdit { Op = "include_table", Target = tables[0].Name, Value = "false" },
+            }, "human");
+            Assert.Equal(0, noop.Applied);
+            Assert.Equal(after.Version, StartPlanStore.Read(before.Id).Version);
+            Assert.Equal(1, announced);
+        }
+
         // ------------------------------------------------------------------ W1: the sample setting is part of what was agreed
 
         [Fact]
@@ -333,6 +366,7 @@ namespace Semanticus.Tests
             Assert.Equal(StartSampleStatus.Read, after.Sample.State);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_grant_is_refused_while_the_sample_is_still_being_read_and_covers_the_sample_once_it_is_in_the_plan_the_person_sees()
         {
@@ -402,12 +436,13 @@ namespace Semanticus.Tests
 
         // ------------------------------------------------------------------ W4: both doors, the digest, the decline
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_and_build_refuse_a_digest_that_is_not_the_current_one_on_both_doors()
         {
             var v = await StartAsync();
             var stale = new string('0', v.Digest.Length);
-            var human = new HumanGovernanceRpcTarget(Engine);
+            var human = new EngineRpcTarget(Engine);
             var studio = new EngineRpcTarget(Engine, "human");
             var agent = new EngineRpcTarget(Engine, "agent");
 
@@ -475,6 +510,7 @@ namespace Semanticus.Tests
 
         /// <summary>The loop uses sf-consent's REAL fence (the request's own text is read, not what the asker declares). A column the person renamed with the name of a table
         /// they left out would otherwise be sent to Jev inside an ask about a table that is in. Removing the fence from the loop turns this red.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_decide_loops_real_fence_never_lets_the_name_of_a_table_the_person_left_out_reach_Jev()
         {
@@ -526,6 +562,7 @@ namespace Semanticus.Tests
             Assert.False(string.IsNullOrWhiteSpace(doc.Decide.Reason));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_wait_for_a_grant_ends_when_the_extra_table_is_taken_back_out_with_no_new_grant()
         {
@@ -554,6 +591,7 @@ namespace Semanticus.Tests
             Assert.True(oracle.Asks >= asksBefore);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_wait_ends_when_a_decision_point_that_was_off_is_switched_on_again_with_the_grant_still_standing()
         {
@@ -630,6 +668,7 @@ namespace Semanticus.Tests
             Assert.True(r.Written == 1, string.Join("; ", r.Refused));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_read_after_a_build_says_built_and_the_plan_is_kept_not_deleted()
         {
@@ -648,6 +687,7 @@ namespace Semanticus.Tests
             Assert.NotNull(StartPlanStore.Read(v.Id).BuiltUtc);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_build_that_was_undone_builds_again_with_the_words_and_the_approval_it_had()
         {
@@ -671,6 +711,7 @@ namespace Semanticus.Tests
             Assert.True(await TablesAsync() > 0);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_after_an_undone_build_keeps_the_words_and_builds_after_a_new_approval()
         {
@@ -690,6 +731,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("ref_codes", names1);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_build_skips_a_held_line_instead_of_refusing_and_the_line_waits_on_the_plan()
         {
@@ -728,6 +770,7 @@ namespace Semanticus.Tests
             Assert.NotEqual(one, StartPlanViewBuilder.Digest(doc));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_getStartWords_page_is_clamped_in_the_engine_whatever_a_door_sends()
         {

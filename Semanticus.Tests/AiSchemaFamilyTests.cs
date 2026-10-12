@@ -203,8 +203,8 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { Prefix + "table:Customer", Prefix + "table:Sales" }, rows.Select(i => i.Id).ToArray());
             var sales = rows.Single(i => i.Id == Prefix + "table:Sales");
             var customer = rows.Single(i => i.Id == Prefix + "table:Customer");
-            Assert.Equal("Choose what Copilot sees: 1 thing in Sales", sales.Title);
-            Assert.Equal("Choose what Copilot sees: 1 thing in Customer", customer.Title);
+            Assert.Equal("Choose which 1 field Copilot can see in Sales", sales.Title);
+            Assert.Equal("Choose which 1 field Copilot can see in Customer", customer.Title);
             Assert.Equal(ModelPlanSections.Trust, sales.Section);
             Assert.Equal(ModelPlanOwners.Jev, sales.Who);
             Assert.Equal(ModelPlanChangeStates.Proposed, sales.ChangeSet.State);
@@ -727,10 +727,10 @@ namespace Semanticus.Tests
             var dropped = Why(L(AiSchemaFamily.Name, "column:Sales/LineKey", "set_ai_data_schema", "Included", "Excluded", Point, "rejected", JevFamily.Sure));
             Assert.DoesNotContain(dropped, w => w.Contains(PutBack, StringComparison.Ordinal));
             var back = Why(L(AiSchemaFamily.Name, "column:Sales/LineKey", "set_ai_data_schema", "Excluded", "Included", Point, "rejected", JevFamily.Sure));
-            Assert.Contains(back, w => w.StartsWith("1 line puts back something you left out", StringComparison.Ordinal));
+            Assert.Contains(back, w => w.StartsWith("1 change puts back something you left out", StringComparison.Ordinal));
             var unsure = Why(L(MeasuresFamily.Name, "measure:Sales/Total", "set_display_folder", "(none)", "Sales",
                 DecisionRegistry.MeasureFolderAndFormat, "rejected", JevFamily.Unsure));
-            Assert.Contains(unsure, w => w.StartsWith("1 line arrives dropped because Jev was unsure", StringComparison.Ordinal));
+            Assert.Contains(unsure, w => w.StartsWith("1 change is unticked because Jev was not sure", StringComparison.Ordinal));
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]

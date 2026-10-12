@@ -19,6 +19,7 @@ import { QueryWells } from './querywells';
 import { useQueriesAsk, AskField, AskChips, AskLines, AskFreeLine } from './queriesask';
 import { squash } from './daxsquash';
 import { withMeasureFormats, editingFormatsApply, measuresNotShadowed, queriesLinkedCopy, measureFormatsFromDmv, sentFormatsNow, MEASURE_FORMATS_DMV, type SentFormats } from './resultformats';
+import { notesStore } from './studio/notes-runtime';
 import { answerOwnsResult, producedByOf } from './resultownership';
 import { SaveChooser } from './askdata';
 import { answerFilterLines, checkDraftOf, filterWords, outcomeOf, pivotConfigOf, type CheckDraft, type QueriesHandoff } from './askdata-model';
@@ -328,6 +329,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
     busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey, formatScopeKey, sentFormats, noteSent, speedQuery, speedFor,
   } = useDaxLabTabState();
   const [fieldsOpen, setFieldsOpen] = usePersistedState('lab.fieldsOpen', false);
+  useEffect(() => { if (res && !res.error) notesStore.setListOpen(false); }, [res]);
   // The Fields drawer's edge drags, as the old rail's did; it snaps to whole grid columns so both cards keep their
   // edges on the grid (verify-queries-redesign D11).
   const [fieldsW, onFieldsDrag] = useResizable('lab.fieldsW', 240, { axis: 'x', min: 170, max: 420 });
@@ -860,7 +862,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
         </div>
       </div>
 
-      <div className="shrink-0"><ConnectBar hint="Connect a model to run queries." /></div>
+      {!res && <div className="shrink-0"><ConnectBar hint="Connect a model to run queries." /></div>}
 
       {cellMenu && <MenuPop at={{ x: cellMenu.x, y: cellMenu.y }} onClose={() => setCellMenu(null)} items={[
         { label: 'Explain this number', detail: `${cellMenu.payload.measureName} = ${cellMenu.payload.value}`, act: () => setExplain(cellMenu.payload) },

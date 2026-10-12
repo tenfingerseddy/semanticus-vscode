@@ -28,6 +28,7 @@ namespace Semanticus.Tests
         [InlineData("Fiscal Year", "Int64", "2025")]
         [InlineData("Quarter (FY)", "String", "Q2")]
         [InlineData("Financial Quarter", "String", "2025 Q2")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Join2_a_qualified_period_is_said_without_dates(string column, string type, string value)
         {
             using var rig = await BuildAsync();
@@ -41,12 +42,18 @@ namespace Semanticus.Tests
             Assert.False(split.Contains("calendar"), "each row of " + column + " called a calendar period: '" + split + "'");
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("FY Quarter", "String", "Q2")]
+        public Task Join2_a_qualified_period_is_said_without_dates_sample(string column, string type, string value) => Join2_a_qualified_period_is_said_without_dates(column, type, value);
+
         [Theory]
         [Trait("Join2", "calendar-only")]
         [InlineData("Calendar Year", "Int64", "2025", "Calendar Year is 2025 (1 January to 31 December 2025)", "a calendar year, 1 January to 31 December")]
         [InlineData("Calendar Quarter", "String", "Q2", "Calendar Quarter is Q2 (1 April to 30 June)", "a calendar quarter")]
         [InlineData("Month", "String", "March", "Month is March (1 to 31 March)", "a calendar month")]
         [InlineData("Year", "Int64", "2025", "Year is 2025 (1 January to 31 December 2025)", "a calendar year, 1 January to 31 December")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Join2_a_plain_calendar_period_keeps_its_dates(string column, string type, string value, string expected, string row)
         {
             using var rig = await BuildAsync();
@@ -58,6 +65,11 @@ namespace Semanticus.Tests
             Assert.Equal("This shows Net Sales for each " + column + " (" + row + ").",
                 StatedReading.From(Spec(cat, new[] { "Date[" + column + "]" }, new[] { "Net Sales" }), null, cat).Person);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Calendar Year", "Int64", "2025", "Calendar Year is 2025 (1 January to 31 December 2025)", "a calendar year, 1 January to 31 December")]
+        public Task Join2_a_plain_calendar_period_keeps_its_dates_sample(string column, string type, string value, string expected, string row) => Join2_a_plain_calendar_period_keeps_its_dates(column, type, value, expected, row);
 
         [Fact]
         [Trait("Join2", "calendar-only")]

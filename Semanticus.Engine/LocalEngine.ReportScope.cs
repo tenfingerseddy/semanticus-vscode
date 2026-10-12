@@ -406,6 +406,7 @@ namespace Semanticus.Engine
 
             var composed = ComposeScope(s, modelName);
             composed.Usage = analysis;
+            composed.ReportMeasures = ReportScopeResult.DescribeReportMeasures(analysis.ReportMeasuresRead, analysis.ReportMeasureReferencesChecked);
             return composed;
         }
 

@@ -72,7 +72,7 @@ assert.deepEqual(G.PLAN_TOUR.map((s) => s.title), [
   'The work on your model', 'Every row answers three questions', 'How Semanticus works', 'Add your own',
   "Your assistant's tasks", 'What changed, and Undo',
 ]);
-assert.equal(G.PLAN_TOUR[3].body, 'Describe a task or an aim in your own words. It becomes a row. Hand it to your assistant, or do it yourself.');
+assert.equal(G.PLAN_TOUR[3].body, 'Describe a task or an aim in your own words. It becomes a task. Hand it to your assistant, or do it yourself.');
 assert.equal(G.PLAN_TOUR[5].view, 'history', 'the last step opens History, where its anchor is');
 assert.ok(G.PLAN_TOUR[5].anchor.includes('history'), 'and falls back to the History switch when no row has drawn yet');
 assert.equal(G.PLAN_TOUR[2].how, true, 'step three is the four-line how it works');
@@ -80,7 +80,7 @@ assert.equal(G.WHAT_CHANGED_CARD_ID, 'm11-1', 'the card id is a content id, not 
 assert.deepEqual(G.WHAT_CHANGED['m11-1'].lines, [
   'The Plan is now where you start. The Overview is gone.',
   'Edit History moved into the Plan. Open History at the top.',
-  'Workflow runs show as rows in the Plan.',
+  'Workflow runs show as tasks in the Plan.',
   "One switch pauses your assistant's tasks.",
   'Connections are on one page, with a SQL endpoint for each model.',
   'Workflows is one page. With Pro, a workflow you describe in words becomes steps.',

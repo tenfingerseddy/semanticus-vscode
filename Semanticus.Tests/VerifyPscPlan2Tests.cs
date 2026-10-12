@@ -48,6 +48,7 @@ namespace Semanticus.Tests
 
         // Accept on AI readiness with the twin firing: both close; undo opens both; redo closes both; the pair survives a save and
         // a fresh open (an engine restart reads the stored record).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Paired_with_the_twin_firing_survives_undo_redo_and_a_reopen()
         {
@@ -84,6 +85,7 @@ namespace Semanticus.Tests
 
         // Accept with the twin NOT firing (a measure activates the relationship): no pair is stored (the "older record" shape);
         // the twin then appears and is open on its own page; the readiness acceptance still holds.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unpaired_record_then_the_twin_appears_open()
         {
@@ -105,6 +107,7 @@ namespace Semanticus.Tests
 
         // Twin firing when accepted, then hidden by a new measure, then back when it is deleted: it was seen and decided, so it
         // reads as accepted again (log only; either reading is defensible, neither is harm).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Paired_twin_that_goes_away_and_comes_back()
         {
@@ -119,6 +122,7 @@ namespace Semanticus.Tests
         }
 
         // A rule-level acceptance (every inactive relationship) stores no pair and closes nothing on the other page.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_rule_level_acceptance_pairs_nothing()
         {
@@ -133,6 +137,7 @@ namespace Semanticus.Tests
 
         // Declined formats: a rule-level FMT-COLUMN acceptance (no column takes a format) and a rule-level best-practice acceptance
         // keep every column off the words queue; the assistant's write on such a column is recorded below.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("air", "FMT-COLUMN")]
         [InlineData("bpa", ColumnRule)]
@@ -150,12 +155,13 @@ namespace Semanticus.Tests
         }
 
         // Per-object: the key column (only best practice asks) declined through a per-object acceptance of the BPA rule is not queued.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_key_column_whose_best_practice_format_was_accepted_is_not_queued()
         {
             using var f = await InactiveModelAsync();
             var e = f.Engine;
-            var keys = (await e.GetWordsQueueAsync()).Items.Where(i => i.Kind == "format" && i.Tool == "set_property").Select(i => i.ObjectRef).ToArray();
+            var keys = (await e.GetWordsQueueAsync()).Items.Where(i => i.Kind == "format" && i.ObjectRef.StartsWith("column:", StringComparison.Ordinal)).Select(i => i.ObjectRef).ToArray();
             _out.WriteLine("queued columns: " + string.Join(", ", keys));
             if (keys.Length == 0) return;
             await e.WaiveFindingAsync("bpa", ColumnRule, keys[0], "Keys take no format.", "human");

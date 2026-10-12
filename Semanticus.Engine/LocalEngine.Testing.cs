@@ -113,7 +113,8 @@ namespace Semanticus.Engine
         /// which means the model's own partitions). When it is given, this never resolves a second time: resolving again
         /// here would apply the model's endpoint to a pinned check and query a different place than the run reported.
         /// A direct reconcile_measure call passes null and is resolved here, once.</summary>
-        private async Task<ReconcileRunResult> ReconcileMeasureCoreAsync(ReconcileRequest req, string origin, SqlSourceResolution resolvedSource, ReconcileBinding bound = null)
+        private async Task<ReconcileRunResult> ReconcileMeasureCoreAsync(ReconcileRequest req, string origin, SqlSourceResolution resolvedSource, ReconcileBinding bound = null,
+            Dictionary<string, string> sqlTokens = null)
         {
             if (req == null)
                 return ReconcileRunResult.Fail("No request supplied.", ReconcileStatus.InputError);
@@ -205,7 +206,8 @@ namespace Semanticus.Engine
                 return ReconcileRunResult.Fail(xmlaGate, ReconcileStatus.InputError, refused: true, approvalId: xmlaApprovalId);
 
             string token;
-            try { token = ReconcileSqlForTests != null ? null : await AcquireSqlTokenAsync(req.AuthMode, req.TenantId, origin, CancellationToken.None).ConfigureAwait(false); }
+            // A whole test run hands in its token cache, so the sign-in is paid once per (mode, tenant) and not once per check.
+            try { token = ReconcileSqlForTests != null && SqlTokenFetchForTests == null ? null : await RunSqlTokenAsync(sqlTokens, req.AuthMode, req.TenantId, origin).ConfigureAwait(false); }
             catch (Exception ex) { return ReconcileRunResult.Fail("Could not acquire a SQL token: " + ScrubSchemaError(ex.Message), ReconcileStatus.InsufficientCoverage); }
 
             var maxRows = req.MaxRows <= 0 ? 100000 : req.MaxRows;
@@ -225,19 +227,27 @@ namespace Semanticus.Engine
             };
             bool truncated = false;
 
+            // The model's DAX and the source's SQL are different servers, so a check's SQL starts as its DAX starts and
+            // the two are read in the order they always were (DAX first). The DAX lane stays single: one query at a time.
+            // Whatever is still running when the check ends one way or another is waited for, so nothing is left behind.
+            PendingSql memberSql = null, totalSql = null;
+            try
+            {
             // ---- member cells (grouped mode) ----
             if (grouped)
             {
                 var memberQuery = BuildDaxMemberQuery(probe.MeasureName, probe.GroupByRefs, req.FilterDax);
                 result.DaxQuery = BuildReconcileDaxQuery(req, probe.MeasureName, probe.GroupByRefs);
+                memberSql = StartSql(server, database, token, req.Sql, maxRows);
+                if (!string.IsNullOrWhiteSpace(req.SqlGrandTotal)) totalSql = StartSql(server, database, token, req.SqlGrandTotal, 10);
                 result.DaxExecutedAtUtc = DateTime.UtcNow;
                 var daxRs = await live.ExecuteAsync(memberQuery, maxRows, 120).ConfigureAwait(false);
                 if (daxRs.PolicyRefused) return ReconcileRunResult.Fail(daxRs.Error, ReconcileStatus.InputError, refused: true);
                 if (!string.IsNullOrEmpty(daxRs.Error)) return QueryFail("DAX member query", daxRs.Error, result.DaxQuery);
                 result.DaxElapsedMs = daxRs.ElapsedMs;
 
-                result.SqlExecutedAtUtc = DateTime.UtcNow;
-                var sqlRs = await ReconcileSqlAsync(server, database, token, req.Sql, maxRows).ConfigureAwait(false);
+                result.SqlExecutedAtUtc = memberSql.At;
+                var sqlRs = await memberSql.Task.ConfigureAwait(false);
                 if (!string.IsNullOrEmpty(sqlRs.Error)) return QueryFail("SQL member query", sqlRs.Error, result.DaxQuery);
                 result.SqlElapsedMs = sqlRs.ElapsedMs;
                 if (sqlRs.Columns.Length < groupBy.Length + 1)
@@ -263,7 +273,7 @@ namespace Semanticus.Engine
                 // caller supplies its own total SQL. We never reconstruct it from the member rows.
                 if (!string.IsNullOrWhiteSpace(req.SqlGrandTotal))
                 {
-                    var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.SqlGrandTotal, req.FilterDax);
+                    var gt = await BuildGrandTotalCellAsync(live, probe.MeasureName, server, database, token, req.SqlGrandTotal, req.FilterDax, totalSql);
                     if (gt.Error != null)
                         return gt.IsShape ? ReconcileRunResult.Fail(gt.Error, ReconcileStatus.InputError) : QueryFail(gt.Stage, gt.Error, result.DaxQuery);
                     cells.Add(gt.Cell);
@@ -281,6 +291,8 @@ namespace Semanticus.Engine
                 result.DaxElapsedMs = gt.DaxMs; result.SqlElapsedMs = gt.SqlMs;
                 result.DaxExecutedAtUtc = gt.DaxAt; result.SqlExecutedAtUtc = gt.SqlAt;
             }
+            }
+            finally { await SettleAsync(memberSql, totalSql).ConfigureAwait(false); }
 
             // ---- the pure judgement ----
             var judged = MeasureReconciler.Reconcile(cells, policy);
@@ -400,10 +412,42 @@ namespace Semanticus.Engine
             return FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, CancellationToken.None);
         }
 
+        /// <summary>A ground-truth SQL that has been started: when it started, and the query still running.</summary>
+        private sealed class PendingSql
+        {
+            public DateTime At;
+            public Task<ResultSet> Task;
+        }
+
+        // Starts the SQL on a worker so it runs while the caller's DAX does, and so even a source that answers at once
+        // (a test seam) is read where the caller reads it. A failure is held in the task and surfaces at the caller's
+        // own await, which is where it always did; nothing is observed here.
+        private PendingSql StartSql(string server, string database, string token, string sql, int maxRows)
+        {
+            var at = DateTime.UtcNow;
+            return new PendingSql { At = at, Task = Task.Run(() => ReconcileSqlAsync(server, database, token, sql, maxRows)) };
+        }
+
+        // Wait for any SQL still running when a check ends early (a DAX error, a bad shape), so it is never left behind and
+        // never reports as an unobserved failure. The outcome of such a query is not used: the check already has its answer.
+        private static async Task SettleAsync(params PendingSql[] pending)
+        {
+            foreach (var p in pending)
+            {
+                if (p == null) continue;
+                try { await p.Task.ConfigureAwait(false); } catch { }
+            }
+        }
+
         private async Task<GrandTotalOutcome> BuildGrandTotalCellAsync(
             LiveConnection live, string measureName, string server, string database, string token, string sql,
-            string filterDax = null)
+            string filterDax = null, PendingSql started = null)
         {
+            // The SQL starts with the DAX (or already did, when a grouped check started it up front). Which error is
+            // reported is unchanged: the DAX is judged first, then the SQL.
+            var pending = started ?? StartSql(server, database, token, sql, 10);
+            try
+            {
             var daxAt = DateTime.UtcNow;
             var daxRs = await live.ExecuteAsync(BuildDaxGrandTotalQuery(measureName, filterDax), 10, 120).ConfigureAwait(false);
             if (daxRs.PolicyRefused) return GrandTotalOutcome.Failed("DAX grand-total query", daxRs.Error);
@@ -413,8 +457,8 @@ namespace Semanticus.Engine
             if (daxRs.Rows.Length != 1 || daxRs.Columns.Length == 0)
                 return GrandTotalOutcome.Failed("DAX grand-total query", $"expected exactly one total row/value but got {daxRs.Rows.Length} row(s), {daxRs.Columns.Length} column(s).");
 
-            var sqlAt = DateTime.UtcNow;
-            var sqlRs = await ReconcileSqlAsync(server, database, token, sql, 10).ConfigureAwait(false);
+            var sqlAt = pending.At;
+            var sqlRs = await pending.Task.ConfigureAwait(false);
             if (!string.IsNullOrEmpty(sqlRs.Error)) return GrandTotalOutcome.Failed("SQL grand-total query", sqlRs.Error);
             // (P1-5) A grand total must be exactly ONE row with a value column. ZERO rows is NOT a present NULL — that
             // would fabricate a judgeable total and could green a run under BlankIsNull. It is a malformed total query
@@ -431,6 +475,8 @@ namespace Semanticus.Engine
             ApplyCoerced(daxVal, v => cell.Dax = v, () => cell.DaxBlank = true, () => cell.DaxUnsupported = true);
             ApplyCoerced(sqlVal, v => cell.Sql = v, () => cell.SqlNull = true, () => cell.SqlUnsupported = true);
             return new GrandTotalOutcome { Cell = cell, DaxMs = daxRs.ElapsedMs, SqlMs = sqlRs.ElapsedMs, DaxAt = daxAt, SqlAt = sqlAt };
+            }
+            finally { await SettleAsync(pending).ConfigureAwait(false); }
         }
 
         // The grand-total value is the LAST column of the (guaranteed) single row. Callers verify exactly one row and

@@ -87,6 +87,10 @@ namespace Semanticus.Engine
             ["ClearCacheAsync"] = "It empties a cache; no word and no model content is written.",
             ["GetStartPlanAsync"] = "A read that may start the plan's background work.",
             ["GetStartWordsAsync"] = "A read of the start plan's open words.",
+            ["ShowInStudioAsync"] = "A note for the person: it changes nothing in the model.",
+            ["SuggestNextAsync"] = "Buttons for the person: they change nothing in the model.",
+            ["NoteAgentCallAsync"] = "A signal that a call began: it changes nothing in the model.",
+            ["SetStudioDriverAsync"] = "The Studio reports its own screen: it writes nothing in the model.",
         };
 
         /// <summary>The Fenced methods a request from the extension's own writer may make with NO model named while a model is open, each with the reason. A method

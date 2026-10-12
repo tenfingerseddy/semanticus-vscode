@@ -144,11 +144,11 @@ namespace Semanticus.Engine
         public async Task<ModelPlanView> SkipModelPlanItemAsync(string id, string reason, string origin)
         {
             if (string.IsNullOrWhiteSpace(id))
-                throw new ArgumentException("Name the item to set aside. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task to set aside. Call get_model_plan for the ids.", nameof(id));
             if (string.IsNullOrWhiteSpace(reason))
                 throw new ArgumentException(
-                    "Say why you are setting this aside. The reason is shown on the plan beside the item, so the "
-                    + "next person to read it knows it was a decision and not an oversight.", nameof(reason));
+                    "Say why you are setting this aside. The Plan shows the reason beside the task, so the "
+                    + "next person sees it was a choice and not a mistake.", nameof(reason));
 
             var trimmed = reason.Trim();
             // The same cap as a pause reason and a note (PlanTasks.MaxNoteChars): the reason is shown beside the row on
@@ -166,11 +166,13 @@ namespace Semanticus.Engine
                 var current = await ComposeAsync(null).ConfigureAwait(false);
                 var row = current?.Items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
                 if (row != null && string.Equals(row.Status, ModelPlanStatuses.Done, StringComparison.Ordinal)) return current;
+                var ground = await SkipGroundAsync(id).ConfigureAwait(false);
                 return await ComposeAsync(memory =>
                 {
                     var existing = memory.Find(id);
                     if (existing != null) { existing.Reason = trimmed; existing.When = DateTimeOffset.UtcNow; }
-                    else memory.Skips.Add(new PlanSkip { ItemId = id, Reason = trimmed, When = DateTimeOffset.UtcNow });
+                    else memory.Skips.Add(existing = new PlanSkip { ItemId = id, Reason = trimmed, When = DateTimeOffset.UtcNow });
+                    existing.Ref = ground?.Ref; existing.Tag = ground?.Tag;
 
                     var title = TitleOf(memory, id);
                     // The reason lives in the detail, not in the sentence, so the timeline shows it as the
@@ -184,7 +186,7 @@ namespace Semanticus.Engine
         public async Task<ModelPlanView> UnskipModelPlanItemAsync(string id, string origin)
         {
             if (string.IsNullOrWhiteSpace(id))
-                throw new ArgumentException("Name the item to put back. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task to put back. Call get_model_plan for the ids.", nameof(id));
 
             var revision = _sessions.Require().Revision;
             return await UnderReadyGateAsync(() => ComposeAsync(memory =>
@@ -243,7 +245,7 @@ namespace Semanticus.Engine
             string id, string action, string origin, string digest = null)
         {
             if (string.IsNullOrWhiteSpace(id))
-                throw new ArgumentException("Name the item to act on. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task to act on. Call get_model_plan for the ids.", nameof(id));
 
             var verb = (action ?? "start").Trim().ToLowerInvariant();
 
@@ -256,9 +258,9 @@ namespace Semanticus.Engine
             if (verb != "start" && verb != "propose" && verb != "approve" && verb != "cancel")
                 throw new ArgumentException(
                     "The actions are 'propose' (work the changes out, nothing is written), 'approve' (apply the "
-                    + "ones you kept), 'cancel' (drop them) and 'start' (run a row straight away). A target you "
+                    + "ones you kept), 'cancel' (drop them) and 'start' (run a task straight away). An aim you "
                     + "added answers 'done' instead, which records that you finished it by hand. Use "
-                    + "skip_model_plan_item to set an item aside and unskip_model_plan_item to put it back.",
+                    + "skip_model_plan_item to set a task aside and unskip_model_plan_item to put it back.",
                     nameof(action));
 
             var s = _sessions.Require();
@@ -274,8 +276,8 @@ namespace Semanticus.Engine
                 return new ModelPlanActionResult
                 {
                     ItemId = id, Action = verb, Performed = false, Revision = s.Revision, Plan = plan,
-                    Sentence = "Nothing on the plan has that id. It may have been finished or set aside since the "
-                             + "plan was last read.",
+                    Sentence = "No task on the Plan has that id. It may be finished or set aside since you last "
+                             + "looked at the Plan.",
                 };
 
             // The three review verbs. Propose and cancel write nothing at all, so they are free on every
@@ -290,19 +292,22 @@ namespace Semanticus.Engine
             {
                 if (string.Equals(item.Who, ModelPlanOwners.Auto, StringComparison.Ordinal)
                     && !Entitlement.FeatureGrants.IsProTier(_entitlement))
+                {
+                    await NoteFreeProRowsAsync(s, new[] { item }).ConfigureAwait(false);
                     return await RefusedAsync(item, verb, s.Revision, origin, RunIsProSentence, bound).ConfigureAwait(false);
+                }
                 return await ApproveItemAsync(s, item, digest, readAt, origin).ConfigureAwait(false);
             }
 
             if (string.Equals(item.Status, ModelPlanStatuses.Skipped, StringComparison.Ordinal))
                 return await RefusedAsync(item, verb, s.Revision, origin,
-                    "This item is set aside. Put it back first, then start it.", bound).ConfigureAwait(false);
+                    "This task is set aside. Put it back first, then start it.", bound).ConfigureAwait(false);
 
             if (!string.Equals(item.Who, ModelPlanOwners.Auto, StringComparison.Ordinal))
                 return await RefusedAsync(item, verb, s.Revision, origin,
                     string.Equals(item.Who, ModelPlanOwners.Assistant, StringComparison.Ordinal)
-                        ? "This one is words, so your assistant writes it. Ask it to, and it will use the same plan."
-                        : "This one changes the model only once you approve it. Work out its changes, check them and "
+                        ? "Your assistant writes the words for this task. Ask it to, and it will use the same plan."
+                        : "This task changes the model only after you approve it. Work out its changes, look at them and "
                         + "approve them on the Plan, or open " + (item.Jump?.Label ?? "the page it points at") + " and do it there.", bound).ConfigureAwait(false);
 
             // THE STARTER RULE ROW RUNS THROUGH APPROVE (N10). Approve and Run the plan both apply it, so start does too,
@@ -326,7 +331,7 @@ namespace Semanticus.Engine
 
             if (!IsSafeFixItem(item.Id) && !IsBpaFixItem(item.Id))
                 return await RefusedAsync(item, verb, s.Revision, origin,
-                    "Nothing in this release runs this one for you yet. Open "
+                    "Semanticus cannot do this task for you yet. Open "
                     + (item.Jump?.Label ?? "the page it points at") + " and do it there.", bound).ConfigureAwait(false);
 
             // THE PLAN IS FREE TO READ AND PRO TO RUN (Kane, 22 September 2026). Reading it, setting a row
@@ -341,18 +346,21 @@ namespace Semanticus.Engine
             // the Studio had always reserved Start for Pro and a client calling the agent door directly could
             // start every runnable row.
             if (!Entitlement.FeatureGrants.IsProTier(_entitlement))
+            {
+                await NoteFreeProRowsAsync(s, new[] { item }, keptOnly: false).ConfigureAwait(false);
                 return await RefusedAsync(item, verb, s.Revision, origin, RunIsProSentence, bound).ConfigureAwait(false);
+            }
 
             // The model must still be the one the plan was read from. Checked here, and again inside the batch
             // below, because a mutation can commit between this line and the dispatcher picking the batch up.
             if (!ReferenceEquals(_sessions.Current, s))
                 return await RefusedAsync(item, verb, s.Revision, origin,
-                    "A different model is open now, so nothing was changed. Read the plan again for this model "
-                    + "and start it from there.", bound).ConfigureAwait(false);
+                    "A different model is open now, so nothing was changed. Open the Plan for this model "
+                    + "and start the task from there.", bound).ConfigureAwait(false);
             if (s.Revision != readAt)
                 return await RefusedAsync(item, verb, s.Revision, origin,
-                    "The model changed while this was being worked out, so nothing was changed. Refresh the plan "
-                    + "and start it again.", bound).ConfigureAwait(false);
+                    "The model changed while Semanticus worked this out, so nothing was changed. Refresh the Plan "
+                    + "and start the task again.", bound).ConfigureAwait(false);
 
             // The best-practice row has no fix of its own to call: start is "work it out and approve it", the same
             // two steps Run the plan takes on it, so what start does and what the row showed cannot differ.
@@ -366,7 +374,7 @@ namespace Semanticus.Engine
                     return new ModelPlanActionResult
                     {
                         ItemId = item.Id, Action = verb, Performed = false, Revision = s.Revision, Plan = plan,
-                        Sentence = "Its fixes are already in, so nothing was changed.",
+                        Sentence = "These fixes are already made, so nothing was changed.",
                     };
                 var worked = await UnderReadyGateAsync(() => ProposeItemAsync(s, item, readAt, origin)).ConfigureAwait(false);
                 var set = worked.Plan?.Items.FirstOrDefault(i => string.Equals(i.Id, item.Id, StringComparison.Ordinal))?.ChangeSet;
@@ -375,6 +383,7 @@ namespace Semanticus.Engine
             }
 
             var fixes = await ApplyPlanSafeFixesAsync(s, item, readAt, origin).ConfigureAwait(false);
+            NoteProFixes(s.Id, item, fixes.Applied.Length);
 
             // A start that ran and changed nothing is "started", not "done". It started; it finished no work,
             // and a timeline that called it done would report work nobody did.
@@ -393,17 +402,17 @@ namespace Semanticus.Engine
                 Revision = fixes.Revision,
                 Plan = after,
                 Sentence = fixes.Applied.Length == 0
-                    ? "Nothing needed changing, so nothing was changed."
+                    ? "Nothing needed a fix, so nothing was changed."
                     : CountOf(fixes.Applied.Length, "thing was", "things were") + " fixed. "
                       + (fixes.Scorecard?.Grade == null ? "" : "The AI readiness grade is now " + fixes.Scorecard.Grade + ". ")
-                      + "Undo puts it all back in one step.",
+                      + "One undo takes it all back.",
             };
         }
 
         /// <summary>What a free session is told when it starts a row that would have run. The jump stays on
         /// the row in the plan the result carries, so "the page it names" is a real place and not a shrug.</summary>
         internal const string RunIsProSentence =
-            RunIsProLead + " Open the page it names to do this by hand.";
+            RunIsProLead + " Open the page the task names to do it yourself.";
 
         /// <summary>The Pro line itself, shared word for word by every refusal that draws it.</summary>
         internal const string RunIsProLead = "Running the plan is part of Semanticus Pro.";
@@ -412,7 +421,7 @@ namespace Semanticus.Engine
         /// page to name for a list, and approving Semanticus's own rows is Pro too (verify m11/plan-rows L8), so the way
         /// forward is the free one: each row's own page.</summary>
         internal const string BulkRunIsProSentence =
-            RunIsProLead + " Nothing was changed. Open the page each row names to do it by hand.";
+            RunIsProLead + " Nothing was changed. Open the page each task names to do it yourself.";
 
         /// <summary>Apply the safe fixes for ONE plan row, as one undoable step, on the session the plan was
         /// read from and only while that model has not moved.
@@ -441,8 +450,8 @@ namespace Semanticus.Engine
                 // revision that still matches means nothing committed between the check outside and this line.
                 if (s.Revision != readAt)
                     throw new InvalidOperationException(
-                        "The model changed while this was being worked out, so nothing was changed. Refresh the "
-                        + "plan and start it again.");
+                        "The model changed while Semanticus worked this out, so nothing was changed. Refresh the "
+                        + "Plan and start the task again.");
                 applied = SafeFixes.Apply(m, rules, (rule, c) => JevDecidedFinding(rule, ObjectRefs.For(c)), DeclinedChangesOf(m).Declines);
             }).ConfigureAwait(false);
 
@@ -612,6 +621,12 @@ namespace Semanticus.Engine
         /// the bug this type exists to stop.</summary>
         internal PlanMemoryBinding BindPlanMemory()
         {
+            if (_planRowBatch.Value != null)
+            {
+                var bound = _planRowBatch.Value.Bound;
+                if (!PlanMemoryStillOpen(bound)) throw new InvalidOperationException(BulkPlanModelSwitchedSentence);
+                return bound;
+            }
             // ONE read of the context, so the session, the path and the identity are all the same model's.
             // Two reads are two chances to straddle an exchange.
             var context = _sessions.CurrentContext;
@@ -635,8 +650,8 @@ namespace Semanticus.Engine
         /// nothing was kept because nothing was: the refusal happens BEFORE the write, so the target, the
         /// proposal or the skip landed on neither model rather than on the wrong one.</summary>
         internal const string PlanMemoryModelSwitchedSentence =
-            "A different model is open now, so nothing was kept. Read the plan again for this model and try "
-            + "it there.";
+            "A different model is open now, so nothing was kept. Open the Plan for this model and try "
+            + "again there.";
 
         /// <summary>Write to the plan memory of the model the caller bound to, or refuse. Never writes to any
         /// other model, and never writes half of anything: the two checks are both before the write.</summary>
@@ -644,9 +659,9 @@ namespace Semanticus.Engine
         {
             if (!PlanMemoryStillOpen(binding))
                 throw new InvalidOperationException(PlanMemoryModelSwitchedSentence);
-            if (!PlanMemory.Mutate(binding.File, binding.Identity, change) && binding.Nowhere)
+            if (!PlanMemory.Mutate(binding.File, binding.Identity, CountPlanRowChanges(change)) && binding.Nowhere)
                 throw new InvalidOperationException(
-                    "There is nowhere to keep this yet. Save the model to a file first, then try again.");
+                    "Semanticus has nowhere to keep this yet. Save the model to a file first, then try again.");
         }
 
         /// <summary>The same write, best effort, for the READ path's own bookkeeping. A plan that could not
@@ -668,6 +683,14 @@ namespace Semanticus.Engine
         /// caller whose first act is to compose.</summary>
         private async Task<ModelPlanView> ComposeAsync(Action<PlanMemoryState> change, PlanMemoryBinding bound = null)
         {
+            var batch = _planRowBatch.Value;
+            if (batch != null)
+            {
+                if (bound != null && !ReferenceEquals(bound.Context, batch.Bound.Context))
+                    throw new InvalidOperationException(BulkPlanModelSwitchedSentence);
+                if (change != null) WritePlanMemory(batch.Bound, change);
+                return PlanRowBatchView(batch);
+            }
             // Bound BEFORE any await, and everything below reads the model out of the binding rather than
             // out of whatever is current when an await returns.
             var binding = bound ?? BindPlanMemory();
@@ -708,6 +731,8 @@ namespace Semanticus.Engine
                 ComeDueOnCompose(binding, repeatGrounds);
                 // A task whose closing edit History took back is open again before anything reads it (UAT S01-j2-007).
                 ReconcileTakenBackTasks(binding);
+                // A row set aside whose object was renamed has a new id now; the skip moves to it before anything reads it (hero15 H13).
+                await FollowSkipRenamesAsync(binding).ConfigureAwait(false);
 
                 // The memory is read BEFORE the facts, so every save mark in it (LastSave) was written before the model
                 // was read. A later one would credit a save the facts never saw ("Save the changes you have made").
@@ -869,7 +894,8 @@ namespace Semanticus.Engine
                     || (seen.SeenUtc.HasValue && edits.Any(e => string.Equals(e.Origin, "agent", StringComparison.Ordinal) && e.When >= seen.SeenUtc.Value));
                 var doneNow = leaving.Select(seen => new PlanDone
                 {
-                    ItemId = seen.ItemId, Title = seen.Title, Section = seen.Section, When = now, Doer = seen.Doer,
+                    ItemId = seen.ItemId, Title = seen.Title, Section = seen.Section, When = now,
+                    Doer = seen.ItemId == UnsavedItemId && saved ? memory.LastSave?.By ?? PlanDoers.You : seen.Doer,
                     ClosedWhy = seen.Doer == PlanDoers.Assistant && !AssistantWorked(seen)
                         ? ClosedByOtherSentence(leaving.Where(o => o.ItemId != seen.ItemId && ownedIds.Contains(o.ItemId)).Select(o => o.Title).FirstOrDefault())
                         : null,
@@ -932,6 +958,8 @@ namespace Semanticus.Engine
                         ? new PlanSaveMark { Session = facts.SavesSessionId, Saves = facts.Saves }
                         : null;
                     state.Done.RemoveAll(d => live.Contains(d.ItemId));   // a gap that came back is not done
+                    // A cleared row that opened again is not cleared any more: finishing it again shows it again (Refresh plan).
+                    state.ClearedDone.RemoveAll(id => live.Contains(id) || asks.Any(a => a.Id == id && a.Status != ModelPlanStatuses.Done));
                     state.Done.AddRange(doneNow);
                     // The seen time moves only when the plan did, so a read that learned nothing still writes nothing.
                     var before = memory.LastItems.ToDictionary(x => x.ItemId, x => x.SeenUtc, StringComparer.Ordinal);
@@ -1014,14 +1042,15 @@ namespace Semanticus.Engine
                     History = PlanMemory.Read(binding.File, binding.Identity).History.ToArray(),
                     Tables = facts.Tables,
                     OrderedBy = ranking.OrderedBy,
+                    BillingUrl = ranking.BillingUrl,
                     Ranked = ranking.Ranked,
                     // Jev is looking while either background ask is out: the families or the value order.
                     JevPending = jev.Pending || ranking.Pending,
                     Note = kept.Count == 0 ? facts.Note : Join2(facts.Note,
-                        CountOf(kept.Count, "thing on the plan", "things on the plan")
-                        + " could not be checked this time, so the plan cannot say whether "
+                        CountOf(kept.Count, "task on the Plan", "tasks on the Plan")
+                        + " could not be checked this time, so Semanticus cannot tell if "
                         + (kept.Count == 1 ? "it is" : "they are") + " finished. "
-                        + (kept.Count == 1 ? "It is" : "They are") + " still listed, marked as not checked."),
+                        + (kept.Count == 1 ? "It stays" : "They stay") + " on the list, marked as not checked."),
                 }, memory.Tasks.Where(PlanTasks.IsAim).ToList(), binding.Nowhere, memory.Skips);
                 view.Starts = StartsFor(facts.Tables_);
 
@@ -1039,7 +1068,8 @@ namespace Semanticus.Engine
                 if (firstDone < 0) rows.AddRange(openAsks); else rows.InsertRange(firstDone, openAsks);
                 rows.AddRange(asks.Where(i => i.Status == ModelPlanStatuses.Done));
                 rows.AddRange(drafts.Where(i => i.Status == ModelPlanStatuses.Done));
-                view.Items = rows.ToArray();
+                // Refresh plan took these finished rows off the list. Their record stays in Done, the tasks and History.
+                view.Items = ClearedOut(rows, memory.ClearedDone).ToArray();
 
                 // LAST: the state word on every row, once every fact it reads is on the row. Anything that fills
                 // WaitsFor (lane E2) runs before this line.
@@ -1298,8 +1328,8 @@ namespace Semanticus.Engine
                 Value = string.Empty,
                 Why = new[]
                 {
-                    "This was on the plan last time.",
-                    "What it is about could not be read this time, so the plan cannot say whether it is finished.",
+                    "This task was on the Plan last time.",
+                    "Semanticus could not look at what it is about this time, so it cannot tell if it is finished.",
                 },
                 Diff = Array.Empty<string>(),
                 Jump = new ModelPlanJump { Tool = family.Tool, Label = family.Label },
@@ -1382,8 +1412,8 @@ namespace Semanticus.Engine
             Who = d.Doer == null ? ModelPlanOwners.Auto : PlanTasks.WhoOf(d.Doer),
             Value = string.Empty,
             Why = d.ClosedWhy == null
-                ? new[] { "This was on the plan and the model no longer has the gap it named." }
-                : new[] { "This was on the plan and the model no longer has the gap it named.", d.ClosedWhy },
+                ? new[] { "This task was on the Plan, and the problem it named is no longer in the model." }
+                : new[] { "This task was on the Plan, and the problem it named is no longer in the model.", d.ClosedWhy },
             StateNote = d.ClosedWhy == null ? null : NoLongerNeededNote,
             // Done is the GAP being gone, which is what this row IS. It is not "applied": nothing here knows
             // whether a change set closed the gap or somebody did it by hand, and claiming the first would
@@ -1467,6 +1497,10 @@ namespace Semanticus.Engine
             /// <summary>Measure refs used by the reports that were actually read, or null when no report has
             /// been read for this model. Null and empty mean different things and are kept apart.</summary>
             public HashSet<string> MeasuresInReports;
+
+            /// <summary>For each measure in <see cref="MeasuresInReports"/>, the names of the reports that use it, so a check
+            /// row can say which report a broken number would reach.</summary>
+            public Dictionary<string, string[]> ReportsByMeasure = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
 
             /// <summary>Refs of measures a saved check targets, or null when saved checks could not be read
             /// (they are Pro).</summary>
@@ -1639,7 +1673,7 @@ namespace Semanticus.Engine
             }
             catch
             {
-                facts.Gaps.Add("The saved checks could not be read, so the plan cannot say which measures already have one.");
+                facts.Gaps.Add("Semanticus could not open the checks, so it cannot tell which measures already have one.");
             }
 
             facts.Note = facts.Gaps.Count == 0 ? null : string.Join(" ", facts.Gaps);
@@ -1751,11 +1785,16 @@ namespace Semanticus.Engine
                         (usage?.ModelFieldsUsed ?? Array.Empty<string>())
                             .Where(r => r != null && r.StartsWith("measure:", StringComparison.OrdinalIgnoreCase)),
                         StringComparer.OrdinalIgnoreCase);
+                    foreach (var g in (usage?.Reports ?? Array.Empty<ReportUsage>())
+                                 .SelectMany(r => (r.UsedRefs ?? Array.Empty<string>()).Select(u => (Ref: u, r.Name)))
+                                 .Where(p => p.Ref != null && !string.IsNullOrWhiteSpace(p.Name))
+                                 .GroupBy(p => p.Ref, StringComparer.OrdinalIgnoreCase))
+                        facts.ReportsByMeasure[g.Key] = g.Select(p => p.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 }
             }
             catch
             {
-                gaps.Add("The reports could not be read, so the plan cannot say which measures they depend on.");
+                gaps.Add("Semanticus could not look at the reports, so it cannot tell which measures they use.");
             }
 
             return facts;
@@ -1977,13 +2016,13 @@ namespace Semanticus.Engine
         /// facts come from the turn that marked the model clean. Best effort like the read path's own bookkeeping: a
         /// save that could not record this is still a save, and the cost is the row reading off the plan after a
         /// restart, the behaviour before this mark existed.</summary>
-        private void NotePlanSave(Session s, int saves)
+        private void NotePlanSave(Session s, int saves, string origin)
         {
             try
             {
                 var binding = BindPlanMemory();
                 if (!ReferenceEquals(binding.Session, s)) return;
-                TryWritePlanMemory(binding, state => state.LastSave = new PlanSaveMark { Session = s.Id, Saves = saves });
+                TryWritePlanMemory(binding, state => state.LastSave = new PlanSaveMark { Session = s.Id, Saves = saves, By = ChangeBy.ApproverFor(origin) });
             }
             catch { /* the save itself landed; see above */ }
         }
@@ -2019,7 +2058,7 @@ namespace Semanticus.Engine
                 {
                     Id = StarterMeasuresFamily.RuleItemId(t.Table),
                     Section = ModelPlanSections.Meaning,
-                    Title = "Add " + CountOf(t.Measures.Count, "starter measure", "starter measures") + " in " + t.Table,
+                    Title = "Add " + CountOf(t.Measures.Count, "simple measure", "simple measures") + " in " + t.Table,
                     Sub = Join(t.Measures.Select(x => x.Measure), 4),
                     Value = "one answer per number",
                     // The starter measures answer DAC-IMPLICIT-MEASURE (a number column totalled by whatever drops it on a report).
@@ -2030,7 +2069,7 @@ namespace Semanticus.Engine
                     Why = new[]
                     {
                         StarterMeasuresFamily.Missing(t.Measures.Count, t.Table),
-                        "Each one follows the column's own default summary, and key columns get none. Undo takes them all back in one step.",
+                        "Each one totals its column the way the column is already set to. Key columns get none. One undo takes them all back.",
                     },
                     Diff = diff,
                     Touches = CountOf(t.Measures.Count, "measure", "measures") + " in " + t.Table,
@@ -2040,7 +2079,7 @@ namespace Semanticus.Engine
                         {
                             Name = t.Table,
                             Count = t.Measures.Count,
-                            What = CountOf(t.Measures.Count, "starter measure", "starter measures"),
+                            What = CountOf(t.Measures.Count, "simple measure", "simple measures"),
                             Diff = diff,
                         },
                     },
@@ -2088,7 +2127,7 @@ namespace Semanticus.Engine
                     {
                         Id = "safefix/" + g.Key,
                         Section = SectionForCategory(g.Key),
-                        Title = "Fix " + CountOf(g.Count(), "safe thing", "safe things") + " in " + Lower(Spaced(g.Key)),
+                        Title = SafeFixTitle(g.Key, g.Count()),
                         Sub = Join(g.Select(x => x.ObjectName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct(StringComparer.OrdinalIgnoreCase), 4),
                         Value = "raises AI readiness",
                         Rules = RuleIdsOf(g),
@@ -2141,28 +2180,28 @@ namespace Semanticus.Engine
         /// says why (Kane, 28 Sep: anyone who follows the Plan must not be hurt). Reading one report proves nothing
         /// about the others, so a report reading changes what the row offers, never whether it is optional.</summary>
         internal const string CleanupOptionalSentence =
-            "Optional. No report's use of this model has been read yet, so Semanticus cannot tell whether a report shows these. Nothing else on the plan waits for this.";
+            "Optional. Semanticus has not looked at any report that uses this model yet, so it cannot tell if a report shows these. No other task waits for this one.";
 
         /// <summary>The optional sentence once <paramref name="reports"/> reports have been read: what was read, and
         /// that the others may still use these.</summary>
         internal static string CleanupOptionalReadSentence(int reports) =>
             "Optional. " + (reports == 1
-                ? "1 report's use of this model has been read, and it does not show these"
-                : CountOf(reports, "report's", "reports'") + " use of this model has been read, and none of them shows these")
-            + ". Other reports may still use them. Nothing else on the plan waits for this.";
+                ? "Semanticus looked at 1 report that uses this model, and it does not show these"
+                : "Semanticus looked at " + CountOf(reports, "report", "reports") + " that use this model, and none of them shows these")
+            + ". Other reports may still use them. No other task waits for this one.";
 
         /// <summary>The optional sentence when the chosen reports were checked and none could be read (a .pbix, a blocked
         /// published report): the row answers from the model alone and says so.</summary>
         internal static string CleanupOptionalUnreadableSentence(int reports) =>
-            "Optional. " + (reports == 1 ? "1 chosen report" : reports + " chosen reports")
-            + " could not be read, so Semanticus cannot tell whether a report shows these. Nothing else on the plan waits for this.";
+            "Optional. Semanticus could not open " + (reports == 1 ? "the 1 report you chose" : "the " + reports + " reports you chose")
+            + ", so it cannot tell if a report shows these. No other task waits for this one.";
 
         /// <summary>The sentence that says what the row is FOR and that the person decides (Kane, 30 Sep 2026: "its more of a
         /// suggestion list as even a legit deletion may be required for a future report. only a user can properly assess this with
         /// the business context"). One constant, because the row, the tests and the drivers all read it.</summary>
         internal const string CleanupPurposeSentence =
-            "This list keeps the model lean. It is only a suggestion, so you look it over before anything is removed: untick any line you want to keep, "
-            + "or set the whole row aside. A column that nothing uses today may still be wanted for a report you build later, and only you know that.";
+            "This list helps keep the model small. It is only a suggestion, so look it over before anything is removed. Untick any column you want to keep, "
+            + "or set the whole task aside. A column that nothing uses today may still be needed for a report you build later, and only you know that.";
 
         /// <summary>How many columns the row lists and where they start, in plain words. Ticked is what the rule suggests; unticked
         /// is listed anyway, each with its reason on its line.</summary>
@@ -2173,10 +2212,10 @@ namespace Semanticus.Engine
                 return total == 1 ? "1 unused column is listed, and it starts ticked."
                                   : CountOf(total, "unused column is", "unused columns are") + " listed, and all of them start ticked.";
             if (ticked == 0)
-                return CountOf(total, "unused column is", "unused columns are") + " listed. None start ticked, and each line says why.";
+                return CountOf(total, "unused column is", "unused columns are") + " listed. None start ticked, and each one says why.";
             return CountOf(total, "unused column is", "unused columns are") + " listed. " + ticked.ToString("N0", CultureInfo.InvariantCulture)
                  + " start ticked. " + unticked.ToString("N0", CultureInfo.InvariantCulture)
-                 + " start unticked, each with its reason on the line (for example a key, a date, a name or a number). Press Work it out to see them all.";
+                 + " start unticked, and each one says why (for example, it is a key, a date, a name or a number). Open this task to see them all.";
         }
 
         private static ModelPlanItem CleanupItem(PlanFacts f)
@@ -2195,10 +2234,10 @@ namespace Semanticus.Engine
             why.Add(CleanupPurposeSentence);
             why.Add(CleanupCountSentence(safe.Length, unticked));
             why.Add("Nothing in the model uses " + them + (f.ReportsRead == 0 ? "."
-                : f.ReportsRead == 1 ? ", and neither does the report that was read." : ", and neither do the reports that were read."));
-            why.Add("A version is saved first, so undo puts " + them + " back in one step.");
+                : f.ReportsRead == 1 ? ", and neither does the report Semanticus looked at." : ", and neither do the reports Semanticus looked at."));
+            why.Add("A version is saved first, so one undo puts " + them + " back.");
             if (f.CleanupMeasures > 0)
-                why.Add(CountOf(f.CleanupMeasures, "unused measure is", "unused measures are") + " not on this list. A measure is removed on its own, when you are sure no report needs it.");
+                why.Add(CountOf(f.CleanupMeasures, "unused measure is", "unused measures are") + " not on this list. Remove a measure on its own, when you are sure no report needs it.");
             if (!string.IsNullOrWhiteSpace(f.Unused?.Caveat)) why.Add(f.Unused.Caveat);
 
             // The cleanup sweep names each object's table itself, so this one needs no ref parse.
@@ -2245,13 +2284,16 @@ namespace Semanticus.Engine
 
             foreach (var measureRef in uncovered.Take(MaxCheckItems))
             {
-                var name = measureRef.Substring(measureRef.IndexOf(':') + 1);
+                // The measure's own name, as the person sees it in a report: a measure name is unique in the model, so the
+                // table in front of it ("Key Measures/# New Customers") only made the title harder to read (Kane, 11 Oct 2026).
+                var body = measureRef.Substring(measureRef.IndexOf(':') + 1);
+                var name = body.Substring(body.LastIndexOf('/') + 1);
                 yield return new ModelPlanItem
                 {
                     Id = "check/" + measureRef,
                     Section = ModelPlanSections.Trust,
                     Title = "Add a check for " + name,
-                    Sub = "a report uses it and nothing checks it",
+                    Sub = "a report shows it and no check tests it",
                     Value = "one more number you can trust",
                     // Not "auto": nothing in the engine writes a check by itself (calling it auto put a Start on the row that the
                     // engine then refused, F-199). The assistant drafts it with save_test and the person accepts the ground truth
@@ -2261,8 +2303,9 @@ namespace Semanticus.Engine
                     Status = ModelPlanStatuses.Ready,
                     Why = new[]
                     {
-                        "A report that was read uses " + name + ".",
-                        "No saved check covers it, so a change to it would reach that report with nothing to catch it.",
+                        ReportsShowing(f, measureRef) + " " + name + ", but no check tests it.",
+                        "Add one so a change that breaks it is caught.",
+                        "Your assistant writes the check. You can see it on the Validation page.",
                     },
                     Diff = new[] { CheckLine(measureRef, name) },
                     Touches = "1 measure",
@@ -2278,14 +2321,13 @@ namespace Semanticus.Engine
                     Id = "check/more",
                     Section = ModelPlanSections.Trust,
                     Title = CountOf(uncovered.Length - MaxCheckItems, "more measure needs", "more measures need") + " a check",
-                    Sub = "listed on the Tests page",
+                    Sub = "see them on the Validation page",
                     Value = string.Empty,
                     Who = ModelPlanOwners.Assistant,
                     Status = ModelPlanStatuses.Proposed,
                     Why = new[]
                     {
-                        "The plan lists the first " + MaxCheckItems + " one by one and counts the rest, because past "
-                        + "that many, one more row is not what helps.",
+                        "The Plan lists the first " + MaxCheckItems + " one by one and counts the rest here, so the list stays short.",
                     },
                     // No lines of their own: the row counts what is left rather than listing it, which is
                     // the whole point of the cap. The per-table detail still counts them, so a Map block can
@@ -2307,16 +2349,16 @@ namespace Semanticus.Engine
 
             var why = new List<string> { "This model has changes that are not saved yet." };
             if (f.Session.DiskDiverged)
-                why.Add("The file on disk has also moved since it was opened, so check what is there before saving over it.");
+                why.Add("The file on disk has also changed since you opened it, so look at it before you save over it.");
             if (f.Session.LiveBound)
-                why.Add("It is bound to " + (f.Session.LiveDatabase ?? "a live model") + ", so publishing is what puts the changes in front of readers.");
+                why.Add("It is connected to " + (f.Session.LiveDatabase ?? "a published model") + ", so only Publish puts the changes in front of the people who use its reports.");
 
             return new ModelPlanItem
             {
                 Id = UnsavedItemId,
                 Section = ModelPlanSections.Ship,
                 Title = "Save the changes you have made",
-                Sub = f.Session.DiskDiverged ? "the file on disk has moved too" : "they are only in this session",
+                Sub = f.Session.DiskDiverged ? "the file on disk has changed too" : "they are only in Semanticus so far",
                 Value = "nothing is lost",
                 Who = ModelPlanOwners.You,
                 Status = ModelPlanStatuses.Ready,
@@ -2358,7 +2400,7 @@ namespace Semanticus.Engine
                 Section = ModelPlanSections.Structure,
                 Title = date != null && mark != null ? "Mark " + mark.Table + " as the date table"
                       : date != null ? "Mark the date table" : "Define a calendar",
-                Sub = date != null ? "time intelligence needs it" : "the model uses classic time intelligence and has no calendar",
+                Sub = date != null ? "year to date and last year numbers need it" : "the model has year to date style formulas but no calendar",
                 Value = "year to date and last year work",
                 Rules = RuleIdsOf(new[] { date, calendar }.Where(x => x != null)),
                 Goal = PlanGoals.Ai,
@@ -2374,6 +2416,19 @@ namespace Semanticus.Engine
             };
         }
 
+        /// <summary>The start of a check row's first reason: which report shows the measure, by name when the reading names it.</summary>
+        private static string ReportsShowing(PlanFacts f, string measureRef)
+        {
+            var names = f.ReportsByMeasure != null && f.ReportsByMeasure.TryGetValue(measureRef, out var n) ? n : Array.Empty<string>();
+            return names.Length switch
+            {
+                0 => "A report shows",
+                1 => "The report '" + names[0] + "' shows",
+                2 => "The reports '" + names[0] + "' and '" + names[1] + "' show",
+                _ => "The reports '" + names[0] + "', '" + names[1] + "' and " + (names.Length - 2) + " more show",
+            };
+        }
+
         private static ModelPlanItem RecheckItem(PlanFacts f)
         {
             if (f.ReportsNeedingChecking <= 0) return null;
@@ -2382,18 +2437,21 @@ namespace Semanticus.Engine
             {
                 Id = "recheck/reports",
                 Section = ModelPlanSections.Trust,
-                Title = "Read " + CountOf(f.ReportsNeedingChecking, "report", "reports") + " again",
+                Title = "Look at " + CountOf(f.ReportsNeedingChecking, "report", "reports") + " again",
                 Sub = Join(f.ReportsUnchecked, 3),
-                Value = "the answers about impact stay true",
+                Value = "you know what a change would break",
                 // Reading a report again is a choice about which reports, made on the Lineage page. The
                 // engine does not do it for you, so this is not "auto" (F-199).
                 Who = ModelPlanOwners.You,
                 Status = ModelPlanStatuses.Ready,
                 Why = new[]
                 {
-                    CountOf(f.ReportsNeedingChecking, "chosen report has", "chosen reports have")
-                        + " no current reading, so what they use of this model is not known right now.",
-                    "Every answer about what a change would affect is measured against that reading.",
+                    "Semanticus has not looked at " + (f.ReportsNeedingChecking == 1 && f.ReportsUnchecked.Length == 1
+                        ? "the report '" + f.ReportsUnchecked[0] + "'" : CountOf(f.ReportsNeedingChecking, "report", "reports"))
+                        + " since the model last changed.",
+                    "Until it does, what the plan says a change would break in " + (f.ReportsNeedingChecking == 1 ? "that report" : "those reports")
+                        + " may be out of date.",
+                    "Open Lineage and press Check reports or Check again, or ask your assistant to do it.",
                 },
                 Diff = Array.Empty<string>(),
                 Touches = Join(f.ReportsUnchecked, 3),
@@ -2453,7 +2511,7 @@ namespace Semanticus.Engine
                     var touches = g.Select(x =>
                     {
                         var name = Qualified(x.ObjectRef, x.ObjectName);
-                        var change = OldNameTermOnly(x) ? "clear its old name term from its synonyms" : words.Change;
+                        var change = OldNameTermOnly(x) ? "remove its old name from its synonyms" : words.Change;
                         return new PlanTouch
                         {
                             Table = TableOfRef(x.ObjectRef),
@@ -2464,6 +2522,8 @@ namespace Semanticus.Engine
                     }).ToArray();
 
                     var why = new List<string> { words.Lead(count) };
+                    if (g.Key == "dates" || g.Key == "relationships")
+                        why.AddRange(g.Select(x => x.DisplayMessage ?? x.Message).Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.Ordinal).Take(4));
                     var examples = ProposalExamples(touches.Select(t => t.Name));
                     if (examples != null) why.Add(examples);
                     why.Add(words.Earns);
@@ -2624,8 +2684,8 @@ namespace Semanticus.Engine
         {
             ["collisions"] = new ProposalWords
             {
-                Title = n => "Fix " + CountOf(n, "name that Copilot reads as the same word", "names that Copilot reads as the same word"),
-                Lead = n => CountOf(n, "word is", "words are") + " claimed by more than one visible thing, and "
+                Title = n => "Rename or hide fields with " + CountOf(n, "name Copilot confuses", "names Copilot confuses"),
+                Lead = n => CountOf(n, "word is", "words are") + " used by more than one visible field, and "
                           + "Copilot can only hold one meaning for each word.",
                 Earns = "Renaming or hiding the duplicates lets every word mean one thing, so questions stop landing on the wrong field.",
                 Value = "Copilot answers about the right thing",
@@ -2637,7 +2697,7 @@ namespace Semanticus.Engine
             ["names"] = new ProposalWords
             {
                 Title = n => "Rename " + CountOf(n, "unclear thing", "unclear things"),
-                Lead = n => CountOf(n, "name is", "names are") + " generic, cryptic or built out of modelling jargon, "
+                Lead = n => CountOf(n, "name is", "names are") + " too general, hard to decode or full of modelling jargon, "
                           + "so nobody can tell from the name what is inside.",
                 Earns = "Clear names let a reader, and an assistant, pick the right field without asking anyone.",
                 Value = "readers understand them",
@@ -2704,8 +2764,8 @@ namespace Semanticus.Engine
             ["visibility"] = new ProposalWords
             {
                 Title = n => "Hide " + CountOf(n, "technical field", "technical fields"),
-                Lead = n => CountOf(n, "field is", "fields are") + " plumbing rather than something to report on, "
-                          + "and they are visible, so they sit in field lists and in Copilot answers.",
+                Lead = n => CountOf(n, "field is", "fields are") + " only there to make the model work, like a key, not something to report on. "
+                          + (n == 1 ? "It is" : "They are") + " visible, so " + (n == 1 ? "it shows" : "they show") + " up in field lists and in Copilot answers.",
                 Earns = "Hiding them leaves only the fields somebody should actually pick.",
                 Value = "only real fields are offered",
                 Section = ModelPlanSections.Structure,
@@ -2714,7 +2774,7 @@ namespace Semanticus.Engine
             },
             ["relationships"] = new ProposalWords
             {
-                Title = n => "Sort out " + CountOf(n, "relationship", "relationships"),
+                Title = n => "Fix " + CountOf(n, "relationship with a model warning", "relationships with model warnings"),
                 Lead = n => CountOf(n, "relationship needs", "relationships need") + " a decision, because how two "
                           + "tables join decides what every number filtered through them means.",
                 Earns = "Getting them right is what makes totals add up and what lets Copilot walk from one table to the next.",
@@ -2725,9 +2785,9 @@ namespace Semanticus.Engine
             },
             ["dates"] = new ProposalWords
             {
-                Title = n => "Sort out " + CountOf(n, "date setting", "date settings"),
-                Lead = n => CountOf(n, "date setting is", "date settings are") + " unresolved, and every year to "
-                          + "date, last year and running total rests on them.",
+                Title = n => "Fix " + CountOf(n, "date setting with a model warning", "date settings with model warnings"),
+                Lead = n => CountOf(n, "date setting needs", "date settings need") + " a choice. "
+                          + "Date settings affect year to date, last year and running totals.",
                 Earns = "Settling them is what makes time calculations return the period you asked for.",
                 Value = "time calculations work",
                 Section = ModelPlanSections.Structure,
@@ -2779,7 +2839,7 @@ namespace Semanticus.Engine
             },
             ["ai-settings"] = new ProposalWords
             {
-                Title = n => "Set up " + CountOf(n, "AI setting", "AI settings"),
+                Title = n => "Set " + CountOf(n, "option for Copilot and data agents", "options for Copilot and data agents"),
                 Lead = n => CountOf(n, "setting decides", "settings decide") + " what Copilot and data agents are "
                           + "allowed to read and how they answer, and " + (n == 1 ? "it is" : "they are") + " not decided yet.",
                 Earns = "Deciding them is what makes an assistant answer from the fields you chose rather than everything it can see.",
@@ -2803,9 +2863,9 @@ namespace Semanticus.Engine
             return new ProposalWords
             {
                 Title = n => "Decide " + CountOf(n, "open question", "open questions") + " about " + spoken,
-                Lead = n => CountOf(n, "finding about", "findings about") + " " + spoken + " "
-                          + (n == 1 ? "needs" : "need") + " a decision that the rules cannot make for you.",
-                Earns = "Deciding them clears the last of the " + spoken + " findings off the plan.",
+                Lead = n => CountOf(n, "issue about", "issues about") + " " + spoken + " "
+                          + (n == 1 ? "needs" : "need") + " a choice that Semanticus cannot make for you.",
+                Earns = "Deciding them clears the last of the " + spoken + " issues off the Plan.",
                 Section = SectionForCategory(category),
                 CaseOne = "open question", CaseMany = "open questions",
             };
@@ -2843,7 +2903,7 @@ namespace Semanticus.Engine
                 .ToArray();
             if (all.Length == 0) return null;
             if (all.Length <= MaxProposalExamples)
-                return (all.Length == 1 ? "It is " : "They are ") + AndList(all) + ".";
+                return "Applies to: " + AndList(all) + ".";
             return "For example " + string.Join("; ", all.Take(MaxProposalExamples)) + "; and "
                  + (all.Length - MaxProposalExamples).ToString("N0", CultureInfo.InvariantCulture) + " more.";
         }
@@ -2888,7 +2948,7 @@ namespace Semanticus.Engine
             if (cleanup > 0) lines.Add(CountOf(cleanup, "unused thing", "unused things") + " gone");
 
             var checks = open.Count(i => i.Id.StartsWith("check/", StringComparison.Ordinal));
-            if (checks > 0) lines.Add(CountOf(checks, "measure", "measures") + " covered by a check");
+            if (checks > 0) lines.Add(CountOf(checks, "measure", "measures") + " with a check");
 
             // The one words row carries the description findings (their rule ids are DESC-*), so "everything described" rests on it.
             if (open.Any(i => IsWordsItem(i.Id) && (i.Rules ?? Array.Empty<string>()).Any(r => r.StartsWith("DESC-", StringComparison.OrdinalIgnoreCase))))
@@ -2933,6 +2993,8 @@ namespace Semanticus.Engine
                 new Dictionary<string, (double, double)>(StringComparer.Ordinal);
             public bool Ranked;
             public string OrderedBy;
+            /// <summary>Set with the "plan is not active" sentence: where billing is, for the page's link.</summary>
+            public string BillingUrl;
             /// <summary>A plan.rank ask is out in the background for this plan; the page shows Jev is looking.</summary>
             public bool Pending;
         }
@@ -3080,7 +3142,7 @@ namespace Semanticus.Engine
             // Still out. The last order bought for this revision stands meanwhile; with none, rule order.
             var meanwhile = lastKnown != null
                 ? RankingFrom(lastKnown.Outcome, lastKnown.Failure, open, point)
-                : new PlanRanking { OrderedBy = "In the order the rules found them, while Jev works out which matter most." };
+                : new PlanRanking { OrderedBy = "In the order Semanticus found the tasks, while Jev works out which matter most." };
             meanwhile.Pending = true;
             return meanwhile;
         }
@@ -3159,40 +3221,51 @@ namespace Semanticus.Engine
         private static PlanRanking RankingFrom(DecisionOutcome outcome, string failure, IReadOnlyList<ModelPlanItem> open, DecisionPoint point)
         {
             var ranking = new PlanRanking();
-            // Jev unreachable, timed out, down or refusing without a reason the person can act on: the Plan says so in ONE line, here, and
-            // nowhere else (no count of what Jev did not look at, no row, no promise to try again; Kane, 8 Oct). Both doors read this
-            // string off the same view, so the assistant and the page say the same words.
+            // Every line below is ONE plain sentence that says Jev did not order the tasks this time, why in the person's words, and that the
+            // tasks are in the order Semanticus found them. No exception text, no count of what Jev did not look at, no promise to try again.
+            // Jev unreachable, timed out, down or refusing without a reason the person can act on: the same line from one place, read by both doors.
             if (JevDecisionOracle.IsNotAvailable(failure) || (outcome != null && outcome.Asked && !outcome.Answers.Decided
                                                               && JevDecisionOracle.IsNotAvailable(outcome.Answers.NotDecidedReason)))
             {
                 ranking.OrderedBy = NotAvailableOrder;
                 return ranking;
             }
+            // The Pro service did not accept the subscription: said once, with the billing address for the page's link.
+            if (JevDecisionOracle.IsSubscriptionInactive(failure) || (outcome != null && outcome.Asked && !outcome.Answers.Decided
+                                                                      && JevDecisionOracle.IsSubscriptionInactive(outcome.Answers.NotDecidedReason)))
+            {
+                ranking.OrderedBy = PlanInactiveOrder;
+                ranking.BillingUrl = Entitlement.LicenseEntitlement.ManageUrl;
+                return ranking;
+            }
             if (failure != null || outcome == null)
             {
-                // An ordering that could not be bought is not a failed plan. The items, the reasons and the
-                // exact changes are all already computed; only the sort is missing, and rule order is a real
-                // order, so this degrades rather than throws.
-                ranking.OrderedBy = "In the order the rules found them. The value ordering could not run: " + Lower(failure ?? "no answer came back");
+                // An ordering that could not be bought is not a failed plan: the items, the reasons and the exact changes are all already
+                // computed, only the sort is missing, and the order found is a real order. The exception's own text is not for a person.
+                ranking.OrderedBy = "Jev could not put the tasks in order this time, so they are in the order Semanticus found them.";
                 return ranking;
             }
 
             if (!outcome.Asked)
             {
-                ranking.OrderedBy = "In the order the rules found them, " + Because(Lower(outcome.SkippedReason));
+                ranking.OrderedBy = NotOrderedBecause(outcome.SkippedReason);
                 return ranking;
             }
 
             if (!outcome.Answers.Decided)
             {
-                ranking.OrderedBy = "In the order the rules found them, " + Because(PlainNotDecided(outcome.Answers.NotDecidedReason));
+                var why = outcome.Answers.NotDecidedReason;
+                // Asked, no answer, and the budget forbids another try: the reason is already a whole thought, so it is said short.
+                ranking.OrderedBy = string.Equals(why, JevDecisionOracle.AskedThenStoppedReason, StringComparison.Ordinal)
+                    ? "Jev did not answer this time and this session has used its suggestion budget, so the tasks are in the order Semanticus found them."
+                    : NotOrderedBecause(PlainNotDecided(why));
                 return ranking;
             }
 
             var scores = PlanRankPoint.Scores(outcome.Answers, point.ConfidenceBar);
             if (scores.Count == 0)
             {
-                ranking.OrderedBy = "In the order the rules found them. Jev gave no answer that could reorder it.";
+                ranking.OrderedBy = "Jev gave no answer that could reorder the tasks, so they are in the order Semanticus found them.";
                 return ranking;
             }
 
@@ -3206,14 +3279,29 @@ namespace Semanticus.Engine
             ranking.Scores = scores;
             ranking.Ranked = true;
             ranking.OrderedBy = open.All(i => scores.ContainsKey(i.Id))
-                ? "In value order, highest first."
-                : "In value order where Jev gave an answer, and in the order the rules found them for the rest.";
+                ? "Tasks with the greatest expected benefit come first."
+                : "Tasks with advice come first, ordered by expected benefit. The rest follow in the order Semanticus found them.";
             return ranking;
         }
 
         /// <summary>What the Plan's order line says when the last ask failed in the class nobody can act on
         /// (<see cref="JevDecisionOracle.IsNotAvailable"/>). The one place the page and the assistant read it.</summary>
-        internal const string NotAvailableOrder = JevDecisionOracle.NotAvailableReason + " The Plan is in rule order.";
+        internal const string NotAvailableOrder = "Jev could not be reached this time, so the tasks are in the order Semanticus found them.";
+
+        /// <summary>What the order line says when the relay refused an inactive subscription (the page adds a Billing link beside it).</summary>
+        internal const string PlanInactiveOrder = "Jev did not put these in order because your Pro plan is not active. Open billing to fix it.";
+
+        /// <summary>One sentence for a reason Jev did not order the tasks: the reason's first sentence (the relay writes two, and a second one
+        /// would not read after "because"), lower-cased so Jev keeps its capital, with no full stop of its own.</summary>
+        private static string NotOrderedBecause(string reason)
+        {
+            var r = (reason ?? "").Trim();
+            var stop = r.IndexOf(". ", StringComparison.Ordinal);
+            if (stop > 0) r = r.Substring(0, stop);
+            r = r.TrimEnd('.', '!', '?', ' ');
+            if (r.Length == 0) r = "no answer came back";
+            return "Jev did not put the tasks in order this time because " + Lower(r) + ", so they are in the order Semanticus found them.";
+        }
 
         /// <summary>A reason an ask was not decided, in the words the Plan shows a person. The gates already speak
         /// plainly (no permission, no allowance left, the relay's own sentences) and pass through. The reader's refusals
@@ -3313,7 +3401,7 @@ namespace Semanticus.Engine
 
             if (text.Length > AskRoutePoint.MaxAskChars)
             {
-                result.Sentence = "That is longer than this box reads ("
+                result.Sentence = "That is longer than this box takes ("
                     + AskRoutePoint.MaxAskChars.ToString(CultureInfo.InvariantCulture)
                     + " characters), so nothing was sent. Say it in a sentence.";
                 result.Reason = result.Sentence;
@@ -3660,7 +3748,39 @@ namespace Semanticus.Engine
         }
 
         private static string RuleTitle(ReadinessFinding f) =>
-            string.IsNullOrWhiteSpace(f.RuleTitle) ? (f.RuleId ?? "a finding") : f.RuleTitle;
+            string.IsNullOrWhiteSpace(f.RuleTitle) ? (f.RuleId ?? "a finding") : PlainRuleTitle(f.RuleTitle);
+
+        /// <summary>A rule's title without its bracketed group ("[Formatting] Hide foreign keys" reads "Hide foreign keys"): the group is the rule list's own sorting word, not something a person reads.</summary>
+        private static string PlainRuleTitle(string title)
+        {
+            if (string.IsNullOrWhiteSpace(title)) return title;
+            var t = title.TrimStart();
+            if (t.Length > 2 && t[0] == '[')
+            {
+                var close = t.IndexOf(']');
+                if (close > 0 && close + 1 < t.Length) return t.Substring(close + 1).TrimStart();
+            }
+            return title;
+        }
+
+        /// <summary>What a safe-fix task is about, in the words a person uses for it (the readiness category's own name says little: "naming", "visibility").</summary>
+        private static string SafeFixTitle(string category, int n)
+        {
+            var noun = category switch
+            {
+                "Naming" => "naming",
+                "Descriptions" => "description",
+                "Synonyms" => "synonym",
+                "Relationships" => "relationship",
+                "Visibility" => "visibility",
+                "Formatting" => "number format",
+                "CopilotLimits" => "Copilot limit",
+                "DataAgentConfig" => "data agent setup",
+                "BestPractice" => "best practice",
+                _ => Lower(Spaced(category ?? "BestPractice")),
+            };
+            return "Fix " + CountOf(n, noun + " problem", noun + " problems");
+        }
 
         private static string Objects(int n) => CountOf(n, "object", "objects");
 
@@ -3697,16 +3817,6 @@ namespace Semanticus.Engine
 
         /// <summary>Lower-case the first letter only, so a sentence can carry another sentence inside it without
         /// a capital appearing in the middle. Leaves an all-caps or already-lower start alone.</summary>
-        /// <summary>"because" and a reason, as the end of one sentence with one full stop. The relay writes whole sentences,
-        /// which already end in one, and the engine writes clauses, which do not (ai.schema final verify, low item 6: the
-        /// relay's sentence used to get a second).</summary>
-        private static string Because(string reason)
-        {
-            var r = (reason ?? "").Trim();
-            return "because " + r + (r.EndsWith(".", StringComparison.Ordinal) || r.EndsWith("!", StringComparison.Ordinal)
-                                     || r.EndsWith("?", StringComparison.Ordinal) ? "" : ".");
-        }
-
         private static string Lower(string s)
         {
             if (string.IsNullOrEmpty(s)) return s;

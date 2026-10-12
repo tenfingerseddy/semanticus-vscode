@@ -121,6 +121,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- written words become assistant lines
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Written_words_become_assistant_lines_and_move_the_digest_and_void_an_approval()
         {
@@ -154,6 +155,7 @@ namespace Semanticus.Tests
             Assert.False(result.View.CanBuild);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_later_word_for_the_same_object_replaces_the_earlier_one_and_never_stacks()
         {
@@ -167,6 +169,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- the queue shrinks
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_queue_shrinks_as_words_are_written_and_the_plans_own_count_follows()
         {
@@ -277,6 +280,7 @@ namespace Semanticus.Tests
             Assert.Contains(doc.Lines, l => l.Item.ObjectRef == "table:Product" && l.Item.Kind == "set_description");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Two_objects_cannot_be_given_the_same_name_in_one_batch_or_across_batches()
         {
@@ -321,6 +325,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(result.Refused, r => r.Contains("—"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task What_the_person_decided_dropped_or_pinned_is_never_written_over()
         {
@@ -348,6 +353,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- Free can write words
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_can_write_words_with_no_jev_in_sight()
         {
@@ -362,6 +368,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- verifier attacks
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_page_never_passes_forty_thousand_characters_even_for_huge_formulas_and_the_pages_add_up()
         {
@@ -481,6 +488,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- the open-model queue is unchanged by the move
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_open_model_words_queue_reads_the_same_after_it_moved_into_its_own_file()
         {
@@ -522,6 +530,7 @@ namespace Semanticus.Tests
             Assert.Equal(1, doc.Words.Total - doc.Words.Open);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("table:Sales")]
         [InlineData("measure:Sales/Total Sales")]
@@ -619,6 +628,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(doc.Lines, l => StartPlanWords.IsHeld(l, present));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_both_doors_racing_on_one_name_in_two_cases_and_reads_in_between_lose_nothing()
         {

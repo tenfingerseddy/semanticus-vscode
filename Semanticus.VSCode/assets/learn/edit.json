@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "edit",
+  "title": "Edit your model",
+  "minutes": 2,
+  "tryWithClaude": "Ask Claude: write a short description for each measure in Sales.",
+  "steps": [
+    { "place": "edit/properties", "focus": "measure:Sales/Net Sales", "press": null,
+      "say": "Pick a measure in the Model tree. Its properties open beside it.",
+      "how": null, "wait": "read" },
+    { "place": "edit/queries", "focus": null, "press": null,
+      "say": "Queries runs DAX and shows the numbers, so you can test a measure before you keep it.",
+      "how": null, "wait": "read" },
+    { "place": "edit/find", "focus": null, "press": null,
+      "say": "Find and replace changes many names or descriptions at once.",
+      "how": null, "wait": "read" },
+    { "place": "edit/instructions", "focus": null, "press": null,
+      "say": "AI instructions tell Copilot and your assistant how to read this model.",
+      "how": null, "wait": "read" },
+    { "place": "plan/history", "focus": null, "press": null,
+      "say": "Every edit lands in History. Undo takes back any line.",
+      "how": null, "wait": "read" }
+  ]
+}

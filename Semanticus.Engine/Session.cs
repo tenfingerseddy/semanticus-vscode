@@ -25,10 +25,11 @@ namespace Semanticus.Engine
     /// notification per applied operation, tagged with the originating driver (human|agent).
     /// One undo/checkpoint timeline (the handler's UndoManager) is shared by both doors.
     /// </summary>
-    public sealed class Session : IDisposable
+    public sealed partial class Session : IDisposable
     {
         private readonly ChangeBus _bus;
         private List<ChangeDelta> _pending;   // non-null only while a tracked op runs (dispatcher thread)
+        private ChangeWords _pendingWords;
 
         // Every object a tracked commit of THIS session added, by reference, so a rename does not lose it. The Plan's
         // cleanup row never offers to remove one (UAT plan statement check, 28 Sep): "nothing uses it" says nothing
@@ -404,6 +405,17 @@ namespace Semanticus.Engine
             }
         }
 
+        /// <summary>Run each warmable observer's one-time cost now, in the background, so the first edit does not pay it
+        /// (hero16 N3). Queued on the dispatcher ahead of any later edit, so the baseline is still the pre-edit state.
+        /// A session that closes first, or a failed warm, is ignored: the first commit does the same work, as it always did.</summary>
+        internal void WarmObservers()
+        {
+            var warm = _observers.OfType<IWarmableObserver>().ToArray();
+            if (warm.Length == 0) return;
+            _ = RunAsync(() => { foreach (var w in warm) w.Warm(Model); return true; })
+                .ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
         public void UnregisterObserver(ISessionObserver observer)
         {
             lock (_observersLock)
@@ -545,6 +557,8 @@ namespace Semanticus.Engine
             if (delta != null) _pending?.Add(delta);
         }
 
+        internal void RecordWords(ChangeWords words) => _pendingWords = words;
+
         private async Task<long> MutateAsync(string origin, string label, Action<Model> work, List<CascadeWarning> cascadeSink, bool keepsModelSaved)
         {
             // Read the ambient dry-run scope on the CALLER's thread, BEFORE the dispatcher hop — AsyncLocal need
@@ -558,6 +572,7 @@ namespace Semanticus.Engine
                     var redo = (_model.Undo as IRedoPreserve)?.CaptureRedo();
                     var depth = _model.BatchDepth;
                     var wasSaved = keepsModelSaved && depth == 0 && _model.Undo.AtCheckpoint;
+                    var sizeBefore = _model.Undo.UndoSize;
                     _model.BeginUpdate(label);
                     // RetryPendingCascades runs INSIDE the batch (before EndUpdate) so retried LSDL writes join
                     // the same undo step as the renames that queued them. On a work throw the rollback reverts
@@ -570,6 +585,8 @@ namespace Semanticus.Engine
                         work(Model); RetryPendingCascades(cascadeSink);
                         sealedYet = true;
                         (_model as IStructureGuard)?.Seal(structure);
+                        // After the seal, which reads TE2's own steps; only at the outermost batch, so no open seal reads them later.
+                        if (depth == 0) (_model as IUndoPacker)?.PackSince(sizeBefore);
                         _model.EndUpdate();
                         // TE2 counts "saved" by stack position, so the new step would read as an unsaved model edit.
                         if (wasSaved) _model.Undo.SetCheckpoint();
@@ -585,6 +602,72 @@ namespace Semanticus.Engine
                         throw;
                     }
                 })).ConfigureAwait(false);
+        }
+
+        /// <summary>Run a bulk call's items inside the call's batch with ONE whole-model snapshot for all of them, not one per item.
+        /// Reading the model is what an exact rollback needs (<see cref="TabularEditor.TOMWrapper.Utils.ModelSeal"/>), and it cost
+        /// 12 ms per item on 3,000 fields, most of a 300-item call. The call's own commit already seals everything its items did,
+        /// so the snapshot here only serves a rejected item: <paramref name="run"/> throwing an exception <paramref name="rejects"/>
+        /// accepts takes back every item since the snapshot, exactly, then runs the good ones again on a fresh snapshot and goes
+        /// on. A rejected item therefore costs one more snapshot and a second run of the items before it since the last rejection
+        /// (each item runs at most once more per rejection that follows it in its stretch). <paramref name="run"/> must be safe to
+        /// run again: it writes the model and keeps its own results by index, overwriting them. Any other exception goes to the
+        /// caller, whose commit rolls everything back. Dispatcher thread only, inside a tracked commit's work.</summary>
+        internal void BatchItems(int count, Action<int> run, Func<Exception, bool> rejects, Action<int, Exception> rejected)
+        {
+            var good = new List<int>();   // items run since the snapshot, or to run again on the next one
+            var next = 0;
+            while (true)
+            {
+                var depth = _model.BatchDepth;
+                var deltaCount = _pending?.Count ?? 0;
+                var cascadeCount = _pendingCascades.Count;
+                var deleting = _deleting.ToArray();
+                _model.BeginUpdate("items");
+                object structure;
+                try { structure = (_model as IStructureGuard)?.Capture(); }
+                catch (Exception ex) { throw new BatchRollbackException(ex); }
+                var again = good.ToArray();
+                good.Clear();
+                var failed = -1;
+                Exception failure = null;
+                for (var k = 0; k < again.Length && failed < 0; k++)
+                {
+                    try { run(again[k]); good.Add(again[k]); }
+                    catch (Exception ex) when (rejects(ex))
+                    {
+                        failed = again[k]; failure = ex;
+                        good.AddRange(again.Skip(k + 1));
+                    }
+                }
+                for (; next < count && failed < 0; next++)
+                {
+                    try { run(next); good.Add(next); }
+                    catch (Exception ex) when (rejects(ex)) { failed = next; failure = ex; }
+                }
+                if (failed < 0)
+                {
+                    (_model as IStructureGuard)?.Release(structure);
+                    _model.EndUpdate();
+                    return;
+                }
+                Exception sealFailure = null;
+                try { (_model as IStructureGuard)?.Seal(structure); }
+                catch (Exception ex) { sealFailure = ex; }
+                try { RollBackTo(depth); }
+                catch (Exception ex) { throw new BatchRollbackException(ex); }
+                if (_pending != null && _pending.Count > deltaCount) _pending.RemoveRange(deltaCount, _pending.Count - deltaCount);
+                if (_pendingCascades.Count > cascadeCount) _pendingCascades.RemoveRange(cascadeCount, _pendingCascades.Count - cascadeCount);
+                _deleting.Clear();
+                foreach (var pair in deleting) _deleting[pair.Key] = pair.Value;
+                if (sealFailure != null) throw new BatchRollbackException(sealFailure);
+                rejected(failed, failure);
+            }
+        }
+
+        private sealed class BatchRollbackException : Exception
+        {
+            public BatchRollbackException(Exception inner) : base("This item could not be taken back. The whole call was stopped.", inner) { }
         }
 
         /// <summary>Dry-run variant: run the REAL work on the dispatcher, then ALWAYS roll the batch back — the
@@ -665,6 +748,27 @@ namespace Semanticus.Engine
         public Task<long> UndoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "undo", () => { RefuseIfSidecarMoved(redo: false, 1); _model.Undo.Undo(); }, "undo"));
         public Task<long> RedoAsync(string origin) => WithLifetimeLeaseAsync(() => TrackAsync(origin, "redo", () => { RefuseIfSidecarMoved(redo: true, 1); _model.Undo.Redo(); }, "redo"));
 
+        internal Task<long> ReverseStepsAsync(string origin, string label, Func<(int First, int Last)> range)
+        {
+            string replay = null;
+            return WithLifetimeLeaseAsync(() => TrackAsync(origin, label, () =>
+            {
+                var (first, last) = range();
+                RefuseIfSidecarMoved(false, _model.Undo.UndoSteps - first + 1);
+                if (last == _model.Undo.UndoSteps)
+                {
+                    replay = "undo";
+                    for (var i = last; i >= first; i--) _model.Undo.Undo();
+                    return;
+                }
+                var apply = TabularEditor.TOMWrapper.Utils.AssistantUndo.Prepare(Model, first, last, _model.Undo.UndoSteps);
+                var depth = _model.BatchDepth;
+                _model.BeginUpdate(label);
+                try { apply(); _model.EndUpdate(); }
+                catch { RollBackTo(depth); throw; }
+            }, replayForCommit: () => replay));
+        }
+
         /// <summary>Refuse, before anything is walked, an undo or redo that would put back a file beside the model (the
         /// Primer, its suggestion list) that was changed on disk since: undoing would overwrite that newer edit (Sol on
         /// m11/integration 568435d3, finding 2). Throwing here, inside the commit and before the walk, changes nothing
@@ -729,6 +833,7 @@ namespace Semanticus.Engine
             _consentMarkerDirty = false;
             System.Threading.Volatile.Write(ref _consentOnlyRevision, -1);
             if (wroteEdits) SaveCount++;
+            ClearFileRecoveryAfterSave();
         }
 
         /// <summary>Rename via the FormulaFixup contract seam (<see cref="IRenameService"/>): rewrites every DAX /
@@ -815,7 +920,7 @@ namespace Semanticus.Engine
             throw new InvalidOperationException(gate.Refuse(origin, label));
         }
 
-        private async Task<long> TrackAsync(string origin, string label, Action action, string replay = null)
+        private async Task<long> TrackAsync(string origin, string label, Action action, string replay = null, Func<string> replayForCommit = null)
         {
             // THE ONE PLACE A MODEL EDIT COMMITS, and the sink every assistant edit ends at. An assistant's edit is asked about at
             // the assistant's door (AssistantEngine), before the inner engine sees it, and arrives here carrying the person's
@@ -845,6 +950,7 @@ namespace Semanticus.Engine
                     var observers = _observers;
                     foreach (var o in observers) { try { o.BeforeCommit(Model); } catch { /* isolated: never fail an edit */ } }
                     _pending = new List<ChangeDelta>();
+                    _pendingWords = null;
                     var stepsBefore = _model.Undo.UndoSteps;
                     var sizeBefore = _model.Undo.UndoSize;
                     try
@@ -857,6 +963,7 @@ namespace Semanticus.Engine
                         _deleting.Clear();
                         throw;
                     }
+                    replay = replayForCommit?.Invoke() ?? replay;
                     var deltas = replay == null ? WithAdds(_pending, sizeBefore, builtHere: true) : _pending;
                     _pending = null;
                     _deleting.Clear();
@@ -887,6 +994,7 @@ namespace Semanticus.Engine
                         By = ChangeBy.For(cause, origin),
                         Cause = cause,
                         Deltas = deltas.ToArray(),
+                        Words = replay == null ? _pendingWords ?? ChangeWords.From(label, deltas) : null,
                         Undo = UndoStateNow(),
                         Health = health,
                         Writer = writer,
@@ -964,6 +1072,7 @@ namespace Semanticus.Engine
             }
             try
             {
+                StopFileRecovery();
                 try { _model.ObjectChanged -= OnObjectChanged; } catch { }
                 try { _model.ObjectDeleting -= OnObjectDeleting; _model.ObjectDeleted -= OnObjectDeleted; } catch { }
                 // Detach the ambient observers registered on this session (AttachObserver registers on the

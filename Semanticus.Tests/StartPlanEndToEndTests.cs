@@ -298,14 +298,12 @@ namespace Semanticus.Tests
                 Assert.Equal(StartDecideState.WaitingGrant, view.Decide.State);
                 if (mcpDoor)
                 {
-                    // the source grant is the person's question in every preset (join 6, Sol item 1): the assistant's call asks, the person says yes, the same call goes through
-                    Assistant("grant_start_disclosure (asks the person)");
-                    var asked = await McpTools.GrantStartDisclosure(engine, view.Digest);
-                    Assert.True(asked.Asked, "the assistant's grant did not ask the person");
-                    Person("Say yes to Jev seeing this source");
-                    await engine.ApproveAgentActionAsync((await engine.ListPendingApprovalsAsync()).Single().Id, "human");
-                    Assistant("grant_start_disclosure (again)");
+                    // the person's yes in chat is enough for the source grant (Kane, 11 Oct 2026): the assistant's one call grants it, nothing waits in Studio
+                    Person("Say yes in chat to Jev seeing this source");
+                    Assistant("grant_start_disclosure");
                     view = await McpTools.GrantStartDisclosure(engine, view.Digest);
+                    Assert.False(view.Asked, "the assistant's grant asked the person again after their yes in chat");
+                    Assert.Empty(await engine.ListPendingApprovalsAsync());
                 }
                 else { Person("Allow Jev to see this source"); view = await engine.GrantStartDisclosureAsync(view.Digest, "human"); }
                 await engine.StartDecideSettledForTest();
@@ -464,9 +462,13 @@ namespace Semanticus.Tests
             return run.N;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Pro_UI_door() => Assert.NotNull(await ProAsync(false));
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Pro_MCP_door() => Assert.NotNull(await ProAsync(true));
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Free_UI_door() => Assert.NotNull((await RunAsync(pro: false, mcpDoor: false)).N);
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Free_MCP_door() => Assert.NotNull((await RunAsync(pro: false, mcpDoor: true)).N);
     }
 }

@@ -72,6 +72,7 @@ namespace Semanticus.Engine.Decisions
             public DateTimeOffset? grantedUtc { get; set; }
             public DateTimeOffset? withdrawnUtc { get; set; }
             public long generation { get; set; }
+            public string grantedBy { get; set; }
 
             /// <summary>The content stamp of the files the model was loaded from when this record's marker was
             /// minted into it and not yet saved (LocalEngine.Decisions.cs, PendingConsentWitnessAsync). Null once
@@ -127,7 +128,7 @@ namespace Semanticus.Engine.Decisions
                     if (store.models == null || !store.models.TryGetValue(scope, out record) || record == null)
                         return DecisionConsent.None;
                     return new DecisionConsent(record.granted, record.schemaVersion, record.approvedFields,
-                        record.grantedUtc, record.withdrawnUtc, record.generation);
+                        record.grantedUtc, record.withdrawnUtc, record.generation, record.grantedBy);
                 }
                 catch
                 {
@@ -140,7 +141,7 @@ namespace Semanticus.Engine.Decisions
         /// for the one model <paramref name="scope"/> names. A field that no registered point declares is
         /// refused rather than stored: consent has to describe the product that exists, or the settings list
         /// stops being the audit surface.</summary>
-        public static DecisionConsent Grant(string scope, IEnumerable<string> fields, int schemaVersion, DateTimeOffset nowUtc)
+        public static DecisionConsent Grant(string scope, IEnumerable<string> fields, int schemaVersion, DateTimeOffset nowUtc, string grantedBy = null)
         {
             if (string.IsNullOrEmpty(scope)) throw new InvalidOperationException(NoScopeReason);
 
@@ -165,7 +166,7 @@ namespace Semanticus.Engine.Decisions
 
             lock (Gate)
             {
-                var consent = DecisionConsent.Grant(asked, schemaVersion, nowUtc, NextGenerationLocked(scope));
+                var consent = DecisionConsent.Grant(asked, schemaVersion, nowUtc, NextGenerationLocked(scope), grantedBy);
                 WriteLocked(scope, consent);
                 return consent;
             }
@@ -193,7 +194,7 @@ namespace Semanticus.Engine.Decisions
                 if (store.models == null || !store.models.TryGetValue(scope, out record) || record == null)
                     return DecisionConsent.None;
                 return new DecisionConsent(record.granted, record.schemaVersion, record.approvedFields,
-                    record.grantedUtc, record.withdrawnUtc, record.generation);
+                    record.grantedUtc, record.withdrawnUtc, record.generation, record.grantedBy);
             }
             catch
             {
@@ -263,6 +264,7 @@ namespace Semanticus.Engine.Decisions
                 grantedUtc = consent.GrantedUtc,
                 withdrawnUtc = consent.WithdrawnUtc,
                 generation = consent.Generation,
+                grantedBy = consent.GrantedBy,
             };
 
             var root = ConnectionRegistry.Root();

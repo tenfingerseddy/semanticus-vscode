@@ -20,11 +20,12 @@ using Xunit;
 namespace Semanticus.Tests
 {
     /// <summary>
-    /// The slice 6 tool merge (Kane, 24 Sep, prompt audit decision 2): fourteen near-duplicate MCP tools fold into
+    /// The slice 6 tool merge (Kane, 24 Sep, prompt audit decision 2): thirteen near-duplicate MCP tools fold into
     /// their survivors. Only the MCP layer changes; each merged tool calls the same IEngine method the old tool
     /// called, and the UI door keeps its RPC methods. The retired names stay readable in saved files through
     /// OpAliases, and a direct call to one gets a teaching error instead of the SDK's bare refusal.
     /// </summary>
+    [Collection("restore-root")]
     public sealed class ToolMergeTests
     {
         private sealed class Fake : IEntitlement
@@ -37,7 +38,7 @@ namespace Semanticus.Tests
         {
             "bpa_summary", "ai_readiness_summary", "ai_readiness_scan_live", "model_graph_summary", "bpa_fix",
             "bpa_get_fix_prompt", "bpa_fix_all", "load_bpa_rules", "load_readiness_rules", "reset_bpa_rules",
-            "reset_readiness_rules", "benchmark_dax_coldwarm", "impact_of", "label_connection",
+            "reset_readiness_rules", "benchmark_dax_coldwarm", "impact_of",
         };
 
         private static async Task<(LocalEngine engine, SessionManager sessions)> PercentageModelAsync()
@@ -203,8 +204,9 @@ namespace Semanticus.Tests
         // answer to an unknown name is a bare protocol error. This drives the real SDK in process, with the door's
         // own filter registration, to prove a call-tool filter sees the name before the SDK refuses it.
 
-        private static async Task<(IHost host, McpClient client)> StartDoorAsync(IEngine engine)
+        internal static async Task<(IHost host, McpClient client)> StartDoorAsync(IEngine engine, bool gated = false)
         {
+            if (gated) engine = AssistantEngine.ForAssistant(engine);
             var toServer = new Pipe();
             var toClient = new Pipe();
             var builder = Host.CreateApplicationBuilder(Array.Empty<string>());
@@ -256,21 +258,25 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- the surface: 346 tools (get_plan_history added by Plan-heart E4, three Connections tools by slice C, the four draft ops by lane L4, describe_workflow_steps by Kane's UAT on 25 Sep, ask_data and list_data_questions by Jev question-to-DAX on 26 Sep, pick_chart_kind by D6 on 28 Sep, publish_new_model by r1/newmodel2 on 9 Oct; 359 now), none retired, every retired name still resolves ------------------------------
+        // ---- the surface: 346 tools (get_plan_history added by Plan-heart E4, three Connections tools by slice C, the four draft ops by lane L4, describe_workflow_steps by Kane's UAT on 25 Sep, ask_data and list_data_questions by Jev question-to-DAX on 26 Sep, pick_chart_kind by D6 on 28 Sep, publish_new_model by r1/newmodel2 on 9 Oct, show_in_studio and suggest_next by m14/show-tool on 10 Oct; 365 now: fourtools added four more), none retired, every retired name still resolves ------------------------------
 
         [Fact]
         public void The_tool_list_carries_no_retired_name_and_each_resolves_to_a_listed_tool()
         {
             var tools = ProFeatureMapTests.CompiledOperationNames();
-            Assert.Equal(359, tools.Length);
+            // 379 = 365 (359 + fourtools 4 + show-tool 2) + 14 from agent-controls: eleven plan control tools, approve_draft, continue_draft, approve_start_plan.
+            // 380 = 379 plus refresh_plan from the refresh lane (11 Oct 2026).
+            // 385 = 380 plus the four batch tools from the batch lane (write_words, waive_findings, edit_objects, create_measures) plus list_workspace_sql_endpoints (H14); 11 Oct 2026.
+            // 395 = 385 plus the ten remaining bulk forms from the bulk-more lane (11 Oct 2026).
+            // 396 = 395 plus resolve_file_recovery from studio-polish (11 Oct 2026).
+            Assert.Equal(396, tools.Length);
             foreach (var old in RetiredTools)
             {
                 Assert.DoesNotContain(old, tools);
                 Assert.NotNull(OpAliases.RetiredToolMessage(old));
                 Assert.Contains(old, OpAliases.RetiredIds);
                 var current = OpAliases.Canonical(old);
-                if (old == "label_connection") Assert.Equal(old, current);   // no successor: it was never an agent capability
-                else Assert.Contains(current, tools);
+                Assert.Contains(current, tools);
             }
             Assert.Contains("load_rules", tools);
             Assert.Contains("reset_rules", tools);
@@ -304,7 +310,8 @@ namespace Semanticus.Tests
 
                 // The default reproduces the old surviving tool exactly.
                 Assert.Equal(J(await McpTools.BpaScan(engine)), J(await McpTools.BpaScanOp(engine)));
-                Assert.Equal(J(await McpTools.AiReadinessScan(engine)), J(await McpTools.AiReadinessScanOp(engine)));
+                Assert.Equal(J(ReadinessSummary.From(await engine.AiReadinessScanAsync())), J(await McpTools.AiReadinessScanOp(engine)));
+                Assert.Equal(J(await McpTools.AiReadinessScan(engine)), J(await McpTools.AiReadinessScanOp(engine, detail: "full")));
                 Assert.Equal(J(await engine.GetModelGraphAsync()), J(await McpTools.GetModelGraphOp(engine)));
             }
         }
@@ -442,6 +449,36 @@ namespace Semanticus.Tests
 
                 var ex = await Assert.ThrowsAsync<ArgumentException>(() => McpTools.BenchmarkDaxOp(engine, "EVALUATE ROW(\"x\", 1)", 2, mode: "hot"));
                 Assert.Contains("mode must be 'warm' or 'coldWarm'", ex.Message);
+            }
+        }
+
+        [Fact]
+        public async Task Benchmark_cold_warm_returns_measured_runs_through_the_MCP_door()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            await engine.OpenAsync(TestModels.FindBim());
+            var queries = new List<string>();
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("local", "benchmark-door", execute: query =>
+            {
+                queries.Add(query);
+                return new ResultSet { Columns = new[] { new ColumnDef { Name = "n" } }, Rows = new[] { new object[] { 1 } }, RowCount = 1 };
+            }));
+            var (host, client) = await StartDoorAsync(engine, gated: true);
+            using (host)
+            await using (client)
+            {
+                Assert.Contains(await client.ListToolsAsync(), t => t.Name == "benchmark_cold_warm");
+                var result = await client.CallToolAsync("benchmark_cold_warm", new Dictionary<string, object>
+                { ["query"] = "EVALUATE {1}", ["runs"] = 2, ["clearForCold"] = false });
+                Assert.False(result.IsError == true);
+                var json = Newtonsoft.Json.Linq.JObject.Parse(result.Content.OfType<TextContentBlock>().First().Text);
+                Assert.Null(json["error"]?.ToObject<string>());
+                Assert.Equal(2, json["warmTotal"]?["runsMs"]?.Count());
+                Assert.All(queries, q => Assert.Equal("EVALUATE {1}", q));
+                Assert.True(queries.Count >= 2);
+                Assert.NotNull(sessions.Current);
+                await host.StopAsync();
             }
         }
 

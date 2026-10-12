@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "ask",
+  "title": "Ask your data",
+  "minutes": 2,
+  "tryWithClaude": "Ask Claude: which product category had the best margin last year?",
+  "steps": [
+    { "place": "explore/ask", "focus": null, "press": null,
+      "say": "Ask your data answers a question about your numbers. You type it in plain words.",
+      "how": null, "wait": "read" },
+    { "place": "explore/ask", "focus": null, "press": "ask", "example": 0,
+      "say": "Press Ask and the answer comes back as a table. Semanticus checks it before it shows you.",
+      "how": null, "wait": { "ms": 4500 } },
+    { "place": "explore/ask", "focus": null, "press": null, "example": 1,
+      "say": "You can ask about time too. Net sales and gross margin rose each quarter.",
+      "how": null, "wait": "read" },
+    { "place": "explore/ask", "focus": null, "press": null, "example": 2,
+      "say": "Switch to Chart to see the same numbers as bars. Show DAX shows the query that ran.",
+      "how": null, "wait": "read" },
+    { "place": "edit/queries", "focus": null, "press": null,
+      "say": "To go deeper, open Queries. Right-click a number there and choose Explain.",
+      "how": null, "wait": "read" }
+  ]
+}

@@ -219,6 +219,7 @@ namespace Semanticus.Tests
         /// done (review round 3, the sibling of the date table's DT4): neither the Done register nor the History's
         /// sentence may count them as done.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_rule_rows_standing_aside_for_Jev_are_not_told_as_done_in_History()
         {
             using var f = await StarAsync("StarterAsideHistory.bim");
@@ -231,7 +232,7 @@ namespace Semanticus.Tests
 
             Assert.DoesNotContain(plan.Items, i => StarterMeasuresFamily.IsRuleItem(i.Id));
             var entry = plan.History.Last(h => h.Kind == ModelPlanHistoryKinds.Redrawn);
-            Assert.Contains("Add 3 starter measures in Sales", entry.Gone);
+            Assert.Contains("Add 3 simple measures in Sales", entry.Gone);
             Assert.Empty(entry.Completed);
             Assert.DoesNotContain("done", entry.Sentence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain(plan.Items, i => i.Status == ModelPlanStatuses.Done && StarterMeasuresFamily.IsRuleItem(i.Id));
@@ -242,6 +243,7 @@ namespace Semanticus.Tests
         /// measures in the same window where Jev starts deciding them, so Sales' row left because its work is done, and only
         /// Returns' row stood aside. Read off the flag alone, both would be told as replaced by a suggestion.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_starter_row_the_person_finished_while_Jev_starts_deciding_is_told_as_done_not_replaced()
         {
             using var f = await StarAsync("StarterPersonAside.bim");
@@ -269,12 +271,13 @@ namespace Semanticus.Tests
             // Sales' gap is gone, so its row is done; Returns' gap is open, so its row stands aside for Jev.
             Assert.True((entry.Completed ?? Array.Empty<string>()).Contains(sales.Title), told);
             Assert.False((entry.Completed ?? Array.Empty<string>()).Contains(returns.Title), told);
-            Assert.True(entry.Sentence.Contains("1 item replaced by a suggestion", StringComparison.Ordinal), told);
+            Assert.True(entry.Sentence.Contains("1 task replaced by a suggestion", StringComparison.Ordinal), told);
         }
 
         // ---- free ---------------------------------------------------------------------------------------------
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_free_session_composes_no_Jev_item_calls_no_oracle_and_sees_the_rule_item()
         {
             using var f = await StarAsync("StarterFree.bim", pro: false);
@@ -297,7 +300,7 @@ namespace Semanticus.Tests
             var sales = starter.Single(i => i.Id == "starter/table:Sales");
             Assert.Equal(ModelPlanOwners.Auto, sales.Who);
             Assert.Equal(ModelPlanSections.Meaning, sales.Section);
-            Assert.Equal("Add 3 starter measures in Sales", sales.Title);
+            Assert.Equal("Add 3 simple measures in Sales", sales.Title);
 
             // Exactly like every other rule item: free to read and to work out, Pro to run.
             await f.Engine.ModelPlanActionAsync(sales.Id, "propose", "human");
@@ -309,6 +312,7 @@ namespace Semanticus.Tests
         // ---- Pro ----------------------------------------------------------------------------------------------
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Pro_composes_one_Jev_item_per_fact_table_with_the_recorded_oracle()
         {
             using var f = await StarAsync("StarterPro.bim");
@@ -327,8 +331,8 @@ namespace Semanticus.Tests
             var sales = jev.Single(i => i.Id == "jev.starter.table:Sales");
             Assert.Equal(ModelPlanOwners.Jev, sales.Who);
             Assert.Equal(ModelPlanSections.Meaning, sales.Section);
-            Assert.Equal("Add 4 starter measures in Sales", sales.Title);
-            Assert.Equal("Add 1 starter measure in Returns", jev.Single(i => i.Id == "jev.starter.table:Returns").Title);
+            Assert.Equal("Add 4 simple measures in Sales", sales.Title);
+            Assert.Equal("Add 1 simple measure in Returns", jev.Single(i => i.Id == "jev.starter.table:Returns").Title);
 
             foreach (var line in jev.SelectMany(i => i.ChangeSet.Lines))
             {
@@ -351,6 +355,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task An_unsure_line_arrives_dropped()
         {
             using var f = await StarAsync("StarterUnsure.bim");
@@ -366,6 +371,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_column_a_measure_already_uses_gets_no_line()
         {
             using var f = await StarAsync("StarterCovered.bim");
@@ -387,6 +393,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Key_columns_get_no_rule_line_and_every_rule_line_names_its_rule()
         {
             using var f = await StarAsync("StarterRuleKeys.bim", pro: false);
@@ -414,6 +421,7 @@ namespace Semanticus.Tests
         /// both propose a measure for the same column: the starter family owns every number column on a fact table
         /// that no measure uses yet. The old item keeps the columns outside that, here a dimension's number column.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_old_explicit_measures_item_leaves_every_starter_column_to_the_starter_family()
         {
             using var f = await StarAsync("StarterOneOwner.bim", pro: false);
@@ -438,6 +446,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_old_explicit_measures_item_goes_when_the_starter_family_covers_every_column()
         {
             using var f = await StarAsync("StarterOnlyOwner.bim", pro: false);
@@ -455,6 +464,7 @@ namespace Semanticus.Tests
         // ---- apply --------------------------------------------------------------------------------------------
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Approving_the_rule_item_creates_the_measures_in_one_undo_step()
         {
             // Pro with no permission given: the rule decides, and approving a rule item is Pro like every run.
@@ -482,6 +492,7 @@ namespace Semanticus.Tests
         /// <summary>N10: start on the rule row refused with "Nothing in this release runs this one for you yet" while
         /// Approve and Run the plan applied it. Start now applies it through the same approve path: one undo step.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Start_on_the_rule_item_applies_it_through_the_approve_path()
         {
             using var f = await StarAsync("StarterStart.bim");
@@ -501,6 +512,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Bulk_apply_creates_every_fact_tables_measures_in_one_undo_step()
         {
             using var f = await StarAsync("StarterBulk.bim");
@@ -549,6 +561,7 @@ namespace Semanticus.Tests
         // ---- what goes to Jev ---------------------------------------------------------------------------------
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_facts_sent_are_the_declared_fields_and_derived_shares_never_a_value()
         {
             using var f = await StarAsync("StarterPrivacy.bim");

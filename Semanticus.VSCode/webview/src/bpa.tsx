@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { rpc, onDidChange } from './bridge';
+import { rpc, onAssistantCall, onDidChange } from './bridge';
+import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { useFixState } from './hooks';
 import { GiveTheRest, GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
 import { CustomRulesPanel } from './rulesauthor';
-import { GiveToAssistant, findingBuilder } from './sendtask';
+import { GiveOrOnPlan, findingBuilder } from './sendtask';
 import { RagBars } from './ragbars';
 import { gradeBand } from './readinessband.mjs';
 
@@ -31,7 +32,9 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   useEffect(() => {
     void scan();
     const off = onDidChange(() => { window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void scan(), 350); });
-    return () => { off(); window.clearTimeout(timer.current); };
+    // The assistant's own scan (show-checks, 12 Oct): the page scans again so the person sees the result, not an older card.
+    const offCall = onAssistantCall((call) => { if (SCAN_PAGE_OF_TOOL[call.tool] === 'bpa') void scan(); });
+    return () => { off(); offCall(); window.clearTimeout(timer.current); };
   }, []);
   const fixOne = (v: BpaViolation) => fix(v.ruleId, v.objectRef, () => void scan());
   async function fixAll() {
@@ -82,7 +85,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
       ? (st === 'done'
         ? <span className="sem-text-meta">Fixed</span>
         : <MiniButton disabled={st === 'fixing'} onClick={() => fixOne(v)}>{st === 'fixing' ? '…' : 'Fix'}</MiniButton>)
-      : <GiveToAssistant sendKey={`bpa|${v.ruleId}|${v.objectRef}`} build={findingBuilder('bpa', v)} />;
+      : <GiveOrOnPlan ruleId={v.ruleId} objectRef={v.objectRef} sendKey={`bpa|${v.ruleId}|${v.objectRef}`} build={findingBuilder('bpa', v)} />;
     return <span className="flex items-center gap-1">{fixBtn}<WaiveControl onWaive={(reason) => waive(r, reason)} onUnwaive={() => unwaive(r)} /></span>;
   };
   // The rule-header un-waive removes the MODEL-WIDE ('*') waiver — the mirror of "Accept for the whole model" made from the

@@ -68,6 +68,8 @@ namespace Semanticus.Engine.Lineage
         public string ChoiceId { get; set; }
         public int Visuals { get; set; }
         public string[] UsedRefs { get; set; } = Array.Empty<string>();
+        /// <summary>The report measures (formulas the report itself holds) whose DAX reads the field or something that depends on it.</summary>
+        public string[] ReportMeasures { get; set; } = Array.Empty<string>();
         /// <summary>The pages and visuals the field appears on. Restored after the first build dropped them.</summary>
         public ImpactVisualHit[] Details { get; set; } = Array.Empty<ImpactVisualHit>();
         /// <summary>How many matching visuals are counted in <see cref="Visuals"/> but NOT listed in
@@ -250,6 +252,8 @@ namespace Semanticus.Engine.Lineage
                 {
                     Path = report.Path, Name = report.Name, ChoiceId = report.ChoiceId,
                     Visuals = touching.Length, UsedRefs = used,
+                    ReportMeasures = (report.ReportMeasures ?? Array.Empty<ReportMeasureUsage>())
+                        .Where(rm => (rm.UsedRefs ?? Array.Empty<string>()).Any(affected.Contains)).Select(rm => rm.Name).ToArray(),
                     DetailsOmitted = Math.Max(0, touching.Length - DetailCap),
                     Details = touching.Take(DetailCap).Select(v =>
                     {

@@ -135,7 +135,7 @@ export function dueLine(r: PlanRepeat, isPro: boolean): string {
   if (r.resting) return r.resting;
   if (r.openItemId) return `This one is still open. The next comes after it is done and ${dueDay(r.nextDueUtc)} has passed.`;
   return r.fix
-    ? `Next on ${dueDay(r.nextDueUtc)}. Semanticus marks this row then, and Run the plan does it.`
+    ? `Next on ${dueDay(r.nextDueUtc)}. Semanticus marks this task then, and Run the plan does it.`
     : `Next on ${dueDay(r.nextDueUtc)}. Nothing runs by itself.`;
 }
 

@@ -308,8 +308,8 @@ hasNot(/repositoryRoot/, 'and never shows the repository folder as the model fol
   const conns = [{ kind: 'xmla', label: 'prod' }, { kind: 'xmla', label: null }, { kind: 'xmla' }, { kind: 'localDesktop' }, { kind: 'file', label: '' }, { kind: 'xmla', label: 'uat' }];
   assert.equal(Q.unlabelledCount(conns), 2, 'only a published model with no label counts: a local model is Local, as the Connections list says');
   assert.equal(Q.labelsLine(0), 'Labels are set on each model in Connections.');
-  assert.equal(Q.labelsLine(1), 'Labels are set on each model in Connections. 1 model has no label, so it gets the Production settings.');
-  assert.equal(Q.labelsLine(3), 'Labels are set on each model in Connections. 3 models have no label, so they get the Production settings.');
+  assert.equal(Q.labelsLine(1), 'Labels are set on each model in Connections. 1 model has no label, so it gets the Development settings.');
+  assert.equal(Q.labelsLine(3), 'Labels are set on each model in Connections. 3 models have no label, so they get the Development settings.');
 
   // The page: no Targets list, no second disclaimer, no preset cards, no "always allowed" rows.
   assert.doesNotMatch(permsSrc, /TargetsPanel|LabelPicker|ConfirmButton|labelConnection|forgetConnection/, 'labels and Forget live in Connections only');

@@ -9,6 +9,30 @@
    copy the build ships as media/studio/tokens.css. Padding, margin, gap, text size, line height, corners and
    control heights anywhere in the Studio source may use only these names; scripts/visual-style-scan.mjs
    checks it on every npm test, and tools/uishot/screencheck.mjs checks every page in three themes. */
+.said-line {
+  display: flex;
+  align-items: center;
+  gap: var(--sem-space-3);
+  padding: var(--sem-space-2) var(--sem-page-margin);
+  min-height: var(--sem-row);
+  color: var(--sem-fg);
+  background: var(--sem-surface);
+  border-bottom: 1px solid var(--sem-border);
+  font-size: var(--sem-text-meta);
+  line-height: var(--sem-lh-meta);
+}
+.said-line > span { flex: 1; }
+.sem-flash:is([data-object-ref], [data-ref]) { animation: sem-assistant-flash 3s ease-out; }
+@keyframes sem-assistant-flash {
+  0%, 25% { box-shadow: inset 0 0 0 2px var(--sem-doer-agent); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sem-flash:is([data-object-ref], [data-ref]) { animation: none; outline: 2px solid var(--sem-doer-agent); outline-offset: -2px; }
+}
+body.vscode-reduce-motion .sem-flash:is([data-object-ref], [data-ref]) {
+  animation: none; outline: 2px solid var(--sem-doer-agent); outline-offset: -2px;
+}
 :root {
   /* spacing scale: the only lengths allowed for padding, margin and gap */
   --sem-space-1: 4px;   /* icon to text, hairline gaps */

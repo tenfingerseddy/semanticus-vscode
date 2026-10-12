@@ -198,7 +198,7 @@ namespace Semanticus.Engine
                     + ". bpa_scan with ruleId = the rule lists each one, and Model quality lists them all.");
             var rows = unlisted.Count(s => s.What == null);
             if (rows > 0)
-                parts.Add(rows + (rows == 1 ? " is a row" : " are rows") + " left out, still on the plan: get_model_plan reads "
+                parts.Add(rows + (rows == 1 ? " task is" : " tasks are") + " left out here but still on the plan: get_model_plan reads "
                     + (rows == 1 ? "it." : "them."));
             var others = unlisted.Count(s => s.What != null && string.IsNullOrEmpty(s.RuleId));
             if (others > 0)

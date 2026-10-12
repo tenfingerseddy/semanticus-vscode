@@ -1,0 +1,500 @@
+{
+  "Server": "gold.datawarehouse.fabric.microsoft.com",
+  "Database": "Gold-shaped",
+  "Tables": [
+    {
+      "Schema": "dbo",
+      "Name": "Customer",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "customer_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Customer Code",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "Customer Name",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 3
+        },
+        {
+          "Name": "Customer Segment",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 4
+        },
+        {
+          "Name": "Customer City",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 5
+        },
+        {
+          "Name": "Customer State",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 6
+        },
+        {
+          "Name": "Customer Country",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 7
+        },
+        {
+          "Name": "First Purchase Date",
+          "DataType": "DateTime",
+          "SqlType": "dateTime",
+          "Ordinal": 8
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Date",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "date_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Calendar Date",
+          "DataType": "DateTime",
+          "SqlType": "dateTime",
+          "Ordinal": 2
+        },
+        {
+          "Name": "Year",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 3
+        },
+        {
+          "Name": "Quarter Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 4
+        },
+        {
+          "Name": "Quarter",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 5
+        },
+        {
+          "Name": "Year Quarter",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 6
+        },
+        {
+          "Name": "Month Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 7
+        },
+        {
+          "Name": "Month",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 8
+        },
+        {
+          "Name": "Month Short",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 9
+        },
+        {
+          "Name": "Year Month",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 10
+        },
+        {
+          "Name": "Week of Year",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 11
+        },
+        {
+          "Name": "Day of Month",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 12
+        },
+        {
+          "Name": "Day of Week Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 13
+        },
+        {
+          "Name": "Day Name",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 14
+        },
+        {
+          "Name": "Is Weekend",
+          "DataType": "Boolean",
+          "SqlType": "boolean",
+          "Ordinal": 15
+        },
+        {
+          "Name": "Fiscal Year Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 16
+        },
+        {
+          "Name": "Fiscal Year",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 17
+        },
+        {
+          "Name": "Fiscal Quarter Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 18
+        },
+        {
+          "Name": "Fiscal Quarter",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 19
+        },
+        {
+          "Name": "Fiscal Month Number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 20
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Product",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "product_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Product Code",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "Product Name",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 3
+        },
+        {
+          "Name": "Category",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 4
+        },
+        {
+          "Name": "Subcategory",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 5
+        },
+        {
+          "Name": "Brand",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 6
+        },
+        {
+          "Name": "Colour",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 7
+        },
+        {
+          "Name": "list_price",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 8
+        },
+        {
+          "Name": "standard_cost",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 9
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Promotion",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "promotion_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Promotion Name",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "Promotion Type",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 3
+        },
+        {
+          "Name": "discount_percent",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 4
+        },
+        {
+          "Name": "Promotion Start Date",
+          "DataType": "DateTime",
+          "SqlType": "dateTime",
+          "Ordinal": 5
+        },
+        {
+          "Name": "Promotion End Date",
+          "DataType": "DateTime",
+          "SqlType": "dateTime",
+          "Ordinal": 6
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Returns",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "return_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Return Order Number",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "date_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 3
+        },
+        {
+          "Name": "product_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 4
+        },
+        {
+          "Name": "customer_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 5
+        },
+        {
+          "Name": "store_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 6
+        },
+        {
+          "Name": "return_quantity",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 7
+        },
+        {
+          "Name": "return_amount",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 8
+        },
+        {
+          "Name": "Return Reason",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 9
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Sales",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "sales_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Order Number",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "order_line_number",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 3
+        },
+        {
+          "Name": "date_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 4
+        },
+        {
+          "Name": "product_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 5
+        },
+        {
+          "Name": "customer_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 6
+        },
+        {
+          "Name": "store_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 7
+        },
+        {
+          "Name": "promotion_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 8
+        },
+        {
+          "Name": "quantity",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 9
+        },
+        {
+          "Name": "unit_price",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 10
+        },
+        {
+          "Name": "discount_amount",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 11
+        },
+        {
+          "Name": "net_amount",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 12
+        },
+        {
+          "Name": "cost_amount",
+          "DataType": "Decimal",
+          "SqlType": "decimal",
+          "Ordinal": 13
+        }
+      ]
+    },
+    {
+      "Schema": "dbo",
+      "Name": "Store",
+      "KeyColumns": [],
+      "Columns": [
+        {
+          "Name": "store_key",
+          "DataType": "Int64",
+          "SqlType": "int64",
+          "Ordinal": 1
+        },
+        {
+          "Name": "Store Code",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 2
+        },
+        {
+          "Name": "Store Name",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 3
+        },
+        {
+          "Name": "Store City",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 4
+        },
+        {
+          "Name": "Store State",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 5
+        },
+        {
+          "Name": "Store Country",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 6
+        },
+        {
+          "Name": "Store Region",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 7
+        },
+        {
+          "Name": "Sales Channel",
+          "DataType": "String",
+          "SqlType": "string",
+          "Ordinal": 8
+        },
+        {
+          "Name": "Store Open Date",
+          "DataType": "DateTime",
+          "SqlType": "dateTime",
+          "Ordinal": 9
+        }
+      ]
+    }
+  ],
+  "ForeignKeys": []
+}

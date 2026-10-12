@@ -89,46 +89,36 @@ namespace Semanticus.Tests
         [InlineData("cautious")]
         [InlineData("client")]
         [InlineData(Locked)]
-        public async Task Item1_the_assistants_grant_of_source_sharing_is_the_persons_question_in_every_preset(string preset)
+        public async Task Item1_after_the_persons_yes_in_chat_the_assistants_grant_of_source_sharing_goes_through_in_every_preset(string preset)
         {
+            // Kane, 11 Oct 2026: the person's yes in chat is enough for the start plan's source grant, as for set_consent. The call grants it,
+            // with no question left in the Waiting for you list, and the grant covers the tables of the plan that was shown.
             var (engine, digest) = await StartPlanAsync();
             using (engine)
             {
                 AgentPolicyStore.SetPreset(preset, "human");
-                var gate = Gate(engine);
-                try { await gate.GrantStartDisclosureAsync(digest, "agent"); } catch (InvalidOperationException) { /* the old door answers Locked with a refusal */ }
-
-                Assert.Null(engine.StartPlanHost.Current().Disclosure);   // nothing was agreed by the assistant's call
-                var asked = await OnlyPendingAsync(engine);
-                Assert.Contains("Wh", asked.Summary);
-                Assert.Contains("Payroll", asked.Summary);               // the included tables are in front of the person
-                Assert.Contains("sample", asked.Summary, StringComparison.OrdinalIgnoreCase);
-
-                await ApproveAsync(engine);
-                var granted = await gate.GrantStartDisclosureAsync(digest, "agent");   // the person's yes lets the same call through
+                var granted = await Gate(engine).GrantStartDisclosureAsync(digest, "agent");
                 Assert.NotNull(engine.StartPlanHost.Current().Disclosure);
                 Assert.Contains(engine.StartPlanHost.Current().Disclosure.IncludedTables, t => t.EndsWith("Payroll", StringComparison.OrdinalIgnoreCase));
                 Assert.True(granted.Exists);
+                Assert.False(granted.Asked);
+                Assert.Empty(await UnansweredAsync(engine));
             }
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Item1_the_yes_is_for_the_plan_the_person_was_shown_and_a_changed_plan_asks_again()
+        public async Task Item1_the_grant_is_for_the_plan_that_was_shown_and_a_changed_plan_grants_nothing()
         {
             var (engine, digest) = await StartPlanAsync();
             using (engine)
             {
                 AgentPolicyStore.SetPreset("standard", "human");
-                var gate = Gate(engine);
-                try { await gate.GrantStartDisclosureAsync(digest, "agent"); } catch (InvalidOperationException) { }
-                await ApproveAsync(engine);
-                // the person changes the plan after the question: the sample setting moves, so the digest moves with it
+                // the plan changes after the person said yes to it: the sample setting moves, so the digest moves with it
                 var moved = await engine.StartPlanHost.UpdateAsync(d => { d.SampleFacts = !d.SampleFacts; return true; });
                 Assert.NotEqual(digest, moved.Digest);
-                try { await gate.GrantStartDisclosureAsync(moved.Digest, "agent"); } catch (InvalidOperationException) { }
+                await Assert.ThrowsAsync<InvalidOperationException>(() => Gate(engine).GrantStartDisclosureAsync(digest, "agent"));
                 Assert.Null(engine.StartPlanHost.Current().Disclosure);
-                Assert.Single(await UnansweredAsync(engine));   // the new plan is a new question, the old yes is not spent on it
             }
         }
 

@@ -248,6 +248,16 @@ namespace Semanticus.Tests
             ["UpdateNamedExpressionAsync"] = r => R("name", "FxRate", "expression", "2"),
             ["UpvoteInsightAsync"] = r => R("id", r.NoteId),
             ["WaiveFindingAsync"] = r => R("system", "bpa", "ruleId", "AVOID_FLOATING_POINT_DATA_TYPES", "objRef", "column:Sales/Amount", "reason", "known"),
+            ["WaiveFindingsAsync"] = r => R("items", new[] { new FindingWaiverItem { System = "bpa", RuleId = "AVOID_FLOATING_POINT_DATA_TYPES", ObjRef = "column:Sales/Amount", Reason = "known" } }),
+            ["WriteWordsAsync"] = r => R("items", new[] { new WordsWriteItem { ObjRef = "measure:Sales/Total", Description = "Sales total." } }),
+            ["EditObjectsAsync"] = r => R("items", new[] { new ObjectEditItem { ObjRef = "measure:Sales/Total", Set = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>("{\"description\":\"Sales total.\"}") } }),
+            ["CreateMeasuresAsync"] = r => R("items", new[] { new MeasureCreateItem { TableRef = "table:Sales", Name = "Bulk total", Expression = "1" } }),
+            ["UnwaiveFindingsAsync"] = r => R("items", new[] { new FindingFixItem { System = "bpa", RuleId = "AVOID_FLOATING_POINT_DATA_TYPES", ObjRef = "column:Sales/Amount" } }),
+            ["ApplyFixesAsync"] = r => R("items", new[] { new FindingFixItem { System = "bpa", RuleId = "FMT-SUMMARIZE", ObjRef = "column:Sales/ProductId" } }),
+            ["DuplicateObjectsAsync"] = r => R("items", new[] { new ObjectDuplicateItem { ObjRef = "measure:Sales/Total", NewName = "Total copy" } }),
+            ["SetDocSectionsAsync"] = r => R("items", new[] { new DocSectionItem { ObjRef = "measure:Sales/Total", SectionKey = "purpose", Markdown = "It sums the sales." } }),
+            ["SetPerspectiveMembersAsync"] = r => R("items", new[] { new PerspectiveMemberItem { PerspectiveRef = "perspective:View", ObjRef = "table:Sales", Include = true } }),
+            ["SetObjectPermissionsAsync"] = r => R("items", new[] { new ObjectPermissionItem { RoleName = "Managers", ObjRef = "table:Product", Permission = "none" } }),
         };
 
         private readonly Dictionary<string, (byte[] Before, byte[] After)> Appended = new(StringComparer.Ordinal);

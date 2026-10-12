@@ -106,12 +106,20 @@ namespace Semanticus.Tests
         /// fallback), with a Jev sure of every add and with real Jev on.</summary>
         [Theory]
         [MemberData(nameof(ListedSigns))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR9_a_listed_take_away_sign_in_a_form_the_rule_misses_drafts_no_add(string door, string words)
         {
             using var f = await ProAsync(File("VR9"));
             var v = await ComposeOnDoor(f.Engine, door, words);
             Assert.True(Adds(v).Length == 0, words + " => " + string.Join(", ", Adds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR9_a_listed_take_away_sign_in_a_form_the_rule_misses_drafts_no_add_SampleRows() => ListedSigns().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR9_a_listed_take_away_sign_in_a_form_the_rule_misses_drafts_no_add_SampleRows))]
+        public Task VR9_a_listed_take_away_sign_in_a_form_the_rule_misses_drafts_no_add_sample(string door, string words) => VR9_a_listed_take_away_sign_in_a_form_the_rule_misses_drafts_no_add(door, words);
 
         /// <summary>VR10 (the harmful kind). "we need one less role" and "I'd like two fewer measures" ask for fewer things,
         /// and neither has an adding verb (rule version 3, a: "Only an explicit adding VERB in the clause can make it an
@@ -120,12 +128,20 @@ namespace Semanticus.Tests
         /// measure, on both doors.</summary>
         [Theory]
         [MemberData(nameof(WantsOfFewer))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR10_a_want_of_fewer_things_drafts_no_add(string door, string words)
         {
             using var f = await ProAsync(File("VR10"));
             var v = await ComposeOnDoor(f.Engine, door, words);
             Assert.True(Adds(v).Length == 0, words + " => " + string.Join(", ", Adds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR10_a_want_of_fewer_things_drafts_no_add_SampleRows() => WantsOfFewer().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR10_a_want_of_fewer_things_drafts_no_add_SampleRows))]
+        public Task VR10_a_want_of_fewer_things_drafts_no_add_sample(string door, string words) => VR10_a_want_of_fewer_things_drafts_no_add(door, words);
 
         public static IEnumerable<object[]> WantsOfFewer() => OnBothDoors("we need one less role", "I'd like two fewer measures");
 
@@ -159,12 +175,20 @@ namespace Semanticus.Tests
         /// reads what it says of its object.</summary>
         [Theory]
         [MemberData(nameof(Negations))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR12_words_that_ask_for_no_new_thing_draft_no_add(string door, string words)
         {
             using var f = await ProAsync(File("VR12"));
             var v = await ComposeOnDoor(f.Engine, door, words);
             Assert.True(Adds(v).Length == 0, words + " => " + string.Join(", ", Adds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR12_words_that_ask_for_no_new_thing_draft_no_add_SampleRows() => Negations().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR12_words_that_ask_for_no_new_thing_draft_no_add_SampleRows))]
+        public Task VR12_words_that_ask_for_no_new_thing_draft_no_add_sample(string door, string words) => VR12_words_that_ask_for_no_new_thing_draft_no_add(door, words);
 
         public static IEnumerable<object[]> Negations() => OnBothDoors("add no new roles", "create zero new measures");
 

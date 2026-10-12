@@ -470,3 +470,8 @@ covers no translation ground either (it reads cultures only as the container for
 this change removes our only checks for translated object names, descriptions, display folders,
 hierarchy levels and perspective names. No customer-facing text claims that coverage, so nothing is
 now false, but the gap is real and deliberate. It is recorded here rather than dropped silently.
+
+**12 Oct 2026 (report measures lane, copy only).** `ISAVAILABLEINMDX_FALSE_NONATTRIBUTE_COLUMNS` gained a Description that says
+what its fix does in plain words: Excel PivotTables (Analyze in Excel) can no longer use the column, and Power BI reports keep
+working. Its expression, severity and `FixExpression` are unchanged. The licence was not re-read for this wording change and the
+upstream pin did not move; `bodySha256` in `third-party-manifest.json` moved with the file.

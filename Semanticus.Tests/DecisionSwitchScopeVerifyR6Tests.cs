@@ -145,6 +145,7 @@ namespace Semanticus.Tests
             Assert.False(asked);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
@@ -187,6 +188,7 @@ namespace Semanticus.Tests
             Assert.False(asked);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]

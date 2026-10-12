@@ -1261,7 +1261,7 @@ body.vscode-high-contrast .plan-item-open { outline: var(--sem-hairline) solid v
 .pw-grade { font-weight: var(--sem-weight-strong); }
 .pw-latest { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-width: 0; max-width: 60%; margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--sem-fg); font: inherit; cursor: pointer; }
 .pw-latest-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--sem-good); }
-.pw-track { --ph-hue: var(--sem-fg); display: grid; grid-template-columns: 144px minmax(0, 1fr) 280px; align-items: center; column-gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-row); padding: 0 var(--sem-space-3); border: 0; border-top: var(--sem-hairline) solid var(--sem-bg); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
+.pw-track { --ph-hue: var(--sem-fg); display: grid; grid-template-columns: 144px minmax(0, 1fr) minmax(max-content, 380px); align-items: center; column-gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-row); padding: 0 var(--sem-space-3); border: 0; border-top: var(--sem-hairline) solid var(--sem-bg); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
 .pw-track-semanticus { --ph-hue: var(--sem-doer-engine); background: var(--sem-tint-engine); }
 .pw-track-you { --ph-hue: var(--sem-doer-you); background: var(--sem-tint-you); }
 .pw-track-assistant { --ph-hue: var(--sem-doer-agent); background: var(--sem-tint-agent); }
@@ -1279,7 +1279,10 @@ body.vscode-high-contrast .pw-track[aria-pressed="true"], body.vscode-high-contr
 .pw-seg-needs_you { background: var(--sem-tint-warn); box-shadow: inset 0 0 0 2px var(--sem-warn); }
 .pw-seg-waiting { border: 1px dashed var(--sem-faint); }
 .pw-bar-more { flex: none; color: var(--sem-muted); }
-.pw-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); column-gap: var(--sem-space-3); text-align: right; white-space: nowrap; }
+/* The counts use the Studio's own UI font with tabular figures (not the monospace the number class gives), keep a lane's counts on one line
+   while they fit, and when they cannot fit they break between counts, never inside one ("4 ready first" stays whole). */
+.pw-counts { display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: var(--sem-space-4); row-gap: 0; font-family: var(--sem-font-ui); font-variant-numeric: tabular-nums; text-align: right; }
+.pw-counts > span { white-space: nowrap; }
 .pw-count-warn { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
 .pw-legend { display: grid; grid-template-columns: 144px minmax(0, 1fr) auto; align-items: center; column-gap: var(--sem-space-3); min-height: var(--sem-row); padding: 0 var(--sem-space-3); }
 .pw-legend-keys { display: inline-flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-4); }
@@ -1337,6 +1340,8 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pw-title > b { font-size: var(--sem-text-body); line-height: var(--sem-lh-body); font-weight: var(--sem-weight-strong); }
 .pw-sub { color: var(--sem-muted); }
 .pw-sub b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+.pw-waits { display: flex; min-width: 0; gap: var(--sem-space-1); }
+.pw-waits .pw-why { flex: none; }
 .pw-state { display: inline-flex; align-items: baseline; gap: var(--sem-stack); min-width: 0; white-space: nowrap; }
 .pw-state-mark { flex: none; align-self: center; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--sem-fg); }
 .pw-state-warn .pw-state-mark { border: 0; background: var(--sem-warn); }
@@ -1389,6 +1394,11 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
   .pw-split > .pw-list, .pw-sees { grid-column: span 12; }
   /* The counts stay on the track's one line at 900 wide; they used to drop under the name. */
   .pw-track { grid-template-columns: 120px minmax(0, 1fr) auto; }
+}
+/* On a narrow window the lane stacks: who, then the bar, then the counts, which wrap between counts. */
+@media (max-width: 640px) {
+  .pw-track { grid-template-columns: minmax(0, 1fr); row-gap: var(--sem-space-1); padding-top: var(--sem-space-2); padding-bottom: var(--sem-space-2); }
+  .pw-track .pw-counts { justify-content: flex-start; text-align: left; }
 }
 /* ==== end m9/u1: THE PLAN AT THE HEART ==== */
 
@@ -1599,6 +1609,9 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .studio-chrome:is([data-fold="3"], [data-fold="4"]) .pro-chip .pro-chip-label { display: none; }
 .studio-chrome:is([data-fold="3"], [data-fold="4"]) .pro-chip-get .pro-chip-star { display: inline-flex; }
 .pro-chip:hover { background: var(--sem-hover); }
+.pro-chip-wrap { display: inline-flex; align-items: center; gap: var(--sem-space-2); flex: none; }
+.pro-chip-off { color: var(--sem-warn); border-color: var(--sem-warn); }
+.pro-chip-billing { flex: none; padding: 0; border: 0; background: transparent; color: var(--sem-link, var(--sem-fg)); font: inherit; font-size: var(--sem-text-meta); text-decoration: underline; cursor: pointer; }
 .pro-chip-is { color: var(--sem-muted); }
 .pro-chip-here { background: var(--sem-surface-2); color: var(--sem-fg); }
 .pro-chip-flash { animation: pro-chip-flash 1.2s var(--sem-ease-out); }
@@ -2099,7 +2112,7 @@ body.vscode-high-contrast .pw-item-live, body.vscode-high-contrast-light .pw-ite
 .pw-receipt-ok { color: var(--sem-good); font-weight: var(--sem-weight-strong); }
 
 /* the fold: rows only the person can do */
-.pw-fold-h { display: flex; align-items: center; box-sizing: border-box; min-height: var(--sem-control-h); padding: 0 var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); }
+.pw-fold-h { display: flex; align-items: center; gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-control-h); padding: 0 var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); }
 .pw-fold-btn { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-height: var(--sem-control-h); padding: 0; border: 0; background: transparent; color: var(--sem-muted); font: inherit; text-align: left; cursor: pointer; }
 .pw-fold-btn:hover { color: var(--sem-fg); }
 .pw-fold-btn b { color: var(--sem-fg); }

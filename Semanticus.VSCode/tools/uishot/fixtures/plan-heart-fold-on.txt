@@ -1,5 +1,5 @@
 Plan: 2 tasks are ready for you. They do not depend on each other, so take more than one if you can.
 1. Write descriptions for 12 Product columns (pt-3b7d0c21)
 2. Describe 8 Product measures (pt-9e2f7a10)
-Not offered yet: Describe the 2 new time measures. It waits for Add year to date and last year measures.
+Not offered yet: Describe the 2 new time measures. It waits for Add year to date and last year measures first.
 Call list_assistant_requests, then claim_request.

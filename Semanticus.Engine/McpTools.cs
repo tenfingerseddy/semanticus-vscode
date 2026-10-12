@@ -53,7 +53,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "model_overview"), Description("Summarize the open semantic model: name, source, sessionId, table/measure counts, and whether there are unsaved changes. A cheap check of which model is open. For session-start orientation (connection, tier, grade, in-flight work, next actions) use get_model_summary.")]
         public static Task<SessionInfo> ModelOverview(IEngine engine) => engine.SessionInfoAsync();
 
-        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids for the TABS this installation may open: today that is workflows and askData (Ask your data: ask_data, list_data_questions and pick_chart_kind), so a Pro session reports [\"workflows\",\"askData\"] and a free session reports []. Two more things are paid and carry no wire id because neither is a tab: route_ask, and the ranked and run model plan. Read the tier for those. Everything else is free, every read and every bulk apply included. Check this before calling a workflow tool, ask_data or route_ask, so a refusal is never a surprise.")]
+        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids for the TABS this installation may open: today that is workflows and askData (Ask your data: ask_data, list_data_questions and pick_chart_kind), so a Pro session reports [\"workflows\",\"askData\"] and a free session reports []. Two more things are paid and carry no wire id because neither is a tab: route_ask, and the ranked and run model plan. Read the tier for those. Everything else is free, every read and every bulk apply included. Check this before calling a workflow tool, ask_data or route_ask, so a refusal is never a surprise. `assistant` names the assistant attached to this session (key, name, initials) once it has made a call; the Studio shows it in its driver bar.")]
         public static Task<Entitlement.EntitlementInfo> GetEntitlement(IEngine engine) => engine.GetEntitlementAsync();
 
         [McpServerTool(Name = "get_verified_mode"), Description("Is Record verified edits on? This tool keeps its older name so existing assistants and scripts still work. The switch only adds an audit record: every DAX write (update_measure, apply_dax_script, and creating a measure, calculated column, calculated table, calculation item or function) is checked offline whether it is on or off, and malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written. When on, each single-object DAX write that passes is also recorded in the Verified Edits audit trail (list_verified_edits). The record states validity only, not an equivalence or drift proof. Session-scoped (resets on reconnect). 'available' is always true: Record verified edits is free.")]
@@ -195,7 +195,7 @@ namespace Semanticus.Engine
             [Description("Ref of a measure or calculated column/table")] string objRef)
             => engine.GetDaxAsync(objRef);
 
-        [McpServerTool(Name = "update_measure"), Description("Set the DAX expression of a measure, calculated column, calculated table, calculation item or DAX function (a function takes a lambda such as (x: INT64) => x + 1). The expression is validated offline first: malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written, whatever the Record verified edits setting. An unchanged expression is a no-op. The change is applied to the live shared session, appears immediately in the VS Code UI, and is a single undoable step.")]
+        [McpServerTool(Name = "update_measure"), Description("Set the DAX expression of a measure, calculated column, calculated table, calculation item or DAX function (a function takes a lambda such as (x: INT64) => x + 1). The expression is validated offline first: malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written, whatever the Record verified edits setting. An unchanged expression is a no-op. The change is applied to the live shared session, appears immediately in the VS Code UI, and is a single undoable step. For many formulas, use apply_dax_script.")]
         public static Task<SetResult> UpdateMeasure(IEngine engine,
             [Description("Ref of the measure/calculated object, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("The new DAX expression")] string expression,
@@ -206,7 +206,7 @@ namespace Semanticus.Engine
             // Forwarded verbatim, so only an OMITTED argument (null) is unfenced; any supplied value meets that same guard.
             => engine.SetDaxAsync(objRef, expression, "agent", sessionId);
 
-        [McpServerTool(Name = "create_measure"), Description("Create a new measure on a table. Returns the new object ref. Undoable. Pass displayFolder to create it already filed ('Parent\\Child' nests). Create + folder is ONE undo step.")]
+        [McpServerTool(Name = "create_measure"), Description("Create a new measure on a table. Returns the new object ref. Undoable. Pass displayFolder to create it already filed ('Parent\\Child' nests). Create + folder is ONE undo step. On Pro, use create_measures for many new measures in one call.")]
         public static Task<string> CreateMeasure(IEngine engine,
             [Description("Table ref, e.g. 'table:Sales'")] string tableRef,
             [Description("Measure name")] string name,
@@ -214,7 +214,7 @@ namespace Semanticus.Engine
             [Description("Optional display folder path, e.g. 'KPIs' or 'Sales\\Growth'. Empty = table root.")] string displayFolder = null)
             => engine.CreateMeasureAsync(tableRef, name, expression, "agent", displayFolder);
 
-        [McpServerTool(Name = "set_display_folder"), Description("File measures/columns/hierarchies into a display folder in ONE undoable batch (or clear with an empty folder). A display folder is just the DisplayFolder string on each member ('Parent\\Child' nests). It has no existence of its own, so an EMPTY folder cannot persist: create one by moving/creating a member into it. All-or-nothing: any bad ref rolls the whole batch back. For a single object set_property(DisplayFolder) works too; this op keeps a multi-object gesture to one undo step.")]
+        [McpServerTool(Name = "set_display_folder"), Description("File measures/columns/hierarchies into a display folder in ONE undoable batch (or clear with an empty folder). A display folder is just the DisplayFolder string on each member ('Parent\\Child' nests). It has no existence of its own, so an EMPTY folder cannot persist: create one by moving/creating a member into it. All-or-nothing: any bad ref rolls the whole batch back. For a single object set_property(DisplayFolder) works too; this op keeps a multi-object gesture to one undo step. On Pro, use edit_objects or write_words to give many objects different folders in one call.")]
         public static Task<SetResult> SetDisplayFolder(IEngine engine,
             [Description("Object refs to file, e.g. ['measure:Sales/Total Sales','measure:Sales/Margin'] (measures/columns/hierarchies; see list_measures / list_columns)")] string[] refs,
             [Description("Target folder path ('KPIs' or 'Sales\\Growth'); empty/null clears (back to the table root)")] string folder = null)
@@ -353,7 +353,7 @@ namespace Semanticus.Engine
             [Description("Fields in display order. Each is {objectRef: 'measure:…' or 'column:…', label?: 'optional display name'}")] FieldParameterItem[] items)
             => engine.CreateFieldParameterAsync(name, items, "agent");
 
-        [McpServerTool(Name = "set_column_data_type"), Description("Set a data (source) column's data type: String|Int64|Decimal|Double|DateTime|Boolean. Only applies to physical/source columns (a calculated column derives its type from its DAX). Undoable.")]
+        [McpServerTool(Name = "set_column_data_type"), Description("Set a data (source) column's data type: String|Int64|Decimal|Double|DateTime|Boolean. Only applies to physical/source columns (a calculated column derives its type from its DAX). Undoable. On Pro, use edit_objects for many data types in one call.")]
         public static Task<SetResult> SetColumnDataType(IEngine engine,
             [Description("Column ref, e.g. 'column:Sales/Amount'")] string columnRef,
             [Description("String | Int64 | Decimal | Double | DateTime | Boolean")] string dataType)
@@ -429,7 +429,7 @@ namespace Semanticus.Engine
         public static Task<string> CreatePerspective(IEngine engine, [Description("Perspective name (unique)")] string name)
             => engine.CreatePerspectiveAsync(name, "agent");
 
-        [McpServerTool(Name = "set_perspective_member"), Description("Include (or exclude) one object in a perspective. The object ref is a table/column/measure/hierarchy. Including a TABLE cascades to all its columns/measures/hierarchies. Undoable.")]
+        [McpServerTool(Name = "set_perspective_member"), Description("Include (or exclude) one object in a perspective. The object ref is a table/column/measure/hierarchy. Including a TABLE cascades to all its columns/measures/hierarchies. Undoable. On Pro, use set_perspective_members for many items in one call.")]
         public static Task<SetResult> SetPerspectiveMember(IEngine engine,
             [Description("Perspective ref or name, e.g. 'perspective:Finance'")] string perspectiveRef,
             [Description("Object ref to include/exclude: table:/column:/measure:/hierarchy:")] string objectRef,
@@ -442,7 +442,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_calculation_groups"), Description("List the model's calculation groups with their precedence and ordered items (each item's DAX expression + dynamic format-string). Read-only. Author with create_calculation_group / create_calculation_item / set_calc_group_precedence / set_calc_item_format_string.")]
         public static Task<CalcGroupInfo[]> ListCalculationGroups(IEngine engine) => engine.ListCalculationGroupsAsync();
 
-        [McpServerTool(Name = "delete_object"), Description("Delete any model object by ref (measure/column/table/hierarchy/relationship/calculation-group/calculation-item/role…). Deleting an absent ref is a net-zero no-op. DAX references to a deleted object are NOT auto-rewritten. They will error; check dependents first. Undoable.")]
+        [McpServerTool(Name = "delete_object"), Description("Delete any model object by ref (measure/column/table/hierarchy/relationship/calculation-group/calculation-item/role…). Deleting an absent ref is a net-zero no-op. DAX references to a deleted object are NOT auto-rewritten. They will error; check dependents first. Undoable. Use delete_objects for many objects in one call.")]
         public static Task<SetResult> DeleteObject(IEngine engine, [Description("Object ref, e.g. 'measure:Sales/Old Total' or 'table:Staging'")] string objRef)
             => engine.DeleteObjectAsync(objRef, "agent");
 
@@ -451,7 +451,7 @@ namespace Semanticus.Engine
             [Description("Object refs to delete, e.g. ['measure:Sales/Old Total','measure:Sales/Unused']")] string[] objRefs)
             => engine.DeleteObjectsAsync(objRefs, "agent");
 
-        [McpServerTool(Name = "duplicate_object"), Description("Duplicate a measure, calculated/data column, hierarchy, calculation item, table (incl. calculated tables / field parameters), or calculation group (a deep clone). newName optional (collision-safe auto-name if omitted). targetRef optional: a 'table:' ref to clone a MEASURE onto another table, or a calc group's 'table:' ref to clone a CALCULATION ITEM onto another group. Columns/hierarchies stay on their own table; tables duplicate at model scope. Returns the new ref. Undoable.")]
+        [McpServerTool(Name = "duplicate_object"), Description("Duplicate a measure, calculated/data column, hierarchy, calculation item, table (incl. calculated tables / field parameters), or calculation group (a deep clone). newName optional (collision-safe auto-name if omitted). targetRef optional: a 'table:' ref to clone a MEASURE onto another table, or a calc group's 'table:' ref to clone a CALCULATION ITEM onto another group. Columns/hierarchies stay on their own table; tables duplicate at model scope. Returns the new ref. Undoable. On Pro, use duplicate_objects for many items in one call.")]
         public static Task<string> DuplicateObject(IEngine engine,
             [Description("Object ref to duplicate")] string objRef,
             [Description("Name for the copy (optional)")] string newName = null,
@@ -462,7 +462,7 @@ namespace Semanticus.Engine
         public static Task<ObjectProperty[]> GetProperties(IEngine engine, [Description("Object ref, e.g. 'model:' or 'column:Sales/Amount'")] string objRef)
             => engine.GetObjectPropertiesAsync(objRef);
 
-        [McpServerTool(Name = "set_property"), Description("Set one property of an object by name (from get_properties). value is the string form: 'true'/'false' for bool, the enum NAME for enum, the number for numeric. Setting 'Name' renames (DAX refs auto-rewritten). Undoable.")]
+        [McpServerTool(Name = "set_property"), Description("Set one property of an object by name (from get_properties). value is the string form: 'true'/'false' for bool, the enum NAME for enum, the number for numeric. Setting 'Name' renames (DAX refs auto-rewritten). Undoable. On Pro, use edit_objects for different property values across many objects in one call.")]
         public static Task<SetResult> SetProperty(IEngine engine,
             [Description("Object ref")] string objRef,
             [Description("Property name (exactly as returned by get_properties)")] string propertyName,
@@ -516,7 +516,7 @@ namespace Semanticus.Engine
             [Description("The whole chosen set. An empty array clears the list.")] Lineage.ReportScopeChoice[] choices)
             => engine.SetReportScopeAsync(choices, "agent");
 
-        [McpServerTool(Name = "check_reports"), Description("Read the reports chosen for this model and keep what each one uses, so impact_assessment, unused_objects, remove_safe_objects and the apply-time recheck all answer from the same reading. ids empty = every chosen report. Local report folders need no sign-in. A PUBLISHED report needs consent=true: reading its definition asks Fabric for permission that can also edit reports, even though Semanticus only reads it. A report that cannot be read is reported as couldNotBeFullyChecked with the reason, never silently dropped, so 'no use found' is never overstated.")]
+        [McpServerTool(Name = "check_reports"), Description("Read the reports chosen for this model and keep what each one uses, so impact_assessment, unused_objects, remove_safe_objects and the apply-time recheck all answer from the same reading. ids empty = every chosen report. Local report folders need no sign-in. A PUBLISHED report needs consent=true: reading its definition asks Fabric for permission that can also edit reports, even though Semanticus only reads it. A report that cannot be read is reported as couldNotBeFullyChecked with the reason, never silently dropped, so 'no use found' is never overstated. Report measures (formulas the report itself holds, in reportExtensions) are read too: the model names in their DAX count as report use, and the reportMeasures line says how many report measures were read and how many references in them were checked. A name in them that matches nothing in the model makes that report couldNotBeFullyChecked.")]
         public static Task<Lineage.ReportScopeResult> CheckReports(IEngine engine,
             [Description("Chosen report ids to read; empty = every report chosen for this model")] string[] ids = null,
             [Description("Must be true to read a PUBLISHED report: the sign-in asks for permission that can also edit reports. Semanticus uses it only to read.")] bool consent = false,
@@ -566,7 +566,7 @@ namespace Semanticus.Engine
             [Description("Target compatibility level, e.g. 1702")] int level)
             => engine.SetCompatibilityLevelAsync(level, "agent");
 
-        [McpServerTool(Name = "rename_object"), Description("Rename a measure/column/table. ALL DAX references to it are automatically rewritten (safe rename). Returns the new ref. Undoable. (Report-layer bindings outside the model can't be updated. Review for renames used in reports.)")]
+        [McpServerTool(Name = "rename_object"), Description("Rename a measure/column/table. ALL DAX references to it are automatically rewritten (safe rename). Returns the new ref. Undoable. (Report-layer bindings outside the model can't be updated. Review for renames used in reports.) On Pro, use edit_objects for many names in one call.")]
         public static Task<RenameResult> RenameObject(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Sales Amt'")] string objRef,
             [Description("New name")] string newName,
@@ -582,8 +582,9 @@ namespace Semanticus.Engine
             => engine.SaveAsync(path, format, overwrite, "agent");
 
         [McpServerTool(Name = "undo_change"), Description("Undo the most recent change on the shared session: steps back one entry on the model's SINGLE undo timeline. A whole batch (apply_plan / apply_safe_fixes / a generator) undoes as ONE step. The timeline is shared across both drivers, so this reverts the last change regardless of who made it (your edits or the human's in the VS Code UI). The revert is live. It broadcasts to the UI immediately. toEntry (optional): an entry id from get_plan_history; undoes that change and every later one in ONE step, one broadcast. Refused with a sentence when the entry is from before this session or already undone. Returns CanUndo / CanRedo / AtCheckpoint / Steps / RedoSteps. Use it to back out a change you just applied.")]
-        public static Task<UndoState> UndoChange(IEngine engine, [Description("Optional: the get_plan_history entry id to undo back to, including it. Omit for one step.")] string toEntry = null) =>
-            string.IsNullOrWhiteSpace(toEntry) ? engine.UndoAsync("agent") : engine.UndoToEntryAsync(toEntry, "agent");
+        public static Task<UndoState> UndoChange(IEngine engine, [Description("Optional: the get_plan_history entry id to undo back to, including it. Omit for one step.")] string toEntry = null,
+            [Description("Optional: the last revision of an assistant group. Takes back only that group when later edits belong to your assistant and touch other objects. historyRequired means open History instead.")] long? throughRevision = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? engine.UndoAsync("agent") : engine.UndoToEntryAsync(toEntry, "agent", throughRevision);
 
         [McpServerTool(Name = "redo_change"), Description("Re-apply the change most recently undone with undo_change: steps forward one entry on the shared undo timeline. Live (broadcasts to the UI). toEntry (optional): an undone entry id from get_plan_history; redoes every undone change up to and including it in ONE step. Returns CanUndo / CanRedo / AtCheckpoint / Steps / RedoSteps. Making a NEW edit after an undo clears the redo stack.")]
         public static Task<UndoState> RedoChange(IEngine engine, [Description("Optional: the undone get_plan_history entry id to redo up to, including it. Omit for one step.")] string toEntry = null) =>
@@ -725,14 +726,15 @@ namespace Semanticus.Engine
         public static async Task<ReadinessSummary> AiReadinessSummary(IEngine engine)
             => ReadinessSummary.From(await engine.AiReadinessScanAsync());
 
-        [McpServerTool(Name = "ai_readiness_scan"), Description("Score the open model A to F for AI readiness, meaning how well Copilot and Fabric data agents can use it. It returns the overall grade and 0-100 score, per-category scores, coverage KPIs and the reasons any hard gate holds the grade down. detail='summary' adds the total finding count and counts by severity, fix kind and top rule, with no findings list, and stays small on any model. detail='full' (the default) also returns the findings in priority order, each tagged SafeFix (a deterministic fix exists), AiContent (you write it) or Proposal (a person should review it). live=true adds the live cardinality rules: it reads each column's distinct-value count (COLUMNSTATISTICS) from the connected model and checks the Copilot index limits (SCALE-QNA-INDEX, the 5,000,000-value index ceiling, and SCALE-HICARD-COLUMN). live=true needs a live connection (connect_xmla or connect_local) and is refused without one. The filters narrow only the returned findings; scores and counts always cover the whole model, and a filter given with detail='summary' is refused. Read-only.")]
+        [McpServerTool(Name = "ai_readiness_scan"), Description("Score the open model A to F for AI readiness, meaning how well Copilot and Fabric data agents can use it. It returns the overall grade and 0-100 score, per-category scores, coverage KPIs and the reasons any hard gate holds the grade down. detail='summary' (the default) adds the total finding count and counts by severity, fix kind and top rule, with no findings list, and stays small on any model. detail='full' also returns the findings in priority order, each tagged SafeFix (a deterministic fix exists), AiContent (you write it) or Proposal (a person should review it). live=true adds the live cardinality rules: it reads each column's distinct-value count (COLUMNSTATISTICS) from the connected model and checks the Copilot index limits (SCALE-QNA-INDEX, the 5,000,000-value index ceiling, and SCALE-HICARD-COLUMN). live=true needs a live connection (connect_xmla or connect_local) and is refused without one. The filters narrow only the returned findings; scores and counts always cover the whole model, and a filter given with detail='summary' is refused. Read-only.")]
         public static async Task<object> AiReadinessScanOp(IEngine engine,
-            [Description("full (the default: scores plus the findings) or summary (scores and counts only)")] string detail = "full",
+            [Description("summary (the default: scores and counts) or full (scores plus findings). With filters and no detail flag, returns full.")] string detail = null,
             [Description("true = also run the live cardinality rules on the connected model (needs a live connection)")] bool live = false,
             [Description("Only return findings in this category (e.g. 'Naming'). Null/empty = all categories.")] string category = null,
             [Description("Only return findings at this severity or higher: Info|Medium|High|Critical. Null/empty = all.")] string severityMin = null,
             [Description("Cap the returned findings to this many (0 = no cap, the default). Capping is opt-in so findings are never hidden silently.")] int maxFindings = 0)
         {
+            detail ??= !string.IsNullOrWhiteSpace(category) || !string.IsNullOrWhiteSpace(severityMin) || maxFindings > 0 ? "full" : "summary";
             var summary = IsSummary(detail);
             if (summary)
                 RefuseSummaryFilter(!string.IsNullOrWhiteSpace(category) || !string.IsNullOrWhiteSpace(severityMin) || maxFindings > 0);
@@ -765,19 +767,38 @@ namespace Semanticus.Engine
             return c;
         }
 
-        [McpServerTool(Name = "apply_safe_fixes"), Description("Apply every deterministic fix for one rule system as one undoable batch, then return what changed and the new scorecard. system='air' applies the AI-readiness safe fixes: hide foreign-key columns, set SummarizeBy to None on key, relationship and identifier columns, set geographic data categories, and mark each dimension's row label. It renames nothing and writes no content. system='bpa' applies every Best Practice Analyzer auto-fix, repeating until a pass changes nothing, so a fix that creates another finding is cleared in the same call. For system='bpa', read 'unfixed' before you report the model clean: it lists each auto-fixable finding still present with the reason it survived (including one left alone because the person accepted the same change under another rule), and 'remaining' is how many. The batch did everything it said only when remaining is 0. A data type change, and a key on a table that already has one, are left for the person: they stay in 'unfixed' with the reason, and apply_fix still makes them one at a time. Content findings, and naming findings that need a new name, are left alone; get_fix_prompt covers those. For the readiness fixes plus a queue of content to write, use make_model_ai_ready.")]
         public static async Task<object> ApplySafeFixes(IEngine engine,
-            [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system)
+            string system)
             => RuleSystem(system) == "bpa" ? await engine.BpaFixAllAsync("agent") : (object)await engine.ApplySafeFixesAsync("agent");
 
-        [McpServerTool(Name = "apply_fix"), Description("Apply the deterministic fix for one finding on one object, as one undoable change. system='bpa' fixes a Best Practice Analyzer violation that bpa_scan marks CanAutoFix, for example a bi-directional relationship made single, or SummarizeBy set to None on a key column. system='air' fixes an AI-readiness SafeFix finding: VIS-FK (hide a foreign-key column), FMT-SUMMARIZE and SUMMARIZE-DIMENSION (SummarizeBy None), CAT-GEO (geographic data category), DIM-PRIMARY-NAME (mark the column that names each row of a dimension as its row label). A finding with no deterministic fix is refused; get its instruction from get_fix_prompt with the same system, rule and object.")]
+        [McpServerTool(Name = "apply_fix"), Description("Apply the deterministic fix for one finding on one object, as one undoable change. system='bpa' fixes a Best Practice Analyzer violation that bpa_scan marks CanAutoFix, for example a bi-directional relationship made single, or SummarizeBy set to None on a key column. system='air' fixes an AI-readiness SafeFix finding: VIS-FK (hide a foreign-key column), FMT-SUMMARIZE and SUMMARIZE-DIMENSION (SummarizeBy None), CAT-GEO (geographic data category), DIM-PRIMARY-NAME (mark the column that names each row of a dimension as its row label). A finding with no deterministic fix is refused; get its instruction from get_fix_prompt with the same system, rule and object. For many findings, apply_safe_fixes applies every safe fix in one call; on Pro, apply_fixes fixes selected findings in one call.")]
         public static Task<SetResult> ApplyFix(IEngine engine,
             [Description("Which rule system: 'bpa' (Best Practice Analyzer) or 'air' (AI readiness)")] string system,
             [Description("Rule id from bpa_scan or ai_readiness_scan, e.g. 'VIS-FK' for air")] string ruleId,
             [Description("Object ref the finding is on")] string objRef)
             => RuleSystem(system) == "bpa" ? engine.BpaFixAsync(ruleId, objRef, "agent") : engine.ApplyFixAsync(ruleId, objRef, "agent");
 
-        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Copilot index ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move.")]
+        [McpServerTool(Name = "waive_findings"), Description("Semanticus Pro feature: waive many findings in ONE engine call and one undo step. Use one bulk call per page of work. Each item follows waive_finding. Bad items are left out and named in rejected (index, objRef, reason); applied is the real count. On Free use waive_finding. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
+        public static Task<BatchEditResult> WaiveFindings(IEngine engine,
+            [Description("Findings to waive: [{system:'air' or 'bpa', ruleId, objRef (optional; '*' means the whole rule), reason}].")] FindingWaiverItem[] items)
+            => engine.WaiveFindingsAsync(items, "agent");
+
+        [McpServerTool(Name = "write_words"), Description("Semanticus Pro feature: write descriptions, synonyms and display folders for many objects in ONE engine call and one undo step. Use one bulk call per page of work. Feed an authored get_words_queue page straight in using objRef. Synonyms REPLACE the list, exactly like set_synonyms. Omit a field to leave it unchanged; empty text or an empty synonyms list clears it. Bad items are left out and named in rejected (index, objRef, reason); applied counts objects actually changed. On Free use set_description, set_synonyms or set_display_folder. After writing, read get_words_queue again from offset 0 for the next work. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
+        public static Task<BatchEditResult> WriteWords(IEngine engine,
+            [Description("Authored words: [{objRef, description?, synonyms?: [terms], displayFolder?}].")] WordsWriteItem[] items)
+            => engine.WriteWordsAsync(items, "agent");
+
+        [McpServerTool(Name = "edit_objects"), Description("Semanticus Pro feature: edit common properties across many objects in ONE engine call and one undo step. Use one bulk call per page of work. Reuses set_property validation; name changes fix DAX references. Supports name, description, formatString, displayFolder, hidden (or isHidden), formatStringExpression (measures, CL 1601+), aiSchema (true/false, default culture), dataCategory, summarizeBy, sortByColumn and dataType (physical columns only). Values may be typed JSON or the set_property string form. Each item's properties apply together; a bad item is left out and named in rejected (index, objRef, reason). Applied counts objects actually changed. On Free use set_property or the single-property tools. For one shared value on many objects, use set_properties on every tier. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
+        public static Task<BatchEditResult> EditObjects(IEngine engine,
+            [Description("Edits: [{objRef, set: {property: value, ...}}]. Input refs resolve before renames.")] ObjectEditItem[] items)
+            => engine.EditObjectsAsync(items, "agent");
+
+        [McpServerTool(Name = "create_measures"), Description("Semanticus Pro feature: create many measures in ONE engine call and one undo step. Use one bulk call per page of work. Each item follows create_measure, including DAX validation and optional displayFolder. Bad items are left out and named in rejected (index, objRef, reason); applied is the real count. On Free use create_measure. apply_dax_script and apply_tmdl only update existing objects. Send these one after another. Parallel calls wait for the same writer and are not faster.")]
+        public static Task<BatchEditResult> CreateMeasures(IEngine engine,
+            [Description("Measures: [{tableRef, name, expression, displayFolder?}].")] MeasureCreateItem[] items)
+            => engine.CreateMeasuresAsync(items, "agent");
+
+        [McpServerTool(Name = "waive_finding"), Description("WAIVE (accept) a finding so it stops counting against the score, for findings you've consciously decided not to fix (e.g. 'we keep these unused columns'). system: 'bpa' or 'air'. objRef set = waive THIS instance; objRef empty/'*' = waive the ENTIRE rule, every instance model-wide. A reason is REQUIRED: a waiver is an audited decision (stored with who+when on the model), never a silent suppression. The finding is still surfaced (tagged 'waived' with its reason) and the scorecard reports a waived count, so the grade is honest. Hard gates (Copilot index ceiling, >50% measures undescribed) are NOT lifted by waivers. Persisted on the model (undoable, travels with it); per-instance BPA waivers also write Tabular Editor's BestPracticeAnalyzer_IgnoreRules so TE3 honours them. Re-scan to see the score move. On Pro, use waive_findings for many findings in one call.")]
         public static Task<SetResult> WaiveFinding(IEngine engine,
             [Description("Which system the rule belongs to: 'bpa' or 'air'")] string system,
             [Description("Rule id (e.g. 'UNNECESSARY_COLUMNS' for bpa, 'NAME-MEASURE' for air)")] string ruleId,
@@ -785,7 +806,7 @@ namespace Semanticus.Engine
             [Description("Why this finding is accepted: required, stored for audit")] string reason)
             => engine.WaiveFindingAsync(system, ruleId, objRef, reason, "agent");
 
-        [McpServerTool(Name = "unwaive_finding"), Description("Remove a waiver so the finding counts against the score again (re-instates it). system: 'bpa' or 'air'. objRef set = un-waive that instance; empty/'*' = remove the rule-level waiver. Never gated (it makes the model more compliant). Undoable; also clears Tabular Editor's ignore annotation for a per-instance BPA waiver.")]
+        [McpServerTool(Name = "unwaive_finding"), Description("Remove a waiver so the finding counts against the score again (re-instates it). system: 'bpa' or 'air'. objRef set = un-waive that instance; empty/'*' = remove the rule-level waiver. Never gated (it makes the model more compliant). Undoable; also clears Tabular Editor's ignore annotation for a per-instance BPA waiver. On Pro, use unwaive_findings for many items in one call.")]
         public static Task<SetResult> UnwaiveFinding(IEngine engine,
             [Description("'bpa' or 'air'")] string system,
             [Description("Rule id")] string ruleId,
@@ -802,7 +823,7 @@ namespace Semanticus.Engine
             [Description("Object ref the finding is on")] string objRef)
             => RuleSystem(system) == "bpa" ? engine.BpaGetFixPromptAsync(ruleId, objRef) : engine.GetFixPromptAsync(ruleId, objRef);
 
-        [McpServerTool(Name = "get_grounding"), Description("Get grounding context for an object (name, table, DAX expression, format string, existing description, sibling names) so YOU can author a high-quality business description or a clearer name. Call this before set_description.")]
+        [McpServerTool(Name = "get_grounding"), Description("Get grounding context for an object (name, table, DAX expression, format string, existing description, sibling names) so YOU can author a high-quality business description or a clearer name. Use this for one object before set_description. For many objects, get_words_queue includes each page's context; reuse it instead of reading each object separately.")]
         public static Task<GroundingBundle> GetGrounding(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales' or 'column:Customer/City'")] string objRef)
             => engine.GetGroundingAsync(objRef);
@@ -813,18 +834,17 @@ namespace Semanticus.Engine
             [Description("true = treat every warning (a missing column or measure, an arity problem) as an error, the same verdict a write would give. Default false.")] bool strict = false)
             => engine.ValidateDaxAsync(expression, strict);
 
-        [McpServerTool(Name = "set_description"), Description("Set an object's description: a measure, table, column, hierarchy, perspective, calculation item or any other object that has one. Keep it <=200 chars and front-loaded: Copilot truncates. Applies as a reviewable, undoable change tagged as the agent. Use after get_grounding.")]
+        [McpServerTool(Name = "set_description"), Description("Set an object's description: a measure, table, column, hierarchy, perspective, calculation item or any other object that has one. Keep it <=200 chars and front-loaded: Copilot truncates. Applies as a reviewable, undoable change tagged as the agent. Use after get_grounding, or reuse the context from get_words_queue. On Pro, use write_words for many objects in one call.")]
         public static Task<SetResult> SetDescription(IEngine engine,
             [Description("Object ref")] string objRef,
             [Description("Business description, <=200 chars, front-loaded")] string text)
             => engine.SetDescriptionAsync(objRef, text, "agent");
 
-        [McpServerTool(Name = "make_model_ai_ready"), Description("Applies every deterministic AI-readiness safe fix (the same set as apply_safe_fixes) as one undoable batch, then returns the new scorecard plus a prioritized work queue of up to maxQueue AI-content findings (accepted ones left out, and so is any change the person declined by accepting another finding about the same thing; do not make a change that is not in the queue), each with its grounding (DAX, table, sibling names). It writes no descriptions, names or synonyms itself: the queue is for you to author with set_description, rename_object or set_synonyms, or to stage for review with propose_plan.")]
         public static Task<ReadinessPlan> MakeModelAiReady(IEngine engine,
-            [Description("Max AI-content items to return with grounding (default 40)")] int maxQueue = 40)
+            int maxQueue = 40)
             => engine.MakeAiReadyAsync("agent", maxQueue);
 
-        [McpServerTool(Name = "set_measure_format"), Description("Set a measure's STATIC format string (e.g. '0.0%', '\\$#,0', '#,0'). Deterministic, undoable. For a DYNAMIC (per-filter-context) format that switches by magnitude/sign/currency, use set_measure_format_expression. Browse curated strings with list_format_templates.")]
+        [McpServerTool(Name = "set_measure_format"), Description("Set a measure's STATIC format string (e.g. '0.0%', '\\$#,0', '#,0'). Deterministic, undoable. For a DYNAMIC (per-filter-context) format that switches by magnitude/sign/currency, use set_measure_format_expression. Browse curated strings with list_format_templates. On Pro, use edit_objects for many static formats in one call.")]
         public static Task<SetResult> SetMeasureFormat(IEngine engine,
             [Description("Measure ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Format string")] string formatString)
@@ -836,31 +856,31 @@ namespace Semanticus.Engine
             [Description("Optional fuzzy search over id/name/category/format-string/description")] string search = null)
             => engine.ListFormatTemplatesAsync(category, search);
 
-        [McpServerTool(Name = "set_measure_format_expression"), Description("Set (or clear) a measure's DYNAMIC format-string expression: the DAX that RETURNS a format string, evaluated per filter context (Power BI's 'Format = Dynamic'). This is how magnitude-adaptive scaling (500->'500', 5e6->'5M'), per-currency, per-selected-measure, and duration/bps formats work on a plain measure (a static string can't). Pass an empty string to clear it (the measure falls back to its static/model format). A non-blank expression AUTO-CLEARS any static format string. Requires model compatibility level 1601+. Undoable. (For a static literal use set_measure_format; browse ready-made expressions with list_format_templates.)")]
+        [McpServerTool(Name = "set_measure_format_expression"), Description("Set (or clear) a measure's DYNAMIC format-string expression: the DAX that RETURNS a format string, evaluated per filter context (Power BI's 'Format = Dynamic'). This is how magnitude-adaptive scaling (500->'500', 5e6->'5M'), per-currency, per-selected-measure, and duration/bps formats work on a plain measure (a static string can't). Pass an empty string to clear it (the measure falls back to its static/model format). A non-blank expression AUTO-CLEARS any static format string. Requires model compatibility level 1601+. Undoable. (For a static literal use set_measure_format; browse ready-made expressions with list_format_templates.) On Pro, use edit_objects with formatStringExpression for many items in one call.")]
         public static Task<SetResult> SetMeasureFormatExpression(IEngine engine,
             [Description("Measure ref, e.g. 'measure:Sales/YoY %'")] string objRef,
             [Description("Format-string DAX expression (e.g. a SWITCH over SELECTEDMEASURE()); empty clears it")] string formatExpression)
             => engine.SetMeasureFormatExpressionAsync(objRef, formatExpression, "agent");
 
-        [McpServerTool(Name = "set_data_category"), Description("Set a column's data category (e.g. 'City','Country','StateOrProvince','PostalCode','WebUrl','ImageUrl'). Helps Copilot/maps. Deterministic, undoable.")]
+        [McpServerTool(Name = "set_data_category"), Description("Set a column's data category (e.g. 'City','Country','StateOrProvince','PostalCode','WebUrl','ImageUrl'). Helps Copilot/maps. Deterministic, undoable. On Pro, use edit_objects for many objects in one call.")]
         public static Task<SetResult> SetDataCategory(IEngine engine,
             [Description("Column ref, e.g. 'column:Geography/City'")] string objRef,
             [Description("Data category")] string dataCategory)
             => engine.SetColumnMetadataAsync(objRef, null, null, dataCategory, null, "agent");
 
-        [McpServerTool(Name = "set_summarize_by"), Description("Set a column's default aggregation (None/Sum/Average/Min/Max/Count/DistinctCount). Use None for keys/years/codes. Deterministic, undoable. On Pro the Plan can propose an explicit base measure for a number column in place of the column adding up by itself (the column.summarize point); this op is the same setting done by hand.")]
+        [McpServerTool(Name = "set_summarize_by"), Description("Set a column's default aggregation (None/Sum/Average/Min/Max/Count/DistinctCount). Use None for keys/years/codes. Deterministic, undoable. On Pro the Plan can propose an explicit base measure for a number column in place of the column adding up by itself (the column.summarize point); this op is the same setting done by hand. On Pro, use edit_objects for many objects in one call.")]
         public static Task<SetResult> SetSummarizeBy(IEngine engine,
             [Description("Column ref")] string objRef,
             [Description("Aggregate: None, Sum, Average, Min, Max, Count, DistinctCount")] string summarizeBy)
             => engine.SetColumnMetadataAsync(objRef, null, summarizeBy, null, null, "agent");
 
-        [McpServerTool(Name = "set_column_hidden"), Description("Show/hide a column. Hidden columns are excluded from Copilot/data-agent grounding. Hide technical/key/FK columns. Deterministic, undoable.")]
+        [McpServerTool(Name = "set_column_hidden"), Description("Show/hide a column. Hidden columns are excluded from Copilot/data-agent grounding. Hide technical/key/FK columns. Deterministic, undoable. On Pro, use edit_objects for many objects in one call.")]
         public static Task<SetResult> SetColumnHidden(IEngine engine,
             [Description("Column ref")] string objRef,
             [Description("true to hide, false to show")] bool hidden)
             => engine.SetColumnMetadataAsync(objRef, hidden, null, null, null, "agent");
 
-        [McpServerTool(Name = "set_sort_by_column"), Description("Set a column's sort-by column (e.g. sort 'Month Name' by 'Month Number'). Deterministic, undoable.")]
+        [McpServerTool(Name = "set_sort_by_column"), Description("Set a column's sort-by column (e.g. sort 'Month Name' by 'Month Number'). Deterministic, undoable. On Pro, use edit_objects for many objects in one call.")]
         public static Task<SetResult> SetSortByColumn(IEngine engine,
             [Description("Column ref to sort")] string objRef,
             [Description("Name of the column to sort by (same table)")] string sortByColumnName)
@@ -951,14 +971,14 @@ namespace Semanticus.Engine
             [Description("true = add, false = remove")] bool add = true)
             => engine.SetRoleMemberAsync(roleName, memberName, add, "agent");
 
-        [McpServerTool(Name = "set_table_ols"), Description("Set a table's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the table at all (distinct from set_table_permission's row filter). 'None' hides the table's metadata + data from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). A calculation group cannot carry OLS. Surfaced via list_roles → ObjectPermissions. Undoable.")]
+        [McpServerTool(Name = "set_table_ols"), Description("Set a table's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the table at all (distinct from set_table_permission's row filter). 'None' hides the table's metadata + data from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). A calculation group cannot carry OLS. Surfaced via list_roles → ObjectPermissions. Undoable. On Pro, use set_object_permissions for many items in one call.")]
         public static Task<SetResult> SetTableOls(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Table ref or name, e.g. 'table:Salary' or 'Salary'")] string tableRef,
             [Description("Default | None | Read")] string permission)
             => engine.SetTableObjectPermissionAsync(roleName, tableRef, permission, "agent");
 
-        [McpServerTool(Name = "set_column_ols"), Description("Set a column's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the column. 'None' hides the column from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). Surfaced via list_roles → ObjectPermissions[].Columns. Undoable.")]
+        [McpServerTool(Name = "set_column_ols"), Description("Set a column's OBJECT-LEVEL (metadata) security for a role: controls whether the role can SEE the column. 'None' hides the column from the role; 'Read' grants it; 'Default' removes the override (visible). Requires model compatibility level >= 1400 (errors clearly below). Surfaced via list_roles → ObjectPermissions[].Columns. Undoable. On Pro, use set_object_permissions for many items in one call.")]
         public static Task<SetResult> SetColumnOls(IEngine engine,
             [Description("Role name")] string roleName,
             [Description("Column ref, e.g. 'column:Employee/Salary'")] string columnRef,
@@ -970,7 +990,7 @@ namespace Semanticus.Engine
             [Description("Culture id (e.g. 'en-US'), or null for default")] string culture = null)
             => engine.CreateLinguisticSchemaAsync(culture, "agent");
 
-        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot and data agents map natural language to the right field. The list replaces the object's own synonyms: a word left out is removed. The object's name term and Power BI's own generated words are kept, except what Power BI still records from an old name, which a list that leaves it out clears. Hidden targets are refused, and entities bound to hidden or deleted objects are pruned automatically. Two visible fields that read as the same word do not make a write fail; the readiness scan reports them as a Copilot ambiguity.")]
+        [McpServerTool(Name = "set_synonyms"), Description("Set the synonyms (alternate words users might say) for a measure/column/table, e.g. Total Sales -> ['revenue','turnover','sales amount']. Auto-enables the linguistic schema if needed. Helps Copilot and data agents map natural language to the right field. The list replaces the object's own synonyms: a word left out is removed. The object's name term and Power BI's own generated words are kept, except what Power BI still records from an old name, which a list that leaves it out clears. Hidden targets are refused, and entities bound to hidden or deleted objects are pruned automatically. Two visible fields that read as the same word do not make a write fail; the readiness scan reports them as a Copilot ambiguity. On Pro, use write_words for many objects in one call.")]
         public static Task<SetResult> SetSynonyms(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Synonym terms")] string[] terms,
@@ -988,7 +1008,7 @@ namespace Semanticus.Engine
             [Description("Culture id (e.g. 'en-US'), or null for default")] string culture = null)
             => engine.GetAiInstructionsAsync(culture);
 
-        [McpServerTool(Name = "set_ai_data_schema"), Description("Include or exclude a field (measure/column/table) from the Prep-for-AI 'AI data schema': the focused field set Copilot/data agents reason over. included=false EXCLUDES it (marks it Hidden in the LSDL); included=true restores it. Excluding noise (keys, sort/helper columns, intermediate measures) sharpens AI answers without hiding the field from report authors. Auto-enables the linguistic schema if needed; round-trip verified, live, a single undoable step. CAVEAT: for a DEPLOYED model the LSDL edit syncs only after a model refresh. Persist with save_model. On Pro the Plan can propose these choices as rows (the ai.schema point, what Copilot sees); this op is the same change done by hand.")]
+        [McpServerTool(Name = "set_ai_data_schema"), Description("Include or exclude a field (measure/column/table) from the Prep-for-AI 'AI data schema': the focused field set Copilot/data agents reason over. included=false EXCLUDES it (marks it Hidden in the LSDL); included=true restores it. Excluding noise (keys, sort/helper columns, intermediate measures) sharpens AI answers without hiding the field from report authors. Auto-enables the linguistic schema if needed; round-trip verified, live, a single undoable step. CAVEAT: for a DEPLOYED model the LSDL edit syncs only after a model refresh. Persist with save_model. On Pro the Plan can propose these choices as rows (the ai.schema point, what Copilot sees); this op is the same change done by hand. On Pro, use edit_objects with aiSchema for many items in one call.")]
         public static Task<SetResult> SetAiDataSchema(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales', 'column:Sales/CustomerKey', 'table:Bridge'")] string objRef,
             [Description("true = include in the AI data schema; false = exclude (mark Hidden)")] bool included,
@@ -1137,6 +1157,17 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "connection_status"), Description("Report the current live query connection: connected, kind, data source. For which model is being edited versus which one answers queries (they can be two different copies), use connection_context.")]
         public static Task<ConnectionStatus> ConnectionStatusTool(IEngine engine) => engine.ConnectionStatusAsync();
 
+        [McpServerTool(Name = "label_connection"), Description("Set a saved connection's first environment label: local, dev, uat or prod. The connection must have no label yet. Only the person can change or clear an existing label, in Connections. An unlabelled target is treated as dev (a test target). Returns the updated connection. Permission rules for live actions use this label. This changes the saved connection on this device.")]
+        public static Task<ModelConnectionRecord> LabelConnection(IEngine engine,
+            [Description("Saved connection id from list_connections")] string id,
+            [Description("First environment label: local, dev, uat or prod")] string label)
+            => engine.LabelConnectionAsync(id, label, "agent");
+
+        [McpServerTool(Name = "set_default_account_profile"), Description("Make a saved, signed-in account the default for its tenant on this device. Future model opens on that tenant use it unless another account is selected. Returns the saved accounts with the new default marked. This does not sign in or reconnect the current model.")]
+        public static Task<AccountProfile[]> SetDefaultAccountProfile(IEngine engine,
+            [Description("Saved, signed-in account id from list_account_profiles")] string profileId)
+            => engine.SetDefaultAccountProfileAsync(profileId, "agent");
+
         [McpServerTool(Name = "disconnect"), Description("Close the live query connection (the one connect_xmla, connect_local, open_live or open_local attached). The open model, its unsaved edits and its undo history stay in the session; run_dax, run_dmv and the other live tools need a new connection afterwards. Returns the resulting connection status.")]
         public static async Task<ConnectionStatus> Disconnect(IEngine engine)
         {
@@ -1182,6 +1213,9 @@ namespace Semanticus.Engine
             try { engine.PublishActivityAsync(e).ContinueWith(t => { _ = t.Exception; }, System.Threading.Tasks.TaskContinuationOptions.OnlyOnFaulted | System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously); }
             catch { /* live feed is best-effort */ }
         }
+
+        [McpServerTool(Name = "cancel_query"), Description("Stop the query running on the live connection. Returns stopped=true when a running query was stopped, or false when there was nothing to stop. The model stays open.")]
+        public static Task<CancelQueryResult> CancelQuery(IEngine engine) => engine.CancelDaxAsync();
 
         [McpServerTool(Name = "run_dax"), Description("Run a DAX query (EVALUATE / DEFINE...EVALUATE) against the connected live model and return columns + rows (capped). Returns {error} if not connected or the query fails. Read-only. A ROW-returning query (`EVALUATE <table>`, SUMMARIZECOLUMNS, FILTER, VALUES, TOPN, …) reads source rows, so the agent policy's QueryData rule applies to the connected target. An Ask refusal names the approval to request; a Deny means the target's policy forbids it (a human can run it or change the policy). A scalar probe (EVALUATE ROW(...) / EVALUATE { … }) is a calculation and is never gated.")]
         public static async Task<ResultSet> RunDax(IEngine engine,
@@ -1865,6 +1899,14 @@ namespace Semanticus.Engine
 
         /// <summary>benchmark_dax with mode='coldWarm'. The activity kind stays "benchmark_coldwarm": the DAX Lab reads
         /// a ColdWarmBenchmark off that kind, so one kind for both modes would hand it the wrong shape.</summary>
+        [McpServerTool(Name = "benchmark_cold_warm"), Description("Time a DAX query with cold and warm runs on the live connection. Returns averages, spread, each run and notes about missing cache clearing or server timings. Cold runs clear the cache before each run. On a shared server, use confirm=true to allow clearing its cache for all users. Otherwise the result contains warm runs only. Use clearForCold=false for warm runs only. The model does not change.")]
+        public static Task<ColdWarmBenchmark> BenchmarkColdWarm(IEngine engine,
+            [Description("DAX query to time")] string query,
+            [Description("Runs per temperature, from 1 to 25; default 5")] int runs = 5,
+            [Description("Clear the cache before cold runs; default true")] bool clearForCold = true,
+            [Description("Allow clearing the shared server's cache; default false")] bool confirm = false)
+            => BenchmarkDaxColdWarm(engine, query, runs, clearForCold, confirm);
+
         public static async Task<ColdWarmBenchmark> BenchmarkDaxColdWarm(IEngine engine, string query, int runs = 5, bool clearForCold = true, bool confirm = false)
         {
             var r = await engine.BenchmarkColdWarmAsync(query, runs, clearForCold, confirm);
@@ -1895,14 +1937,14 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_plan"), Description("Get the current change plan: every proposed item with its before→after, source (deterministic/bpa/ai), risk, status, and a summary. Use it to see what still needs content (status 'needs_content') and what is approved/ready to apply. These are the SAME changes the Model Plan groups under its items (get_model_plan), as one flat list: this is the change-by-change view, that is the by-goal view, and there is one set of changes behind both.")]
         public static Task<ChangePlanView> GetPlan(IEngine engine) => engine.GetPlanAsync();
 
-        [McpServerTool(Name = "set_plan_item"), Description("Fill an AI-content plan item with your authored value (and/or approve/reject it). Authoring a value moves the item to 'approved', EXCEPT the opt-in kinds (rename, set_dax without a non-empty verify matrix, set_m), which land on 'proposed' after ANY value revision (even one made after an approval: the consent covered the old value) and need an explicit approve. e.g. set_plan_item('ci-0007', after='Total revenue recognised in the period.'). Use get_plan to see item ids + grounding first. THIS IS ALSO HOW YOU KEEP AND DROP one line of a Model Plan item's change set: approved=true keeps the line, approved=false drops it, and the item's changeSet.digest changes either way, so an approval given before you dropped a line can no longer be honoured. The line's planItemId on get_model_plan is the itemId to pass here. Keeping and dropping change NOTHING in the model and are free on every tier. Touching a line this way is what makes a cleanup line that arrived ticked as a suggestion (suggested: true) the person's own, and apply_plan from your door does not apply an untouched suggested line.")]
+        [McpServerTool(Name = "set_plan_item"), Description("Fill an AI-content plan item with your authored value (and/or approve/reject it). Authoring a value moves the item to 'approved', EXCEPT the opt-in kinds (rename, set_dax without a non-empty verify matrix, set_m), which land on 'proposed' after ANY value revision (even one made after an approval: the consent covered the old value) and need an explicit approve. e.g. set_plan_item('ci-0007', after='Total revenue recognised in the period.'). Use get_plan to see item ids + grounding first. THIS IS ALSO HOW YOU KEEP AND DROP one line of a Model Plan item's change set: approved=true keeps the line, approved=false drops it, and the item's changeSet.digest changes either way, so an approval given before you dropped a line can no longer be honoured. The line's planItemId on get_model_plan is the itemId to pass here. Keeping and dropping change NOTHING in the model and are free on every tier. Touching a line this way is what makes a cleanup line that arrived ticked as a suggestion (suggested: true) the person's own, and apply_plan from your door does not apply an untouched suggested line. When the person does not need to review each line first, for many authored descriptions, synonyms, names or static formats on Pro use get_words_queue with write_words and edit_objects instead of filling one plan item per object. On Pro, use set_plan_items for many items in one call.")]
         public static Task<ChangePlanView> SetPlanItem(IEngine engine,
             [Description("Plan item id from get_plan, e.g. 'ci-0007'")] string itemId,
             [Description("The authored value (description text, format string, new name, comma-separated synonyms, or DAX); null to only approve/reject")] string after = null,
             [Description("true to approve, false to reject, null to leave as-is")] bool? approved = null)
             => engine.SetPlanItemAsync(itemId, after, approved, "agent");
 
-        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included') | delete (remove the object) | delete_if_unused (remove ONLY if unused_objects' safe verdict still holds at apply time, recomputed server-side, else the item is skipped with the reason). An identical pending item (same ref+kind+target+after) is deduped: the existing item is returned, not re-added. For a set_dax rewrite, pass verifyGroupBy so apply_plan proves equivalence (and skips the item if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename). It will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan. The change also appears on the Model Plan (get_model_plan) as a line on the item it serves, or on a new item owned by the assistant when no item serves it, so a person reads it in one list with everything else.")]
+        [McpServerTool(Name = "add_plan_item"), Description("Add a custom change to the plan (an incremental edit, or a DAX rewrite you want verified before applying). kind is the operation: set_dax | set_description | set_measure_format | set_summarize_by | set_column_hidden | set_data_category | rename | set_synonyms | set_relationship_crossfilter | mark_date_table | set_ai_instructions (model-level: objRef is the model, after = the instructions text) | set_ai_data_schema (objRef a measure/column/table, after = 'Excluded' or 'Included') | delete (remove the object) | delete_if_unused (remove ONLY if unused_objects' safe verdict still holds at apply time, recomputed server-side, else the item is skipped with the reason). An identical pending item (same ref+kind+target+after) is deduped: the existing item is returned, not re-added. For a set_dax rewrite, pass verifyGroupBy so apply_plan proves equivalence (and skips the item if results change). A set_dax item WITHOUT verifyGroupBy is added as 'proposed' (opt-in, like a rename). It will NOT be applied unless you explicitly approve it via set_plan_item, and if applied it goes in UNVERIFIED. Nothing is mutated until apply_plan. The change also appears on the Model Plan (get_model_plan) as a line on the item it serves, or on a new item owned by the assistant when no item serves it, so a person reads it in one list with everything else. On Pro, use add_plan_items for many items in one call.")]
         public static Task<ChangePlanView> AddPlanItem(IEngine engine,
             [Description("Object ref, e.g. 'measure:Sales/Total Sales'")] string objRef,
             [Description("Operation kind, e.g. 'set_dax', 'set_description', 'rename'")] string kind,
@@ -1941,7 +1983,7 @@ namespace Semanticus.Engine
             [Description("Section key, e.g. 'businessContext'")] string sectionKey)
             => engine.GetDocSectionAsync(objRef, sectionKey);
 
-        [McpServerTool(Name = "set_doc_section"), Description("Author/insert a Documentation narrative section (Markdown) for an object: ADDITIONAL business context that merges into the exported documentation, SEPARATE from the model's Descriptions. objRef is 'model' or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures; other refs are rejected). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Set markdown to empty/null to clear the section. This is the collaborate-on-the-docs path: it's stored as a model annotation, broadcasts live to the human's Documentation tab, and is undoable.")]
+        [McpServerTool(Name = "set_doc_section"), Description("Author/insert a Documentation narrative section (Markdown) for an object: ADDITIONAL business context that merges into the exported documentation, SEPARATE from the model's Descriptions. objRef is 'model' or 'table:Name' / 'measure:Table/Name' (narrative is supported on the model, tables and measures; other refs are rejected). Common sectionKeys: 'overview', 'businessContext', 'notes' (per object); 'overview', 'glossary', 'methodology' (model). Set markdown to empty/null to clear the section. This is the collaborate-on-the-docs path: it's stored as a model annotation, broadcasts live to the human's Documentation tab, and is undoable. On Pro, use set_doc_sections for many items in one call.")]
         public static async Task<SetResult> SetDocSection(IEngine engine,
             [Description("Object ref, or 'model' for the model-wide narrative")] string objRef,
             [Description("Section key, e.g. 'businessContext'")] string sectionKey,
@@ -2127,7 +2169,7 @@ namespace Semanticus.Engine
                 : new ModelRef { Kind = "file", Path = sourceFile }, "agent");   // an agent never pops UI; a workspace ref (if ever passed) is refused
 
         // ---- Model compare (ALM Toolkit / BISM Normalizer grade) + the deploy gate --------------------
-        [McpServerTool(Name = "model_diff"), Description("ALM-Toolkit-grade SEMANTIC compare of the open model against another version, by default the git ref 'HEAD' (i.e. what you changed since the last commit). Returns an object-level diff (per table/column/measure/relationship/role/...: Create/Update/Delete) with each object's before/after text. Pass a different gitRef to compare against a branch/commit, or targetFile to compare against a model on disk, or sourceFile to compare two files. Read-only.")]
+        [McpServerTool(Name = "model_diff"), Description("ALM-Toolkit-grade SEMANTIC compare of the open model against another version, by default the git ref 'HEAD' (i.e. what you changed since the last commit). Returns an object-level diff (per table/column/measure/relationship/role/...: Create/Update/Delete) with each object's before/after text. Pass a different gitRef to compare against a branch/commit, or targetFile to compare against a model on disk, or sourceFile to compare two files. Read-only. To compare the working copy with the LIVE (published) model: in Studio open Publish > Published > Changes, which already takes the publish destination as the other side; through MCP call apply_model_diff with targetEndpoint and targetDatabase and commit=false. That is a dry run, it changes nothing, and it lists the objects that differ.")]
         public static async Task<ModelDiff> ModelDiff(IEngine engine,
             [Description("Compare the open model against this git ref (default 'HEAD'); ignored if targetFile is set")] string gitRef = "HEAD",
             [Description("Compare against a model on disk (TMDL/PBIP folder or .bim) instead of git")] string targetFile = null,
@@ -2267,7 +2309,7 @@ namespace Semanticus.Engine
         public static async Task<AccountProfile[]> ListAccountProfiles(IEngine engine)
             => await engine.ListAccountProfilesAsync();
 
-        [McpServerTool(Name = "remember_xmla_connection"), Description("Remember an XMLA endpoint in the shared connection registry without connecting to it. Stores endpoint, optional model name and auth MODE only; never a token or secret. New records are unlabelled and therefore treated as production until the human labels them. Use this only when the endpoint is already known, then list_connections to retrieve its id. This does not open, query, edit, or publish a model.")]
+        [McpServerTool(Name = "remember_xmla_connection"), Description("Remember an XMLA endpoint in the shared connection registry without connecting to it. Stores endpoint, optional model name and auth MODE only; never a token or secret. New records are unlabelled and therefore treated as dev (a test target) until a label is set. Use this only when the endpoint is already known, then list_connections to retrieve its id. This does not open, query, edit, or publish a model.")]
         public static async Task<ModelConnectionRecord> RememberXmlaConnection(IEngine engine,
             [Description("XMLA endpoint")] string endpoint,
             [Description("Optional model/database name")] string database = null,
@@ -2310,7 +2352,7 @@ namespace Semanticus.Engine
             [Description("true lets go of the open model's publish destination instead of setting one. Nothing is deployed or deleted; clearing when none is set changes nothing and says so in 'note'. A model open live from its workspace saves straight back to it, so its destination cannot be cleared: open a local copy instead.")] bool clear = false)
             => await engine.SetPublishDestinationAsync(connectionId, "agent", clear);
 
-        [McpServerTool(Name = "forget_connection"), Description("Remove a connection from the remembered list (see list_connections). Does not disconnect anything and does not touch the model. It only forgets the endpoint, its auth mode, its target label and its working folder. Re-connecting to the same endpoint records it again, UNLABELLED, which means it will be treated as production until the user labels it.")]
+        [McpServerTool(Name = "forget_connection"), Description("Remove a connection from the remembered list (see list_connections). Does not disconnect anything and does not touch the model. It only forgets the endpoint, its auth mode, its target label and its working folder. Re-connecting to the same endpoint records it again, UNLABELLED, which means it is treated as dev (a test target) until it is labelled.")]
         public static async Task<object> ForgetConnection(IEngine engine,
             [Description("Connection id from list_connections")] string id)
         {
@@ -2326,7 +2368,7 @@ namespace Semanticus.Engine
             catch (Exception ex) { return new { forgotten = false, error = ex.Message }; }
         }
 
-        [McpServerTool(Name = "get_agent_policy"), Description("Read the agent-permissions policy: what YOU (the agent) are allowed to do to a live target, by environment. Returns the global on/off switch, the active preset, and the capability×label matrix. Labels are local | dev | uat | prod; an UNLABELLED target is treated as prod (the strictest). Actions are allow | ask | deny: 'ask' means a human must approve the specific action in the UI before you can do it (see list_pending_approvals. You request approval simply by attempting the action). Reading, and running a calculation, are never gated. Use this to know BEFORE you try: if pushing to a target is 'deny' or 'ask', tell the user rather than failing repeatedly. Only a human can change this policy or the labels it reads; the user sets labels in Connections, in VS Code. Read-only and free.")]
+        [McpServerTool(Name = "get_agent_policy"), Description("Read the agent-permissions policy: what YOU (the agent) are allowed to do to a live target, by environment. Returns the global on/off switch, the active preset, and the capability×label matrix. Labels are local | dev | uat | prod; an UNLABELLED target is treated as dev (a test target); a label Semanticus does not know is treated as prod. Actions are allow | ask | deny: 'ask' means a human must approve the specific action in the UI before you can do it (see list_pending_approvals. You request approval simply by attempting the action). Reading, and running a calculation, are never gated. Use this to know BEFORE you try: if pushing to a target is 'deny' or 'ask', tell the user rather than failing repeatedly. Only a human can change this policy or the labels it reads; the user sets labels in Connections, in VS Code. Read-only and free.")]
         public static async Task<AgentPolicy> GetAgentPolicy(IEngine engine) => await engine.GetAgentPolicyAsync();
 
         [McpServerTool(Name = "list_pending_approvals"), Description("The 'waiting for you' queue: actions you attempted that the policy said need a human's approval (an 'ask'). Each entry is bound to the EXACT action (capability + target + intent); the human approves it in the UI, then you retry the SAME action and it proceeds once (a grant is one-shot and expires). Use this to see what you're waiting on. You cannot approve your own actions. That asymmetry is the point. Read-only and free.")]
@@ -2337,6 +2379,12 @@ namespace Semanticus.Engine
             [Description("Only restore points for this XMLA endpoint (requires database)")] string endpoint = null,
             [Description("Only restore points for this dataset (database) name")] string database = null)
             => await engine.ListRestorePointsAsync(endpoint, database);
+
+        [McpServerTool(Name = "resolve_file_recovery"), Description("Restore or discard the unsaved file changes reported in model_overview.fileRecovery. Restore changes only the working model, leaves it unsaved, and creates one undo step. It never saves the source file. Pass the sessionId from model_overview and restore=true to restore, or false to discard the recovery copy.")]
+        public static Task<bool> ResolveFileRecovery(IEngine engine,
+            [Description("The sessionId from model_overview")] string expectedSession,
+            [Description("True restores the kept changes; false discards the recovery copy")] bool restore)
+            => engine.ResolveFileRecoveryAsync(expectedSession, restore, "agent");
 
         [McpServerTool(Name = "rollback_push"), Description("Undo a push to a PUBLISHED model by restoring it to a pre-push snapshot (see list_restore_points). DRY RUN by default: commit=false reports exactly what would be restored and (critically) what would be REMOVED, i.e. every object that exists on the target now but not in the snapshot. That includes anything the push added AND anything anyone else added since, so READ RemovedRefs before committing. Pass commit=true to write. Restores the object kinds a redeploy cannot: relationships, roles (RLS), perspectives, hierarchies, partitions, cultures, datasources and data tables. Resolution is by lineage identity, so an object republished under you is refused rather than overwritten. Recorded in the audit trail. FREE at both tiers. The undo for an irreversible write is never gated. Next: run list_restore_points to find the id; run rollback_push(id) to preview; then rollback_push(id, commit=true).")]
         public static async Task<RollbackResult> RollbackPush(IEngine engine,
@@ -2391,6 +2439,14 @@ namespace Semanticus.Engine
             [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
             CancellationToken cancellationToken = default)
             => engine.ListWorkspaceModelsAsync(workspaceId, authMode, null, "agent", cancellationToken);
+
+        [McpServerTool(Name = "list_workspace_sql_endpoints"), Description("List the SQL endpoints in a Fabric workspace: each lakehouse's SQL analytics endpoint and each warehouse (workspace, kind, database, server, status). Leave workspaceId empty to read every workspace you can see. Each row maps straight onto start_model_from_sql(server, database) and save_sql_source. Uses the person's own saved sign-in in Semanticus, never the az tool unless you pass azcli. When no sign-in is saved, the result says signInNeeded with what to ask the person. Free and read-only.")]
+        public static Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpoints(IEngine engine,
+            [Description("Workspace id, from list_workspaces. Empty reads every workspace.")] string workspaceId = null,
+            [Description("Leave empty to use the saved sign-in. Or: interactive | serviceprincipal | devicecode | azcli")] string authMode = null,
+            [Description("Tenant id, optional")] string tenantId = null,
+            CancellationToken cancellationToken = default)
+            => engine.ListWorkspaceSqlEndpointsAsync(workspaceId, authMode, tenantId, "agent", cancellationToken);
 
         [McpServerTool(Name = "list_deployment_pipelines"), Description("List the Fabric deployment pipelines you can access (id, displayName, description). Use get_pipeline_stages then get_stage_items to drill into a pipeline's Dev/Test/Prod stages. Live read; read-only.")]
         public static Task<DeploymentPipeline[]> ListDeploymentPipelines(IEngine engine,

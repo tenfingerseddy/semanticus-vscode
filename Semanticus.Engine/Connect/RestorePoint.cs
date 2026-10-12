@@ -65,7 +65,7 @@ namespace Semanticus.Engine
         public string Note { get; set; }
     }
 
-    public static class RestorePointStore
+    public static partial class RestorePointStore
     {
         public const int MaxPerTarget = 10;
         private const string DirName = "restore";
@@ -156,6 +156,7 @@ namespace Semanticus.Engine
             try
             {
                 var stale = Directory.EnumerateFiles(dir, "*.json")
+                    .Where(p => SafeId.IsMatch(Path.GetFileNameWithoutExtension(p)))
                     .OrderByDescending(p => p, StringComparer.Ordinal)   // id is lexicographically sortable by time
                     .Skip(MaxPerTarget).ToList();
                 foreach (var json in stale)

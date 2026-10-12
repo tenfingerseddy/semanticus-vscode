@@ -203,6 +203,7 @@ namespace Semanticus.Engine
             ["get_model_graph"] = P(("detail", "internal")),
             ["impact_assessment"] = P(("objectRef", "pick:objects"), ("intent", "enum:change|rename|remove|restructure"),
                 ("scope", "enum:modelAndReports|model"), ("reportPaths", "internal")),
+            ["benchmark_cold_warm"] = P(("query", "authored:dax"), ("runs", "number"), ("clearForCold", "flag"), ("confirm", "internal")),
             ["benchmark_dax"] = P(("query", "authored:dax"), ("runs", "number"), ("mode", "enum:warm|coldWarm"), ("clearForCold", "flag"), ("confirm", "internal")),
             ["profile_dax"] = P(("query", "authored:dax")),
 

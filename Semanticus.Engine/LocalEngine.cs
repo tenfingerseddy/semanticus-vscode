@@ -251,7 +251,17 @@ namespace Semanticus.Engine
         public Task<Entitlement.EntitlementInfo> GetEntitlementAsync()
         {
             var e = _entitlement;   // one read: a licence swap between two reads would stamp one tier with another's grants
-            return Task.FromResult(Entitlement.FeatureGrants.Stamp(e.Info, e));
+            var info = Entitlement.FeatureGrants.Stamp(e.Info, e);
+            if (info == null) return Task.FromResult(info);
+            var assistant = CurrentAssistant;
+            var inactive = _decisions?.Oracle is Semanticus.Engine.Decisions.JevDecisionOracle { SubscriptionInactive: true } && Entitlement.FeatureGrants.IsProTier(e);
+            if (!inactive && assistant == null) return Task.FromResult(info);
+            // A copy: the licence's own info is shared, and these facts are the relay's and the door's, not the licence's.
+            return Task.FromResult(new Entitlement.EntitlementInfo
+            {
+                Tier = info.Tier, LicensedTo = info.LicensedTo, Expiry = info.Expiry, Reason = info.Reason,
+                ManageUrl = info.ManageUrl, Features = info.Features, PlanInactive = inactive || info.PlanInactive, Assistant = assistant,
+            });
         }
 
         // ---- Record verified edits (free audit switch) --------------------------------------------------------------
@@ -926,7 +936,7 @@ namespace Semanticus.Engine
             var coords = ConnectionInput.Parse(endpoint, database);
             var rawEndpoint = endpoint;   // classified below: LoopbackIntakeRefusal reads the RAW address, not coords
             // Phase 2 human-only boundary: an agent may pick a signed-in saved profile, never trigger an interactive
-            // sign-in or repoint the tenant default (mirrors label_connection's refusal). The agent door never passes
+            // sign-in or implicitly repoint the tenant default during an open. The explicit saved-account tool is separate. The agent door never passes
             // forceReauth. AgentInteractiveRefusal additionally refuses an agent interactive/devicecode connect with no
             // silently-usable account BEFORE any prompt could appear (BLOCKER).
             // LoopbackIntakeRefusal takes rawEndpoint, so the classifier keeps a URI's authority; see its own comment.
@@ -1077,11 +1087,9 @@ namespace Semanticus.Engine
         // a profile without repointing"; explicit true is make-default. Pure + unit-testable.
         internal static bool RepointDefaultRule(bool? makeDefault, bool forceReauth) => makeDefault ?? forceReauth;
 
-        // The human-only boundary for Phase 2 account selection (mirrors label_connection / ConnectionRegistry.IsHuman:
-        // fail closed on an unrecognised origin). An interactive sign-in (adding/forcing a NEW Microsoft account, forceReauth)
-        // and repointing the tenant default (makeDefault) are HUMAN actions — an agent that could pop a browser or silently
-        // move every model's default has defeated the identity model. Picking an already-signed-in SAVED profile is fine for
-        // an agent (device-local, credential-free, no prompt). Returns a teaching refusal, or null when the action may proceed.
+        // An open may silently reuse a signed-in saved profile. Interactive sign-in and implicit make-default
+        // during an open require the person, including for an unrecognised origin. The explicit saved-default tool
+        // has its own local-write gate. Returns a teaching refusal, or null when the action may proceed.
         internal static string AccountSelectionRefusal(string origin, bool forceReauth, bool makeDefault, string accountProfileId)
         {
             if (string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase)) return null;
@@ -1294,7 +1302,7 @@ namespace Semanticus.Engine
 
         // The target label a policy gates on. Precedence: an EXPLICIT registry label (a human declaration) beats
         // everything, including the loopback inference — if the user says a target is prod, it is prod; then loopback ⇒
-        // local (the only inference we make besides fail-closed, and it is host-exact); then UNLABELLED ⇒ prod.
+        // local (the only inference we make besides fail-closed, and it is host-exact); then UNLABELLED ⇒ test (dev; Kane, 10 Oct 2026).
         internal static string ResolveTargetLabel(string endpoint, string database)
         {
             var rec = ConnectionRegistry.FindByEndpoint(endpoint, database);
@@ -1360,7 +1368,8 @@ namespace Semanticus.Engine
 
         /// <summary>Every model source this machine has connected to, newest first, including local files.
         /// Read-only, free, both doors.</summary>
-        public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List().Select(ConnectionJobs.WithReasons).ToArray());
+        public Task<ModelConnectionRecord[]> ListConnectionsAsync() => Task.FromResult(ConnectionRegistry.List()
+            .Where(r => r.Kind != "file" || !ThrowawayPaths.IsLearnCopy(r.Endpoint)).Select(ConnectionJobs.WithReasons).ToArray());
 
         /// <summary>The connection timeline (connects, opens, account switches), newest first — optionally one target.
         /// Device-local, holds no credentials. Read-only, free, both doors.</summary>
@@ -1539,13 +1548,11 @@ namespace Semanticus.Engine
             return Task.FromResult(EntraToken.ListProfiles().ToArray());
         }
 
-        /// <summary>Make a saved profile the tenant DEFAULT: the account an UNQUALIFIED open of any model on that tenant will
-        /// use from now on. HUMAN-ONLY (it repoints every remembered model on the tenant — a governance-weight blast radius,
-        /// like label_connection), and broadcast so both doors refresh. Records a switch in the connection history.</summary>
+        /// <summary>Make a saved profile the tenant default for future opens. This device-local setting uses the
+        /// assistant's local-write gate and broadcasts so both doors refresh. Records a switch in connection history.</summary>
         public async Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human")
         {
-            if (!string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Only a human can set the default account. It repoints every remembered model on that tenant, so an agent cannot. Ask the user to set it from Connections.");
+            GuardOutsideWrite(origin);
             var profile = EntraToken.FindProfile(profileId)
                 ?? throw new InvalidOperationException("No saved account with that id. Open Connections to see the saved accounts.");
             var result = EntraToken.SetDefaultProfileResult(profileId);
@@ -1562,7 +1569,7 @@ namespace Semanticus.Engine
             // Broadcast so the hub, the native picker and the Compare picker re-read (dual-drive parity with connect/forget).
             await PublishActivityAsync(new ActivityEvent
             {
-                Kind = "set_default_account_profile", Origin = "human",
+                Kind = "set_default_account_profile", Origin = origin,
                 Label = $"Made {profile.Username} the default account", Target = profileId, Ok = true,
             });
             return EntraToken.ListProfiles().ToArray();
@@ -1611,15 +1618,17 @@ namespace Semanticus.Engine
             return record;
         }
 
-        /// <summary>Declare what a target IS (<c>local|dev|uat|prod</c>). Refused from the agent door: the agent's own
-        /// permissions are gated on this label. Clearing it returns the target to unlabelled, i.e. treated as prod.</summary>
+        /// <summary>Declare a target's environment under the local-write policy. The agent can set only the first label.
+        /// Live permissions use this label. Only the person can change or clear it.</summary>
         public async Task<ModelConnectionRecord> LabelConnectionAsync(string id, string label, string origin = "agent")
         {
             var activityOrigin = string.IsNullOrWhiteSpace(origin) ? "unknown" : origin;
             ModelConnectionRecord record;
             try
             {
-                record = ConnectionRegistry.SetLabel(id, label, origin);
+                GuardOutsideWrite(origin);
+                using (GuardRegistry(nameof(LabelConnectionAsync), "connections", ConnectionRegistry.StatePath()))
+                    record = ConnectionRegistry.SetLabel(id, label, origin);
             }
             catch (Exception ex)
             {
@@ -3016,7 +3025,7 @@ namespace Semanticus.Engine
             // out of a capped list), unless the person already saved it (labelled it, linked a working copy). The
             // timeline still gets its row either way.
             var throwaway = ThrowawayPaths.IsThrowaway(full) && ConnectionRegistry.FindByEndpoint(full, null) == null;
-            var rec = throwaway ? null : RememberConnection("file", full, null, result.ModelName);
+            var rec = throwaway || ThrowawayPaths.IsLearnCopy(full) ? null : RememberConnection("file", full, null, result.ModelName);
             RecordConnectionHistory(rec, "open", null, full, null, null, ok: true, throwaway: throwaway);
             return result;
         }
@@ -3226,7 +3235,7 @@ namespace Semanticus.Engine
             // nothing observable happens ahead of the refusals.
             var coords = ConnectionInput.Parse(endpoint, database);
             var rawEndpoint = endpoint;   // classified below: LoopbackIntakeRefusal reads the RAW address, not coords
-            // Phase 2 human-only boundary (mirrors label_connection): an agent may pick an already-signed-in saved profile,
+            // Interactive sign-in boundary: an agent may pick an already-signed-in saved profile,
             // but never force an interactive sign-in (forceReauth), repoint the tenant default, or select a signed-out
             // profile. AgentInteractiveRefusal also refuses an agent interactive/devicecode open with no silently-usable
             // account BEFORE any prompt could appear (BLOCKER). All checked BEFORE any auth or model export.
@@ -4113,16 +4122,7 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set doc narrative", m =>
             {
                 FenceModelIdentity(s, expectedIdentity);
-                var ao = ResolveDocTarget(m, objRef) ?? throw new InvalidOperationException($"setDocSection: {objRef} cannot carry documentation narrative.");
-                var env = ReadDocEnvelope(ao);
-                var sections = (System.Text.Json.Nodes.JsonObject)env["sections"];
-                GuardExpectedValue("section", expectedMarkdown, DocStr(sections[sectionKey]), newVal);
-                if (string.IsNullOrEmpty(newVal)) sections.Remove(sectionKey);
-                else sections[sectionKey] = newVal;
-                env["author"] = origin;
-                env["updatedUtc"] = DateTime.UtcNow.ToString("o");
-                // public SetAnnotation(name,value) is undoable + change-tracked (broadcasts); value=null removes it.
-                ao.SetAnnotation(DocAnnotation, sections.Count == 0 ? null : env.ToJsonString());
+                ApplyDocSection(m, objRef, sectionKey, markdown, origin, expectedMarkdown);
             });
             return new SetResult { Revision = rev, Changed = true };
         }
@@ -4475,6 +4475,7 @@ namespace Semanticus.Engine
                     if (!string.IsNullOrEmpty(path)) { s.AddFormerIdentity(ModelIdentityOf(s)); s.SourcePath = target; }
                     await s.RebaseSidecarsAsync(CarrySidecars(oldSource, target));
                     switchesNotKept = CarryDecisionSwitches(s, switchesBefore);
+                    await s.RunAsync(() => { s.ClearFileRecoveryAfterSave(); s.StartFileRecovery(); return true; });
                 }
                 finally
                 {
@@ -4486,10 +4487,10 @@ namespace Semanticus.Engine
             _sessions.Ledger.EnsureLoaded(s.Id);
             // After the move: the History's file is found where the model now lives, never at the place a save-as just left (it is written from here on).
             if (savedRevision >= 0) _sessions.Ledger.StampSaved(s.Id, savedSteps, savedRevision);
-            if (wroteEdits && marked.PlanSaw) NotePlanSave(s, marked.Saves);
+            if (wroteEdits && marked.PlanSaw) NotePlanSave(s, marked.Saves, origin);
             // Saving is not an undoable edit, but both doors must see the dirty flag clear. A ChangeNotification
             // with empty deltas is the same wire the UI already refreshes on.
-            PublishSaveNotification(s, "save");
+            PublishSaveNotification(s, "save", origin: origin);
             try { _loadedDiskStamp = ModelDiskStamp(); }
             catch { _loadedDiskStamp = null; }
             await CaptureVitalsAsync(s, "save_model", "system", Array.Empty<string>(), liveReflectsSession: false);
@@ -4902,7 +4903,7 @@ namespace Semanticus.Engine
             if (s != null && ReferenceEquals(_sessions.Current, s)) PublishSaveNotification(s, label, swap: true);
         }
 
-        private void PublishSaveNotification(Session s, string label, bool swap = false)
+        private void PublishSaveNotification(Session s, string label, bool swap = false, string origin = "system")
         {
             try
             {
@@ -4910,7 +4911,8 @@ namespace Semanticus.Engine
                 {
                     SessionId = s.Id,
                     Revision = s.Revision,
-                    Origin = "system",
+                    Origin = origin,
+                    By = ChangeBy.For(null, origin),
                     Label = label,
                     Deltas = Array.Empty<ChangeDelta>(),
                     Undo = s.UndoStateNow(),
@@ -4951,6 +4953,8 @@ namespace Semanticus.Engine
                 Source = s.SourcePath,
                 HasUnsavedChanges = s.HasUnsavedChanges,
                 HasUnsavedEdits = s.HasUnsavedEdits,
+                KeepsUnsavedWork = true,
+                FileRecovery = s.FileRecovery,
                 DiskDiverged = diskDiverged,
                 Tables = m.Tables.Count,
                 Measures = m.AllMeasures.Count(),
@@ -8313,11 +8317,21 @@ namespace Semanticus.Engine
             return EntraToken.AcquireAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
         }
 
+        /// <summary>Test seam at the one place a SQL-audience token is minted: it answers in place of the credential and
+        /// sees (mode, tenant, origin), so a test can count how many times a run signs in.</summary>
+        internal Func<string, string, string, string> SqlTokenFetchForTests;
+
+        /// <summary>Test seam for the engine's one-line-per-phase log of a test run: when set, the lines go here instead of
+        /// to the engine log, so a test can read them.</summary>
+        internal Action<string> RunLogForTests;
+
         // The ONE place the schema / reconcile / test-suite lane mints a SQL-audience token. The audience differs from
         // XMLA but the PROMPT surface is identical (one credential, one browser), so the agent rule is the same:
         // DeployGuard's fail-closed test decides, and an agent gets DisableAutomaticAuthentication.
         private Task<string> AcquireSqlTokenAsync(string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken)
         {
+            var seam = SqlTokenFetchForTests;
+            if (seam != null) return Task.FromResult(seam(authMode, tenantId, origin));
             return EntraToken.AcquireSqlAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
         }
 
@@ -8338,6 +8352,74 @@ namespace Semanticus.Engine
             var token = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken);
             return await FabricRest.ListSemanticModelsAsync(workspaceId, token, cancellationToken);
         }
+
+        internal const string SqlEndpointSignInNeeded = "Semanticus has no Power BI sign-in saved yet, so it cannot list the workspace's SQL endpoints. Ask the person to open Connections in Semanticus and press Sign in, then ask again. They can also paste the SQL endpoint address from the item's settings in Fabric.";
+        internal const int SqlEndpointWorkspaceCap = 50;
+
+        // The sign-in this listing uses, decided here so the agent never lands on az by default: the mode passed in, else
+        // the start plan's, else a saved account on this device, else a ready service principal, else none (null).
+        internal (string Mode, string Tenant) ResolveSqlListSignIn(string authMode, string tenantId)
+        {
+            if (!string.IsNullOrWhiteSpace(authMode)) return (authMode.Trim(), tenantId);
+            StartSource source;
+            lock (_startPlanLock) source = _startPlan?.Source;
+            // start_model_from_sql still defaults to azcli, so a start plan's azcli is that default and not the person's choice.
+            if (!string.IsNullOrWhiteSpace(source?.AuthMode) && !string.Equals(source.AuthMode, "azcli", StringComparison.OrdinalIgnoreCase))
+                return (source.AuthMode, tenantId ?? source.TenantId);
+            var profile = EntraToken.ListProfiles().Where(p => p.SignedIn).OrderByDescending(p => p.IsDefault).FirstOrDefault();
+            if (profile != null) return (string.IsNullOrWhiteSpace(profile.Family) ? "interactive" : profile.Family, tenantId ?? profile.TenantId);
+            if (EntraToken.ProbePrerequisites("serviceprincipal", tenantId).Ready) return ("serviceprincipal", tenantId);
+            return (null, tenantId);
+        }
+
+        // Every SQL endpoint (lakehouse SQL endpoints and warehouses) in one workspace, or in each workspace this sign-in
+        // sees when none is named. Read-only. No usable sign-in is a normal answer that says what to do, not an error.
+        public async Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpointsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
+        {
+            var (mode, tenant) = ResolveSqlListSignIn(authMode, tenantId);
+            if (mode == null)
+                return new WorkspaceSqlEndpointList { SignInNeeded = true, Message = SqlEndpointSignInNeeded };
+            string token;
+            try { token = await AcquireFabricTokenAsync(mode, tenant, origin, cancellationToken); }
+            catch (Exception ex) when (IsSignInMissing(ex))
+            {
+                return new WorkspaceSqlEndpointList { SignInNeeded = true, Message = SqlEndpointSignInNeeded };
+            }
+            if (!string.IsNullOrWhiteSpace(workspaceId))
+            {
+                var rows = await FabricRest.ListSqlEndpointsAsync(workspaceId.Trim(), token, cancellationToken);
+                return new WorkspaceSqlEndpointList { Endpoints = rows };
+            }
+            var all = await FabricRest.ListWorkspacesAsync(token, cancellationToken);
+            var picked = all.Take(SqlEndpointWorkspaceCap).ToArray();
+            var results = new WorkspaceSqlEndpoint[picked.Length][];
+            using var gate = new SemaphoreSlim(4);
+            await Task.WhenAll(picked.Select(async (w, i) =>
+            {
+                await gate.WaitAsync(cancellationToken);
+                try
+                {
+                    var rows = await FabricRest.ListSqlEndpointsAsync(w.Id, token, cancellationToken);
+                    foreach (var r in rows) r.WorkspaceName = w.DisplayName;
+                    results[i] = rows;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    results[i] = new[] { new WorkspaceSqlEndpoint { WorkspaceId = w.Id, WorkspaceName = w.DisplayName, Error = FabricRest.Scrub(ex.Message) } };
+                }
+                finally { gate.Release(); }
+            }));
+            return new WorkspaceSqlEndpointList
+            {
+                Endpoints = results.SelectMany(r => r).ToArray(),
+                Truncated = all.Length > picked.Length,
+                Message = all.Length > picked.Length ? $"Only the first {SqlEndpointWorkspaceCap} of {all.Length} workspaces were read. Pass a workspaceId to list another one." : null,
+            };
+        }
+
+        private static bool IsSignInMissing(Exception ex)
+            => ex is Azure.Identity.AuthenticationFailedException || ex.InnerException is Azure.Identity.AuthenticationFailedException
+               || (ex is InvalidOperationException && ex.Message.Contains("serviceprincipal auth needs", StringComparison.Ordinal));
 
         public async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", System.Threading.CancellationToken cancellationToken = default)
         {
@@ -9145,19 +9227,7 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             var rev = await s.MutateAsync(origin, $"{(include ? "add to" : "remove from")} perspective {perspectiveRef}", m =>
             {
-                if (!(ObjectRefs.Resolve(m, perspectiveRef) is Perspective p))
-                    throw new InvalidOperationException($"{perspectiveRef} is not a perspective. Run get_perspectives to see them; create one with create_perspective.");
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
-                if (!(obj is ITabularPerspectiveObject po))
-                    throw new InvalidOperationException($"{objRef} ({ObjectRefs.KindOf(obj)}) can't be put in a perspective. Only tables, columns, measures and hierarchies can.");
-                // Setting a table cascades to its columns/measures/hierarchies (PerspectiveTableIndexer).
-                var was = po.InPerspective[p];
-                po.InPerspective[p] = include;
-                // The wrapper reports no change for a perspective member, so the History and the person's question would name
-                // nothing: say which object went in or out of which perspective.
-                if (was != include)
-                    s.RecordDelta(new ChangeDelta { Kind = "update", Ref = ObjectRefs.For((ITabularObject)po), Props = new[] { "InPerspective" },
-                        Before = include ? null : p.Name, After = include ? p.Name : null });
+                ApplyPerspectiveMember(m, s, perspectiveRef, objRef, include);
             });
             return new SetResult { Revision = rev, Changed = true };
         }
@@ -9252,15 +9322,20 @@ namespace Semanticus.Engine
         {
             if (objRefs == null || objRefs.Length == 0)
                 throw new InvalidOperationException("delete_objects: pass at least one object ref. Run list_objects or search_model to find refs.");
-            if (objRefs.Length == 1)
-                return await DeleteObjectAsync(objRefs[0], origin);
             var s = _sessions.Require();
             var unique = objRefs.Where(r => !string.IsNullOrWhiteSpace(r)).Distinct().ToArray();
             var exists = await s.ReadAsync(m => unique.Where(r => ObjectRefs.Resolve(m, r) != null).ToArray());
             if (exists.Length == 0) return new SetResult { Revision = s.Revision, Changed = false };
-            if (exists.Length == 1) return await DeleteObjectAsync(exists[0], origin);
+            if (exists.Length == 1)
+            {
+                var one = await DeleteObjectAsync(exists[0], origin);
+                if (one.Changed) NoteBatch(s.Id, origin, 1, "deleted", "objects", "edit/properties");
+                return one;
+            }
+            var count = 0;
             var rev = await s.MutateAsync(origin, $"delete {exists.Length} objects", m =>
             {
+                count = exists.Select(r => ObjectRefs.Resolve(m, r)).Where(o => o != null).Distinct(ReferenceEqualityComparer.Instance).Count();
                 foreach (var r in exists)
                 {
                     var obj = ObjectRefs.Resolve(m, r);
@@ -9268,6 +9343,7 @@ namespace Semanticus.Engine
                     DeleteResolvedObject(m, obj, r);
                 }
             });
+            NoteBatch(s.Id, origin, count, "deleted", "objects", "edit/properties");
             return new SetResult { Revision = rev, Changed = true };
         }
 
@@ -9312,67 +9388,7 @@ namespace Semanticus.Engine
             string newRef = null;
             await s.MutateAsync(origin, $"duplicate {objRef}", m =>
             {
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to find it.");
-
-                // Optional paste-target CONTAINER (the tree's copy/paste). Resolving to the source's own container
-                // collapses to the classic beside-the-original duplicate, so a caller can always pass its selection.
-                ITabularNamedObject target = null;
-                if (!string.IsNullOrWhiteSpace(targetRef))
-                    target = ObjectRefs.Resolve(m, targetRef) ?? throw new InvalidOperationException(
-                        $"{targetRef} not found. Pass a table ref (e.g. 'table:Sales') to copy into, or omit targetRef to duplicate beside the original.");
-
-                ITabularObject copy;
-                switch (obj)
-                {
-                    case Measure me:
-                    {
-                        var tt = CrossTableTarget(target, me.Table, "a measure");
-                        if (tt == null) { copy = me.Clone(newName); break; }
-                        // Measure names are model-wide unique and must not collide with a column on the landing
-                        // table. Clone() names against the SOURCE collection, so cross-table we name against the
-                        // TARGET ourselves: clone under a throwaway name, rename inside the same undo batch.
-                        var final = UniqueCopyName(string.IsNullOrEmpty(newName) ? me.Name : newName,
-                            n => tt.Model.AllMeasures.Any(x => NameEq(x.Name, n)) || tt.Columns.Any(x => NameEq(x.Name, n)));
-                        var mc = me.Clone(TempCloneName(), true, tt);
-                        mc.Name = final;
-                        copy = mc;
-                        break;
-                    }
-                    // Columns and hierarchies stay on their own table: a column's data (source binding / row
-                    // context) and a hierarchy's levels only exist there — a cross-table clone would dangle.
-                    case CalculatedTableColumn ctc:
-                        RefuseCrossTable(target, ctc.Table, "a calc-table column", "it is produced by its table's DAX expression. Duplicate it on its own table, or copy the expression into the target table's DAX");
-                        copy = ctc.Clone(newName); break;
-                    case CalculatedColumn cc:
-                        RefuseCrossTable(target, cc.Table, "a column", "a column's data lives in its own table. Duplicate it there, or create a new calculated column on the target table");
-                        copy = cc.Clone(newName); break;
-                    case DataColumn dc:
-                        RefuseCrossTable(target, dc.Table, "a column", "a data column is bound to its own table's source query. Duplicate it there, or add the column in the target table's source");
-                        copy = dc.Clone(newName); break;
-                    case Hierarchy h:
-                        RefuseCrossTable(target, h.Table, "a hierarchy", "its levels are built from its own table's columns. Duplicate it there, or create a new hierarchy on the target table from that table's columns");
-                        copy = h.Clone(newName); break;
-                    case CalculationItem ci:
-                    {
-                        var tg = target == null || ReferenceEquals(target, ci.CalculationGroupTable) ? null
-                            : target as CalculationGroupTable ?? throw new InvalidOperationException(
-                                $"Can't paste a calculation item onto {ObjectRefs.KindOf(target)} '{target.Name}'. The target must be a calculation group (pass its 'table:' ref).");
-                        if (tg == null) { copy = ci.Clone(newName); break; }
-                        var final = UniqueCopyName(string.IsNullOrEmpty(newName) ? ci.Name : newName,
-                            n => tg.CalculationItems.Any(x => NameEq(x.Name, n)));
-                        var cic = ci.Clone(TempCloneName(), tg.CalculationGroup);
-                        cic.Name = final;
-                        copy = cic;
-                        break;
-                    }
-                    case Table t:   // Table, CalculatedTable (incl. field parameters), CalculationGroupTable — Clone dispatches internally
-                        if (target != null && !ReferenceEquals(target, t)) throw new InvalidOperationException(
-                            "Tables, calculation groups and field parameters duplicate at model scope. Omit targetRef.");
-                        copy = t.Clone(newName); break;
-                    default:
-                        throw new InvalidOperationException($"Duplicate is not supported for {ObjectRefs.KindOf(obj)} (supported: measure, calculated/data/calc-table column, hierarchy, calculation item, table / calculated table / field parameter, calculation group).");
-                }
-                newRef = ObjectRefs.For(copy);
+                newRef = DuplicateObjectCore(m, objRef, newName, targetRef);
             });
             return newRef;
         }
@@ -10335,7 +10351,7 @@ namespace Semanticus.Engine
         {
             var s = _sessions.Require();
             var changed = false;
-            var reportWarn = false;
+            string reportWarn = null;
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             long rev;
             try
@@ -10345,45 +10361,42 @@ namespace Semanticus.Engine
                     FenceModelIdentity(s, expectedIdentity);
                     var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"{objRef} not found. Check the ref with get_object, or run list_objects / search_model to see it.");
                     if (expectedValue != null) GuardExpectedValue("value", expectedValue, GridValueOf(m, obj, propertyName), value);   // the grid's starting point against what is live NOW, in this turn
-                    if (string.Equals(propertyName, "SortByColumn", StringComparison.Ordinal) && obj is Column sortCol)
-                    {
-                        changed = ApplySortByColumn(sortCol, value);
-                        if (!changed) throw new NoopMutationException();
-                        return;
-                    }
-                    if (string.Equals(propertyName, "CompatibilityLevel", StringComparison.Ordinal) && obj is Model)
-                    {
-                        changed = ApplyCompatibilityLevel(m, value);
-                        if (!changed) throw new NoopMutationException();
-                        return;
-                    }
-                    ValidatePropertyWrite(m, obj, propertyName, value);
-                    var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
-                            ?? throw new InvalidOperationException($"{ObjectRefs.KindOf(obj)} has no property '{propertyName}'. Run get_properties on {objRef} to see its settable property names.");
-                    if (!p.CanWrite) throw new InvalidOperationException($"Property '{propertyName}' is read-only.");
-                    var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
-                    var next = ConvertPropertyValue(pt, value, propertyName);
-                    var current = p.GetValue(obj);
-                    if (Equals(current, next) && !(p.Name == "Ordinal" && obj is CalculationItem)) throw new NoopMutationException();   // already the target value
-                    if (p.Name == "SummarizeBy" && obj is Column sumCol && next is AggregateFunction agg)
-                        GuardSummarizeBy(sumCol, agg);
-                    // The property grid's rename path: a Name write must go through the ONE rename seam. The reflected
-                    // setter still runs AutoFixup, but only Session.Rename cascades the rename into the LSDL.
-                    if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
-                    {
-                        changed = s.Rename(named, newName);
-                        if (changed && RenameTouchesReports(named)) reportWarn = true;
-                    }
-                    else if (p.Name == "Ordinal" && obj is CalculationItem ci && next is int ord)
-                        changed = MoveCalculationItem(ci, ord);
-                    else { p.SetValue(obj, next); changed = true; }   // wrapper setter tracks the change
+                    changed = ApplyObjectProperty(m, s, obj, propertyName, value, out reportWarn);
                     if (!changed) throw new NoopMutationException();
                 }, cascade);
             }
             catch (NoopMutationException) { return Noop(s); }
-            return new SetResult { Revision = rev, Changed = changed, Warning = JoinWarnings(cascade, reportWarn ? ReportRenameWarning : null) };
+            return new SetResult { Revision = rev, Changed = changed, Warning = JoinWarnings(cascade, reportWarn) };
         }
 
+
+        private bool ApplyObjectProperty(Model m, Session s, ITabularNamedObject obj, string propertyName, string value, out string reportWarn)
+        {
+            reportWarn = null;
+            if (string.Equals(propertyName, "SortByColumn", StringComparison.Ordinal) && obj is Column sortCol)
+                return ApplySortByColumn(sortCol, value);
+            if (string.Equals(propertyName, "CompatibilityLevel", StringComparison.Ordinal) && obj is Model)
+                return ApplyCompatibilityLevel(m, value);
+            ValidatePropertyWrite(m, obj, propertyName, value);
+            var p = obj.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance)
+                ?? throw new InvalidOperationException($"{ObjectRefs.KindOf(obj)} has no property '{propertyName}'. Run get_properties on {ObjectRefs.For(obj)} to see its settable property names.");
+            if (!p.CanWrite) throw new InvalidOperationException($"Property '{propertyName}' is read-only.");
+            var pt = Nullable.GetUnderlyingType(p.PropertyType) ?? p.PropertyType;
+            var next = ConvertPropertyValue(pt, value, propertyName);
+            if (Equals(p.GetValue(obj), next) && !(p.Name == "Ordinal" && obj is CalculationItem)) return false;
+            if (p.Name == "SummarizeBy" && obj is Column sumCol && next is AggregateFunction agg)
+                GuardSummarizeBy(sumCol, agg);
+            if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
+            {
+                var warning = ReportRenameWarningFor(s, m, named);   // before the rename, while the report names still match
+                var changed = s.Rename(named, newName);
+                reportWarn = changed ? warning : null;
+                return changed;
+            }
+            if (p.Name == "Ordinal" && obj is CalculationItem ci && next is int ord) return MoveCalculationItem(ci, ord);
+            p.SetValue(obj, next);
+            return true;
+        }
         /// <summary>Set ONE property to ONE value across N objects as a SINGLE atomic gesture — the multi-select
         /// property-grid write (#140). Generalizes <see cref="SetObjectPropertyAsync"/>: the whole batch is one
         /// <see cref="Session.MutateAsync"/> (one undo entry, one model/didChange broadcast) so a single undo
@@ -10413,7 +10426,7 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             var changedRefs = new List<string>();
             var warnings = new List<string>();   // non-fatal LSDL-cascade advisories from Name writes
-            var reportWarn = false;
+            var reportWarns = new List<string>();
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
             long rev;
             try
@@ -10474,8 +10487,9 @@ namespace Semanticus.Engine
                             // Name writes route through the ONE rename seam so the LSDL cascade follows.
                             if (p.Name == "Name" && obj is TabularNamedObject named && next is string newName)
                             {
+                                var warning = ReportRenameWarningFor(s, m, named);   // before the rename, while the report names still match
                                 s.Rename(named, newName);      // refused cultures retry at batch end; survivors drain below
-                                if (RenameTouchesReports(named)) reportWarn = true;
+                                if (warning != null) reportWarns.Add(warning);
                             }
                             else if (p.Name == "Ordinal" && obj is CalculationItem ci && next is int ord)
                             {
@@ -10509,7 +10523,12 @@ namespace Semanticus.Engine
                         : $"set {propertyName} = '{value}' on {changedRefs.Count} of {objRefs.Length} objects in one atomic change (the rest already had the value)",
                     Evidence = System.Text.Json.JsonSerializer.Serialize(new { property = propertyName, value, attempted = objRefs.Length, refs = objRefs, changed = changedRefs.Count, changedRefs }),
                 }, vitalsChangedRefs: changedRefs.ToArray());
-            if (reportWarn) warnings.Add(ReportRenameWarning);
+            if (reportWarns.Count > 0)
+            {
+                var distinct = reportWarns.Distinct(StringComparer.Ordinal).ToList();
+                warnings.AddRange(distinct.Take(3));
+                if (distinct.Count > 3) warnings.Add((distinct.Count - 3) + " more renames touch names in reports.");
+            }
             return new SetResult { Revision = rev, Changed = changedRefs.Count > 0, Warning = warnings.Count > 0 ? string.Join(" ", warnings) : null };
         }
 
@@ -10832,7 +10851,7 @@ namespace Semanticus.Engine
             string oldRef = null, newRef = null;
             var aliasedRuns = new List<WorkflowRunState>();
             var cascade = new List<CascadeWarning>();   // this call's own cascade channel (never another caller's)
-            var reportWarn = false;
+            string reportWarn = null;
             await context.WorkflowGate.WaitAsync();
             try
             {
@@ -10852,13 +10871,14 @@ namespace Semanticus.Engine
                             if (ReferenceEquals(ObjectRefs.Resolve(m, currentTarget), target)) aliasedRuns.Add(run);
                         }
                     }
+                    var warning = ReportRenameWarningFor(s, m, obj);   // before the rename, while the report names still match
                     changed = s.Rename(obj, newName); // the FormulaFixup contract seam: rewrites all DAX / RLS references + cascades the LSDL
-                    if (changed && RenameTouchesReports(obj)) reportWarn = true;
+                    if (changed) reportWarn = warning;
                     newRef = ObjectRefs.For(obj);
                 }, cascade);
                 if (changed && !rehearsing && oldRef != null && !string.Equals(oldRef, newRef, StringComparison.Ordinal))
                     foreach (var run in aliasedRuns) run.ObjectRefAliases[oldRef] = newRef;
-                return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef, Warning = JoinWarnings(cascade, reportWarn ? ReportRenameWarning : null) };
+                return new RenameResult { Revision = rev, Changed = changed, NewRef = newRef, Warning = JoinWarnings(cascade, reportWarn) };
             }
             finally { context.WorkflowGate.Release(); }
         }
@@ -11574,22 +11594,7 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, $"BPA fix {ruleId}", m =>
             {
-                var rule = GetBpaRules(m).FirstOrDefault(r => string.Equals(r.ID, ruleId, StringComparison.OrdinalIgnoreCase))
-                           ?? throw new InvalidOperationException($"Unknown BPA rule '{ruleId}'. Run bpa_scan to see the rule ids in force, or load_rules with system='bpa' to add a rule set.");
-                var obj = ObjectRefs.Resolve(m, objRef) ?? throw new InvalidOperationException($"Object not found: {objRef}. Run list_objects or search_model to find the exact ref (e.g. measure:Table/Name, column:Table/Name).");
-                // A deterministic fix exists to CLEAR A FINDING, so it never OVERWRITES an object the rule does not
-                // flag. Without this, apply_fix writes wherever it is pointed: DATECOLUMN_FORMATSTRING's fix would
-                // replace a person's Long Date with the ISO form, which is exactly what its description now promises
-                // never happens. Re-applying a fix that already landed is NOT that case — the value is already what
-                // the fix writes, so it is a quiet no-op (changed:false), which keeps a second call idempotent.
-                // The scan is the SAME evaluation bpa_scan runs (waivers included, so an accepted finding is still
-                // fixable on request), narrowed to this one object by the scoped overload.
-                var (fixProp, fixBefore, fixAfter) = BpaAnalyzer.PreviewFix(rule, obj);
-                if (fixProp != null && !string.Equals(fixBefore, fixAfter, StringComparison.Ordinal)
-                    && !BpaAnalyzer.Analyze(m, new[] { rule }, new HashSet<string>(new[] { objRef }, StringComparer.OrdinalIgnoreCase))
-                        .Violations.Any(v => string.Equals(v.ObjectRef, objRef, StringComparison.OrdinalIgnoreCase)))
-                    throw new InvalidOperationException($"{objRef} does not violate {rule.ID} right now, so this fix would overwrite {fixProp} ('{fixBefore}' to '{fixAfter}') for no finding. Nothing was changed. Run bpa_scan for the current findings.");
-                changed = BpaAnalyzer.ApplyFix(m, rule, obj);
+                changed = ApplyBpaFixCore(m, ruleId, objRef);
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -11698,47 +11703,54 @@ namespace Semanticus.Engine
         // Rule-level (objRef null/'*' = every instance, model-wide) and per-instance are both free.
         public async Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin)
         {
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
+            string warning = null;
+            var rev = await s.MutateAsync(origin, $"Waive {system} {ruleId}", m =>
+            {
+                ApplyFindingWaiver(m, system, ruleId, objRef, reason, origin, out warning);
+                var key = ((system ?? "").Trim().ToLowerInvariant(), (ruleId ?? "").Trim().ToLowerInvariant(),
+                    WaiverStore.IsRuleLevel(objRef) ? "" : WaiverKey(m, objRef).ToLowerInvariant());
+                s.RecordWords(ChangeWords.For("waived", "findings", System.Text.Json.JsonSerializer.Serialize(key, new System.Text.Json.JsonSerializerOptions { IncludeFields = true })));
+            });
+            await SyncPlanWithWaiversAsync(context, s);
+            return new SetResult { Revision = rev, Changed = true, Warning = warning };
+        }
+
+        private static void ApplyFindingWaiver(Model m, string system, string ruleId, string objRef, string reason, string origin, out string warning)
+        {
             system = (system ?? "").Trim().ToLowerInvariant();
             if (system != "bpa" && system != "air") throw new ArgumentException("system must be 'bpa' or 'air'.");
             if (string.IsNullOrWhiteSpace(ruleId)) throw new ArgumentException("A rule id is required.");
             if (string.IsNullOrWhiteSpace(reason)) throw new ArgumentException("A reason is required to waive a finding (it's an audited, accepted decision, not a silent suppression).");
             bool ruleLevel = WaiverStore.IsRuleLevel(objRef);
-            var context = _sessions.CurrentContext;
-            var s = context.RequireSession();
-            var changed = false;
-            string warning = null;
-            var rev = await s.MutateAsync(origin, $"Waive {system} {ruleId}" + (ruleLevel ? " (rule-level)" : ""), m =>
+            warning = null;
+            // DATA-PRESERVATION: if the existing waiver annotation is unreadable, copy it aside BEFORE Save
+            // overwrites it — otherwise this add would silently destroy the accepted-findings record. If the
+            // aside write fails, PreserveCorrupt throws and this whole mutation rolls back (refuse over destroy).
+            var recs = WaiverStore.LoadForWrite(m, out var corruptRaw);
+            if (corruptRaw != null)
             {
-                // DATA-PRESERVATION: if the existing waiver annotation is unreadable, copy it aside BEFORE Save
-                // overwrites it — otherwise this add would silently destroy the accepted-findings record. If the
-                // aside write fails, PreserveCorrupt throws and this whole mutation rolls back (refuse over destroy).
-                var recs = WaiverStore.LoadForWrite(m, out var corruptRaw);
-                if (corruptRaw != null)
-                {
-                    var backup = WaiverStore.PreserveCorrupt((IAnnotationObject)m, WaiverStore.Annotation, corruptRaw);
-                    warning = $"The existing waiver data was corrupt and could not be fully read; it was preserved to the '{backup}' annotation before this waiver was written. Recover any lost waivers from there.";
-                }
-                WaiverStore.Add(recs, new WaiverRecord
-                {
-                    System = system,
-                    RuleId = ruleId.Trim(),
-                    ObjectRef = ruleLevel ? null : WaiverKey(m, objRef),
-                    Reason = reason.Trim(),
-                    By = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
-                    When = DateTimeOffset.UtcNow.ToString("o"),
-                    PairedWith = ruleLevel ? null : FiringTwinOf(m, system, ruleId.Trim(), WaiverKey(m, objRef)),
-                });
-                WaiverStore.Save(m, recs);
-                // Mirror a per-instance BPA waiver into TE's annotation so TE3 honours it too (interop).
-                if (system == "bpa" && !ruleLevel)
-                {
-                    var o = ObjectRefs.Resolve(m, objRef);
-                    if (o != null) WaiverStore.WriteTeIgnore(o, ruleId.Trim(), true);
-                }
-                changed = true;
+                var backup = WaiverStore.PreserveCorrupt((IAnnotationObject)m, WaiverStore.Annotation, corruptRaw);
+                warning = $"The existing waiver data was corrupt and could not be fully read; it was preserved to the '{backup}' annotation before this waiver was written. Recover any lost waivers from there.";
+            }
+            WaiverStore.Add(recs, new WaiverRecord
+            {
+                System = system,
+                RuleId = ruleId.Trim(),
+                ObjectRef = ruleLevel ? null : WaiverKey(m, objRef),
+                Reason = reason.Trim(),
+                By = string.IsNullOrWhiteSpace(origin) ? "human" : origin,
+                When = DateTimeOffset.UtcNow.ToString("o"),
+                PairedWith = ruleLevel ? null : FiringTwinOf(m, system, ruleId.Trim(), WaiverKey(m, objRef)),
             });
-            await SyncPlanWithWaiversAsync(context, s);   // a line the plan seeded from this finding stops reading as ticked
-            return new SetResult { Revision = rev, Changed = changed, Warning = warning };
+            WaiverStore.Save(m, recs);
+            // Mirror a per-instance BPA waiver into TE's annotation so TE3 honours it too (interop).
+            if (system == "bpa" && !ruleLevel)
+            {
+                var o = ObjectRefs.Resolve(m, objRef);
+                if (o != null) WaiverStore.WriteTeIgnore(o, ruleId.Trim(), true);
+            }
         }
 
         /// <summary>The ref an acceptance is stored under: the ref as the finding gave it when an object has exactly that name (a name that
@@ -11773,7 +11785,6 @@ namespace Semanticus.Engine
             system = (system ?? "").Trim().ToLowerInvariant();
             if (system != "bpa" && system != "air") throw new ArgumentException("system must be 'bpa' or 'air'.");
             if (string.IsNullOrWhiteSpace(ruleId)) throw new ArgumentException("A rule id is required.");
-            bool ruleLevel = WaiverStore.IsRuleLevel(objRef);   // un-waiving makes the model MORE compliant — never gated
 
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
@@ -11781,36 +11792,7 @@ namespace Semanticus.Engine
             string warning = null;
             var rev = await s.MutateAsync(origin, $"Unwaive {system} {ruleId}", m =>
             {
-                // Same data-preservation contract as WaiveFindingAsync: never let a Remove+Save destroy an unreadable
-                // store — preserve it aside first, or refuse (PreserveCorrupt throws ⇒ the mutation rolls back).
-                var recs = WaiverStore.LoadForWrite(m, out var corruptRaw);
-                if (corruptRaw != null)
-                {
-                    var backup = WaiverStore.PreserveCorrupt((IAnnotationObject)m, WaiverStore.Annotation, corruptRaw);
-                    warning = $"The existing waiver data was corrupt and could not be fully read; it was preserved to the '{backup}' annotation before this change. Recover any lost waivers from there.";
-                }
-                removed = WaiverStore.Remove(recs, system, ruleId.Trim(), ruleLevel ? null : WaiverKey(m, objRef));
-                if (!removed && !ruleLevel) removed = WaiverStore.Remove(recs, system, ruleId.Trim(), objRef.Trim());   // an older store trimmed the name
-                WaiverStore.Save(m, recs);
-                // A finding that reads as accepted only because another acceptance covers its change has no record of its own to
-                // remove; say which acceptance to undo instead of reporting a quiet no-op.
-                if (!removed && !ruleLevel && warning == null)
-                {
-                    var about = system == "air" ? RuleAboutTable.ForReadiness(ruleId.Trim())
-                        : RuleAboutTable.ForBpa(GetBpaRules(m).FirstOrDefault(r => string.Equals(r.ID, ruleId.Trim(), StringComparison.OrdinalIgnoreCase)));
-                    if (about?.Property != null && DeclinedChangesOf(m).DeclinesAsk(system, ruleId.Trim(), WaiverKey(m, objRef), about.Property))
-                        warning = "Nothing to undo here: this finding reads as accepted because you accepted the same change under another rule. Undo that acceptance instead.";
-                }
-                // The same problem accepted on the other page closes this one too (PairedAcceptances); say which acceptance to undo.
-                if (!removed && !ruleLevel && warning == null
-                    && PairedAcceptances.TwinAcceptance(recs, system, ruleId.Trim(), WaiverKey(m, objRef)) != null)
-                    warning = "Nothing to undo here: this finding reads as accepted because you accepted the same finding on "
-                        + (system == "air" ? "Model quality" : "AI readiness") + ". Undo that acceptance instead.";
-                if (system == "bpa" && !ruleLevel)
-                {
-                    var o = ObjectRefs.Resolve(m, objRef);
-                    if (o != null) WaiverStore.WriteTeIgnore(o, ruleId.Trim(), false);
-                }
+                (removed, warning) = RemoveFindingWaiver(m, system, ruleId, objRef);
             });
             await SyncPlanWithWaiversAsync(context, s);   // and one this waiver left out comes back
             return new SetResult { Revision = rev, Changed = removed, Warning = warning };
@@ -11891,35 +11873,7 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, $"AI-readiness fix {ruleId}", m =>
             {
-                switch (ruleId)
-                {
-                    case "VIS-FK":
-                        if (ObjectRefs.Resolve(m, objRef) is Column fk && !fk.IsHidden) { fk.IsHidden = true; changed = true; }
-                        break;
-                    case "FMT-SUMMARIZE":
-                    case "SUMMARIZE-DIMENSION":   // same deterministic fix: a non-additive column should not auto-aggregate
-                        if (ObjectRefs.Resolve(m, objRef) is Column sc && sc.SummarizeBy != AggregateFunction.None)
-                        { sc.SummarizeBy = AggregateFunction.None; changed = true; }
-                        break;
-                    case "CAT-GEO":
-                        if (ObjectRefs.Resolve(m, objRef) is Column gc)
-                        {
-                            var cat = ReadinessRuleSet.GeoCategory(gc.Name);
-                            if (cat != null && gc.DataCategory != cat) { gc.DataCategory = cat; changed = true; }
-                        }
-                        break;
-                    case "DIM-PRIMARY-NAME":
-                        // Only the column the finding names, and only while its dimension has no row label: a second
-                        // row label is not what the finding asked for.
-                        if (ObjectRefs.Resolve(m, objRef) is Column lc)
-                        {
-                            var dim = ReadinessRuleSet.DimensionRowLabels(m).FirstOrDefault(d => ReferenceEquals(d.Label, lc));
-                            if (dim.Label != null && !dim.Clean) changed = SafeFixes.MarkRowLabel(lc);
-                        }
-                        break;
-                    default:
-                        throw new InvalidOperationException($"Rule '{ruleId}' has no deterministic safe fix; use Claude (get_fix_prompt) or a Proposal review.");
-                }
+                changed = ApplyReadinessFixCore(m, ruleId, objRef);
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -12686,24 +12640,7 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, "set table OLS", m =>
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
-                if (role.MetadataPermission == null) throw new InvalidOperationException("Object-level security requires compatibility level 1400 or higher.");
-                var table = ResolveTable(m, tableRef) ?? throw new InvalidOperationException($"Table not found: {tableRef}. Run list_objects to see the model's tables.");
-                if (table is CalculationGroupTable)
-                    throw new InvalidOperationException($"Object-level security cannot be applied to a calculation group table ('{table.Name}').");
-                var p = ParseMetadataPermission(permission);
-                if (role.MetadataPermission[table] != p)
-                {
-                    role.MetadataPermission[table] = p;
-                    changed = true;
-                    // Default leaves an otherwise-empty TablePermission behind; remove it (NoEffect also guards a still-
-                    // present RLS filter / column OLS) so Default is a clean removal — mirrors clearing an RLS filter.
-                    if (p == MetadataPermission.Default)
-                    {
-                        var tp = role.TablePermissions.FindByName(table.Name);
-                        if (tp != null && tp.NoEffect) tp.Delete();
-                    }
-                }
+                changed = ApplyTableObjectPermission(m, roleName, tableRef, permission);
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -12716,24 +12653,7 @@ namespace Semanticus.Engine
             var changed = false;
             var rev = await s.MutateAsync(origin, "set column OLS", m =>
             {
-                var role = FindRole(m, roleName) ?? throw new InvalidOperationException($"Role '{roleName}' not found. Run list_roles to see roles; create one with create_role.");
-                if (role.MetadataPermission == null) throw new InvalidOperationException("Object-level security requires compatibility level 1400 or higher.");
-                if (!(ObjectRefs.Resolve(m, columnRef) is Column col)) throw new InvalidOperationException($"{columnRef} is not a column. Pass a 'column:Table/Name' ref; run list_columns on the table to see its columns.");
-                // Mirror the table-OLS calc-group guard: a calc group isn't part of the OLS surface (the vendor's
-                // RoleOLSIndexer excludes them), so setting column OLS on one would orphan a TablePermission.
-                if (col.Table is CalculationGroupTable)
-                    throw new InvalidOperationException($"Object-level security cannot be applied to a calculation group column ('{col.Table.Name}'[{col.Name}]).");
-                var p = ParseMetadataPermission(permission);
-                if (col.ObjectLevelSecurity[role] != p)
-                {
-                    col.ObjectLevelSecurity[role] = p;
-                    changed = true;
-                    if (p == MetadataPermission.Default)
-                    {
-                        var tp = role.TablePermissions.FindByName(col.Table.Name);
-                        if (tp != null && tp.NoEffect) tp.Delete();
-                    }
-                }
+                changed = ApplyColumnObjectPermission(m, roleName, columnRef, permission);
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -12814,22 +12734,16 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "set description", m =>
             {
                 var obj = ObjectRefs.Resolve(m, objRef);
-                switch (obj)
-                {
-                    case Measure me: if (me.Description != text) { me.Description = text; changed = true; } break;
-                    case Table t: if (t.Description != text) { t.Description = text; changed = true; } break;
-                    case Column c: if (c.Description != text) { c.Description = text; changed = true; } break;
-                    case Perspective p: if (p.Description != text) { p.Description = text; changed = true; } break;
-                    // Any other describable object (a hierarchy, which DESC-HIERARCHY flags, a calculation item, a
-                    // function...): the same writable Description seam apply_plan's set_description item writes
-                    // through, so the tool and the plan agree about what can be described.
-                    case ITabularNamedObject other when other.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.Instance)?.CanWrite == true:
-                        changed = WriteStringProp(other, "Description", text);
-                        break;
-                    default: throw new InvalidOperationException($"set_description cannot describe {objRef}: it is not an object with a description. Use list_objects or search_model to find the exact ref.");
-                }
+                changed = ApplyDescription(obj, text);
             });
             return new SetResult { Revision = rev, Changed = changed };
+        }
+
+        private static bool ApplyDescription(ITabularNamedObject obj, string text)
+        {
+            if (obj == null || obj.GetType().GetProperty("Description", BindingFlags.Public | BindingFlags.Instance)?.CanWrite != true)
+                throw new InvalidOperationException("This is not an object with a description. Use list_objects or search_model to find the exact ref.");
+            return WriteStringProp(obj, "Description", text);
         }
 
         public async Task<SetResult> CreateLinguisticSchemaAsync(string culture, string origin)
@@ -12863,14 +12777,17 @@ namespace Semanticus.Engine
             var s = _sessions.Require();
             var changed = false;
             SetOutcome outcome = null;
+            ChangeWords words = null;
             var rev = await s.MutateAsync(origin, "set synonyms", m =>
             {
                 if (!(ObjectRefs.Resolve(m, objRef) is TabularNamedObject obj)) throw new InvalidOperationException($"{objRef} not found. set_synonyms takes a table/column/measure/hierarchy ref; run list_objects or search_model to find it.");
                 var cult = EnsureLinguisticCulture(m, culture, out _);
                 outcome = LsdlSynonyms.SetSynonyms(obj, cult, string.Join(",", terms ?? Array.Empty<string>()));
+                words = ChangeWords.For(terms == null || terms.Length == 0 ? "removed synonyms from" : "added synonyms to", "fields", ObjectRefs.For(obj));
+                s.RecordWords(words);
                 changed = true;
             });
-            return new SetResult { Revision = rev, Changed = changed, Warning = outcome?.Warning };
+            return new SetResult { Revision = rev, Changed = changed, Warning = outcome?.Warning, Words = words };
         }
 
         // Prep-for-AI "AI instructions": a single top-level "CustomInstructions" string in the LSDL (Culture.Content),
@@ -12940,6 +12857,7 @@ namespace Semanticus.Engine
             {
                 var (table, prop) = ResolveSchemaTarget(m, objRef);
                 changed = ApplyAiDataSchema(m, culture, table, prop, included);
+                s.RecordWords(ChangeWords.For(included ? "included in Copilot" : "excluded from Copilot", "fields", objRef));
             });
             return new SetResult { Revision = rev, Changed = changed };
         }
@@ -13542,66 +13460,15 @@ namespace Semanticus.Engine
         public async Task<ChangePlanView> AddPlanItemAsync(string objRef, string kind, string after, string title, string[] verifyGroupBy, string[] verifyFilters, string origin)
         {
             var context = _sessions.CurrentContext;
-            var s = context.RequireSession();
-            // Normalize the kind ONCE at entry: lowercase-invariant, not just trimmed. Every kind switch
-            // (TargetForKind / CategoryForKind / RiskForKind / RequiresAfter / DefaultTitle) matches lowercase
-            // literals and is case-SENSITIVE, and dedupe compares Target with Ordinal (case-sensitive) — so an
-            // upper/mixed-case kind like "DELETE_IF_UNUSED" would fall to every switch's default (a garbage Target =
-            // the raw kind), evade the dedupe, and carry inconsistent metadata. One normalization keeps all of them honest.
-            kind = (kind ?? "").Trim().ToLowerInvariant();
-            // A retired id (enable_qna) is stored as the operation it became, so the plan never shows the old name.
-            kind = OpAliases.CanonicalPlanKind(kind);
-            var ctx = await s.ReadAsync(m => ReadItemContext(m, objRef, kind));
             await context.PlanGate.WaitAsync();
             try
             {
                 EnsureContextCurrent(context, "Change plan item");
                 var plan = context.Plans.GetOrStart();
-                var tgt = TargetForKind(kind);
-                // Dedupe by (ref, kind, target): an IDENTICAL pending duplicate (proposed / needs_content /
-                // approved, same proposed value) is a no-op returning the existing plan — a double-clicked
-                // "Review as a plan" (or any retrying caller, on either door) must not stack N copies the
-                // human then rejects one by one. A DIFFERENT After is a different proposal and still adds;
-                // applied / failed / skipped / rejected items never block a fresh attempt.
-                var dup = plan.Snapshot().FirstOrDefault(x =>
-                    (x.Status == "proposed" || x.Status == "needs_content" || x.Status == "approved")
-                    && string.Equals(x.ObjectRef, objRef, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.Kind, kind, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.Target, tgt, StringComparison.Ordinal)
-                    && string.Equals(x.After ?? "", after ?? "", StringComparison.Ordinal));
-                if (dup != null) return BuildView(plan, s.Revision);   // nothing changed → nothing to broadcast
-                string status = (after == null && RequiresAfter(kind)) ? "needs_content"
-                    : OptInKind(kind, verifyGroupBy) ? "proposed"   // risky / unproven → opt-in (explicit approve required)
-                    : "approved";
-                var source = string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) ? "ai" : "deterministic";
-                var risk = RiskForKind(kind);
-                if (source == "ai" && risk == "safe") risk = "ai";
-                var it = new ChangeItem
-                {
-                    ObjectRef = objRef,
-                    ObjectName = ctx.name,
-                    Kind = kind,
-                    Source = source,
-                    Category = CategoryForKind(kind),
-                    Severity = "Medium",
-                    Risk = risk,
-                    RuleId = null,
-                    Target = tgt,
-                    Title = string.IsNullOrWhiteSpace(title) ? DefaultTitle(kind) : title,
-                    Rationale = "Added to the plan.",
-                    Before = ctx.before,
-                    After = after,
-                    VerifyGroupBy = verifyGroupBy,   // null = no gate (opt-in apply); [] = scalar equivalence; [...] = matrix equivalence
-                    VerifyFilters = verifyFilters,
-                    Status = status,
-                    Generated = after != null,
-                    // R2: a removal is reviewed against a set of checked reports. Bind that basis to the proposal
-                    // so apply can tell whether the person is applying the answer they actually read.
-                    ReviewedScope = string.Equals(kind, "delete_if_unused", StringComparison.Ordinal)
-                        ? ReportScopeSignature(s) : null,
-                };
-                plan.Add(it, s.Revision, SourceVersionOf(s));
-                return PublishPlan(plan, s.Revision);
+                var count = plan.Snapshot().Length;
+                var view = await AddPlanItemCoreAsync(context, plan, objRef, kind, after, title, verifyGroupBy, verifyFilters, origin);
+                if (plan.Snapshot().Length != count) PublishPlan(plan, view.Revision);
+                return view;
             }
             finally { context.PlanGate.Release(); }
         }
@@ -13618,123 +13485,9 @@ namespace Semanticus.Engine
             try
             {
                 EnsureContextCurrent(context, "Change plan item");
-                var plan = context.Plans.Require();
-                var it = plan.Find(itemId) ?? throw new InvalidOperationException($"Plan item '{itemId}' not found. Run get_plan to see the current plan's item ids.");
-                if (after != null) GuardExpectedValue("planned value", expectedAfter, it.After, after);   // the editor's starting point against what the line holds NOW, inside the gate
-                var byAssistant = string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase);
-                var jevFormat = IsJevFormatLine(it);
-                string said = null;
-                if (after != null && byAssistant && jevFormat)
-                    throw new InvalidOperationException("This line is Jev's suggested format, and Semanticus works it out again whenever the model changes, so a value written here would be lost without a word. "
-                        + "To choose a different format, set it on the measure or column itself (set_measure_format, or set_property on FormatString).");
-                // A line an accepted finding left out stays left out while it is filled or ticked: the assistant works from ids it read
-                // before the person accepted the finding, and a tick or a new value must neither clear the reason nor put the line
-                // back in the list to review, nor make it read "approved" under a note that says it will not be made. It is worked
-                // out as the status the line would have, then held again below, unless the new value is no longer one that is
-                // declined (a clearer name after the table's own name was accepted). Only a rejection moves it.
-                var wasLeftOut = IsLeftOut(it);
-                if (wasLeftOut) it.Status = RestoredStatus(it);
-                if (after != null)
-                {
-                    it.After = after;
-                    if (IsReplacedSynonyms(it) && context.Session != null)
-                    {
-                        // A re-authored find and replace item is the list the person wrote: it clears the words of Before
-                        // the list leaves out, and its After shows what that write leaves (the name term always stays), so
-                        // the plan says what apply will do and undo and redo find the item by that reading.
-                        var list = after;
-                        var shown = await context.Session.ReadAsync(m =>
-                            ObjectRefs.Resolve(m, it.ObjectRef) is TabularNamedObject o && ReplacedSynonymsCulture(m, it) is Culture c
-                                ? LsdlSynonyms.PreviewSynonyms(o, c, list, RemovedSynonyms(it.Before, list)) : null);
-                        it.After = shown ?? list;
-                        it.Args = new Dictionary<string, string>(it.Args) { [ReplacedListArg] = list };   // Clone shares Args: a new one
-                    }
-                    it.Generated = true;
-                    // A value written over a Jev line survives the family working its lines out again (Sol 6.1, finding 1.3).
-                    if (JevFamily.IsJevLine(it) && !jevFormat) it.AuthoredAfter = it.After;
-                    it.VerifyState = null; it.Note = null;   // a re-authored value invalidates any prior verify/apply note
-                    // Class-driven gate integrity: an OPT-IN kind stays opt-in through ANY value revision —
-                    // including one made after approval (the human consented to the OLD value; a new value needs
-                    // fresh consent). Authoring only ever auto-approves the safe kinds.
-                    if (OptInKind(it.Kind, it.VerifyGroupBy)) { if (it.Status != "rejected") it.Status = "proposed"; }
-                    else if (it.Status == "needs_content" || it.Status == "proposed") it.Status = "approved";
-                }
-                // A re-authored value is a new proposal, and a tick covered the old one.
-                if (after != null) { it.KeptByPerson = false; it.KeptAgainst = null; it.KeptDigest = null; }
-                if (approved == true)
-                {
-                    // What the object computes at this moment, once: the line's own stamp is compared with it (a tick on a line worked out
-                    // for an older version of the object is refused), and it is what a tick records.
-                    var computesNow = !byAssistant && jevFormat ? await DigestOfAsync(context, it.ObjectRef) : null;
-                    if (!byAssistant && jevFormat && it.WorkedOutDigest != null && !string.Equals(it.WorkedOutDigest, computesNow, StringComparison.Ordinal))
-                    {
-                        // A TICK IS FOR WHAT THE PERSON SEES, and what they see was worked out for another version of this measure or column
-                        // (addendum 4 item 23). Recording it against what the object computes now would write a format Jev never looked at, so
-                        // the tick is refused in words and the line says it is out of date. Nothing else moves.
-                        if (Semanticus.Engine.Decisions.JevFormatSuggestion.IsSuggestion(it.CheckText))
-                            it.CheckText = Semanticus.Engine.Decisions.JevFormatSuggestion.StaleNote;
-                        said = "Not ticked: Jev worked this format out before the measure or column, or something it reads, changed, so it may not fit now. Nothing was changed. "
-                            + "Wait for Jev to work it out again, or set the format yourself.";
-                    }
-                    else if (byAssistant && jevFormat && it.KeptByPerson)
-                    {
-                        // An assistant's approve never erases a person's tick: the line stays as the person kept it.
-                        said = "The person has already ticked this line, so it stays as they kept it.";
-                    }
-                    else if (byAssistant && jevFormat && Semanticus.Engine.Decisions.JevFormatSuggestion.IsSuggestion(it.CheckText))
-                    {
-                        // A suggestion is only ever ticked by the person (THE FORMAT FILL RULE, addendum 2 item 8). Recording the
-                        // assistant's approve as approved would show the line as kept and stop nothing at write time but the row,
-                        // so it is not recorded, and the words say what really happened.
-                        said = "Not approved: this is a format Semanticus could not prove fits, and only the person can tick a suggestion like this on the Plan. Nothing was changed. "
-                            + "To set a format yourself, use set_measure_format or set_property on FormatString for that measure or column.";
-                    }
-                    else
-                    {
-                        // "approved" must mean apply-ready — refuse to approve an item that still needs content.
-                        it.Status = (RequiresAfter(it.Kind) && string.IsNullOrEmpty(it.After)) ? "needs_content" : "approved";
-                        // WHO TICKED IT. Only the person's own door records a keep: an assistant's approval is not the person's,
-                        // and the engine's own approval on arrival is neither. THE FORMAT FILL RULE writes an unproven format
-                        // only for a line a person kept (see JevFormatWriteRefusal), and a re-sync carries only that. A keep
-                        // belongs to the object and what it computes (addendum 3 item 12), so the digest is taken now.
-                        var byPerson = it.Status == "approved" && !byAssistant;
-                        it.KeptByPerson = byPerson;
-                        it.KeptAgainst = byPerson ? it.Before : null;
-                        it.KeptDigest = byPerson && jevFormat ? computesNow : null;
-                        it.DroppedBy = null;
-                    }
-                }
-                else if (approved == false)
-                {
-                    // An assistant's drop of a line the person had ticked takes their tick away (a drop writes nothing, so it is allowed), and the
-                    // words say so, never in silence (addendum 4 item 28, L5).
-                    if (byAssistant && jevFormat && it.KeptByPerson)
-                        said = "This line had been ticked by the person. It is dropped now, and their tick is gone. Nothing was changed in the model; the person can keep it again on the Plan.";
-                    it.Status = "rejected"; it.KeptByPerson = false; it.KeptAgainst = null; it.KeptDigest = null;
-                    it.DroppedBy = byAssistant ? "assistant" : "person";
-                }
-                if (wasLeftOut)
-                {
-                    var cover = approved == false || context.Session == null ? Cover.None
-                        : await context.Session.ReadAsync(m => new SeedWaivers(m).Coverage(it));
-                    if (cover != Cover.None)
-                    {
-                        it.HeldFromStatus = it.Status;
-                        it.Status = "skipped";
-                        it.Note = NoteFor(cover);
-                    }
-                    else { it.HeldFromStatus = null; it.Note = null; }   // rejected is rejected, and a value nothing declined is a line to review
-                }
-                // A Jev line another line cannot stand without moves that line with it (ChangeItem.Needs): drop a base
-                // measure and its format, description, hide and Excel lines go too; keep the hide and its measure comes
-                // back. On this one path, so both doors get the same pairs.
-                if (approved.HasValue && IsPendingLine(it))
-                    PlanLineExecutor.FollowKeep(it, plan.Snapshot().Where(IsPendingLine), keep: approved.Value);
-                // Any keep, drop or edit is the person (or the assistant they told) LOOKING at the line: a cleanup line that
-                // arrived ticked as a suggestion is theirs now, and Run the plan may apply it.
-                if (approved.HasValue || after != null) it.Suggested = false;
-                var view = PublishPlan(plan, context.Session?.Revision ?? 0);
-                return said == null ? view : WithNote(view, said);
+                var view = await SetPlanItemCoreAsync(context, context.Plans.Require(), itemId, after, approved, origin, expectedAfter);
+                PublishPlan(context.Plans.Require(), view.Revision);
+                return view;
             }
             finally { context.PlanGate.Release(); }
         }

@@ -251,8 +251,9 @@ namespace Semanticus.Tests
             Assert.True(SqlSourceRegistry.Find(source.Id).LastTestOk);
 
             // The agent door is the SAME engine call, governed by the standard QueryData gate on that SQL
-            // target: an unlabelled target is read as production, the strictest reading. A gated agent gets a
-            // plain refusal in the result, never an exception and never a silent ok. The policy root is pinned
+            // target: an unlabelled target counts as test (1.4, Kane 10 Oct), so under the default policy the agent's
+            // test of it goes through and answers the same as the person's. A gated agent would get a plain refusal
+            // in the result, never an exception and never a silent ok. The policy root is pinned
             // to a fresh directory for this assertion so the DEFAULT policy is what decides, not whatever
             // another test in this collection last wrote into the shared fixture root.
             var policyRoot = Path.Combine(_root, "policy-" + Guid.NewGuid().ToString("N").Substring(0, 6));
@@ -265,7 +266,7 @@ namespace Semanticus.Tests
                 var viaAgent = await McpTools.TestSqlSource(engine, source.Id);
                 Assert.Equal(source.Id, viaAgent.Id);
                 Assert.False(string.IsNullOrWhiteSpace(viaAgent.Note));
-                Assert.False(viaAgent.Ok);
+                Assert.True(viaAgent.Ok);
             }
             finally
             {

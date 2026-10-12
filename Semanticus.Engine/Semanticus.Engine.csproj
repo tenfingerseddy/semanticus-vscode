@@ -41,6 +41,7 @@
        via list_format_templates. Embedded (not CopyToOutput) so it can't drift from the binary or go missing. -->
   <ItemGroup>
     <EmbeddedResource Include="format-templates.json" />
+    <EmbeddedResource Include="..\Semanticus.VSCode\webview\src\studio\presses.json" Link="studio-presses.json" LogicalName="Semanticus.Engine.studio-presses.json" />
   </ItemGroup>
 
   <!-- The model facts place list (Facts/Data/README.md has its licence note). Embedded under a fixed logical name
@@ -54,6 +55,12 @@
        can never drift from the docs copy. Same fail-loud load pattern as format-templates.json. -->
   <ItemGroup>
     <EmbeddedResource Include="..\docs\interview-fix-map.json" Link="interview-fix-map.json" />
+  </ItemGroup>
+
+  <!-- The Studio place map (1.4): the SINGLE source of truth is the webview's own file, which the Studio imports. The engine reads
+       the same bytes to check show_in_studio's place ids and to fill each note's "To do this yourself" sentence. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\Semanticus.VSCode\webview\src\studio\places.json" Link="studio-places.json" LogicalName="Semanticus.Engine.studio-places.json" />
   </ItemGroup>
 
   <!-- The built-in hard-question pack (Model Interview seeds): catalog data like the fix map above — the

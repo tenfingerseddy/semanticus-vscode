@@ -58,6 +58,7 @@ namespace Semanticus.Tests
 
         // ---- S12-5-006 --------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_whose_object_was_deleted_cannot_be_claimed_or_completed()
         {
@@ -92,6 +93,7 @@ namespace Semanticus.Tests
 
         // ---- S12-6-002 --------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_that_names_an_object_is_grounded_to_it_and_says_so_when_it_goes()
         {
@@ -160,7 +162,7 @@ namespace Semanticus.Tests
 
             await f.Engine.SkipModelPlanItemAsync(id, "Not this quarter.", "human");
             repeat = Assert.Single((await f.Engine.GetModelPlanAsync()).Repeats);
-            Assert.Equal("Its task is set aside, so it does not come due. Put the task back, or stop repeating.", repeat.Resting);
+            Assert.Equal("Its task is set aside, so it does not come back. Put the task back, or stop the repeat.", repeat.Resting);
             Clock(f.Engine, new DateTimeOffset(2026, 9, 28, 9, 0, 0, TimeSpan.Zero));
             var plan = await f.Engine.GetModelPlanAsync();
             Assert.DoesNotContain(plan.Items, i => i.Source == PlanSources.Repeat);
@@ -173,6 +175,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { Total }, card.Objects);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_repeat_whose_object_is_gone_does_not_come_due_and_says_why()
         {
@@ -187,7 +190,7 @@ namespace Semanticus.Tests
             Clock(f.Engine, new DateTimeOffset(2026, 9, 28, 9, 0, 0, TimeSpan.Zero));
             var plan = await f.Engine.GetModelPlanAsync();
             Assert.DoesNotContain(plan.Items, i => i.Source == PlanSources.Repeat);
-            Assert.Equal("Sales[Total Sales] is no longer in the model, so it does not come due.", Assert.Single(plan.Repeats).Resting);
+            Assert.Equal("Sales[Total Sales] is no longer in the model, so it does not come back.", Assert.Single(plan.Repeats).Resting);
         }
 
         // ---- S12-5-004 --------------------------------------------------------------------------------------
@@ -247,17 +250,15 @@ namespace Semanticus.Tests
                 var ran = await engine.RunDraftAsync(v.DraftId, "agent");
                 Assert.NotNull(ran.Overwrite);
 
-                // Writing over the person's own edit is theirs to choose, not the assistant's.
-                await Assert.ThrowsAsync<InvalidOperationException>(() => engine.EditDraftAsync(v.DraftId, "apply_draft", null, null, null, null, "agent"));
-                Assert.Equal("Finance review pending.", await AmountDescriptionAsync(sm));
-
-                var applied = await engine.EditDraftAsync(v.DraftId, "apply_draft", null, null, null, null, "human");
+                // Kane, 10 Oct 2026: the person's word in chat is enough, so the assistant can write over their edit too (Undo brings theirs back).
+                var applied = await engine.EditDraftAsync(v.DraftId, "apply_draft", null, null, null, null, "agent");
                 Assert.Null(applied.Overwrite);
                 Assert.Equal(DraftStates.Done, applied.State);
                 Assert.Equal("What the line sold for.", await AmountDescriptionAsync(sm));
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_draft_with_no_change_under_it_runs_as_before()
         {

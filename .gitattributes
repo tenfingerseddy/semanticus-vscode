@@ -26,3 +26,7 @@ Semanticus.VSCode/tools/uishot/fixtures/plan-heart-fold-*.txt text eol=lf
 # byte with their compat freezes (WorkflowSeedLibraryTests). A CRLF checkout changed both on Windows. Neither folder ships.
 Semanticus.Engine/workflow-templates-compat/** text eol=lf
 Semanticus.Engine/workflows-parked/** text eol=lf
+
+# The Learn demo model ships as TMDL and recorded answers. learn-tour.test.mjs requires LF line ends, and a CRLF
+# checkout on Windows would also package different bytes into the Windows VSIX than every other target.
+Semanticus.VSCode/assets/learn/** text eol=lf

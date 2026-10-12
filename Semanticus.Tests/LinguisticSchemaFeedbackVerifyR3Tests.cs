@@ -261,12 +261,17 @@ namespace Semanticus.Tests
         {
             // The assistant reads these. set_synonyms no longer refuses a write because two visible names read alike, and
             // apply_safe_fixes now sets DIM-PRIMARY-NAME's row label, a Naming finding.
-            string Describe(string method) => typeof(McpTools).GetMethod(method, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!
+            // A tool's text sits on the method that carries [McpServerTool]: the compact wrapper in McpTools.LeanResults.cs for
+            // a tool that has one, the method itself otherwise. So the text is found by the tool's name, not by a method name.
+            string Describe(string tool) => typeof(McpTools).GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .Where(m => m.GetCustomAttributes(true).Any(a => a.GetType().Name == "McpServerToolAttribute"
+                    && (string)a.GetType().GetProperty("Name")!.GetValue(a)! == tool))
+                .Single()
                 .GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false)
                 .Cast<System.ComponentModel.DescriptionAttribute>().Single().Description;
 
-            Assert.DoesNotContain("a write that would collide two names in the linguistic schema fails", Describe("SetSynonyms"), StringComparison.Ordinal);
-            Assert.DoesNotContain("naming findings are left alone", Describe("ApplySafeFixes"), StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("a write that would collide two names in the linguistic schema fails", Describe("set_synonyms"), StringComparison.Ordinal);
+            Assert.DoesNotContain("naming findings are left alone", Describe("apply_safe_fixes"), StringComparison.OrdinalIgnoreCase);
         }
 
         [Theory]

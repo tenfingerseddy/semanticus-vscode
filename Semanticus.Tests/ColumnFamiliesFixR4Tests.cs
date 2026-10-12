@@ -237,7 +237,7 @@ namespace Semanticus.Tests
             await f.Engine.SetPlanItemAsync(hide.PlanItemId, null, approved: false, "human");
             var after = Row(await f.Engine.GetModelPlanAsync(), SalesRow);
             // The hide and the Excel line that needs it: two lines, both dropped by the person.
-            Assert.Contains(after.Why, w => w == "2 lines are dropped, so approving leaves them out. Keep them to include them.");
+            Assert.Contains(after.Why, w => w == "2 changes are unticked, so running the plan leaves them out. Tick them to include them.");
         }
 
         // ---- D7: a new column out of Excel reaches the live model ----------------------------------------------------
@@ -393,7 +393,7 @@ namespace Semanticus.Tests
             Assert.Equal("Add 1 measure for the numbers in Sales", Row(await f.Engine.GetModelPlanAsync(), SalesRow).Title);
             var amount = sales.ChangeSet.Lines.Single(l => l.Op == "create_measure" && l.Target == "measure:Sales/Total Amount");
             await f.Engine.SetPlanItemAsync(amount.PlanItemId, null, approved: false, "human");
-            Assert.Equal("Stop 2 columns adding up by themselves in Sales", Row(await f.Engine.GetModelPlanAsync(), SalesRow).Title);
+            Assert.Equal("Set 2 columns to Don't summarize in Sales", Row(await f.Engine.GetModelPlanAsync(), SalesRow).Title);
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]

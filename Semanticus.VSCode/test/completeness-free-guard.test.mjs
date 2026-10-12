@@ -54,6 +54,11 @@ if (b.status !== 0) failures.push(`B. importing a pure helper from askdata-model
 const c = mirror((src) => appendFileSync(join(src, 'lineage.tsx'), "\nvoid rpc('composeTask', 'a caller nobody listed');\n"));
 if (c.status === 0) failures.push('C. a new composeTask caller in lineage.tsx passes the guard, whose header says a new caller fails');
 
+// D. A value that names itself inside its own initializer (a timer id cleared from its own callback) must not crash the tracer.
+const d = mirror((src) => appendFileSync(join(src, 'features.ts'),
+  "\nexport function selfNamed(set: (fn: () => void) => number): number { let id: number = set(() => { id = 0; }); return id; }\n"));
+if (d.status !== 0) failures.push(`D. a value that names itself in its own initializer breaks the guard: ${(d.out.split('\n').find((l) => /Error/.test(l)) ?? '').slice(0, 200)}`);
+
 for (const f of failures) console.log('FREE GUARD: ' + f);
 assert.equal(failures.length, 0, `${failures.length} way(s) the Free guard misreads real code (listed above)`);
 console.log('completeness-free-guard: the guard ignores a feature id and a pure helper, and catches a new caller');

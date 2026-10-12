@@ -111,6 +111,7 @@ namespace Semanticus.Tests
         /// one KeyStatusCanMatter calls seen; a rule whose population changes must be on the list too. So a new rule that
         /// reads IsKey, or a finding the predicate does not know, fails here before the plan can call a pair independent
         /// over it. A population that moves with nothing to find changes no row, so only findings bind the predicate.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_rule_that_sees_a_key_move_is_named_and_a_key_with_nothing_to_find_is_seen_by_none()
         {
@@ -322,6 +323,7 @@ namespace Semanticus.Tests
         /// the relationships at its table, which a cardinality line writes. On the Creates fixture the pair commutes because
         /// One and One leaves the many side where it was; turned round, the pair is a proven conflict: done cardinality
         /// first, the starter row for Returns adds nothing, so the model differs.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_cardinality_change_that_moves_the_many_side_is_ordered_against_the_starter_row()
         {

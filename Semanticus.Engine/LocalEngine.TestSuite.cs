@@ -135,6 +135,11 @@ namespace Semanticus.Engine
         public string Filter { get; set; }
         public string Tolerance { get; set; }
         public string Source { get; set; }
+
+        /// <summary>How long the check's two sides took in this run, in milliseconds: the DAX on the model and the SQL on
+        /// the source. Absent when the check did not run a query on that side.</summary>
+        public long? DaxMs { get; set; }
+        public long? SqlMs { get; set; }
     }
 
     /// <summary>One filter context of a recorded check, in the same words as the live run's compare table.</summary>
@@ -277,7 +282,7 @@ namespace Semanticus.Engine
                 : $"{hidden} saved mapping(s) belong to another model or predate model scoping and were hidden.");
         }
 
-        public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human", string[] only = null, string[] sections = null)
+        public async Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist = false, string origin = "human", string[] only = null, string[] sections = null, string runId = null)
         {
             if (persist) GuardOutsideWrite(origin);
             var sw = System.Diagnostics.Stopwatch.StartNew();
@@ -384,13 +389,38 @@ namespace Semanticus.Engine
                 if (gate != null) { live = null; gateNote = gate; }
             }
 
+            // One sign-in per (mode, tenant) for the whole run: table counts and compare-with-source checks share it.
+            var sqlTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var phase = System.Diagnostics.Stopwatch.StartNew();
+            // The checks that take time, counted up front so the page can say "312 of 691": a relationship and a table count
+            // each, a saved check each. A run with no live connection sends no query, so it counts only the saved checks.
+            var valueDefs = runMeasures
+                ? measureDefs.Where(d => d.Enabled && string.Equals(d.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)).ToList()
+                : new List<TestDefinition>();
+            var progress = new RunProgressTicker(_sessions.Bus, runId,
+                (live != null ? relInputs.Count + tableInputs.Count : 0) + (runMeasures ? reconPlans.Count : 0) + valueDefs.Count,
+                RunProgressIntervalForTests ?? RunProgressMinInterval);
+            progress.Start("relationships");
             if (live != null)
             {
                 foreach (var rel in relInputs)
+                {
                     rel.Probe = await ExecuteRelationshipProbesAsync(live, rel);
-                var sqlTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    progress.Step("relationships");
+                }
+                LogRunPhase("relationships", relInputs.Count, phase);
+                phase.Restart();
                 foreach (var table in tableInputs)
+                {
                     await ExecuteTableRowCountAsync(live, table, origin, sqlTokens);
+                    progress.Step("table counts");
+                }
+                LogRunPhase("table counts", tableInputs.Count, phase);
+            }
+            else
+            {
+                LogRunPhase("relationships", 0, phase);
+                LogRunPhase("table counts", 0, phase);
             }
 
             var relReport = RelationshipIntegrity.Evaluate(relInputs);
@@ -403,11 +433,27 @@ namespace Semanticus.Engine
             var outcomes = new List<ReconcileOutcome>(runMeasures ? unmappedMeasures : Enumerable.Empty<ReconcileOutcome>());
             if (runMeasures)
             {
+                phase.Restart();
                 var modelEndpointId = reconPlans.Count == 0 ? null : await ModelSqlEndpointIdAsync(s);
                 foreach (var plan in reconPlans)
-                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin, modelEndpointId));
-                foreach (var d in measureDefs.Where(d => d.Enabled && string.Equals(d.Kind, TestKinds.MeasureValue, StringComparison.OrdinalIgnoreCase)))
+                {
+                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin, modelEndpointId, sqlTokens));
+                    progress.Step("saved checks");
+                }
+                LogRunPhase("compare with source", reconPlans.Count, phase,
+                    outcomes.Sum(x => x.DurationMs), outcomes.Sum(x => x.SqlDurationMs));
+                phase.Restart();
+                foreach (var d in valueDefs)
+                {
                     outcomes.Add(await RunMeasureValueDefAsync(d, identities, live != null, origin));
+                    progress.Step("saved checks");
+                }
+                LogRunPhase("trusted numbers", valueDefs.Count, phase);
+            }
+            else
+            {
+                LogRunPhase("compare with source", 0, phase);
+                LogRunPhase("trusted numbers", 0, phase);
             }
             // An enabled definition whose kind has no evaluator yet must NOT vanish from the run (the suite
             // rots visibly, never silently): it surfaces as NotVerifiable with the reason. Covers the
@@ -440,6 +486,7 @@ namespace Semanticus.Engine
             // the Performance category can never activate (and move the grade) by surprise.
             var timingVerdicts = new List<Verdict>();
             var cacheCleared = false;
+            phase.Restart();
             if (live != null)
                 (timingVerdicts, cacheCleared) = await ExecuteTimingPassAsync(live, reconPlans, outcomes);
             else
@@ -457,7 +504,10 @@ namespace Semanticus.Engine
 
             // E6 variants are supporting evidence for each base measure's family. They never enter the
             // score calculation; the chip verdicts carry their own signal without pretending they are tests.
+            LogRunPhase("timing", timingVerdicts.Count, phase);
+            phase.Restart();
             await ExecuteVariantPassAsync(live, reconPlans, outcomes);
+            LogRunPhase("variants", reconPlans.Count, phase);
 
             // The Model interview left Tests in 1.2.0 (Kane, 2026-09-15). A run used to replay every saved
             // value question here and write the outcome back to the interview store, which made a Tests run
@@ -495,6 +545,9 @@ namespace Semanticus.Engine
                         : null),
             };
 
+            // The run's time is stamped BEFORE the record is built from it. It was stamped after, so every recorded run
+            // said it took 0 ms.
+            run.DurationMs = sw.ElapsedMilliseconds;
             if (persist)
             {
                 if (scope.Partial)
@@ -504,9 +557,76 @@ namespace Semanticus.Engine
                 else
                     run.Persisted = TestSuiteStore.AppendRun(dir, TestSuiteStore.Serialize(BuildRunRecord(run)));
             }
-            run.DurationMs = sw.ElapsedMilliseconds;
+            LogRunTotal(run);
             RememberTestRun(run);
             return run;
+        }
+
+        // ---- progress while a run goes: "312 of 691 checks" -----------------------------------------------------
+        // A run of a few hundred checks takes about a minute, and the page said only "Running". Each finished check is a step;
+        // the ticker tells the page at most a few times a second (always the first and the last), so a fast run is two
+        // messages and a slow one is not a message per check. It carries counts and a phase word, nothing from the model.
+        internal static readonly TimeSpan RunProgressMinInterval = TimeSpan.FromMilliseconds(250);
+
+        /// <summary>Test seam: the shortest gap between two progress events of one run.</summary>
+        internal TimeSpan? RunProgressIntervalForTests;
+
+        private sealed class RunProgressTicker
+        {
+            private readonly ChangeBus _bus;
+            private readonly string _runId;
+            private readonly int _total;
+            private readonly long _minMs;
+            private readonly System.Diagnostics.Stopwatch _clock = System.Diagnostics.Stopwatch.StartNew();
+            private long _lastMs;
+            private int _done;
+
+            public RunProgressTicker(ChangeBus bus, string runId, int total, TimeSpan minInterval)
+            {
+                _bus = bus; _total = total; _minMs = (long)minInterval.TotalMilliseconds;
+                _runId = string.IsNullOrWhiteSpace(runId) ? Guid.NewGuid().ToString("N") : runId;
+            }
+
+            public void Start(string note) { if (_total > 0) Publish(note); }
+
+            public void Step(string note)
+            {
+                _done++;
+                if (_done < _total && _clock.ElapsedMilliseconds - _lastMs < _minMs) return;
+                Publish(note);
+            }
+
+            private void Publish(string note)
+            {
+                _lastMs = _clock.ElapsedMilliseconds;
+                _bus.PublishProgress(new OperationProgress { OpKey = "run_tests", RunId = _runId, Done = _done, Total = _total, Note = note });
+            }
+        }
+
+        // ---- the run's own log: one line per phase, counts and milliseconds only ----------------------------------
+        // A run on a live model used to leave no trace of where its time went, so a slow run could not be explained. These
+        // lines go to the engine log (the extension's output channel). They carry counts and milliseconds and nothing the
+        // model holds: no value, no name, no query.
+        private void RunLog(string line)
+        {
+            var seam = RunLogForTests;
+            if (seam != null) { seam(line); return; }
+            try { Console.Error.WriteLine(line); } catch { }
+        }
+
+        private void LogRunPhase(string phase, int count, System.Diagnostics.Stopwatch took, long? daxMs = null, long? sqlMs = null)
+            => RunLog("[tests] " + phase + ": " + count.ToString(CultureInfo.InvariantCulture) + " checked, "
+                + (daxMs.HasValue ? "DAX " + daxMs.Value.ToString(CultureInfo.InvariantCulture) + " ms, SQL "
+                    + (sqlMs ?? 0).ToString(CultureInfo.InvariantCulture) + " ms, " : "")
+                + took.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture) + " ms");
+
+        private void LogRunTotal(TestSuiteRunResult run)
+        {
+            var results = (run.Reconciles?.Length ?? 0)
+                + (run.Relationships?.Relationships?.Sum(r => r?.Checks?.Count() ?? 0) ?? 0)
+                + (run.Relationships?.TableRowCounts?.Count ?? 0);
+            RunLog("[tests] run: " + results.ToString(CultureInfo.InvariantCulture) + " results, "
+                + run.DurationMs.ToString(CultureInfo.InvariantCulture) + " ms");
         }
 
         /// <summary>The parts of Tests that have an evaluator behind them. Anything else is refused by name
@@ -954,37 +1074,8 @@ namespace Semanticus.Engine
         /// <summary>Execute the six probe queries for one relationship. Each result is nullable-per-probe:
         /// a failed probe leaves ITS field null (that check stays NotVerifiable) without discarding the
         /// counts that did land — partial evidence honestly beats none.</summary>
-        private async Task<RelationshipProbeResult> ExecuteRelationshipProbesAsync(LiveConnection live, RelationshipCheckInput rel)
-        {
-            RelationshipProbeQueries q;
-            try { q = RelationshipProbes.For(rel); }
-            catch (ArgumentException) { return null; }   // blank endpoint — the analyzer routes it NotVerifiable
-            var probe = new RelationshipProbeResult
-            {
-                OrphanRows = await ProbeScalarAsync(live, q.OrphanRows),
-                BlankForeignKeys = await ProbeScalarAsync(live, q.BlankForeignKeys),
-                DuplicateKeys = await ProbeScalarAsync(live, q.DuplicateKeys),
-                BlankKeys = await ProbeScalarAsync(live, q.BlankKeys),
-                ManyRowCount = await ProbeScalarAsync(live, q.ManyRowCount),
-                OneRowCount = await ProbeScalarAsync(live, q.OneRowCount),
-            };
-            return probe;
-        }
-
-        private static async Task<long?> ProbeScalarAsync(LiveConnection live, string query)
-        {
-            try
-            {
-                var rs = await live.ExecuteAsync(query, 2, 120);
-                if (!string.IsNullOrEmpty(rs.Error) || rs.Rows == null || rs.Rows.Length == 0 || rs.Rows[0].Length == 0) return null;
-                var v = rs.Rows[0][0];
-                // COUNTROWS over an empty FILTER is BLANK, not 0 — surfacing as null would leave the check
-                // NotVerifiable when the true measurement is "zero rows". BLANK here IS zero.
-                if (v == null || v is DBNull) return 0;
-                return Convert.ToInt64(v);
-            }
-            catch { return null; }
-        }
+        private static Task<RelationshipProbeResult> ExecuteRelationshipProbesAsync(LiveConnection live, RelationshipCheckInput rel)
+            => RelationshipProbeRunner.RunAsync(q => live.ExecuteAsync(q, 2, 120), rel);
 
         /// <summary>Run one deterministic COUNTROWS / COUNT_BIG pair. A mismatch is not a failure here because
         /// the two connections cannot prove snapshot alignment; the pure judge keeps it NotVerifiable.</summary>
@@ -1023,15 +1114,7 @@ namespace Semanticus.Engine
                 tenantId = connection?.TenantId;
             }
             string token;
-            try
-            {
-                var tokenKey = string.Join("\u001f", authMode ?? "azcli", tenantId ?? "");
-                if (!sqlTokens.TryGetValue(tokenKey, out token))
-                {
-                    token = await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
-                    sqlTokens[tokenKey] = token;
-                }
-            }
+            try { token = await RunSqlTokenAsync(sqlTokens, authMode, tenantId, origin).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 table.SourceError = "could not acquire a SQL token: " + ScrubSchemaError(ex.Message);
@@ -1043,6 +1126,21 @@ namespace Semanticus.Engine
             table.SourceObservedUtc = DateTime.UtcNow.ToString("o");
             if (!TryReadCount(source, out var sourceCount, out var sourceError)) table.SourceError = sourceError;
             else table.SourceCount = sourceCount;
+        }
+
+        /// <summary>The SQL sign-in for a test run, fetched ONCE per (mode, tenant) and then reused by every table count and
+        /// every compare-with-source check in the run. Each fetch builds a browser credential and reads the saved sign-in
+        /// from disk again, which was paid once per check. Only a token that was got is kept: a sign-in that failed is
+        /// tried again by the next check, so each check still says for itself why it could not run. A run is minutes long
+        /// and a token lives about an hour. With no cache (a single direct call) it is a plain fetch.</summary>
+        private async Task<string> RunSqlTokenAsync(Dictionary<string, string> cache, string authMode, string tenantId, string origin)
+        {
+            if (cache == null) return await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
+            var key = string.Join("\u001f", authMode ?? "azcli", tenantId ?? "");
+            if (cache.TryGetValue(key, out var kept)) return kept;
+            var token = await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
+            cache[key] = token;
+            return token;
         }
 
         private static bool TryReadCount(ResultSet result, out long count, out string error)
@@ -1270,7 +1368,8 @@ namespace Semanticus.Engine
             }
         }
 
-        private async Task<ReconcileOutcome> RunReconcileDefAsync(ReconcilePlan plan, bool live, string origin, string modelEndpointId)
+        private async Task<ReconcileOutcome> RunReconcileDefAsync(ReconcilePlan plan, bool live, string origin, string modelEndpointId,
+            Dictionary<string, string> sqlTokens = null)
         {
             var o = new ReconcileOutcome
             {
@@ -1315,7 +1414,7 @@ namespace Semanticus.Engine
 
             // Resolved ONCE, above: the run executes exactly where it just reported, so a check pinned to the model's
             // partitions is never handed the model's endpoint on the way to the query.
-            var r = await ReconcileMeasureCoreAsync(plan.Request, origin, sqlSource, plan.Binding);
+            var r = await ReconcileMeasureCoreAsync(plan.Request, origin, sqlSource, plan.Binding, sqlTokens);
             o.Dax = r.DaxQuery;
             o.Rows = BuildCompareRows(r.Cells, out var rowsTotal);
             o.RowsTotal = rowsTotal;
@@ -1695,6 +1794,9 @@ namespace Semanticus.Engine
                     Filter = NullIfBlank(o.Filter),
                     Tolerance = NullIfBlank(o.ToleranceNote),
                     Source = NullIfBlank(o.SourceLabel),
+                    // How long each side took, as the page shows it. A check that sent no query on a side has no time for it.
+                    DaxMs = o.DurationMs > 0 ? o.DurationMs : (long?)null,
+                    SqlMs = o.SqlDurationMs > 0 ? o.SqlDurationMs : (long?)null,
                     ContextsTotal = o.RowsTotal,
                     Contexts = (o.Rows ?? Array.Empty<CompareRow>()).Where(r => r != null).Select(r => new RecordedContext
                     {

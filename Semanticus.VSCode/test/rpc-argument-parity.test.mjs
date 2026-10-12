@@ -89,8 +89,8 @@ for (const file of TARGETS) {
 assert.ok(methods.size > 200, `the RPC targets should expose hundreds of methods; parsed ${methods.size}, so the parse is wrong`);
 const runTests = methods.get('runTests');
 assert.ok(runTests, 'sanity: runTests must be found');
-assert.deepEqual(runTests[0].params.map((p) => `${p.name}:${p.kind}`), ['persist:boolean', 'origin:string', 'only:array', 'sections:array'],
-  'sanity: runTests parses to its real four parameters');
+assert.deepEqual(runTests[0].params.map((p) => `${p.name}:${p.kind}`), ['persist:boolean', 'origin:string', 'only:array', 'sections:array', 'runId:string'],
+  'sanity: runTests parses to its real five parameters');
 
 const signaturesFor = (name) => methods.get(name) ?? methods.get(`${name}Async`)
   ?? (name.endsWith('Async') ? methods.get(name.slice(0, -'Async'.length)) : undefined);

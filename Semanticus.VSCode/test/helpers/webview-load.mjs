@@ -28,6 +28,7 @@ export function makeLoader(stubs = {}, reactImpl = null) {
       if (name in stubs) return stubs[name];
       // Vite inlines `x.woff2?inline` as a data: URI at build time (docfonts.ts). Node has no bundler, so a test gets a stand-in string.
       if (name.endsWith('?inline')) return 'data:font/woff2;base64,AAAA';
+      if (name.endsWith('.css')) return {};   // a stylesheet import is the bundler's; Node has no styles to apply
       if (name === 'react' && reactImpl) return reactImpl;
       if (name.startsWith('.')) return load(resolve(dirname(full), name));
       return req(name);

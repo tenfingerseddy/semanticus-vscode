@@ -29,8 +29,17 @@ namespace Semanticus.Tests
             "Set the rules of the work", "Look things up",
         };
 
+        // 1.4 adds two Connections tools, cancellation and cold/warm timing: 359 to 363.
         // T215 placements plus the workflow document, preview, layout and upgrade operations.
-        // 27+42+101+27+30+14+37+28+47+6 = 359 (publish_new_model joined Ship it out > Publishing and deployment in lane r1/newmodel2, 24 to 25 and 358 to 359; before that 358: the eight spec-first start tools joined Change the model > The model spec in lane m11/sf-doors, 8 to 16 and 350 to 358; before that 350: get_words_queue joined Findings and fixes in lane m11/plan-rows, the Plan's "Give the words to your assistant" row, 93 to 94 and 349 to 350; pick_chart_kind joined See what is in the model > Measures, DAX and queries on 28 Sep, D6: 41 to 42 and 348 to 349). Before that 348 (ask_data and list_data_questions joined See what is in the model > Measures,
+        // 381 on 11 Oct 2026: file recovery joins Connections and targets, 29 to 30 (studio-polish fix 2).
+        // 31 on the join of 11 Oct 2026: both lanes added one to Connections and targets (file recovery and the workspace SQL endpoints), 29 to 31; 396 in all.
+        // 380 on 11 Oct 2026: refresh_plan (lane m14/refresh, the Plan's Refresh plan button) joined Findings and fixes, 40 to 41.
+        // 381 on 11 Oct 2026: list_workspace_sql_endpoints (H14) joined Connections and targets, 29 to 30.
+        // 379 on 11 Oct 2026 (join of agent-controls onto show-tool and fourtools: 365 plus the lane's 14). The lane's part, from 359 to 373 (Kane: the Plan page's controls
+        // are the assistant's too): Findings and fixes took the eleven plan control tools (add_plan_task ... delete_plan_repeat); Workflows and rules took
+        // approve_draft and continue_draft, 47 to 49; The model spec took approve_start_plan, 16 to 17. Findings and fixes is 40 here: 27, the two Studio
+        // tools (show_in_studio and suggest_next, lane m14/show-tool) and the eleven.
+        // 27+42+101+29+30+14+37+28+47+6 = 361 (show_in_studio and suggest_next joined Make it better > Findings and fixes in lane m14/show-tool, 27 to 29 and 359 to 361, placement flagged for Kane; before that 359: publish_new_model joined Ship it out > Publishing and deployment in lane r1/newmodel2, 24 to 25 and 358 to 359; before that 358: the eight spec-first start tools joined Change the model > The model spec in lane m11/sf-doors, 8 to 16 and 350 to 358; before that 350: get_words_queue joined Findings and fixes in lane m11/plan-rows, the Plan's "Give the words to your assistant" row, 93 to 94 and 349 to 350; pick_chart_kind joined See what is in the model > Measures, DAX and queries on 28 Sep, D6: 41 to 42 and 348 to 349). Before that 348 (ask_data and list_data_questions joined See what is in the model > Measures,
         // DAX and queries on 26 Sep, Jev question-to-DAX: 39 to 41 and 346 to 348). Before that 346 (describe_workflow_steps joined Workflows and rules on 25 Sep, Kane's UAT:
         // describing a workflow opens Author; 46 to 47 and 345 to 346). Before that 345 (the composer's four draft ops joined Workflows and rules in lane L4,
         // compose_task, get_draft, edit_draft and run_draft, 42 to 46 and 341 to 345 after slice C; before that:
@@ -44,29 +53,29 @@ namespace Semanticus.Tests
         // (contract 19), 24 to 27 and 338 to 341.
         private static readonly Dictionary<string, Dictionary<string, int>> Ratified = new Dictionary<string, Dictionary<string, int>>(StringComparer.Ordinal)
         {
-            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 27 },
+            ["Open a model and connect"] = new Dictionary<string, int> { ["Connections and targets"] = 31 },
             ["See what is in the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 10, ["Reports and what uses this model"] = 9, ["Speed and size"] = 6,
+                ["Measures, DAX and queries"] = 11, ["Reports and what uses this model"] = 9, ["Speed and size"] = 7,
                 ["Tables, columns and hierarchies"] = 5, ["The model as a whole"] = 6,
                 ["Relationships and the diagram"] = 3, ["Tests, numbers and evidence"] = 3,
             },
             ["Change the model"] = new Dictionary<string, int>
             {
-                ["Measures, DAX and queries"] = 19, ["Where the data comes from"] = 14, ["The model as a whole"] = 14,
-                ["Tables, columns and hierarchies"] = 14, ["How the model looks and reads"] = 12,
-                ["The model spec"] = 16, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
+                ["Measures, DAX and queries"] = 20, ["Where the data comes from"] = 14, ["The model as a whole"] = 16,
+                ["Tables, columns and hierarchies"] = 15, ["How the model looks and reads"] = 15,
+                ["The model spec"] = 18, ["Dates and time"] = 8, ["Relationships and the diagram"] = 4,
             },
             // 23 = 21 plus add_plan_target and remove_plan_target, the target half of the living plan.
-            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 27 },
+            ["Make it better"] = new Dictionary<string, int> { ["Findings and fixes"] = 45 },
             ["Prove it is right"] = new Dictionary<string, int> { ["Tests, numbers and evidence"] = 30 },
             ["Track versions and compare"] = new Dictionary<string, int> { ["Versions and history"] = 14 },
             ["Ship it out"] = new Dictionary<string, int>
             {
-                ["Publishing and deployment"] = 25, ["Who can see what"] = 8, ["The model write-up"] = 4,
+                ["Publishing and deployment"] = 25, ["Who can see what"] = 9, ["The model write-up"] = 5,
             },
             ["Teach the AI about this model"] = new Dictionary<string, int> { ["Teach the AI"] = 28 },
-            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 47 },
+            ["Set the rules of the work"] = new Dictionary<string, int> { ["Workflows and rules"] = 49 },
             ["Look things up"] = new Dictionary<string, int> { ["Reference lists and instruction sheets"] = 6 },
         };
 
@@ -126,8 +135,8 @@ namespace Semanticus.Tests
                 Assert.False(string.IsNullOrWhiteSpace(o.Question), o.Name);
                 Assert.False(string.IsNullOrWhiteSpace(o.Shelf), o.Name);
             });
-            Assert.Equal(359, catalog.Length);
-            Assert.Equal(359, OpTaxonomy.Count);
+            Assert.Equal(396, catalog.Length);
+            Assert.Equal(396, OpTaxonomy.Count);
         }
 
         [Fact]
@@ -260,7 +269,7 @@ namespace Semanticus.Tests
             {
                 var e = new LocalEngine(new SessionManager(), new FreeTier(), ws);
                 var cat = await e.GetOpCatalogAsync();
-                Assert.Equal(359, cat.Length);
+                Assert.Equal(396, cat.Length);
                 Assert.All(cat, o => Assert.False(string.IsNullOrWhiteSpace(o.Question) || string.IsNullOrWhiteSpace(o.Shelf), o.Name));
                 var wf = cat.Single(o => o.Name == "start_workflow");
                 Assert.Equal("Set the rules of the work", wf.Question);

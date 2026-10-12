@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "answers": [
+    {
+      "question": "What were net sales by product category in 2025?",
+      "measure": "Net Sales",
+      "columns": [
+        { "name": "Category", "type": "string" },
+        { "name": "Net Sales", "type": "number", "format": "$#,0" }
+      ],
+      "rows": [
+        ["Computers", 3942000],
+        ["Cameras and Camcorders", 2186000],
+        ["Home Appliances", 1954000],
+        ["Cell Phones", 1610000],
+        ["TV and Video", 1288000],
+        ["Audio", 1020000]
+      ],
+      "dax": "EVALUATE\nSUMMARIZECOLUMNS (\n    Product[Category],\n    TREATAS ( { 2025 }, 'Date'[Year] ),\n    \"Net Sales\", [Net Sales]\n)\nORDER BY [Net Sales] DESC",
+      "chart": "bar"
+    },
+    {
+      "question": "How did net sales and gross margin percent move by quarter in 2025?",
+      "measure": "Gross Margin %",
+      "columns": [
+        { "name": "Quarter", "type": "string" },
+        { "name": "Net Sales", "type": "number", "format": "$#,0" },
+        { "name": "Gross Margin %", "type": "number", "format": "0.0%" }
+      ],
+      "rows": [
+        ["Q1", 2640000, 0.38],
+        ["Q2", 2760000, 0.385],
+        ["Q3", 2880000, 0.39],
+        ["Q4", 3720000, 0.405]
+      ],
+      "dax": "EVALUATE\nSUMMARIZECOLUMNS (\n    'Date'[Quarter],\n    TREATAS ( { 2025 }, 'Date'[Year] ),\n    \"Net Sales\", [Net Sales],\n    \"Gross Margin %\", [Gross Margin %]\n)\nORDER BY 'Date'[Quarter]",
+      "chart": "line"
+    },
+    {
+      "question": "Which stores sold the most in 2025?",
+      "measure": "Net Sales",
+      "columns": [
+        { "name": "Store Name", "type": "string" },
+        { "name": "Net Sales", "type": "number", "format": "$#,0" }
+      ],
+      "rows": [
+        ["Contoso Online Store", 3120000],
+        ["Contoso Seattle", 1860000],
+        ["Contoso Sydney", 1540000],
+        ["Contoso London", 1410000],
+        ["Contoso Toronto", 1150000],
+        ["All other stores", 2920000]
+      ],
+      "dax": "EVALUATE\nTOPN (\n    5,\n    SUMMARIZECOLUMNS (\n        Store[Store Name],\n        TREATAS ( { 2025 }, 'Date'[Year] ),\n        \"Net Sales\", [Net Sales]\n    ),\n    [Net Sales], DESC\n)",
+      "chart": "bar"
+    },
+    {
+      "question": "How many orders did we take each month in 2025?",
+      "measure": "Orders",
+      "columns": [
+        { "name": "Month", "type": "string" },
+        { "name": "Orders", "type": "number", "format": "#,0" }
+      ],
+      "rows": [
+        ["Jan", 3400],
+        ["Feb", 3200],
+        ["Mar", 3600],
+        ["Apr", 3500],
+        ["May", 3700],
+        ["Jun", 3900],
+        ["Jul", 3800],
+        ["Aug", 4000],
+        ["Sep", 4100],
+        ["Oct", 4300],
+        ["Nov", 5300],
+        ["Dec", 5200]
+      ],
+      "dax": "EVALUATE\nSUMMARIZECOLUMNS (\n    'Date'[Month Number],\n    'Date'[Month],\n    TREATAS ( { 2025 }, 'Date'[Year] ),\n    \"Orders\", [Orders]\n)\nORDER BY 'Date'[Month Number]",
+      "chart": "line"
+    }
+  ]
+}

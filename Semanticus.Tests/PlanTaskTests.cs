@@ -142,6 +142,7 @@ namespace Semanticus.Tests
             Assert.Equal(ids.Length, ids.Distinct(StringComparer.Ordinal).Count());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Task_ids_never_repeat_across_a_restart_and_the_old_ones_still_resolve()
         {
@@ -164,6 +165,7 @@ namespace Semanticus.Tests
             Assert.All(first, id => Row(plan, id));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_persists_with_no_assistant_attached_and_starts_with_your_assistant()
         {
@@ -187,6 +189,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanDoers.Assistant, back.Doer);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_with_nowhere_to_keep_tasks_keeps_them_for_the_session_and_says_so()
         {
@@ -264,6 +267,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Ready, PlanStateWords.InPrecedence.Last());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_row_on_a_real_plan_carries_a_source_a_doer_and_a_state_word()
         {
@@ -301,6 +305,7 @@ namespace Semanticus.Tests
 
         // ---- how done is known ----------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_check_task_closes_when_the_finding_it_links_is_gone()
         {
@@ -321,6 +326,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Done, Row(await f.Engine.GetModelPlanAsync(), added.ItemId).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_has_words_task_is_done_when_every_named_object_has_words()
         {
@@ -341,6 +347,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Done, Row(await f.Engine.GetModelPlanAsync(), added.ItemId).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(null, PlanDoneWhen.AssistantSays)]
         [InlineData("you", PlanDoneWhen.YouMark)]
@@ -360,6 +367,7 @@ namespace Semanticus.Tests
             Assert.Null(row.Order);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_check_the_engine_cannot_run_is_refused_when_the_task_is_added()
         {
@@ -373,6 +381,7 @@ namespace Semanticus.Tests
 
         // ---- migration (contract 15) ----------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_pre_upgrade_file_migrates_targets_to_aims_keeping_dates_and_old_ids()
         {
@@ -490,6 +499,22 @@ namespace Semanticus.Tests
             Assert.NotEqual(a.ItemId, b.ItemId);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task A_task_added_from_a_suggested_next_step_keeps_the_words_source_and_names_no_page()
+        {
+            // The Studio's suggestion buttons (1.4, contract section 6) add a task with the source page "suggest".
+            // It is not a page: the row reads as the person's words, links back to nothing and offers no Go there.
+            using var f = await GappyAsync("SuggestSource.bim");
+            var added = await AskAsync(f, "Describe the Sales measures", page: "suggest");
+            var row = Row(added.Plan, added.ItemId);
+            Assert.Equal(PlanSources.Words, row.Source);
+            Assert.Equal("suggest", row.SourcePage);
+            Assert.Equal(PlanOriginKinds.Words, row.OriginLink.Kind);
+            Assert.NotEqual("suggest", row.Jump?.Tool);
+            Assert.Equal(PlanDoers.Assistant, row.Doer);
+        }
+
         [Fact]
         public async Task The_same_send_key_survives_a_restart_and_still_gives_one_task()
         {
@@ -510,6 +535,7 @@ namespace Semanticus.Tests
             Assert.Equal(first.ItemId, second.ItemId);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_send_key_over_the_limit_is_refused_in_plain_words()
         {

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "publish",
+  "title": "Publish",
+  "minutes": 2,
+  "tryWithClaude": "Ask Claude: show me what would change if I publish this model.",
+  "steps": [
+    { "place": "publish/changes", "focus": null, "press": null,
+      "say": "Publish lists what will change in the live model before anything is sent.",
+      "how": null, "wait": "read" },
+    { "place": "publish/changes", "focus": null, "press": "publish",
+      "say": "Publish sends only those changes. Nothing goes live until you press it.",
+      "how": null, "wait": { "ms": 4000 } },
+    { "place": "publish/new-model", "focus": null, "press": "publish-new",
+      "say": "Or publish as a new model. The old one stays as it is.",
+      "how": null, "wait": { "ms": 4000 } },
+    { "place": "publish/data-agent", "focus": null, "press": null,
+      "say": "Data agent sets up how a Fabric data agent reads your model.",
+      "how": null, "wait": "read" }
+  ]
+}

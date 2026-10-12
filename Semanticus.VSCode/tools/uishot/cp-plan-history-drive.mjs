@@ -206,7 +206,7 @@ async function shoot(page, name, { beforeCheck = null } = {}) {
   expect(/Object \| Change \| Before \| After/.test(m.detail ?? '') || /Object\s+Change\s+Before\s+After/.test(m.detail ?? ''), 'detail: the before and after table');
   expect(/Verified\./.test(m.detail ?? ''), 'detail: Verified as a word');
   expect(/Takes back this and 5 later changes\./.test(m.detail ?? ''), 'detail: the undo count sentence');
-  expect(m.seams.length === 1 && /Before this session/.test(m.seams[0]), 'detail: the Before this session seam');
+  expect(m.seams.length === 1 && /From an earlier visit/.test(m.seams[0]), 'detail: the Before this session seam');
   await page.close();
 }
 
@@ -253,7 +253,7 @@ async function shoot(page, name, { beforeCheck = null } = {}) {
   const done = await shoot(page, 'restored');
   expect(done.calls.filter((c) => c.call === 'restoreHistoryCheckpoint' && c.params[1] === true).length === 1, 'restored: one restore');
   expect(done.rows[0].kind === 'restored', 'restored: the Restored flag row is on top');
-  expect(done.seams.length === 2 && /Before the restore/.test(done.seams[0]) && /Before this session/.test(done.seams[1]), 'restored: both seams, restore first');
+  expect(done.seams.length === 2 && /Before the restore/.test(done.seams[0]) && /From an earlier visit/.test(done.seams[1]), 'restored: both seams, restore first');
   expect(!done.rows.some((r) => r.kind === 'edit' || r.kind === 'item') || !/Undo to here/.test(done.rows.map((r) => r.text).join(' ')), 'restored: nothing older offers Undo to here');
   await page.close();
 }

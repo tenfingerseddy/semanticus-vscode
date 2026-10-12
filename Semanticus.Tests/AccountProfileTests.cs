@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -9,8 +10,8 @@ namespace Semanticus.Tests
 {
     /// <summary>
     /// Connections Phase 2 (T160 item 3): the multi-account profile store + per-open account choice. Proves the store, its
-    /// migration from the Phase 1 single record, the tenant-default semantics, the human-only boundary (interactive
-    /// sign-in / make-default refused for an agent), and the crash-safe file discipline — all WITHOUT a live MSAL
+    /// migration from the Phase 1 single record, the tenant-default semantics, the sign-in boundary (interactive
+    /// sign-in and implicit make-default refused for an agent), and the crash-safe file discipline — all WITHOUT a live MSAL
     /// sign-in (interactive flows can't run in tests; we seed the identity record layer the same way #233's tests do).
     /// The live two-tenant behaviour joins the standalone-door release F5 gate.
     /// </summary>
@@ -228,6 +229,37 @@ namespace Semanticus.Tests
             Assert.Equal(EntraToken.SetDefaultResult.Ok, EntraToken.SetDefaultProfileResult(ok));
         }
 
+        [Fact]
+        public async Task Set_default_account_profile_changes_the_saved_default_through_the_MCP_door()
+        {
+            var first = SeedSignedIn("contoso.com", "megan@contoso.com", makeDefault: true);
+            var second = SeedSignedIn("contoso.com", "admin@contoso.com");
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions);
+            var activities = new List<ActivityEvent>();
+            sessions.Bus.Activity += activities.Add;
+            var (host, client) = await ToolMergeTests.StartDoorAsync(engine, gated: true);
+            using (host)
+            await using (client)
+            {
+                Assert.Contains(await client.ListToolsAsync(), t => t.Name == "set_default_account_profile");
+                var result = await client.CallToolAsync("set_default_account_profile", new Dictionary<string, object> { ["profileId"] = second });
+                Assert.False(result.IsError == true);
+                Assert.True(EntraToken.ListProfiles().Single(p => p.Id == second).IsDefault);
+                Assert.False(EntraToken.ListProfiles().Single(p => p.Id == first).IsDefault);
+                Assert.Contains(activities, a => a.Kind == "set_default_account_profile" && a.Origin == "agent" && a.Ok);
+                AgentPolicyStore.SetPreset("locked", "human");
+                try
+                {
+                    var held = await client.CallToolAsync("set_default_account_profile", new Dictionary<string, object> { ["profileId"] = first });
+                    Assert.True(held.IsError);
+                    Assert.True(EntraToken.ListProfiles().Single(p => p.Id == second).IsDefault);
+                }
+                finally { AgentPolicyStore.SetPreset("standard", "human"); }
+                await host.StopAsync();
+            }
+        }
+
         // ---- default semantics: make-default moves the pointer; a per-open touch does NOT ----
 
         [Fact]
@@ -249,22 +281,20 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task SetDefaultAccountProfile_is_human_only_and_refuses_an_agent()
+        public async Task SetDefaultAccountProfile_allows_both_doors_and_records_the_switch()
         {
             var id = SeedSignedIn("contoso.com", "megan@contoso.com", makeDefault: true);
             var b = SeedSignedIn("contoso.com", "admin@contoso.com");
             var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions);
-            // An agent cannot repoint the tenant default (blast radius across every remembered model on the tenant).
-            await Assert.ThrowsAsync<InvalidOperationException>(() => engine.SetDefaultAccountProfileAsync(b, "agent"));
-            Assert.True(EntraToken.ListProfiles().Single(p => p.Id == id).IsDefault);   // unchanged
-            // A human may, and it is recorded in the connection history.
-            var after = await engine.SetDefaultAccountProfileAsync(b, "human");
-            Assert.True(after.Single(p => p.Id == b).IsDefault);
+            var agent = await engine.SetDefaultAccountProfileAsync(b, "agent");
+            Assert.True(agent.Single(p => p.Id == b).IsDefault);
+            var after = await engine.SetDefaultAccountProfileAsync(id, "human");
+            Assert.True(after.Single(p => p.Id == id).IsDefault);
             Assert.Contains(ConnectionHistory.List(), e => e.Kind == "switch" && e.Account == "admin@contoso.com");
         }
 
-        // ---- the human-only boundary (AccountSelectionRefusal), mirroring the connection-label refusal ----
+        // ---- the interactive sign-in boundary (AccountSelectionRefusal) ----
 
         [Fact]
         public void An_agent_is_refused_for_interactive_sign_in_make_default_and_a_signed_out_profile()

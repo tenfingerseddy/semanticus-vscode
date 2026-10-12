@@ -13,6 +13,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace Semanticus.Engine
 {
@@ -37,6 +38,7 @@ namespace Semanticus.Engine
             if (string.IsNullOrWhiteSpace(path)) return false;
             string full;
             try { full = Trim(Path.GetFullPath(path)); } catch { return false; }
+            if (IsLearnCopy(full)) return true;
             var cmp = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
             foreach (var root in Roots().Where(r => !string.IsNullOrWhiteSpace(r)))
             {
@@ -45,6 +47,20 @@ namespace Semanticus.Engine
                 if (string.Equals(full, r, cmp)) return true;
                 if (full.StartsWith(r + Path.DirectorySeparatorChar, cmp)) return true;
             }
+            return false;
+        }
+
+        /// <summary>The extension's scratch Learn copies, including those made by earlier builds.</summary>
+        public static bool IsLearnCopy(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            try
+            {
+                for (var dir = new DirectoryInfo(Path.GetFullPath(path)); dir?.Parent != null; dir = dir.Parent)
+                    if (string.Equals(dir.Parent.Name, "learn", StringComparison.OrdinalIgnoreCase)
+                        && Regex.IsMatch(dir.Name, @"^(plan|ask|edit|review|publish)-\d{8}-\d{6}(-\d+)?$")) return true;
+            }
+            catch { }
             return false;
         }
 

@@ -108,7 +108,15 @@ namespace Semanticus.Tests
         {
             var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", Endpoint));   // DataSource = Endpoint, Database = ""
+            LabelProd();
             return engine;
+        }
+
+        // An unlabelled target counts as test since 1.4 (3a4dc874, Kane 10 Oct), so the tests of the ask loop label their target production.
+        private static void LabelProd()
+        {
+            var rec = ConnectionRegistry.Remember("xmla", Endpoint, "");   // "" matches the ForTest stub's empty Database
+            ConnectionRegistry.SetLabel(rec.Id, "prod", "human");
         }
 
         // A QueryData=DENY posture: the 'client' preset denies data preview off UAT/prod, and the target is labelled prod.
@@ -164,7 +172,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task A_querydata_grant_allows_row_queries_without_being_consumed()
         {
-            using var engine = Connected();   // default 'standard' preset; the unlabelled target resolves to prod ⇒ Ask
+            using var engine = Connected();   // default 'standard' preset; the target is labelled prod ⇒ Ask
 
             var q = "EVALUATE 'Sales'";
             var r1 = await engine.RunDaxAsync(q, 100, origin: "agent");
@@ -219,7 +227,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task EvaluateAndLog_agent_runs_under_a_grant_without_consuming_it()
         {
-            using var engine = Connected();   // default 'standard' preset; the unlabelled target resolves to prod ⇒ Ask
+            using var engine = Connected();   // default 'standard' preset; the target is labelled prod ⇒ Ask
 
             var q = "EVALUATE ROW(\"v\", EVALUATEANDLOG([Total Sales]))";
             var r1 = await engine.EvaluateAndLogAsync(q, 100, origin: "agent");
@@ -253,7 +261,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Interview_agent_row_returning_attempt_is_gated()
         {
-            using var engine = Connected();   // default 'standard' preset; the unlabelled target resolves to prod ⇒ Ask
+            using var engine = Connected();   // default 'standard' preset; the target is labelled prod ⇒ Ask
 
             var inline = "{\"question\":\"What are the raw sales rows?\",\"tier\":\"value\"," +
                          "\"query\":\"EVALUATE ROW(\\\"v\\\", [Total Sales])\",\"expectedValue\":\"1\"}";
@@ -315,12 +323,20 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
+        // An unlabelled target counts as test since 1.4 (3a4dc874), so this class labels its target production to test the ask loop.
+        private static void LabelProd()
+        {
+            var rec = ConnectionRegistry.Remember("xmla", Endpoint, "");
+            ConnectionRegistry.SetLabel(rec.Id, "prod", "human");
+        }
+
         // A workspace-anchored engine (project interview store in the temp ws) with the never-opened live stub
         // attached — the default 'standard' preset + unlabelled target resolve to prod ⇒ QueryData asks.
         private LocalEngine Connected()
         {
             var engine = new LocalEngine(new SessionManager(), new Fake(pro: true), _ws);
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", Endpoint));
+            LabelProd();
             return engine;
         }
 

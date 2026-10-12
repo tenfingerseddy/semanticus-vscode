@@ -81,6 +81,7 @@ namespace Semanticus.Tests
 
         // ---- E1: approve on a model with nowhere to keep the record ---------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Approve_on_a_model_never_saved_says_it_was_written_undoable_and_not_saved_yet()
         {
@@ -107,7 +108,7 @@ namespace Semanticus.Tests
             Assert.True(result.Performed, "the changes were written, so the answer is not a failure: " + result.Sentence);
             Assert.NotEqual(before, result.Revision);
             Assert.Contains("not saved", result.Sentence, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Undo", result.Sentence, StringComparison.Ordinal);
+            Assert.Contains("undo", result.Sentence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("failed", result.Sentence, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("nowhere", result.Sentence, StringComparison.OrdinalIgnoreCase);
             await e.UndoAsync("human");   // and it really is one undo step
@@ -135,6 +136,7 @@ namespace Semanticus.Tests
             return (f, e);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_embedded_copy_of_the_bundled_measure_format_rule_is_advice_the_gate_skips()
         {
@@ -156,6 +158,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_rule_under_the_bundled_id_with_a_different_expression_is_the_models_own_and_keeps_its_gate()
         {
@@ -254,6 +257,7 @@ namespace Semanticus.Tests
             return sb.Append("]}").ToString();
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_row_worked_out_again_after_Run_the_plan_is_not_stale_and_the_next_press_takes_it()
         {
@@ -300,7 +304,7 @@ namespace Semanticus.Tests
                 plan = await e.GetModelPlanAsync();
                 ran = await e.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
                 trail.AppendLine("turn " + turn + " press: " + ran.Performed + " " + ran.Sentence);
-                Assert.DoesNotContain("worked out before the model last changed", ran.Sentence ?? "", StringComparison.Ordinal);
+                Assert.DoesNotContain("changed after these changes were worked out", ran.Sentence ?? "", StringComparison.Ordinal);
             }
         }
 
@@ -345,9 +349,10 @@ namespace Semanticus.Tests
             var jev = LocalEngine.StaleRowSentence(new ModelPlanItem { Id = "jev.column-summarize.table:Sales" });
             var own = LocalEngine.StaleRowSentence(new ModelPlanItem { Id = "safefix/Visibility" });
 
-            Assert.Contains("Run the plan once more", jev, StringComparison.Ordinal);
+            Assert.DoesNotContain("Run the plan once more", jev, StringComparison.Ordinal);
+            Assert.Contains("Open this task on the Plan", jev, StringComparison.Ordinal);
             Assert.DoesNotContain("Work them out again", jev, StringComparison.Ordinal);
-            Assert.Contains("Work them out again, then run the plan", own, StringComparison.Ordinal);
+            Assert.Contains("Open the task again to get new changes, then press Run the plan", own, StringComparison.Ordinal);
         }
     }
 }

@@ -81,6 +81,7 @@ namespace Semanticus.Tests
         /// <summary>K21. "net sales in 2008" filters to 2008 on every shape of the date table that holds the year somewhere.</summary>
         [Theory]
         [MemberData(nameof(BindableYearShapes))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_year_in_the_question_filters_the_query_on_every_shape_of_the_date_table(string shape)
         {
             var a = await AskYearAsync(shape, "net sales in 2008");
@@ -88,11 +89,19 @@ namespace Semanticus.Tests
             Assert.True(FiltersBy(a, "2008"), shape + ": the year was dropped: " + Seen(a) + "; parts " + string.Join(", ", a.Parts?.Filters?.Select(f => f.Column + " " + f.Op + " " + string.Join("|", f.Values)) ?? Array.Empty<string>()));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> A_year_in_the_question_filters_the_query_on_every_shape_of_the_date_table_SampleRows() => BindableYearShapes().Take(1);
+
+        [Theory]
+        [MemberData(nameof(A_year_in_the_question_filters_the_query_on_every_shape_of_the_date_table_SampleRows))]
+        public Task A_year_in_the_question_filters_the_query_on_every_shape_of_the_date_table_sample(string shape) => A_year_in_the_question_filters_the_query_on_every_shape_of_the_date_table(shape);
+
         /// <summary>The invariant (K21): whatever the shape, a year the question names is either a filter of the query or said.
         /// Never the all-time total with nothing said.</summary>
         [Theory]
         [MemberData(nameof(BindableYearShapes))]
         [MemberData(nameof(UnbindableYearShapes))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_year_the_question_names_is_filtered_or_said_never_dropped_in_silence(string shape)
         {
             var a = await AskYearAsync(shape, "net sales in 2008");
@@ -101,14 +110,29 @@ namespace Semanticus.Tests
                 shape + ": 2008 was neither applied nor said: " + Seen(a));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> A_year_the_question_names_is_filtered_or_said_never_dropped_in_silence_SampleRows() => BindableYearShapes().Take(1);
+
+        [Theory]
+        [MemberData(nameof(A_year_the_question_names_is_filtered_or_said_never_dropped_in_silence_SampleRows))]
+        public Task A_year_the_question_names_is_filtered_or_said_never_dropped_in_silence_sample(string shape) => A_year_the_question_names_is_filtered_or_said_never_dropped_in_silence(shape);
+
         /// <summary>A year no column of the date table can name is said in the plain line, beside the number.</summary>
         [Theory]
         [MemberData(nameof(UnbindableYearShapes))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_year_no_column_can_hold_is_said_in_one_plain_line(string shape)
         {
             var a = await AskYearAsync(shape, "net sales in 2008");
             Assert.Equal("Could not apply '2008', so this covers every date.", a.Assumption);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> A_year_no_column_can_hold_is_said_in_one_plain_line_SampleRows() => UnbindableYearShapes().Take(1);
+
+        [Theory]
+        [MemberData(nameof(A_year_no_column_can_hold_is_said_in_one_plain_line_SampleRows))]
+        public Task A_year_no_column_can_hold_is_said_in_one_plain_line_sample(string shape) => A_year_no_column_can_hold_is_said_in_one_plain_line(shape);
 
         /// <summary>The year the data does not hold, on a column of labels, is one plain line, as it is for a column of whole numbers.</summary>
         [Fact]

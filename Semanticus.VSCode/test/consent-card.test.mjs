@@ -88,6 +88,12 @@ assert.ok(cardGrant, 'the card no longer builds the list it grants in one place 
 assert.match(cardGrant[1], /^consent\?\.fieldsInForce\?\.length \? \[\.\.\.consent\.fieldsInForce\]/,
   'the card grants something other than the engine\'s fields in force (get_consent)');
 
+// ---- the person's word in chat is enough (1.4 chatyes): a grant the assistant made says so, and Withdraw stays ----------
+assert.match(card, /grantedBy\?: string \| null/, 'the card no longer reads who turned permission on');
+assert.match(card, /consent\.current && consent\.grantedBy === 'agent'[\s\S]*?Turned on by your assistant/,
+  'a permission the assistant gave must read "Turned on by your assistant" on the consent card');
+assert.match(card, /data-testid="consent-withdraw"/, 'the person can still turn it off');
+
 // ---- copy rules --------------------------------------------------------------------------------
 assert.ok(!card.includes('\u2014'), 'the consent card source carries an em dash');
 

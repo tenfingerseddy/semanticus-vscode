@@ -217,6 +217,7 @@ namespace Semanticus.Tests
             return failures;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_Jev_off_no_labelled_phrasing_offers_or_drafts_an_add_it_did_not_ask_for_on_any_door()
         {
@@ -231,6 +232,7 @@ namespace Semanticus.Tests
             Assert.True(failures.Count == 0, failures.Count + " adds not asked for:\n" + string.Join("\n", failures));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_Jev_sure_of_every_add_no_take_away_offers_or_drafts_an_add_on_any_door()
         {
@@ -268,6 +270,7 @@ namespace Semanticus.Tests
 
         private static List<Label> V2Labels() => Load("adding-rule-v2-cases.json");
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Adding_rule_version_2_cases_with_Jev_off_on_every_door()
         {
@@ -280,6 +283,7 @@ namespace Semanticus.Tests
             Assert.True(failures.Count == 0, failures.Count + " adds version 2 does not allow:\n" + string.Join("\n", failures));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Adding_rule_version_2_cases_with_Jev_sure_of_every_add_on_every_door()
         {
@@ -318,6 +322,7 @@ namespace Semanticus.Tests
         /// measure remove the old role", which asks to add, and the menu matches Add a role for the words that take the
         /// role away (and, once Jev drafts on the Plan, a Jev sure of that add drafts it). With a full stop after the first
         /// words it does not. Both doors.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("add a Margin measure", "remove the old role", "role")]
         [InlineData("add a Margin measure", "also delete the old role", "role")]
@@ -344,6 +349,7 @@ namespace Semanticus.Tests
         /// ("remove the order count and total cost measures"). D4: an adding verb whose thing is what is then taken away
         /// ("Build a list of unused measures and delete them"). D5: Sol's seventh pass, reported open by the builder.
         /// asked is the one add the words do ask for, or null.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("Total Sales and Average Price can go", null)]
         [InlineData("Count Orders and Total Cost are no longer needed", null)]

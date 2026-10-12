@@ -245,13 +245,13 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "jev.measures.table:Returns", "jev.measures.table:Sales" }, jev.Select(i => i.Id).ToArray());
             var sales = jev.Single(i => i.Id == "jev.measures.table:Sales");
             Assert.Equal(ModelPlanSections.Meaning, sales.Section);
-            Assert.Equal("Tidy 2 measures in Sales", sales.Title);
+            Assert.Equal("Add folders and formats to 2 measures in Sales", sales.Title);
             Assert.Equal(ModelPlanItemStates.Proposed, sales.State);
             Assert.NotNull(sales.ChangeSet);
             Assert.Equal(ModelPlanChangeStates.Proposed, sales.ChangeSet.State);
             Assert.False(sales.ChangeSet.Stale, sales.ChangeSet.StaleReason);
             Assert.False(string.IsNullOrWhiteSpace(sales.ChangeSet.Digest));
-            Assert.Equal("Tidy 1 measure in Returns", jev.Single(i => i.Id == "jev.measures.table:Returns").Title);
+            Assert.Equal("Add folders and formats to 1 measure in Returns", jev.Single(i => i.Id == "jev.measures.table:Returns").Title);
 
             // The measures that already have both are left alone.
             Assert.DoesNotContain(sales.ChangeSet.Lines, l => l.Target == "measure:Sales/Revenue" || l.Target == "measure:Sales/Order Count");

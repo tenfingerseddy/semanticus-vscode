@@ -400,7 +400,7 @@ namespace Semanticus.Engine.Lineage
             var index = -1;
             var allUsed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var unresolvedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int read = 0, unreadable = 0, totalUnresolved = 0, totalSkipped = 0;
+            int read = 0, unreadable = 0, totalUnresolved = 0, totalSkipped = 0, measuresRead = 0, measureRefsChecked = 0;
 
             foreach (var (path, error, pr) in parsed)
             {
@@ -413,10 +413,13 @@ namespace Semanticus.Engine.Lineage
                     foreach (var modelRef in ReconcileAll(m, f))
                         resolved.Add(modelRef);   // a name miss just means the report uses a field not in THIS model — ignore
                 }
+                // The report's own measures: their DAX reads model names, and each one is a real use.
+                var measureUsages = ReadReportMeasures(m, pr, resolved, unresolvedNames, ext, out var measureUnresolved, out var measureChecked);
+                measuresRead += measureUsages.Length; measureRefsChecked += measureChecked;
                 bool ok = pr.DefinitionFound && error == null;
                 if (ok) read++; else unreadable++;
                 foreach (var r in resolved) allUsed.Add(r);
-                totalUnresolved += pr.Unresolved;
+                totalUnresolved += pr.Unresolved + measureUnresolved;
                 foreach (var n in pr.UnresolvedNames) unresolvedNames.Add(n);
                 totalSkipped += pr.SkippedParts;
 
@@ -446,7 +449,8 @@ namespace Semanticus.Engine.Lineage
                 {
                     Path = path, Name = ReportName(path), Read = ok,
                     ChoiceId = choiceIds != null && index < choiceIds.Count ? choiceIds[index] : null,
-                    FieldCount = resolved.Count, Unresolved = pr.Unresolved,
+                    FieldCount = resolved.Count, Unresolved = pr.Unresolved + measureUnresolved,
+                    ReportMeasures = measureUsages,
                     UsedRefs = resolved.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
                     ExtensionMeasures = ext.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
                     Visuals = visuals.OrderBy(v => v.Page, StringComparer.OrdinalIgnoreCase).ThenBy(v => v.Visual, StringComparer.OrdinalIgnoreCase).ToArray(),
@@ -498,7 +502,84 @@ namespace Semanticus.Engine.Lineage
                 ModelFieldsUsed = allUsed.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
                 Unused = unused,
                 Caveat = caveat,
+                ReportMeasuresRead = measuresRead,
+                ReportMeasureReferencesChecked = measureRefsChecked,
             };
+        }
+
+        /// <summary>Which of these reports (and which of their report measures) use a model object, for a warning that
+        /// names them. <paramref name="touches"/> says whether a resolved object ref is the object, or part of it (a
+        /// table's columns, a hierarchy's level columns). Called BEFORE the change, while the names still match.
+        /// Cheap on purpose: it resolves references only and never runs the unused sweep.</summary>
+        internal static List<(string Report, string[] ReportMeasures)> ReportUsesOf(Model m,
+            IReadOnlyList<(string path, string error, ReportDefinitionReader.ParseResult result)> parsed, Func<string, bool> touches)
+        {
+            var hits = new List<(string, string[])>();
+            foreach (var (path, _, pr) in parsed)
+            {
+                var direct = pr.Fields.Any(f => !f.IsExtension && ReconcileAll(m, f).Any(touches));
+                var measures = ReadReportMeasures(m, pr, new HashSet<string>(), new HashSet<string>(), new List<string>(), out _, out _)
+                    .Where(u => u.UsedRefs.Any(touches)).Select(u => u.Name).ToArray();
+                if (direct || measures.Length > 0) hits.Add((ReportName(path), measures));
+            }
+            return hits.OrderBy(h => h.Item1, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        // Resolve what each report measure's DAX reads against the open model (by name, as every report reference is).
+        // Table[Name] is a column or a measure of that table; a bare [Name] is a measure, else a column (every table's
+        // column of that name counts: over-protecting is the safe error). Another report measure of this report is not a
+        // gap. A name that matches nothing is a real use we could not place: it goes to UnresolvedNames, the same
+        // caution path an unattributable visual field takes, so a would-be-safe object of that name is never "safe".
+        private static ReportMeasureUsage[] ReadReportMeasures(Model m, ReportDefinitionReader.ParseResult pr, HashSet<string> resolved,
+            HashSet<string> unresolvedNames, List<string> ext, out int unresolvedCount, out int checkedCount)
+        {
+            unresolvedCount = 0; checkedCount = 0;
+            if (pr.ReportMeasures.Count == 0) return Array.Empty<ReportMeasureUsage>();
+            var siblings = new HashSet<string>(pr.ReportMeasures.Select(x => x.Name), StringComparer.OrdinalIgnoreCase);
+            var usages = new List<ReportMeasureUsage>();
+            foreach (var rm in pr.ReportMeasures)
+            {
+                ext.Add(rm.Name);
+                var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                int unresolved = 0;
+                foreach (var r in rm.Refs)
+                {
+                    checkedCount++;
+                    var hits = ResolveName(m, r).ToList();
+                    if (hits.Count > 0) { foreach (var h in hits) used.Add(h); continue; }
+                    if (r.MaybeOwn || (r.Table == null && siblings.Contains(r.Name))
+                        || (r.Table != null && siblings.Contains(r.Name) && pr.ReportMeasures.Any(x => string.Equals(x.Name, r.Name, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(x.Entity, r.Table, StringComparison.OrdinalIgnoreCase)))) continue;
+                    unresolved++; unresolvedNames.Add(r.Name);
+                }
+                unresolvedCount += unresolved;
+                foreach (var u in used) resolved.Add(u);
+                usages.Add(new ReportMeasureUsage
+                {
+                    Name = rm.Name, ReferencesChecked = rm.Refs.Count, Unresolved = unresolved,
+                    UsedRefs = used.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray(),
+                });
+            }
+            return usages.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        private static IEnumerable<string> ResolveName(Model m, ReportMeasureReferences.NameRef r)
+        {
+            if (r.Table != null)
+            {
+                if (!m.Tables.Contains(r.Table)) yield break;
+                var t = m.Tables[r.Table];
+                var col = t.Columns.FirstOrDefault(x => string.Equals(x.Name, r.Name, StringComparison.OrdinalIgnoreCase));
+                if (col != null) yield return ObjectRefs.For(col);
+                var me = t.Measures.FirstOrDefault(x => string.Equals(x.Name, r.Name, StringComparison.OrdinalIgnoreCase));
+                if (me != null) yield return ObjectRefs.For(me);
+                yield break;
+            }
+            var measure = m.Tables.SelectMany(t => t.Measures).FirstOrDefault(x => string.Equals(x.Name, r.Name, StringComparison.OrdinalIgnoreCase));
+            if (measure != null) { yield return ObjectRefs.For(measure); yield break; }
+            foreach (var t in m.Tables)
+                foreach (var c in t.Columns)
+                    if (string.Equals(c.Name, r.Name, StringComparison.OrdinalIgnoreCase)) yield return ObjectRefs.For(c);
         }
 
         // When report coverage is incomplete, a "safe" verdict can't be honoured (a report we couldn't read — or the

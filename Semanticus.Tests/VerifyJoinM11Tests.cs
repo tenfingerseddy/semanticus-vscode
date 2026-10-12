@@ -124,6 +124,7 @@ namespace Semanticus.Tests
         /// <summary>Sibling of item 1. The person accepted "Keys should not add up" (FMT-SUMMARIZE) on Sales[CustomerKey]: a decision
         /// to leave its summarize setting as it is, which declines the summarizeBy change on every path. Jev's column-summarize row
         /// must not carry a summarizeBy line for that column, and Run the plan must leave it as it was.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_an_accepted_summarize_finding_stops_Jevs_summarize_line_and_Run_the_plan_leaves_the_column()
         {
@@ -152,6 +153,7 @@ namespace Semanticus.Tests
         /// <summary>Sibling of item 6. Jev is sure Sales[CustomerKey] (the many side of a relationship) should be summed. No path may
         /// total a key: the base measure family must refuse the pick as StarterMeasuresFamily does, and Run the plan adds no
         /// "Total CustomerKey".</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_Jevs_sure_sum_on_a_key_never_becomes_a_total_of_the_key()
         {

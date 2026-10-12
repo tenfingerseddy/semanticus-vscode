@@ -1124,12 +1124,13 @@ const OPEN = (w) => w !== 'done' && w !== 'set_aside' && w !== 'checking';
 // it can move (order, hold, the switch). The engine's own text over the same rows is pinned byte for byte by
 // Semanticus.Tests/PlanHeartFoldParityTests.cs against plan-heart-fold-on.txt and plan-heart-fold-paused.txt, and
 // test/plan-heart.test.mjs holds this mock to the same two files.
+const WHO_WORD = { you: 'you', assistant: 'your assistant', semanticus: 'Semanticus' };
 function stampFold(plan) {
   const mine = plan.items.filter((r) => r.id.startsWith('pt-') && r.doer === 'assistant');
   for (const r of plan.items) r.offerNumber = null;
   if (plan.assistantQueue === 'paused') {
     const held = mine.filter((r) => r.stateWord === 'on_it' && r.claim && r.claim.claimedBy !== 'you');
-    plan.assistantSees = ['Plan: tasks are paused by the person. Carry on with what they ask you directly.',
+    plan.assistantSees = ['Plan: the person paused your tasks. Do what they ask you directly.',
       ...held.slice(0, 5).map((t) => `${t.title}: you may finish it.`)].join('\n');
     return plan;
   }
@@ -1140,7 +1141,7 @@ function stampFold(plan) {
     + (ready.length > 1 && ready.every((r) => r.footprintKnown) ? ' They do not depend on each other, so take more than one if you can.' : '');
   plan.assistantSees = [head,
     ...ready.slice(0, 5).map((r, k) => `${k + 1}. ${r.title} (${r.id})`),
-    ...mine.filter((r) => r.stateWord === 'waiting').map((w) => `Not offered yet: ${w.title}. It waits for ${w.waitsFor?.[0]?.title ?? 'another row'}.`),
+    ...mine.filter((r) => r.stateWord === 'waiting').map((w) => `Not offered yet: ${w.title}. It waits for ${w.waitsFor?.[0]?.title ?? 'another task'} first${WHO_WORD[w.waitsFor?.[0]?.doer] ? `, which ${WHO_WORD[w.waitsFor[0].doer]} must do.` : '.'}`),
     'Call list_assistant_requests, then claim_request.'].join('\n');
   return plan;
 }

@@ -81,7 +81,7 @@ export function PlanHistory({ sessionId = null, objectRef: objectRefProp = null,
     ]);
     if (mine !== seq.current) return;
     if (h.status === 'fulfilled') { setView(h.value); setOlder([]); setMore(!!h.value?.more); setFailed(null); }
-    else setFailed('History could not be read. ' + String((h.reason as Error)?.message ?? h.reason));
+    else setFailed('History could not be opened. ' + String((h.reason as Error)?.message ?? h.reason));
     setChain(c.status === 'fulfilled' ? c.value : null);
     setCheckpoints(k.status === 'fulfilled' ? k.value : null);
   }, [who, objectRef]);
@@ -234,7 +234,7 @@ export function PlanHistory({ sessionId = null, objectRef: objectRefProp = null,
 
       {broken && (
         <div className="ph-broken" role="alert" data-testid="ph-broken">
-          <b>{chain!.firstBrokenSeq > 0 ? `The verified record is broken at record ${chain!.firstBrokenSeq}.` : 'The verified record could not be read.'}</b>{' '}
+          <b>{chain!.firstBrokenSeq > 0 ? `The verified record is broken at record ${chain!.firstBrokenSeq}.` : 'The verified record could not be opened.'}</b>{' '}
           {chain!.firstBrokenSeq > 0
             ? 'A record was edited or removed after it was written. Nothing from that point on can be trusted.'
             : 'The stored record is damaged. None of it can be trusted.'}
@@ -467,7 +467,7 @@ export function HistoryDetail({ row, parent, chain, now, busy, sessionId, onClos
       )}
       {evidence && record && <div className="ph-evidence"><Evidence record={record} sessionId={sessionId ?? undefined} onJump={onJump} /></div>}
       {row.report?.evidence && (
-        <div className="ph-acts"><button type="button" className="sem-btn sem-btn-sm" onClick={() => void copyText(row.report!.evidence!)}>Copy the run's evidence</button></div>
+        <div className="ph-acts"><button type="button" className="sem-btn sem-btn-sm" onClick={() => void copyText(row.report!.evidence!)}>Copy what the run did</button></div>
       )}
       {/* A finished workflow run (lane W2, contract 11.3): its sealed report and "Make it reusable" live here now. */}
       {row.kind === 'run' && row.report?.runId && <RunEntryActions report={row.report} onOpenWorkflows={onGo ? () => onGo('workflows') : undefined} />}

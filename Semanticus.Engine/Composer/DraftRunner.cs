@@ -1676,7 +1676,7 @@ namespace Semanticus.Engine
                     goto changed;
                 }
                 if (act == "continue")
-                    throw new InvalidOperationException("Continue is the person's own: they press Continue in Semanticus. A stop that asks the person cannot be passed by the assistant.");
+                    throw new InvalidOperationException("Continue is its own tool: call continue_draft with the draft id (the person's word in chat is enough).");
                 if (act == "reorder")
                 {
                     if (d.Run != null && d.Run.Outcome != "not_ready") throw new InvalidOperationException("It has run, so its steps are fixed now.");
@@ -1745,10 +1745,7 @@ namespace Semanticus.Engine
                         sentence = await KeepTheirsAsync(p, d).ConfigureAwait(false);
                         break;
                     case "apply_draft":
-                        // Writing over the person's own newer edit is their call, never an assistant's (UAT S12-5-004).
-                        if (origin == "agent")
-                            throw new InvalidOperationException("Only the person can choose to write the draft over what they changed. "
-                                + "Ask them to press Apply the draft in Semanticus, or use keep_theirs to drop that step.");
+                        // Writing over the person's newer edit: the person's word in chat is enough (Kane, 10 Oct 2026), and Undo brings theirs back.
                         sentence = ApplyDraftOverIt(d);
                         break;
                     case "check_again":
@@ -2023,10 +2020,10 @@ namespace Semanticus.Engine
                     + (string.IsNullOrWhiteSpace(s.TickedFromWords) ? "" : " (from \"" + s.TickedFromWords.Trim() + "\")"))
                 .ToArray();
 
-        /// <summary>Approve and run on a held draft: the person's own approval, from the human-only target only. It
+        /// <summary>Approve and run on a held draft: the person's Approve and run, or the assistant's when the person said so in chat (Kane, 10 Oct 2026). It
         /// counts only when every part has passed, so the person approves words they could read. Pressed earlier, it
         /// sends the parts to the assistant and approves nothing yet; the draft then waits for the person again.</summary>
-        public async Task<DraftView> ApproveHeldDraftAsync(string draftId)
+        public async Task<DraftView> ApproveHeldDraftAsync(string draftId, string origin = "human")
         {
             RequireProFeature();
             var p = BindDrafts();
@@ -2038,7 +2035,7 @@ namespace Semanticus.Engine
                 id = d.Id;
                 PrepareToRunAgain(d);
                 d.Approved = true;
-                d.ApprovedBy = "human";
+                d.ApprovedBy = string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) ? "agent" : "human";
                 d.ApprovedUtc = DateTimeOffset.UtcNow;
                 await PostOpenBlanksAsync(p, d).ConfigureAwait(false);
                 var passed = EveryPartPassed(d, TaskReader(p));

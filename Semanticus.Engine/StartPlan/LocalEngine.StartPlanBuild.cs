@@ -233,14 +233,16 @@ namespace Semanticus.Engine
 
             var expected = doc.Preview.ProjectionDigest;
             (int? AiReadiness, string AiGrade, string BestPractice, int? BestPracticeOpen) inside = default;
+            var jevChoices = 0;
             long rev;
             try
             {
-                // The person approved this exact plan on the person-only door, so the commit carries "you" whichever door runs it.
+                // Whoever approved this exact plan is credited, whichever door runs the build: the assistant when it approved on the person's word in chat.
                 // The scope covers the commit only: the audit record below is not a change to the model and carries no cause.
                 using (ChangeCause.Begin(new ChangeCauseInfo
                 {
-                    Kind = ChangeCauseKinds.StartPlan, Ids = new[] { doc.Id }, Title = "Build the model from its start plan", ApprovedBy = ChangeBy.You,
+                    Kind = ChangeCauseKinds.StartPlan, Ids = new[] { doc.Id }, Title = "Build the model from its start plan",
+                    ApprovedBy = string.Equals(doc.Approval?.By, "agent", StringComparison.OrdinalIgnoreCase) ? ChangeBy.Assistant : ChangeBy.You,
                     Declined = StartPlanBuild.RefusedColumnRefs(doc),   // a column the approved plan gives no measure is a decision on the model that was just made (UAT-J7-S2-009)
                 }))
                     rev = await s.MutateAsync(origin, "build model from start plan", m =>
@@ -296,6 +298,10 @@ namespace Semanticus.Engine
                         if (!string.Equals(StartPlanProjection.Digest(projection), expected, StringComparison.Ordinal))
                             throw new StartPlanBuildRefusedException(
                                 "The model this plan builds is not the one you were shown, so nothing was built. Look at the plan again.");
+                        var present = StartPlanHold.PresentRefs(doc, m);
+                        jevChoices = (doc.Lines ?? new System.Collections.Generic.List<StartLine>()).Count(l => l?.Item != null
+                            && l.Kept && l.DecidedBy == StartDecidedBy.Jev && !StartPlanHold.IsHeld(l, present))
+                            + (doc.Manifest?.BuiltBases().Count(b => b.DecidedBy == StartDecidedBy.Jev) ?? 0);
                     }).ConfigureAwait(false);
                 inside = await s.ReadAsync(m => StartPlanBuild.GradesOf(m)).ConfigureAwait(false);
             }
@@ -303,6 +309,11 @@ namespace Semanticus.Engine
             {
                 return new StartPlanBuildResult { Built = false, Refused = refused.Message, Revision = s.Revision };
             }
+
+            // Count only the Jev choices the successful build used. Held and dropped lines did not land.
+            if (jevChoices > 0)
+                NoteProStep(s.Id, doc.Id, "Pro built the model with " + CountOf(jevChoices, "Jev choice", "Jev choices")
+                    + " in one step. One undo takes the build back.", placeId: "plan/start");
 
             // THE PERSON'S "NO" TRAVELS WITH THE BUILD. A suggestion they left unticked in the plan is a decision on the model that was just made, so it goes into the
             // Plan as a drop by the person, and the Plan after the build does not offer it again. Called once the lines have landed (and only then: a refused build

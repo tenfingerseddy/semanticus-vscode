@@ -206,6 +206,7 @@ namespace Semanticus.Tests
             Assert.Equal(6 * m.BaseMeasures.Count, m.TimeMeasures().Count());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -325,6 +326,7 @@ namespace Semanticus.Tests
             finally { try { Directory.Delete(dir, true); } catch { } }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_taken_back_then_saved_then_brought_back_and_never_saved_again_says_it_was_not_saved_after_a_restart()
         {
@@ -434,6 +436,7 @@ namespace Semanticus.Tests
             Assert.Null(TableLine(view, "Client").NameFlag);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_person_keeps_a_flagged_table_name_and_a_flagged_column_name_through_the_human_door_and_the_flag_goes()
         {
@@ -455,6 +458,7 @@ namespace Semanticus.Tests
             Assert.False(string.IsNullOrWhiteSpace(Column(view, "dim_client", "IND_CD").NameFlag));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_assistants_keep_over_the_agent_door_clears_the_same_flag()
         {
@@ -654,6 +658,7 @@ namespace Semanticus.Tests
             Assert.Contains(later.Refused, r => r.Contains("kept this name yourself", StringComparison.OrdinalIgnoreCase));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_that_starts_from_words_the_assistant_has_since_replaced_is_refused()
         {
@@ -854,6 +859,7 @@ namespace Semanticus.Tests
             return string.Join(" ", name.Split('_', ' ').Where(p => p.Length > 0).Select(p => char.ToUpperInvariant(p[0]) + p.Substring(1).ToLowerInvariant()));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_words_count_after_the_assistant_answered_every_item_says_what_the_queue_still_asks()
         {

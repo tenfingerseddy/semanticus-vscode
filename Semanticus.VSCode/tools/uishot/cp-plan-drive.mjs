@@ -38,8 +38,9 @@ if (!existsSync(join(webRoot, 'media', 'studio', 'studio.js'))) {
   process.exit(1);
 }
 
-// The fixture, as browser-ready source. Nothing is rewritten but the module keywords.
-const FIXTURE_SRC = readFileSync(join(here, 'fixtures', 'plan-heart-fixture.mjs'), 'utf8').replace(/^export /gm, '');
+// The fixture, as browser-ready source, with the engine's current assistant note.
+const FIXTURE_SRC = readFileSync(join(here, 'fixtures', 'plan-heart-fixture.mjs'), 'utf8').replace(/^export /gm, '')
+  .replaceAll('on its next call', 'when your assistant next checks the Plan');
 // U2's History engine, so opening History from the Plan draws the real History rather than a half-answered one.
 const HISTORY_SRC = readFileSync(join(here, 'fixtures', 'plan-history-fixture.mjs'), 'utf8').replace(/^export /gm, '');
 const FOLD_ON = readFileSync(join(here, 'fixtures', 'plan-heart-fold-on.txt'), 'utf8');
@@ -54,6 +55,7 @@ ${FIXTURE_SRC}
 window.__planCalls = [];
 ${typeof HISTORY_SRC === 'string' ? `window.__ph = (() => { ${HISTORY_SRC}\n return makeHistoryEngine({}); })();` : ''}
 let __plan = makeHeartPlan({ mode: ${JSON.stringify(mode)}, free: ${JSON.stringify(!!free)} });
+if (__plan.orderedBy === 'In value order, highest first.') __plan.orderedBy = 'Tasks with the greatest expected benefit come first.';
 if (${JSON.stringify(mode)} === 'collisions') { const base = JSON.parse(JSON.stringify(__plan.items.find((r) => r.doer === 'you') || __plan.items[0])); __plan.items = [{ ...base, id: 'proposal/collisions', title: 'Fix 3 names that Copilot reads as the same word', sub: 'Group1Key, Group2Key, PRAC_CD', stateWord: 'needs_you', status: 'proposed', jump: { tool: 'search', label: 'Find and replace', find: ['Group1Key', 'Group1 Key', 'PRAC_CD'] } }]; }
 const __note = (name, params) => window.__planCalls.push({ call: name, params: params });
 const __person = (name, fn) => (params) => { __note(name, params); __plan = fn(__plan, params); return __plan; };
@@ -78,6 +80,17 @@ let __h; Object.defineProperty(window, '__uishotHarness', { configurable: true,
     window.__removedRows = {};
     v.setResponse('removePlanRow', (params) => { __note('removePlanRow', params); const r = heartRemove(__plan, params[0]); __plan = r.result.plan; window.__removedRows[params[0]] = r; return r.result; });
     v.setResponse('restorePlanRow', (params) => { __note('restorePlanRow', params); __plan = heartRestore(__plan, window.__removedRows[params[0]]); return __plan; });
+    // Refresh plan (Kane, 11 Oct): the engine scans again, adds what is new, and takes the finished rows off the list.
+    v.setResponse('refreshPlan', (params) => { __note('refreshPlan', params);
+      const done = __plan.items.filter((r) => r.stateWord === 'done' || r.status === 'done');
+      const base = JSON.parse(JSON.stringify(__plan.items.find((r) => r.doer === 'semanticus' && r.stateWord === 'ready') || __plan.items[0]));
+      const fresh = { ...base, id: 'safefix/Store', title: 'Hide 2 key columns on Store', sub: 'StoreKey, RegionKey', why: ['Store has 2 key columns that people do not need to see.'],
+        stateWord: 'ready', status: 'ready', state: 'gap', changeSet: null, waitsFor: [], held: false, doer: 'semanticus', who: 'auto', source: 'found',
+        originLink: null, claim: null, note: null, stateNote: null, order: null, jump: { tool: 'readiness', label: 'AI readiness' } };
+      __plan = { ...__plan, items: [...__plan.items.filter((r) => !done.includes(r)), fresh], __doneBase: { semanticus: 0, you: 0, assistant: 0 } };
+      __plan = recount(__plan);
+      const sentence = '1 new task, ' + done.length + ' done task' + (done.length === 1 ? '' : 's') + ' cleared.';
+      return { added: 1, addedIds: [fresh.id], cleared: done.length, sentence, plan: __plan }; });
     v.setResponse('addPlanTask', (params) => { __note('addPlanTask', params); const r = heartAdd(__plan, params[0] || {}); __plan = r.plan; return r; });
     v.setResponse('applyPlanItems', (params) => { __note('applyPlanItems', params); const r = heartRun(__plan, params[0], params[2]); __plan = r.plan; return r; });
     // Keep or drop one line: answered with a change plan by the engine, so the page reads the plan again.
@@ -176,6 +189,7 @@ const MEASURE = `(() => {
     proLine: text(q('[data-testid="plan-pro-line"]')),
     sees: (q('[data-testid="plan-sees-text"]') || {}).textContent ?? null,
     said: text(q('[data-testid="plan-said"]')),
+    refreshButton: text(q('[data-testid="plan-refresh"]')),
     queueLine: text(q('[data-testid="plan-queue-line"]')),
     // The Overview's jobs on the Plan (lane R1, contract 11.1): the object line and Raise compatibility level.
     showing: text(q('[data-testid="plan-list"] .pw-grp')),
@@ -322,11 +336,11 @@ await scene('page', {
     ...has(m.grade === 'AI readiness B now to A when the plan is done', `grade line "${m.grade}"`),
     ...has(m.bestPractice === 'Best practice C', `best practice "${m.bestPractice}"`),
     ...has(/^Latest\s*10:46\s*Semanticus hid 3 Promotion key columns\s*History$/.test(m.latest), `latest "${m.latest}"`),
-    ...has(JSON.stringify(m.tracks.map((t) => t.counts)) === JSON.stringify(['5 done1 on it3 ready', '2 done0 on it2 need you', '4 done1 on it2 ready']), `track counts ${JSON.stringify(m.tracks.map((t) => t.counts))}`),
+    ...has(JSON.stringify(m.tracks.map((t) => t.counts)) === JSON.stringify(['5 done1 on it3 ready first1 follows it', '2 done0 on it2 need you', '4 done1 on it2 ready2 waiting']), `track counts ${JSON.stringify(m.tracks.map((t) => t.counts))}`),
     ...has(m.field === 'Describe a task or an aim', `field placeholder ${m.field}`),
     // Round 1: the rows only you can do are a closed fold, last; the Next list is Semanticus rows then the assistant's.
-    ...has(m.fold === 'Only you can do 2' && JSON.stringify(m.foldRows) === '[]', `fold "${m.fold}" with rows ${JSON.stringify(m.foldRows)}`),
-    ...has(m.rows.length === 8 && m.rows.every((r) => r.doer !== 'you'), `${m.rows.length} rows, ${m.rows.map((r) => r.doer)}`),
+    ...has(m.fold === '2 tasks need your choice' && JSON.stringify(m.foldRows) === '[]', `fold "${m.fold}" with rows ${JSON.stringify(m.foldRows)}`),
+    ...has(m.rows.length === 9 && m.rows.every((r) => r.doer !== 'you'), `${m.rows.length} rows, ${m.rows.map((r) => r.doer)}`),
     ...has(m.showAll === 'Show all 10', `show all "${m.showAll}"`),
     ...has(m.run === 'Run the plan 4', `run "${m.run}"`),
     ...has(JSON.stringify(m.queue) === '["On"]', `switch ${JSON.stringify(m.queue)}`),
@@ -337,6 +351,10 @@ await scene('page', {
     ...has(row(m, 'timeintel/measure:Sales/Sales Amount')?.sub === 'Waits for: Mark Date as the date table', 'Waits for names the row'),
   ],
 });
+await scene('waiting-open', { steps: [{ testId: 'plan-row-open-timeintel/measure:Sales/Sales Amount', settle: 900 }],
+  scrollTo: 'plan-detail-timeintel/measure:Sales/Sales Amount', expect: (m) => [
+    ...has(/Finish these tasks first/.test(m.detail), `dependency detail "${m.detail}"`),
+  ] });
 await scene('page-show-all', { steps: [{ testId: 'plan-show-all' }], expect: (m) => has(m.rows.length === 10, `${m.rows.length} rows after Show all`) });
 await scene('strip-filtered', {
   steps: [{ testId: 'plan-track-semanticus' }],
@@ -345,6 +363,23 @@ await scene('strip-filtered', {
     ...has(m.rows.every((r) => r.doer === 'semanticus') && m.rows.length === 5, `rows ${m.rows.map((r) => r.doer)}`),
     // The tour's one read of History on load (lane U4) is not the filter's.
     ...has(m.planCalls.filter((c) => !/^(getPlanHistory|listVerifiedEdits|listHistoryCheckpoints)$/.test(c.call)).length === 0, 'filtering a track makes no call'),
+  ],
+});
+// ---- Refresh plan (Kane, 11 Oct): before and after, once a run has finished rows, on the Semanticus track that lists them ----
+await scene('refresh-before', {
+  steps: [{ testId: 'plan-run', settle: 900 }, { testId: 'plan-track-semanticus', settle: 900 }],
+  expect: (m) => [
+    ...has(m.refreshButton === 'Refresh plan', `button "${m.refreshButton}"`),
+    ...has(m.rows.some((r) => r.state === 'done'), `no done rows before: ${m.rows.map((r) => r.state)}`),
+  ],
+});
+await scene('refresh-after', {
+  steps: [{ testId: 'plan-run', settle: 900 }, { testId: 'plan-track-semanticus', settle: 900 }, { testId: 'plan-refresh', settle: 900 }],
+  expect: (m) => [
+    ...has(callsOf(m, 'refreshPlan').length === 1, `refresh calls ${JSON.stringify(callsOf(m, 'refreshPlan'))}`),
+    ...has(/^1 new task, \d+ done tasks? cleared\.$/.test(m.said), `note "${m.said}"`),
+    ...has(!m.rows.some((r) => r.state === 'done'), `done rows left: ${m.rows.filter((r) => r.state === 'done').map((r) => r.id)}`),
+    ...has(m.rows.some((r) => r.id === 'safefix/Store'), `new row missing: ${m.rows.map((r) => r.id)}`),
   ],
 });
 await scene('latest-opens-history', { steps: [{ testId: 'plan-latest' }], expect: (m) => has(m.view === 'hist', `view ${m.view}`) });
@@ -616,7 +651,7 @@ await scene('queue-on', {
     ...has(row(m, 'pt-3b7d0c21')?.actions.length === 0, `first task actions ${row(m, 'pt-3b7d0c21')?.actions}`),
     ...has(row(m, 'pt-3b7d0c21')?.title.startsWith('1') && row(m, 'pt-9e2f7a10')?.title.startsWith('2'), 'the offer is numbered as the fold numbers it'),
     ...has(row(m, 'pt-c4e1a9f3')?.meta === 'Not offered yet', 'the waiting task says Not offered yet'),
-    ...has(m.queueLine === 'Offered on its next call', `queue line "${m.queueLine}"`),
+    ...has(m.queueLine === 'Your assistant gets these when it next checks the Plan', `queue line "${m.queueLine}"`),
     ...has(row(m, 'pt-0d6e33b8')?.actions.length === 0, `paused task actions ${row(m, 'pt-0d6e33b8')?.actions}`),
   ],
 });
@@ -627,7 +662,7 @@ await scene('queue-paused', {
     ...has(JSON.stringify(callsOf(m, 'setAssistantQueue').map((c) => c.params)) === '[["paused"]]', 'one switch call'),
     ...has(JSON.stringify(m.queue) === '["Paused"]', `switch ${m.queue}`),
     ...has(row(m, 'pt-a41b6f02')?.meta === 'Finishes, even when paused', 'the claimed task finishes, even when paused'),
-    ...has(m.queueLine === 'Paused by you. Nothing is offered.', `queue line "${m.queueLine}"`),
+    ...has(m.queueLine === 'Paused by you. Your assistant gets no new tasks.', `queue line "${m.queueLine}"`),
   ],
 });
 await scene('queue-up', {
@@ -691,8 +726,8 @@ await scene('run', {
       ...has(calls.length === 2, `${calls.length} applyPlanItems calls, expected two waves`),
       ...has(calls[0] && JSON.stringify(calls[0].params.slice(0, 2)) === '[[],"human"]' && /^rd-/.test(calls[0].params[2]), `run args ${JSON.stringify(calls[0]?.params)}`),
       // The time measures waited only on the date table, which the press runs, so they are in the same press and Done.
-      ...has(/Ran 4 rows/.test(m.runReceipt), `the press ran the time measures too (${m.runReceipt})`),
-      ...has(/^Ran \d+ rows?\./.test(m.runReceipt), `receipt "${m.runReceipt}"`),
+      ...has(/Ran 4 tasks/.test(m.runReceipt), `the press ran the time measures too (${m.runReceipt})`),
+      ...has(/^Ran \d+ tasks?\./.test(m.runReceipt), `receipt "${m.runReceipt}"`),
     ];
   },
 });
@@ -801,6 +836,7 @@ await scene('object-line-empty', { mode: 'empty', tab: '', extra: '&initialSelec
   ...has(m.objectActions.includes('Preview data'), `object actions on an empty plan ${JSON.stringify(m.objectActions)}`),
 ] });
 // Raise compatibility level: shown only while the level blocks a named capability, and it calls the free operation.
+await scene('raise-copy', { extra: '&compat=1604', expect: () => [] });
 await scene('raise-level', { extra: '&compat=1604', steps: [{ testId: 'plan-raise-level', settle: 900 }], expect: (m) => [
   ...has(JSON.stringify(callsOf(m, 'setCompatibilityLevel').map((c) => c.params)) === '[[1701]]', `raise calls ${JSON.stringify(callsOf(m, 'setCompatibilityLevel'))}`),
 ] });

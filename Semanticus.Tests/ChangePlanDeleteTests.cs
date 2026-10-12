@@ -48,6 +48,7 @@ namespace Semanticus.Tests
             Assert.Equal("approved", (await engine.GetPlanAsync()).Items.Single(i => i.Id == item.Id).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_stale_delete_plan_item_fails_loudly()
         {
@@ -92,7 +93,7 @@ namespace Semanticus.Tests
                 await engine.SetPlanItemAsync(item.Id, null, approved: true, "human");
                 var report = await engine.ApplyPlanAsync(new[] { item.Id }, "human");
                 Assert.Equal(1, report.AppliedCount);
-                Assert.Contains("re-verified", Assert.Single(report.Items).Note);
+                Assert.Contains("checked again first", Assert.Single(report.Items).Note);
                 Assert.DoesNotContain(await engine.ListMeasuresAsync(), m => m.Ref == orphan);
 
                 await engine.UndoAsync("human");                // one undoable batch, same as delete
@@ -118,7 +119,7 @@ namespace Semanticus.Tests
                 Assert.Equal(0, report.FailedCount);            // a stale verdict is a SKIP, never a failure
                 Assert.Equal(1, report.SkippedCount);
                 var note = Assert.Single(report.Items).Note;
-                Assert.Contains("no longer holds at apply time", note);
+                Assert.Contains("no longer looks safe to remove", note);
                 Assert.Contains(await engine.ListMeasuresAsync(), m => m.Ref == orphan);   // never deleted
             }
         }
@@ -151,7 +152,7 @@ namespace Semanticus.Tests
                 Assert.Equal(1, report.SkippedCount);          // the delete skipped (a stale verdict is a SKIP, not a failure)
                 var del = report.Items.First(i => i.Kind == "delete_if_unused");
                 Assert.Equal("skipped", del.Status);
-                Assert.Contains("no longer holds at apply time", del.Note);
+                Assert.Contains("no longer looks safe to remove", del.Note);
                 Assert.Contains(await engine.ListMeasuresAsync(), m => m.Ref == orphan);   // never deleted
             }
         }

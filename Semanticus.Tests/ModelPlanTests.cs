@@ -24,13 +24,24 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    public sealed class ModelPlanTests
+    public sealed class ModelPlanTests : IClassFixture<ModelTemplates>
     {
+        // Lean suite (10 Oct): the gappy model is built once per class (ModelTemplates) and each test opens its own copy.
+        private readonly ModelTemplates _templates;
+        public ModelPlanTests(ModelTemplates templates) => _templates = templates;
+
         /// <summary>A model with real gaps: two undescribed measures, an unhidden foreign key (a safe fix),
         /// and a measure nothing uses. Small on purpose, so a failure names one thing.</summary>
-        private static async Task<DecisionFixture> GappyModelAsync(string file = "Plan.bim", bool pro = true)
+        private async Task<DecisionFixture> GappyModelAsync(string file = "Plan.bim", bool pro = true)
         {
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
+            await _templates.OpenCopyAsync(f, "gappy", BuildGappyModelAsync, file);
+            f.UseNull();   // the default path: no service, so every test below is the no-key path unless it says otherwise
+            return f;
+        }
+
+        private static async Task BuildGappyModelAsync(DecisionFixture f)
+        {
             await f.Engine.CreateModelAsync("Contoso", 1604);
             await f.Engine.CreateTableAsync("Sales", "human");
             await f.Engine.CreateColumnAsync("table:Sales", "Amount", "Double", null, "human");
@@ -45,13 +56,11 @@ namespace Semanticus.Tests
             await f.Engine.CreateRelationshipAsync("column:Sales/CustomerKey", "column:Customer/CustomerKey", null, true, "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Total Sales", "SUM ( Sales[Amount] )", "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Old Total", "SUM ( Sales[Amount] )", "human");
-            await f.SaveAsAsync(file);
-            f.UseNull();   // the default path: no service, so every test below is the no-key path unless it says otherwise
-            return f;
         }
 
         // ---- the plan is a view of the model ---------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_first_plan_names_its_gaps_and_says_it_was_drawn_for_the_first_time()
         {
@@ -71,6 +80,7 @@ namespace Semanticus.Tests
             });
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_open_item_carries_a_reason_a_place_to_go_and_an_owner()
         {
@@ -90,6 +100,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Two_reads_of_an_unchanged_model_give_the_same_items_in_the_same_order()
         {
@@ -103,6 +114,7 @@ namespace Semanticus.Tests
             Assert.Equal("Nothing on the plan changed.", again.RefreshedWhy);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_gaps_are_not_stored_so_a_thrown_away_memory_file_changes_nothing_but_the_history()
         {
@@ -121,6 +133,7 @@ namespace Semanticus.Tests
 
         // ---- skipping ---------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Skipping_keeps_the_item_on_the_plan_and_shows_the_reason()
         {
@@ -140,6 +153,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanStatuses.Skipped, reread.Items.Single(i => i.Id == target.Id).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_skip_with_no_reason_is_refused()
         {
@@ -155,6 +169,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanStatuses.Ready, (await f.Engine.GetModelPlanAsync()).Items.Single(i => i.Id == target.Id).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Putting_a_skipped_item_back_makes_it_ordinary_work_again()
         {
@@ -170,6 +185,7 @@ namespace Semanticus.Tests
             Assert.Null(back.SkipReason);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_skipped_item_sinks_below_the_open_ones_but_stays_on_the_plan()
         {
@@ -188,6 +204,7 @@ namespace Semanticus.Tests
 
         // ---- done --------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_item_whose_gap_is_gone_is_reported_done()
         {
@@ -292,6 +309,7 @@ namespace Semanticus.Tests
 
         // ---- the no-service path -----------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_no_service_the_plan_is_complete_in_rule_order_with_no_numbers_and_says_so()
         {
@@ -303,11 +321,12 @@ namespace Semanticus.Tests
             Assert.NotEmpty(plan.Items);
             Assert.All(plan.Items, i => Assert.Equal(0, i.Confidence));   // zero means no number is shown at all
             Assert.False(string.IsNullOrWhiteSpace(plan.OrderedBy));
-            Assert.Contains("rules", plan.OrderedBy, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("order Semanticus found", plan.OrderedBy, StringComparison.Ordinal);
             Assert.DoesNotContain("—", plan.OrderedBy, StringComparison.Ordinal);
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_session_gets_the_whole_plan_and_is_told_the_ordering_is_Pro()
         {
@@ -323,6 +342,7 @@ namespace Semanticus.Tests
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_same_items_come_back_whether_the_order_was_bought_or_not()
         {
@@ -388,6 +408,7 @@ namespace Semanticus.Tests
             Assert.Equal(applied.Scorecard.Grade, mcp.Worth.To);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_rehearsal_leaves_the_model_exactly_as_it_found_it()
         {
@@ -404,6 +425,7 @@ namespace Semanticus.Tests
 
         // ---- acting ------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_item_names_the_tables_it_is_about()
         {
@@ -435,6 +457,20 @@ namespace Semanticus.Tests
             // A row about nothing in particular says so with an empty list, never with a guessed name.
             var ship = plan.Items.FirstOrDefault(i => i.Id == "ship/unsaved");
             if (ship != null) Assert.Empty(ship.Tables);
+        }
+
+        [Fact]
+        public async Task An_agent_save_gets_credit_for_the_unsaved_row()
+        {
+            using var f = await GappyModelAsync("SaidSave.bim");
+            await f.Engine.SetDescriptionAsync("table:Sales", "Save this", "human");
+            Assert.Contains((await f.Engine.GetModelPlanAsync()).Items, i => i.Id == "ship/unsaved");
+            ChangeNotification saved = null;
+            f.Sessions.Bus.Changed += n => { if (n.Label == "save") saved = n; };
+            await f.Engine.SaveAsync(null, null, false, "agent");
+            Assert.Equal("assistant", saved.By);
+            var done = (await f.Engine.GetModelPlanAsync()).Items.Single(i => i.Id == "ship/unsaved" && i.Status == ModelPlanStatuses.Done);
+            Assert.Equal("assistant", done.Doer);
         }
 
         [Fact]
@@ -489,6 +525,7 @@ namespace Semanticus.Tests
         /// (L3 of the joint verifier's plan-waits check). A file written by a build that remembered an assistant's row or
         /// a Jev row still names them as seen; neither is on the plan now, and neither may be recorded as done: their
         /// changes were dropped or permission withdrawn, which is work nobody did.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_remembered_assistant_or_Jev_row_that_has_gone_is_never_recorded_as_done()
         {
@@ -513,6 +550,7 @@ namespace Semanticus.Tests
         /// <summary>The first draw counts the plan's OWN rows (L6 of the joint verifier's plan-waits check): an assistant's
         /// row on the plan at the first read is told by the change plan, not counted in "drawn for the first time: N items."
         /// The count is the rows the plan wrote down, so the next read's comparison starts from the same number.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_first_draw_counts_the_plans_own_rows_only()
         {
@@ -524,7 +562,7 @@ namespace Semanticus.Tests
             var asst = plan.Items.Count(i => i.Id.StartsWith(LocalEngine.AssistantItemPrefix, StringComparison.Ordinal));
             Assert.True(asst > 0, "the premise: an assistant's row is on the plan at the first read");
             var own = plan.Items.Length - asst;
-            var expected = "The plan was drawn from the model for the first time: " + own + (own == 1 ? " item." : " items.");
+            var expected = "Semanticus made the plan from the model for the first time: " + own + (own == 1 ? " task." : " tasks.");
             Assert.Equal(expected, plan.RefreshedWhy);
             Assert.Equal(expected, plan.History.Single(h => h.Kind == ModelPlanHistoryKinds.Drawn).Sentence);
         }
@@ -568,13 +606,13 @@ namespace Semanticus.Tests
             {
                 var result = await f.Engine.ModelPlanActionAsync(item.Id, "start", "human");
                 // "auto" is a promise that pressing start runs it. A refusal here is a dead button on the page.
-                Assert.False(result.Sentence.Contains("Nothing in this release runs this one", StringComparison.Ordinal),
+                Assert.False(result.Sentence.Contains("Semanticus cannot do this task for you yet", StringComparison.Ordinal),
                     "the plan called " + item.Id + " auto and then refused to start it: " + result.Sentence);
                 Assert.False(result.Sentence.Contains("your assistant writes it", StringComparison.Ordinal),
                     "the plan called " + item.Id + " auto and then said it was the assistant's: " + result.Sentence);
                 Assert.False(result.Sentence.Contains("you have to approve", StringComparison.Ordinal),
                     "the plan called " + item.Id + " auto and then said it needed approval: " + result.Sentence);
-                Assert.False(result.Sentence.Contains("Nothing on the plan has that id", StringComparison.Ordinal),
+                Assert.False(result.Sentence.Contains("on the Plan has that id", StringComparison.OrdinalIgnoreCase),
                     "the row vanished before it could be started, so this loop proved nothing about " + item.Id);
             }
         }
@@ -687,7 +725,7 @@ namespace Semanticus.Tests
             var result = await f.Engine.ModelPlanActionAsync(safeFix.Id, "start", "human");
 
             Assert.False(result.Performed);
-            Assert.Equal("Running the plan is part of Semanticus Pro. Open the page it names to do this by hand.",
+            Assert.Equal("Running the plan is part of Semanticus Pro. Open the page the task names to do it yourself.",
                 result.Sentence);
             Assert.Equal(before, (await f.Engine.SessionInfoAsync()).Revision);   // nothing was written
 
@@ -703,6 +741,7 @@ namespace Semanticus.Tests
 
         /// <summary>The other half of the same line: everything about the plan that is not RUNNING it stays
         /// free. Read it, set a row aside, put it back.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_session_still_reads_the_plan_and_sets_a_row_aside_and_back()
         {
@@ -721,6 +760,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>And Pro still runs it, so the gate above is a tier boundary and not a removal.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_pro_session_still_runs_a_safe_fix_row()
         {
@@ -770,6 +810,7 @@ namespace Semanticus.Tests
                 after.Findings.Count(x => string.Equals(x.RuleId, "VIS-FK", StringComparison.Ordinal)));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Starting_the_safe_fix_item_applies_the_safe_fixes()
         {
@@ -786,6 +827,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanStatuses.Done, result.Plan!.Items.Single(i => i.Id == safeFix.Id).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Starting_something_nothing_can_run_yet_says_so_plainly_and_changes_nothing()
         {
@@ -804,6 +846,7 @@ namespace Semanticus.Tests
 
         /// <summary>Honesty lane: approve exists, so start on a row a person approves must not say the approval step
         /// is not built. It points at the review verbs that are built: work the changes out, then approve them.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Starting_a_row_you_approve_points_at_approve_and_never_says_it_is_not_built()
         {
@@ -822,6 +865,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Starting_a_skipped_item_asks_for_it_to_be_put_back_first()
         {
@@ -836,6 +880,7 @@ namespace Semanticus.Tests
             Assert.Contains("set aside", result.Sentence, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_id_that_is_not_on_the_plan_is_answered_rather_than_thrown_at()
         {
@@ -851,6 +896,7 @@ namespace Semanticus.Tests
         /// sets superseded: propose, approve and cancel are real, and only ONE of the four writes. An
         /// unknown verb still throws, and the message names all four rather than one.
         /// ModelPlanChangesTests holds what each of the three new ones actually does.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_four_verbs_are_accepted_and_anything_else_is_refused_by_name()
         {
@@ -872,6 +918,7 @@ namespace Semanticus.Tests
 
         // ---- one list of what to do next -----------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_next_actions_are_the_plans_top_three()
         {
@@ -891,6 +938,7 @@ namespace Semanticus.Tests
                 Assert.Contains(expected[i], actions[i].Args, StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_orientations_suggestions_are_the_same_list()
         {
@@ -903,6 +951,7 @@ namespace Semanticus.Tests
             Assert.Equal(actions.Select(a => a.Args), summary.SuggestedNextActions!.Select(a => a.Args));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_no_model_open_the_only_suggestion_is_to_open_one()
         {
@@ -976,6 +1025,7 @@ namespace Semanticus.Tests
             Assert.Equal(total!.Value, item.Tables.Sum(t => t.Count));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_safe_fix_row_counts_and_files_its_changes_per_table()
         {
@@ -1010,6 +1060,7 @@ namespace Semanticus.Tests
             Assert.NotEmpty(describe.Tables);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_cleanup_row_counts_and_files_its_changes_per_table()
         {
@@ -1026,6 +1077,7 @@ namespace Semanticus.Tests
             Assert.Contains(customer.Diff, l => l.Contains("Customer[City]", StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_proposal_row_counts_and_files_its_changes_per_table()
         {
@@ -1068,6 +1120,7 @@ namespace Semanticus.Tests
             return f;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_collision_row_names_the_job_with_its_count_and_never_says_look_at_suggestions()
         {
@@ -1076,7 +1129,7 @@ namespace Semanticus.Tests
             var plan = await f.Engine.GetModelPlanAsync();
             var item = plan.Items.Single(i => i.Id == "proposal/collisions");
 
-            Assert.Equal("Fix 24 names that Copilot reads as the same word", item.Title);
+            Assert.Equal("Rename or hide fields with 24 names Copilot confuses", item.Title);
             // Q&A retires in February 2027; the plan speaks about Copilot, which reads the same linguistic schema.
             Assert.All(plan.Items, i => Assert.DoesNotContain("Q&A", i.Title, StringComparison.Ordinal));
             Assert.All(plan.Items, i => Assert.All(i.Why ?? Array.Empty<string>(), w => Assert.DoesNotContain("Q&A", w, StringComparison.Ordinal)));
@@ -1085,6 +1138,7 @@ namespace Semanticus.Tests
             Assert.All(plan.Items, i => Assert.DoesNotContain("suggestion", i.Title, StringComparison.OrdinalIgnoreCase));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_collision_rows_reasons_are_three_sentences_whatever_the_finding_count_is()
         {
@@ -1096,7 +1150,7 @@ namespace Semanticus.Tests
             Assert.Equal(3, item.Why.Length);
 
             // One: what was found and why it matters, said once, with the count.
-            Assert.Contains("24 words are claimed by more than one visible thing", item.Why[0], StringComparison.Ordinal);
+            Assert.Contains("24 words are used by more than one visible field", item.Why[0], StringComparison.Ordinal);
 
             // Two: up to four examples, then a count of the rest. One line, not twenty-four.
             Assert.StartsWith("For example ", item.Why[1], StringComparison.Ordinal);
@@ -1112,6 +1166,7 @@ namespace Semanticus.Tests
             Assert.All(item.Why, w => Assert.DoesNotContain("linguistic schema", w, StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_collision_rows_diff_lines_are_changes_and_not_findings()
         {
@@ -1134,6 +1189,7 @@ namespace Semanticus.Tests
             Assert.Equal("24 objects", item.Touches);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_family_whose_fix_is_your_choice_shows_no_lines_and_says_so()
         {
@@ -1158,6 +1214,7 @@ namespace Semanticus.Tests
             Assert.Equal(3, item.Why.Length);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_proposal_rows_per_table_phrase_names_that_tables_own_cases()
         {
@@ -1175,6 +1232,7 @@ namespace Semanticus.Tests
             AssertCountsSumToTheTotal(item);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_check_row_counts_and_files_its_changes_per_table()
         {
@@ -1207,6 +1265,44 @@ namespace Semanticus.Tests
             Assert.All(sales.Diff, l => Assert.Contains("Sales[Total Sales]", l, StringComparison.Ordinal));
         }
 
+        /// <summary>Kane, 11 Oct 2026, on 1.3.0: after an edit, the plan raised "Read 1 report again" and every "Add a check" row
+        /// said Waiting beside Your assistant, waiting for that row. On a real model: a report is looked at, the model changes, and
+        /// the check row is still Ready, names the report in plain words, and the report row says what to press.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task After_an_edit_a_check_row_is_ready_names_its_report_and_the_report_row_says_what_to_press()
+        {
+            using var f = await GappyModelAsync("PlanCheckAfterEdit.bim");
+            var visual = "{ \"visual\": { \"query\": { \"queryState\": { \"Values\": { \"projections\": [ "
+                       + "{ \"field\": { \"Measure\": { \"Expression\": { \"SourceRef\": { \"Entity\": \"Sales\" } }, "
+                       + "\"Property\": \"Total Sales\" } } } ] } } } } }";
+            var reports = Path.Combine(f.Workspace, "Reports");
+            var visualDir = Path.Combine(reports, "Sales Overview.Report", "definition", "pages", "p1", "visuals", "v1");
+            Directory.CreateDirectory(visualDir);
+            File.WriteAllText(Path.Combine(reports, "Sales Overview.Report", "definition", "report.json"), "{}");
+            File.WriteAllText(Path.Combine(visualDir, "visual.json"), visual);
+            await f.Engine.SetReportScopeAsync(
+                new[] { new Semanticus.Engine.Lineage.ReportScopeChoice
+                        { Kind = "local", Name = "Sales Overview", Path = reports } }, "human");
+            await f.Engine.CheckReportsAsync(Array.Empty<string>(), false, null, null, null, "human", default);
+
+            // Any edit moves the model past the report's reading, which is what raised the report row on Kane's model.
+            await f.Engine.SetDescriptionAsync("table:Sales", "One row per order line.", "human");
+
+            var plan = await f.Engine.GetModelPlanAsync();
+            var recheck = plan.Items.Single(i => i.Id == "recheck/reports");
+            Assert.Equal("Look at 1 report again", recheck.Title);
+            Assert.Contains(recheck.Why, w => w.Contains("press Check reports", StringComparison.Ordinal));
+            var check = plan.Items.Single(i => i.Id == "check/measure:Sales/Total Sales");
+            Assert.Empty(check.WaitsFor);
+            Assert.NotEqual(PlanStateWords.Waiting, check.StateWord);
+            Assert.Equal("The report 'Sales Overview' shows Total Sales, but no check tests it.", check.Why[0]);
+            // Nothing Semanticus or the assistant does waits for the person's report row.
+            var held = plan.Items.Where(i => i.Doer != PlanDoers.You && i.WaitsFor.Any(w => w.Id == "recheck/reports")).Select(i => i.Id).ToArray();
+            Assert.True(held.Length == 0, "waits for the report row: " + string.Join(", ", held));
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_row_about_no_table_in_particular_files_nothing_rather_than_guessing()
         {
@@ -1230,6 +1326,7 @@ namespace Semanticus.Tests
 
         // ---- table facts (the Map's blocks) -----------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_table_of_nothing_but_measures_is_called_a_measure_table()
         {
@@ -1255,6 +1352,7 @@ namespace Semanticus.Tests
             Assert.True(sales.Relationships > 0);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_table_that_is_nothing_but_its_join_keys_is_called_a_bridge()
         {
@@ -1278,6 +1376,7 @@ namespace Semanticus.Tests
             Assert.NotEqual(ModelPlanTableKinds.Bridge, plan.Tables.Single(t => t.Name == "Store").Kind);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_field_parameter_is_called_one_by_the_same_test_the_overview_uses()
         {
@@ -1364,6 +1463,7 @@ namespace Semanticus.Tests
 
         // ---- the history is a story, not a list of sentences ------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Each_kind_of_history_entry_is_written_by_its_own_action_with_the_right_actor()
         {
@@ -1438,6 +1538,7 @@ namespace Semanticus.Tests
                      && h.ItemId == safeFix.Id && h.Detail.Length == 0);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void An_old_text_only_history_file_reads_back_as_a_redraw_by_the_engine()
         {
@@ -1501,6 +1602,7 @@ namespace Semanticus.Tests
         /// tests are about the FILE, so any stable key does.</summary>
         private const string Identity = "disk:abcd1234";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void A_malformed_memory_file_reads_as_nothing_remembered_rather_than_throwing()
         {
@@ -1520,19 +1622,21 @@ namespace Semanticus.Tests
             finally { Directory.Delete(dir, true); }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void The_refresh_note_counts_and_never_characterises()
         {
             Assert.Contains("first time", PlanMemory.RefreshNote(Array.Empty<string>(), new[] { "a", "b" }));
             Assert.Equal("Nothing on the plan changed.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "a" }));
-            Assert.Equal("1 item done, 1 new.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "b" }));
-            Assert.Equal("2 items done.", PlanMemory.RefreshNote(new[] { "a", "b" }, Array.Empty<string>()));
+            Assert.Equal("1 task done, 1 new.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "b" }));
+            Assert.Equal("2 tasks done.", PlanMemory.RefreshNote(new[] { "a", "b" }, Array.Empty<string>()));
             Assert.Equal("1 new.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "a", "b" }));
             // A rule row that stood aside for a suggestion is replaced, not done (review round 3, DT4).
-            Assert.Equal("1 item replaced by a suggestion, 1 new.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "b" }, new[] { "a" }));
-            Assert.Equal("1 item done, 1 item replaced by a suggestion.", PlanMemory.RefreshNote(new[] { "a", "b" }, Array.Empty<string>(), new[] { "b" }));
+            Assert.Equal("1 task replaced by a suggestion, 1 new.", PlanMemory.RefreshNote(new[] { "a" }, new[] { "b" }, new[] { "a" }));
+            Assert.Equal("1 task done, 1 task replaced by a suggestion.", PlanMemory.RefreshNote(new[] { "a", "b" }, Array.Empty<string>(), new[] { "b" }));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void The_history_keeps_the_last_two_hundred_entries_and_no_more()
         {

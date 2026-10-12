@@ -139,6 +139,7 @@ namespace Semanticus.Tests
         /// step, so no add is drafted either way.</summary>
         [Theory]
         [MemberData(nameof(Doors))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task With_jev_off_words_that_take_away_draft_no_add(string door)
         {
             using (var f = await ProAsync(File("R4Off"), new Jev((w, q) => ("yes", 0.99)), consent: false))
@@ -149,6 +150,13 @@ namespace Semanticus.Tests
                 Assert.DoesNotContain(AllSteps(await ComposeOnDoor(f.Engine, door, "make sure the old role is removed")), s => s.Kept && (s.Title ?? "").StartsWith("Add a", StringComparison.Ordinal));
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> With_jev_off_words_that_take_away_draft_no_add_SampleRows() => Doors().Take(1);
+
+        [Theory]
+        [MemberData(nameof(With_jev_off_words_that_take_away_draft_no_add_SampleRows))]
+        public Task With_jev_off_words_that_take_away_draft_no_add_sample(string door) => With_jev_off_words_that_take_away_draft_no_add(door);
 
         /// <summary>Every other pick stands (the rule's own examples): steps that do not add are never taken away.</summary>
         [Theory]

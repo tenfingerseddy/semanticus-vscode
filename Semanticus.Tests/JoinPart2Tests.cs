@@ -30,6 +30,7 @@ namespace Semanticus.Tests
         /// <summary>PIN (held on the joined tree, so it had no failing run): "Autogenerate from model" offers a total for a number
         /// column of a fact table only when a total means something. DUE_DT_KEY and PAID_DT_KEY are yyyymmdd date keys, BILL_RATE is
         /// a price, and CLIENT_KEY is a relationship key: none gets a "Total". INV_AMT does, so the check is not vacuous.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Autogenerate_from_model_never_totals_a_key_a_date_key_or_a_rate()
         {
@@ -130,6 +131,7 @@ namespace Semanticus.Tests
         /// <summary>The assistant's own run_draft counts as the person's review of a kept add, and its answer names each kept add it
         /// runs (the coordinator's ruling on VR19), in the person's own words, so nothing an assistant runs is left to be found in the
         /// model. Failed first at the merge: the answer said only "It runs by itself when every part passes its checks."</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Run_draft_names_each_kept_add_it_runs()
         {
@@ -159,6 +161,7 @@ namespace Semanticus.Tests
         /// facet, and each used to READ it too, so each waited for every starter row before it and Run the plan added one table's measures
         /// per press (21 presses on the 42 tables of a real model). Now none of them waits for another, and ONE press adds every fact's
         /// total. Failed first at the merge: the second and later rows waited for the row before.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_starter_rows_of_many_fact_tables_run_in_one_press()
         {

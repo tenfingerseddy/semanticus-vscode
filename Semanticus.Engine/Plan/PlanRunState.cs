@@ -46,8 +46,10 @@ namespace Semanticus.Engine
         /// Jev looks at them again by itself; a press that took them now would only leave them out. The press waits for Jev instead
         /// (LocalEngine.PlanVerbs.cs, RunReadySetAsync), so one press runs every row. <paramref name="leftOut"/> holds the rows this press already left out.</summary>
         public static List<ModelPlanItem> JevRowsLookingAgain(IEnumerable<ModelPlanItem> items, ISet<string> leftOut) =>
-            Rows(items).Where(r => (leftOut == null || !leftOut.Contains(r.Id))
-                                   && JevFamily.IsJevItem(r.Id) && r.ChangeSet?.Stale == true).ToList();
+            (items ?? Array.Empty<ModelPlanItem>()).Where(r => r != null && string.Equals(r.Doer, PlanDoers.Semanticus, StringComparison.Ordinal)
+                && !r.Held && (leftOut == null || !leftOut.Contains(r.Id)) && JevFamily.IsJevItem(r.Id)
+                && ((IsReady(r) && r.ChangeSet?.Stale == true) || string.Equals(r.StateWord, PlanStateWords.Waiting, StringComparison.Ordinal)))
+                .ToList();
 
         /// <summary>SHA-256, lowercase hex, over the Ready rows sorted by id and the revision.</summary>
         public static string Digest(IEnumerable<ModelPlanItem> items, long revision)

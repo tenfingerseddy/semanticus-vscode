@@ -111,6 +111,7 @@ namespace Semanticus.Tests
             catch { f.Dispose(); throw; }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(Cases))]
         public async Task Every_way_a_person_accepts_a_format_line_lands_it_in_the_build_and_nothing_else_does(Family family, Path path)

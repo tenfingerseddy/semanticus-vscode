@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 using System.Threading.Tasks;
+using ModelContextProtocol.Protocol;
 using Semanticus.Engine;
 using Semanticus.Engine.Entitlement;
 using Xunit;
@@ -23,12 +24,66 @@ namespace Semanticus.Tests
         {
             _safeRoot = fixture.Root;
             ConnectionRegistry.RootOverride = _root;
+            AgentPolicyStore.RootOverride = _root; ApprovalLedger.RootOverride = _root;   // the test sets the locked preset: its own policy and approval files, so another class's preset or approval cannot reach it
         }
 
         public void Dispose()
         {
             ConnectionRegistry.RootOverride = _safeRoot;
+            AgentPolicyStore.RootOverride = _safeRoot; ApprovalLedger.RootOverride = _safeRoot;
             try { if (Directory.Exists(_root)) Directory.Delete(_root, true); } catch { }
+        }
+
+        [Fact]
+        public async Task Label_connection_updates_the_saved_connection_through_the_MCP_door()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var connection = ConnectionRegistry.Remember("xmla", "powerbi://example/mcp-label", "Sales", "Sales model");
+            var activities = new List<ActivityEvent>();
+            sessions.Bus.Activity += activities.Add;
+            var (host, client) = await ToolMergeTests.StartDoorAsync(engine, gated: true);
+            using (host)
+            await using (client)
+            {
+                Assert.Contains(await client.ListToolsAsync(), t => t.Name == "label_connection");
+                var result = await client.CallToolAsync("label_connection", new Dictionary<string, object>
+                { ["id"] = connection.Id, ["label"] = "DEV" });
+                Assert.False(result.IsError == true);
+                Assert.Equal("dev", ConnectionRegistry.Find(connection.Id).Label);
+                Assert.Contains("dev", result.Content.OfType<TextContentBlock>().First().Text);
+                Assert.Contains(activities, a => a.Kind == "label_connection" && a.Origin == "agent" && a.Ok);
+                ConnectionRegistry.SetLabel(connection.Id, "prod", "human");
+                foreach (var label in new[] { "dev", "" })
+                {
+                    var refused = await client.CallToolAsync("label_connection", new Dictionary<string, object>
+                    { ["id"] = connection.Id, ["label"] = label });
+                    Assert.True(refused.IsError);
+                    Assert.Equal("label_connection failed: Changing a connection's label changes what your assistant may do there, so only you can change it, in Connections.",
+                        refused.Content.OfType<TextContentBlock>().First().Text);
+                    Assert.Equal("prod", ConnectionRegistry.Find(connection.Id).Label);
+                }
+                AgentPolicyStore.SetPreset("locked", "human");
+                try
+                {
+                    foreach (var label in new[] { "dev", "" })
+                    {
+                        var refused = await client.CallToolAsync("label_connection", new Dictionary<string, object>
+                        { ["id"] = connection.Id, ["label"] = label });
+                        Assert.True(refused.IsError);
+                        Assert.Equal("label_connection failed: Changing a connection's label changes what your assistant may do there, so only you can change it, in Connections.",
+                            refused.Content.OfType<TextContentBlock>().First().Text);
+                        Assert.Equal("prod", ConnectionRegistry.Find(connection.Id).Label);
+                    }
+                    var unlabelled = ConnectionRegistry.Remember("xmla", "powerbi://example/locked-label", "Sales", "Sales model");
+                    var held = await client.CallToolAsync("label_connection", new Dictionary<string, object>
+                    { ["id"] = unlabelled.Id, ["label"] = "dev" });
+                    Assert.True(held.IsError, "the locked call said: " + string.Join(" ", held.Content.OfType<TextContentBlock>().Select(x => x.Text)));
+                    Assert.Null(ConnectionRegistry.Find(unlabelled.Id).Label);
+                }
+                finally { AgentPolicyStore.SetPreset("standard", "human"); }
+                await host.StopAsync();
+            }
         }
 
         private sealed class Free : IEntitlement
@@ -38,7 +93,52 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Label_public_doors_enforce_the_human_boundary_and_broadcast_exact_outcomes()
+        public async Task Agent_cannot_change_a_connections_existing_label()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var connection = ConnectionRegistry.Remember("xmla", "powerbi://example/existing-label", "Sales", "Sales model");
+            ConnectionRegistry.SetLabel(connection.Id, "prod", "human");
+
+            var refusal = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => McpTools.LabelConnection(engine, connection.Id, "dev"));
+
+            Assert.Equal("Changing a connection's label changes what your assistant may do there, so only you can change it, in Connections.", refusal.Message);
+            Assert.Equal("prod", ConnectionRegistry.Find(connection.Id).Label);
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData(null)]
+        [InlineData("prod")]
+        public async Task Agent_cannot_clear_or_reset_a_connections_existing_label(string label)
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, new Free());
+            var rpc = new EngineRpcTarget(engine, "agent");
+            var connection = ConnectionRegistry.Remember("xmla", "powerbi://example/clear-label", "Sales", "Sales model");
+            ConnectionRegistry.SetLabel(connection.Id, "prod", "human");
+            var activities = new List<ActivityEvent>();
+            sessions.Bus.Activity += activities.Add;
+
+            var refusal = await Assert.ThrowsAsync<InvalidOperationException>(() => rpc.labelConnection(connection.Id, label));
+
+            Assert.Equal("Changing a connection's label changes what your assistant may do there, so only you can change it, in Connections.", refusal.Message);
+            Assert.Equal("prod", ConnectionRegistry.Find(connection.Id).Label);
+            Assert.Empty(activities); // The RPC gate refuses before the engine method runs.
+
+            var directRefusal = await Assert.ThrowsAsync<InvalidOperationException>(
+                () => engine.LabelConnectionAsync(connection.Id, label, "agent"));
+            Assert.Equal(refusal.Message, directRefusal.Message);
+            Assert.Equal("prod", ConnectionRegistry.Find(connection.Id).Label);
+            var activity = Assert.Single(activities);
+            Assert.Equal("agent", activity.Origin);
+            Assert.False(activity.Ok);
+            Assert.Equal(refusal.Message, activity.Error);
+        }
+
+        [Fact]
+        public async Task Label_public_doors_broadcast_exact_outcomes()
         {
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new Free());
@@ -49,27 +149,23 @@ namespace Semanticus.Tests
             sessions.Bus.Activity += activities.Add;
             sessions.Bus.Changed += _ => modelChanges++;
 
-            // label_connection is no longer an MCP tool (2026-09-24): labelling was never an agent capability. The
-            // registry's refusal is still the real guard, because a non-owner MCP process forwards over the pipe with
-            // origin "agent". Drive it through that door and through the engine directly.
             foreach (var attempt in new Func<Task>[]
             {
                 () => new EngineRpcTarget(engine, "agent").labelConnection(connection.Id, "dev"),
                 () => engine.LabelConnectionAsync(connection.Id, "dev", "agent"),
             })
             {
+                await rpc.labelConnection(connection.Id, "");
                 activities.Clear();
-                var refused = await Assert.ThrowsAnyAsync<Exception>(attempt);
-
-                Assert.Contains("Only a human", refused.Message, StringComparison.OrdinalIgnoreCase);
-                Assert.Null(ConnectionRegistry.Find(connection.Id).Label);
+                await attempt();
+                Assert.Equal("dev", ConnectionRegistry.Find(connection.Id).Label);
                 var agentActivity = Assert.Single(activities);
                 Assert.Equal("label_connection", agentActivity.Kind);
                 Assert.Equal("agent", agentActivity.Origin);
-                Assert.False(agentActivity.Ok);
-                Assert.Equal(refused.Message, agentActivity.Error);
+                Assert.True(agentActivity.Ok);
             }
 
+            await rpc.labelConnection(connection.Id, "prod");
             activities.Clear();
             var labelled = await rpc.labelConnection(connection.Id, "DEV");
 
@@ -110,7 +206,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Engine_label_default_fails_closed_as_agent_origin()
+        public async Task Engine_label_default_records_agent_origin()
         {
             using var sessions = new SessionManager();
             using var engine = new LocalEngine(sessions, new Free());
@@ -118,14 +214,12 @@ namespace Semanticus.Tests
             var activities = new List<ActivityEvent>();
             sessions.Bus.Activity += activities.Add;
 
-            var refused = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => engine.LabelConnectionAsync(connection.Id, "dev"));
-
-            Assert.Contains("Only a human", refused.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Null(ConnectionRegistry.Find(connection.Id).Label);
+            var result = await engine.LabelConnectionAsync(connection.Id, "dev");
+            Assert.Equal("dev", result.Label);
+            Assert.Equal("dev", ConnectionRegistry.Find(connection.Id).Label);
             var activity = Assert.Single(activities);
             Assert.Equal("agent", activity.Origin);
-            Assert.False(activity.Ok);
+            Assert.True(activity.Ok);
         }
 
         [Fact]

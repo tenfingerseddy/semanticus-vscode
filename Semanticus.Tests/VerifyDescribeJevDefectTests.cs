@@ -139,6 +139,7 @@ namespace Semanticus.Tests
         /// else: no columns". A Plan draft now asks it on Pro, and the ask offers the model's column and measure names as the
         /// options of its picks.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D3a_compose_draft_sends_only_what_its_purpose_says()
         {
             var (f, jev) = await ProAsync("Sends.bim", (w, q) => q == "step:hide:include" ? Yes(0.97) : null);
@@ -167,6 +168,7 @@ namespace Semanticus.Tests
         /// Plan switch (31a92ca3), a Plan draft where Jev is sure of nothing opens with the word match's steps KEPT, not as
         /// the menu.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D3b_compose_draft_says_what_happens_when_Jev_is_sure_of_nothing()
         {
             var (f, jev) = await ProAsync("NotSure.bim", (w, q) => null);   // Jev answers every clause, sure of nothing
@@ -192,6 +194,7 @@ namespace Semanticus.Tests
         /// and 4 arrived dropped). RefineAsync counts a step Jev only leaned to, which arrives dropped, as added and credits
         /// Jev with it.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D4_add_more_words_does_not_say_it_added_a_step_that_arrives_dropped()
         {
             var (f, _) = await ProAsync("RefineLean.bim", (w, q) =>
@@ -216,6 +219,7 @@ namespace Semanticus.Tests
         /// are the words', RefineAsync says only Jev's count (JevRedrafted(added - addedByWords)), so the sentence
         /// under-counts what was added and never says the words named the rest.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D4b_add_more_words_counts_every_step_it_added()
         {
             var (f, _) = await ProAsync("RefineMixed.bim", (w, q) =>
@@ -244,6 +248,7 @@ namespace Semanticus.Tests
         /// counts every unanswered question (DraftRunner.cs openQuestions), so a step Jev leaned to, which arrives dropped
         /// with its own questions, inflates the count. The count is from lane L4; Jev drafting on the Plan makes it common.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D5_the_summary_does_not_count_the_questions_of_a_dropped_step()
         {
             var (f, _) = await ProAsync("DroppedQuestions.bim", (w, q) => q switch
@@ -272,6 +277,7 @@ namespace Semanticus.Tests
         /// clause. No labelled description in labels.json, labels-fresh.json or labels-plan2.json repeats an op, and the
         /// scorer compares sets of ops, so the replay could not see this.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D7_two_clauses_asking_for_the_same_kind_of_step_draft_two_steps()
         {
             var (f, jev) = await ProAsync("TwoFormats.bim", (w, q) =>
@@ -298,6 +304,7 @@ namespace Semanticus.Tests
         /// dropped from the draft with no word to the person, although the per-clause rule says a clause the words name is
         /// never dropped.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D6a_a_thirteenth_clause_is_not_dropped_silently()
         {
             var (f, jev) = await ProAsync("Thirteen.bim", (w, q) => null);   // Jev sure of nothing: the words decide
@@ -320,6 +327,7 @@ namespace Semanticus.Tests
         /// typed without "and" or "then" become part of the old words' last clause. When Jev is not sure of that joined
         /// clause, the word match names one step for it, and the step the new words name is never drafted.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task D6b_add_more_words_typed_without_and_still_drafts_the_step_they_name()
         {
             var (f, _) = await ProAsync("RefineJoin.bim", (w, q) => null);   // Jev sure of nothing: the words decide

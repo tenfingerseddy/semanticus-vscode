@@ -194,27 +194,26 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public void The_eight_tools_are_compiled_and_there_is_no_approve_among_them()
+        public void The_eight_tools_are_compiled_and_approve_start_plan_is_the_ninth()
         {
             var compiled = ProFeatureMapTests.CompiledOperationNames();
             foreach (var t in Tools) Assert.Contains(t, compiled);
-            Assert.DoesNotContain(compiled, n => n.Contains("approve", StringComparison.OrdinalIgnoreCase) && n.Contains("start", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains("approve_start_plan", compiled);
             // Nor does any McpTools method take an engine and call the approve verb under another name: the only way an
             // MCP tool reaches IEngine is its method body, so look for the verb's name in every tool's IL-free signature
             // surface (name, parameters) and in the descriptions' promise.
-            var tool = typeof(McpTools).GetMethod("BuildStartPlan");
+            // The text the agent reads sits on the compact wrapper (lean-results); the build still refuses without an approval.
+            var tool = typeof(McpTools).GetMethod("BuildStartPlanOp");
             Assert.NotNull(tool);
             var text = tool.GetCustomAttribute<DescriptionAttribute>().Description;
-            Assert.Contains("approve", text, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Studio", text, StringComparison.Ordinal);
+            Assert.Contains("approval", text, StringComparison.OrdinalIgnoreCase);
         }
 
         [Fact]
-        public void An_agent_reachable_rpc_target_has_no_approve_for_a_start_plan()
+        public void The_rpc_target_carries_approve_for_a_start_plan_on_both_doors()
         {
             var entries = typeof(EngineRpcTarget).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly).Select(m => m.Name);
-            Assert.DoesNotContain(entries, n => n.Contains("approve", StringComparison.OrdinalIgnoreCase) && n.Contains("start", StringComparison.OrdinalIgnoreCase));
-            Assert.DoesNotContain("approveStartPlan", entries);
+            Assert.Contains("approveStartPlan", entries);
         }
 
         [Fact]
@@ -226,7 +225,7 @@ namespace Semanticus.Tests
             {
                 var listed = (await client.ListToolsAsync()).Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
                 foreach (var t in Tools) Assert.Contains(t, listed);
-                Assert.DoesNotContain(listed, n => n.Contains("approve", StringComparison.OrdinalIgnoreCase) && n.Contains("start", StringComparison.OrdinalIgnoreCase));
+                Assert.Contains("approve_start_plan", listed);   // Kane, 10 Oct 2026: the person's word in chat is enough
                 // A stale build serves fewer tools than the source holds; the served list must be the compiled list.
                 Assert.Equal(ProFeatureMapTests.CompiledOperationNames().OrderBy(n => n, StringComparer.Ordinal), listed.OrderBy(n => n, StringComparer.Ordinal));
             }
@@ -318,16 +317,21 @@ namespace Semanticus.Tests
 
         // ------------------------------------------------------------------ dual-door parity
 
-        private static Dictionary<string, object> McpArgs(string tool) => tool switch
+        private static Dictionary<string, object> McpArgs(string tool)
         {
+            Dictionary<string, object> args = tool switch
+            {
             "start_model_from_sql" => new() { ["server"] = "x.datawarehouse.fabric.microsoft.com", ["database"] = "SalesWh", ["folder"] = "/work/Sales", ["name"] = "Sales" },
             "edit_start_plan" => new() { ["op"] = "rename", ["target"] = "table:Sales", ["value"] = "Orders" },
             "grant_start_disclosure" => new() { ["digest"] = "d1ge57-aaaaaaaa" },
             "get_start_words" => new() { ["max"] = 25, ["offset"] = 5 },
             "write_start_words" => new() { ["words"] = new[] { new Dictionary<string, object> { ["ref"] = "table:Sales", ["kind"] = "description", ["text"] = "One row per order." } } },
             "build_start_plan" => new() { ["digest"] = "d1ge57-aaaaaaaa" },
-            _ => new(),
-        };
+            _ => new Dictionary<string, object>(),
+            };
+            args["detail"] = true;
+            return args;
+        }
 
         private static object[] RpcArgs(string tool) => tool switch
         {
@@ -378,7 +382,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task The_same_verb_through_MCP_and_the_pipe_reaches_the_engine_alike_and_returns_the_same_json()
+        public async Task The_same_verb_through_MCP_full_detail_and_the_pipe_reaches_the_engine_alike_and_returns_the_same_json()
         {
             var engine = StartEngineFake.Create(out var fake);
             var (host, client) = await StartDoorAsync(engine);
@@ -418,7 +422,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task A_pipe_connection_decides_the_origin_not_the_wire_and_an_agent_cannot_approve()
+        public async Task A_pipe_connection_decides_the_origin_not_the_wire_and_an_agent_reaches_approve()
         {
             var engine = StartEngineFake.Create(out var fake);
             var name = TestPipe.Mint("semanticus-sfdoors-");
@@ -437,10 +441,9 @@ namespace Semanticus.Tests
                 Assert.Equal("agent", Assert.Single(fake.Calls).Args[0]);
                 fake.Calls.Clear();
 
-                // The person's own approval is not on an agent connection at all.
-                var ex = await Assert.ThrowsAnyAsync<Exception>(() => agent.InvokeAsync<JToken>("approveStartPlan", "d1ge57-aaaaaaaa"));
-                Assert.Empty(fake.Calls);
-                Assert.False(ex is OperationCanceledException);
+                // The approval is on an agent connection too (Kane, 10 Oct 2026: the person's word in chat is enough).
+                await agent.InvokeAsync<JToken>("approveStartPlan", "d1ge57-aaaaaaaa");
+                Assert.Equal("ApproveStartPlanAsync", Assert.Single(fake.Calls).Method);
             }
             finally { stop.Cancel(); try { await serving; } catch (OperationCanceledException) { } }
         }
@@ -448,6 +451,7 @@ namespace Semanticus.Tests
         /// <summary>The engine treats a null origin as the PERSON, so a verb on the agent door that forgot to name "agent"
         /// would act as the person (sf-core verifier, 1 Oct). Every MCP verb that takes an origin names "agent" itself,
         /// whatever the caller passes, and no caller-supplied argument can change it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_MCP_verb_names_agent_as_its_origin_and_never_leaves_it_null()
         {
@@ -468,9 +472,9 @@ namespace Semanticus.Tests
                     Assert.Equal("agent", call.Args[call.Args.Length - 1]);
                     Assert.DoesNotContain(call.Args, a => a is string str && str == "human");
                 }
-                // And the person-only approval is not among the tools at all.
+                // And the approval is among the tools (Kane, 10 Oct 2026).
                 var listed = (await client.ListToolsAsync()).Select(t => t.Name).ToArray();
-                Assert.DoesNotContain(listed, n => n.Contains("approve", StringComparison.OrdinalIgnoreCase) && n.Contains("start", StringComparison.OrdinalIgnoreCase));
+                Assert.Contains("approve_start_plan", listed);
             }
             finally { await client.DisposeAsync(); await host.StopAsync(); host.Dispose(); }
         }
@@ -798,6 +802,7 @@ namespace Semanticus.Tests
             Assert.Null((await McpTools.GetStartPlan(_engine)).Notice);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_Plan_points_at_a_start_plan_while_one_exists_and_reads_as_before_when_none_does()
         {

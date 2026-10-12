@@ -57,6 +57,7 @@ namespace Semanticus.Tests
         /// DUE_DT_KEY, PAID_DT_KEY) and only dim_client to dim_date stays on. The draft builds with 0 errors, so the date
         /// table filters invoices and timesheets by WHEN THEIR CLIENT WAS ONBOARDED, and the drafted time intelligence
         /// (Total INV_AMT YTD and the rest, over 'dim_date'[CAL_DT]) reports numbers that are silently wrong.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_dimension_date_key_leaves_each_facts_own_date_link_on()
         {
@@ -113,6 +114,7 @@ namespace Semanticus.Tests
         /// start, the usual shape). Its key is known (Date is IsKey and the table is marked), but the build passes no
         /// date column, so MarkDateTableCore refuses: "the date key is ambiguous: pass dateColumn", words a person on the
         /// Model Spec cannot act on. On dc8d3bd6 the rebuild skipped the table with no error.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Rebuilding_a_model_whose_date_table_has_two_date_columns_reports_no_date_table_error()
         {

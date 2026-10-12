@@ -85,7 +85,7 @@ namespace Semanticus.Tests
             ("git_commit", "message"), ("fabric_git_commit", "comment"), ("create_history_checkpoint", "label"),
             ("validate_dax", "expression"), ("lint_dax", "expression"), ("verify_dax_equivalence", "exprA"),
             ("verify_dax_equivalence", "exprB"), ("probe_measure", "expr"), ("run_dax", "query"), ("pivot_measure", "measureExpr"),
-            ("benchmark_dax", "query"), ("optimize_measure", "candidates"), ("reconcile_measure", "sql"),
+            ("benchmark_cold_warm", "query"), ("benchmark_dax", "query"), ("optimize_measure", "candidates"), ("reconcile_measure", "sql"),
         };
 
         private static string RepoRoot()

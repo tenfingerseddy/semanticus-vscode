@@ -118,7 +118,7 @@ export function RepeatEditor({ row, repeats, isPro, busy, onAdd, onChange, onDel
         {isPro && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="plan-repeat-hold" disabled={!!busy}
           onClick={() => onChange(saved.id, { held: !saved.held })}>{saved.held ? 'Resume' : 'Pause'}</button>}
         <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="plan-repeat-delete" disabled={!!busy}
-          title="Stops the repeat. This row stays." onClick={() => onDelete(saved.id)}>Stop repeating</button>
+          title="Stops the repeat. This task stays." onClick={() => onDelete(saved.id)}>Stop repeating</button>
       </span>
     </span>}
     {face === 'saved' && saved && editing && <CadenceForm start={saved.cadence} now={now} busy={busy ?? (sending ? 'saving' : null)} saveLabel="Save" hold={hold}

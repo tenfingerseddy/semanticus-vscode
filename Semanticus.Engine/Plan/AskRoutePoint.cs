@@ -747,7 +747,7 @@ namespace Semanticus.Engine
             if (f?.SizeBytes == null || f.SizeBytes <= 0)
                 return shape == null
                     ? "This model has not been measured, so there is no size to report yet."
-                    : shape + " Its size in memory has not been measured yet, so Size will read it.";
+                    : shape + " Its size in memory has not been measured yet. Open the Size page to measure it.";
             return shape == null
                 ? "This model is " + Megabytes(f.SizeBytes.Value) + " in memory."
                 : shape + " It is " + Megabytes(f.SizeBytes.Value) + " in memory.";
@@ -770,10 +770,10 @@ namespace Semanticus.Engine
             // of checks on no evidence at all, about a model that may well have some (Astra 16). Saved checks
             // stopped being Pro on 22 September, so the free tier is no longer one of the reasons.
             if (f?.SavedCheckCount == null)
-                return "How many saved checks this model has is not known here. Open the Validation page to see them.";
+                return "How many checks this model has is not known here. Open the Validation page to see them.";
             var n = f.SavedCheckCount.Value;
-            if (n == 0) return "This model has no saved checks yet.";
-            return n == 1 ? "This model has one saved check." : "This model has " + Count(n) + " saved checks.";
+            if (n == 0) return "This model has no checks yet.";
+            return n == 1 ? "This model has one check." : "This model has " + Count(n) + " checks.";
         }
 
         private static string ShapeSentence(AskDeterministicFacts f)

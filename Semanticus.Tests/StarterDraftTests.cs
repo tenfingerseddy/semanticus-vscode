@@ -80,6 +80,7 @@ namespace Semanticus.Tests
 
         [Theory]
         [MemberData(nameof(Starters))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_starter_drafts_with_its_gated_steps_marked_and_passes_check_workflow(string name)
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true, workspace: NewWorkspace());
@@ -100,7 +101,15 @@ namespace Semanticus.Tests
             }
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> A_starter_drafts_with_its_gated_steps_marked_and_passes_check_workflow_SampleRows() => ((IEnumerable<object[]>)Starters).Take(1);
+
+        [Theory]
+        [MemberData(nameof(A_starter_drafts_with_its_gated_steps_marked_and_passes_check_workflow_SampleRows))]
+        public Task A_starter_drafts_with_its_gated_steps_marked_and_passes_check_workflow_sample(string name) => A_starter_drafts_with_its_gated_steps_marked_and_passes_check_workflow(name);
+
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Publish_changes_runs_end_to_end_as_a_draft_and_its_input_gate_fires()
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true, workspace: NewWorkspace());
@@ -138,6 +147,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Test_a_complex_measure_stops_its_draft_when_the_anchor_gate_fails()
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true, workspace: NewWorkspace());
@@ -187,6 +197,7 @@ namespace Semanticus.Tests
 
         [Theory]
         [MemberData(nameof(Parked))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_parked_starters_sentence_sends_the_person_to_the_Plan_where_the_draft_carries_its_checks(string parked, string menu)
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true, workspace: NewWorkspace());
@@ -219,7 +230,15 @@ namespace Semanticus.Tests
             }
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> A_parked_starters_sentence_sends_the_person_to_the_Plan_where_the_draft_carries_its_checks_SampleRows() => ((IEnumerable<object[]>)Parked).Take(1);
+
+        [Theory]
+        [MemberData(nameof(A_parked_starters_sentence_sends_the_person_to_the_Plan_where_the_draft_carries_its_checks_SampleRows))]
+        public Task A_parked_starters_sentence_sends_the_person_to_the_Plan_where_the_draft_carries_its_checks_sample(string parked, string menu) => A_parked_starters_sentence_sends_the_person_to_the_Plan_where_the_draft_carries_its_checks(parked, menu);
+
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_relationship_drafted_on_the_Plan_checks_a_measure_through_it_against_the_number_given()
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true, workspace: NewWorkspace());

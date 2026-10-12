@@ -620,19 +620,18 @@ namespace Semanticus.RpcSmoke
                             try { await call(); return false; }
                             catch (Exception ex) { return ex.Message.IndexOf("method", StringComparison.OrdinalIgnoreCase) >= 0; }
                         }
-                        Check("E1: an agent pipe cannot add, hold, switch, move, pause or note",
-                            await Refused(() => agentPipe.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Invented" }))
-                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("holdPlanItem", heldId, false))
-                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setPlanItemDoer", heldId, "you"))
-                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("movePlanTaskUp", otherId))
-                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setAssistantQueue", "paused"))
-                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("setPlanTaskNote", heldId, "x")));
-                        Check("E1: the attached assistant's engine is refused the same way",
-                            await Refused(() => remote.AddPlanTaskAsync(new PlanTaskRequest { Words = "Invented" }))
-                            && await Refused(() => remote.HoldPlanItemAsync(heldId, false)));
+                        // Kane, 10 Oct 2026: the person's word in chat is enough, so the Plan page's controls are on the agent pipe too.
+                        var byAgent = await agentPipe.Invoke<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Added by Claude" });
+                        var switched = await agentPipe.Invoke<ModelPlanView>("setAssistantQueue", "paused");
+                        var switchedBack = await remote.SetAssistantQueueAsync("on");
+                        Check("E1: an agent pipe adds a task and flips the switch, and the attached assistant's engine flips it back",
+                            !string.IsNullOrEmpty(byAgent?.ItemId) && switched.AssistantQueue == PlanAssistantQueue.Paused && switchedBack.AssistantQueue == PlanAssistantQueue.On);
+                        Check("E1: the Permissions page is still the person's: an agent pipe cannot change the policy",
+                            await Refused(() => agentPipe.Invoke<AgentPolicy>("setAgentPolicyEnabled", false))
+                            && await Refused(() => agentPipe.Invoke<ModelPlanView>("claimPlanTask", otherId)));
                         var after = await McpTools.GetModelPlan(remote);
-                        Check("E1: nothing the agent tried landed",
-                            after.Items.All(i => i.Title != "Invented") && after.Items.First(i => i.Id == heldId).Held
+                        Check("E1: what the agent added landed and the person's held row is unchanged",
+                            after.Items.Any(i => i.Id == byAgent.ItemId) && after.Items.First(i => i.Id == heldId).Held
                             && after.AssistantQueue == PlanAssistantQueue.On);
                     }
                     stop.Cancel();
@@ -728,9 +727,9 @@ namespace Semanticus.RpcSmoke
                 var refused = await McpTools.ClaimRequest(remote, second);
                 Check("E3: paused, the next claim is refused with the paused sentence",
                     refused.Refusal == Semanticus.Engine.Jev.HandoffRefusal.QueuePaused
-                    && refused.Message == "The person has paused tasks for you. Carry on with what they ask you directly.");
+                    && refused.Message == "The person paused your tasks. Do what they ask you directly.");
                 var paused = PlanLine(await Call());
-                Check("E3: the next result carries the paused line", paused == "Plan: tasks are paused by the person. Carry on with what they ask you directly.");
+                Check("E3: the next result carries the paused line", paused == "Plan: the person paused your tasks. Do what they ask you directly.");
                 Check("E3: once", PlanLine(await Call()) == null);
             }
             finally
@@ -809,8 +808,9 @@ namespace Semanticus.RpcSmoke
                 string refusal = null;
                 try { await agentPipe.Invoke<Semanticus.Engine.Composer.DraftView>("approveDraft", composed.DraftId); }
                 catch (Exception ex) { refusal = ex.Message; }
-                Check("L4: an agent connection cannot give the person's Approve and run",
-                    refusal != null && refusal.IndexOf("method", StringComparison.OrdinalIgnoreCase) >= 0);
+                // Kane, 10 Oct 2026: the agent pipe reaches Approve and run (the draft already ran and was undone, so the engine answers about the draft, not about a missing method).
+                Check("L4: an agent connection reaches Approve and run (the method is there)",
+                    refusal == null || refusal.IndexOf("method", StringComparison.OrdinalIgnoreCase) < 0);
             }
             finally
             {

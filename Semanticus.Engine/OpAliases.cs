@@ -38,8 +38,6 @@ namespace Semanticus.Engine
             ["reset_readiness_rules"] = ("reset_rules", "Call reset_rules with system='air'."),
             ["benchmark_dax_coldwarm"] = ("benchmark_dax", "Call benchmark_dax with mode='coldWarm'."),
             ["impact_of"] = ("impact_assessment", "Call impact_assessment with scope='model'; the answer is in modelImpact."),
-            // Not merged: labelling a target was never an agent capability, so there is no successor to run.
-            ["label_connection"] = (null, "Only the user can set a label, in Connections in VS Code. Read labels with list_connections."),
         };
 
         /// <summary>Plan item kinds that were renamed. Only kinds belong here, never tool merges.</summary>
@@ -52,7 +50,7 @@ namespace Semanticus.Engine
         public static IReadOnlyCollection<string> RetiredIds => Retired.Keys;
 
         /// <summary>The current id for <paramref name="op"/>: the operation a retired id became, else the input
-        /// unchanged (null stays null). A retired id with no successor (label_connection) is returned unchanged.</summary>
+        /// unchanged (null stays null). An id without a successor is returned unchanged.</summary>
         public static string Canonical(string op) =>
             op != null && Retired.TryGetValue(op.Trim(), out var r) && r.Current != null ? r.Current : op;
 

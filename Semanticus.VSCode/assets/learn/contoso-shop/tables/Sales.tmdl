@@ -1,0 +1,83 @@
+/// One row for each product on an order.
+table Sales
+
+	/// Total sales after discounts, in US dollars.
+	measure 'Net Sales' = SUMX ( Sales, Sales[Quantity] * Sales[Unit Price] ) - SUM ( Sales[Discount Amount] )
+		formatString: $#,0
+
+	measure 'Total Cost' = SUMX ( Sales, Sales[Quantity] * Sales[Unit Cost] )
+		formatString: $#,0
+
+	measure 'Gross Margin' = [Net Sales] - [Total Cost]
+		formatString: $#,0
+
+	measure 'Gross Margin %' = DIVIDE ( [Gross Margin], [Net Sales] )
+		formatString: 0.0%
+
+	measure Orders = DISTINCTCOUNT ( Sales[Order Number] )
+		formatString: #,0
+
+	measure 'Net Sales YTD' = TOTALYTD ( [Net Sales], 'Date'[Date] )
+		formatString: $#,0
+
+	column 'Order Number'
+		dataType: string
+		sourceColumn: OrderNumber
+		summarizeBy: none
+
+	column 'Order Date'
+		isHidden
+		dataType: dateTime
+		sourceColumn: OrderDate
+		formatString: Long Date
+		summarizeBy: none
+
+	column 'Product Key'
+		isHidden
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	column 'Customer Key'
+		isHidden
+		dataType: int64
+		sourceColumn: CustomerKey
+		summarizeBy: none
+
+	column 'Store Key'
+		isHidden
+		dataType: int64
+		sourceColumn: StoreKey
+		summarizeBy: none
+
+	column Quantity
+		dataType: int64
+		sourceColumn: Quantity
+		formatString: #,0
+		summarizeBy: sum
+
+	column 'Unit Price'
+		dataType: decimal
+		sourceColumn: UnitPrice
+		formatString: $#,0.00
+		summarizeBy: none
+
+	column 'Unit Cost'
+		dataType: decimal
+		sourceColumn: UnitCost
+		formatString: $#,0.00
+		summarizeBy: none
+
+	column 'Discount Amount'
+		dataType: decimal
+		sourceColumn: DiscountAmount
+		formatString: $#,0.00
+		summarizeBy: none
+
+	partition Sales = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [OrderNumber = text, OrderDate = date, ProductKey = Int64.Type, CustomerKey = Int64.Type, StoreKey = Int64.Type, Quantity = Int64.Type, UnitPrice = Currency.Type, UnitCost = Currency.Type, DiscountAmount = Currency.Type], {})
+			in
+				Source

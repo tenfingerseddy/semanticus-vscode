@@ -123,6 +123,7 @@ namespace Semanticus.Tests
                     yield return new object[] { off, clearer, i++ % 2 == 0 ? "studio" : "agent" };
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(Cells))]
         public async Task An_on_for_one_identity_reaches_no_other_identity(string off, string clearer, string door)
@@ -202,33 +203,6 @@ namespace Semanticus.Tests
         }
 
         // ---- what the row says -------------------------------------------------------------------------------------------
-
-        [Theory]
-        [InlineData("P:east", PathOn, "studio", Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so P:east is the Sales title and its row says what T:Sales says.")]
-        [InlineData("T:Sales", TitleOn, "agent")]
-        [InlineData("N", NothingOn, "studio")]
-        public async Task The_row_of_an_on_says_only_what_the_on_did(string view, string say, string door)
-        {
-            using var f = new DecisionFixture();
-            WriteOldOff(f);
-            await OpenViewAsync(f, view);
-            Assert.False((await Row(f, door)).Enabled);
-            var row = (await Set(f, door, true)).Single(p => p.Name == Point);
-            Assert.Equal(say, row.Note);
-            Assert.DoesNotContain("\u2014", row.Note);
-            Assert.DoesNotContain("\u2013", row.Note);
-        }
-
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so there is no file view; the title view's note is pinned by DecisionSwitchScopeR6Tests and DecisionSwitchScopeJoinTests.")]
-        public async Task An_on_after_the_files_own_off_names_the_views_that_still_read_that_off()
-        {
-            using var f = new DecisionFixture();
-            await OpenViewAsync(f, "P:east");
-            await Set(f, "agent", false);
-            var row = (await Set(f, "agent", true)).Single(p => p.Name == Point);
-            Assert.True(row.Enabled);
-            Assert.Equal(RetiredOnForThisFileAfterItsOwnOffNote, row.Note);
-        }
 
         [Fact]
         public async Task An_on_writes_no_shared_file_and_removes_no_off_that_is_not_its_own()

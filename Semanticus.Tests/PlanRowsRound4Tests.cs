@@ -296,13 +296,13 @@ namespace Semanticus.Tests
             Assert.All(bpa, i =>
             {
                 Assert.Equal("format", i.Kind);
-                Assert.Equal("set_measure_format", i.Tool);
+                Assert.Equal("edit_objects", i.Tool);
                 Assert.False(string.IsNullOrWhiteSpace(i.Message));
                 Assert.DoesNotContain("—", i.Message);
             });
             Assert.Contains("#,0", bpa.Single(i => i.ObjectRef == "measure:Sales/Money").Message);
             // A measure with no format at all is asked for once, by the readiness rule, not twice.
-            Assert.Single(q.Items.Where(i => i.ObjectRef == "measure:Sales/Share" && i.Tool == "set_measure_format"));
+            Assert.Single(q.Items.Where(i => i.ObjectRef == "measure:Sales/Share" && i.Tool == "edit_objects"));
             // They come after every finding that carries a grade lift, so the words still lead.
             var firstBpa = Array.FindIndex(q.Items, i => i.RuleId is "INTEGER_FORMATTING" or "PERCENTAGE_FORMATTING");
             Assert.All(q.Items.Skip(firstBpa), i => Assert.True(i.RuleId is "INTEGER_FORMATTING" or "PERCENTAGE_FORMATTING", i.RuleId + " comes after a best-practice format item"));

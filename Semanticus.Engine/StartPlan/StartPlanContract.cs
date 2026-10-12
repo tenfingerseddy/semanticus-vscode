@@ -12,8 +12,8 @@
 // THE ENGINE VERBS LIVE ON IStartPlanEngine, NOT IEngine. IEngine.cs, RemoteEngine.cs and the RPC target are lane
 // sf-doors', and editing them here would make every wave-2 lane conflict with it. sf-doors folds this interface
 // into IEngine (one line: `IEngine : IStartPlanEngine`) and wires both doors. LocalEngine implements it now
-// (LocalEngine.StartPlan.cs). ApproveStartPlanAsync is person-only: it is exposed ONLY on
-// HumanGovernanceRpcTarget (sf-consent), never on an MCP tool; the assistant cannot make an approval.
+// (LocalEngine.StartPlan.cs). ApproveStartPlanAsync is on both doors since Kane's decision of 10 Oct 2026 (the person's
+// word in chat is enough): approve_start_plan and EngineRpcTarget.approveStartPlan. The approval is void the moment the plan changes.
 
 using System;
 using System.Collections.Generic;
@@ -103,11 +103,13 @@ namespace Semanticus.Engine.StartPlan
         public DateTime? Utc { get; set; }
     }
 
-    /// <summary>The person's approval of ONE exact plan (S1). Void the moment the digest moves.</summary>
+    /// <summary>The approval of ONE exact plan (S1), by the person or by an assistant on the person's word. Void the moment the digest moves.</summary>
     public sealed class StartApproval
     {
         public string Digest { get; set; }
         public DateTime? Utc { get; set; }
+        /// <summary>The origin that approved: "agent" for an assistant, "human" (or null, on a record made before this field) for the person.</summary>
+        public string By { get; set; }
     }
 
     /// <summary>How far one decision family has got (S11): asked, answered, unusable, remaining.</summary>
@@ -352,6 +354,10 @@ namespace Semanticus.Engine.StartPlan
     /// <summary>What both doors render. The Digest covers everything the person approves; any edit moves it.</summary>
     public sealed class StartPlanView
     {
+        [Newtonsoft.Json.JsonProperty(Order = -100, NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        [System.Text.Json.Serialization.JsonPropertyOrder(-100)]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public LeanResultSummary Summary { get; set; }
         /// <summary>False when no start plan exists; every other field is then empty.</summary>
         public bool Exists { get; set; }
         public string Id { get; set; }
@@ -380,8 +386,8 @@ namespace Semanticus.Engine.StartPlan
         /// answer, today: which open model a start closed to make room. Set on that call's answer only, never stored
         /// in the plan. Null otherwise. (Added by sf-doors after sf-contract; additive.)</summary>
         public string Notice { get; set; }
-        /// <summary>True when this call was the assistant's and what it asked for is the person's to decide, so the person was asked and nothing was
-        /// changed (grant_start_disclosure: <see cref="Notice"/> carries the question). Set on that call's answer only, never stored in the plan.</summary>
+        /// <summary>True when this call put a question to the person and changed nothing. No start-plan call does now: the assistant's
+        /// grant_start_disclosure grants on the person's yes in chat. Kept for the wire shape; always false. Never stored in the plan.</summary>
         public bool Asked { get; set; }
         /// <summary>The lines an edit moved besides the one the person named (dropped with, kept with, removed, or held), each with its plain reason.
         /// Set on that edit's answer only, never stored in the plan. Null when nothing else moved. (Added by sf-decide; additive.)</summary>
@@ -460,7 +466,7 @@ namespace Semanticus.Engine.StartPlan
     // ---------------------------------------------------------------- the engine verbs
 
     /// <summary>The start plan's engine verbs. LocalEngine implements it; sf-doors folds it into IEngine and wires
-    /// both doors. <see cref="ApproveStartPlanAsync"/> is person-only (no MCP twin).</summary>
+    /// both doors.</summary>
     public interface IStartPlanEngine
     {
         /// <summary>Create the empty model in an empty folder, save it, read the schema, make the plan. Refused on the
@@ -469,8 +475,7 @@ namespace Semanticus.Engine.StartPlan
         Task<StartPlanView> GetStartPlanAsync();
         Task<StartPlanView> EditStartPlanAsync(StartPlanEdit edit, string origin);
         Task<StartPlanView> GrantStartDisclosureAsync(string digest, string origin);
-        /// <summary>Person-only: exposed on HumanGovernanceRpcTarget alone.</summary>
-        Task<StartPlanView> ApproveStartPlanAsync(string digest);
+        Task<StartPlanView> ApproveStartPlanAsync(string digest, string origin = "human");
         Task<StartWordsPage> GetStartWordsAsync(int max, int offset);
         Task<StartWordsResult> WriteStartWordsAsync(StartWord[] words, string origin);
         Task<StartPlanBuildResult> BuildStartPlanAsync(string digest, string origin);

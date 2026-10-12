@@ -43,6 +43,18 @@ const clickSel = bridge.slice(bridge.indexOf('export function selectInProperties
 assert.match(clickSel, /const fromFocus = ref === pendingFocusRef/, 'the click path must collapse the redundant post from a preceding same-ref focus');
 assert.match(clickSel, /clearPendingFocus\(\)/, 'the click path must clear the token after consuming it (one-shot)');
 
+// 1c. Claude's walk-through (hero16 N7): a note moves the tree to its object, and the page it opens may focus its own first row a
+// moment later. That second post must not pull Properties away from the object the tree now has selected.
+const notesNav = read('webview/src/studio/notes-nav.ts');
+assert.match(notesNav, /revealInTree\(focus, true\)/, 'a note\'s object is revealed as a follow, so the host knows the assistant moved the tree');
+assert.match(bridge, /export function revealInTree\(ref: string, follow = false\)/, 'the reveal message can say it is a follow');
+assert.match(ext, /msg\?\.type === 'revealInTree'\) \{ void revealRefInTree\(msg\.ref, msg\.follow === true\)/, 'the host reads the follow flag');
+assert.match(busFn, /followRef/, 'the selection bus knows which object the walk-through is on');
+assert.match(busFn, /ref !== followRef/, 'a Studio row that is not the walk-through object does not move Properties during the walk');
+assert.match(busFn, /studioLastPersonInput/, 'a person who clicked a row since the reveal still moves Properties');
+const revealFn = ext.slice(ext.indexOf('async function revealRefInTree'), ext.indexOf('// Reveal without selecting'));
+assert.match(revealFn, /propGrid\.showObject\(node\)/, 'after a follow reveal, Properties shows the object the tree has selected');
+
 // --- 2. the universal Reveal affordance + per-navigator wiring -----------------------------------------
 assert.match(actions, /Reveal in Model tree/, 'the shared RevealBtn must carry the canonical label');
 assert.match(actions, /stopPropagation/, 'RevealBtn must not trigger the row action it sits on');

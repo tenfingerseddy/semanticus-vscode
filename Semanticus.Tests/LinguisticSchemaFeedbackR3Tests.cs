@@ -747,7 +747,7 @@ namespace Semanticus.Tests
                 var plan = await engine.GetModelPlanAsync();
                 var line = Assert.Single(plan.Items.Single(i => i.Id == "proposal/collisions").Diff);
                 Assert.Contains("Store Country", line, StringComparison.Ordinal);
-                Assert.EndsWith(": clear its old name term from its synonyms", line, StringComparison.Ordinal);
+                Assert.EndsWith(": remove its old name from its synonyms", line, StringComparison.Ordinal);
             }
         }
     }

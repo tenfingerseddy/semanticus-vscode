@@ -196,7 +196,7 @@ namespace Semanticus.Engine
             foreach (var culture in m.Cultures)
             {
                 string terms;
-                try { terms = SynonymHelper.GetSynonyms(obj, culture); } catch { continue; }
+                try { terms = Semanticus.Analysis.SynonymIndex.Terms(obj, culture); } catch { continue; }   // one parse per schema, not one per object
                 if (string.IsNullOrEmpty(terms)) continue;
                 var spans = matcher.Find(terms);
                 if (spans.Count == 0) continue;

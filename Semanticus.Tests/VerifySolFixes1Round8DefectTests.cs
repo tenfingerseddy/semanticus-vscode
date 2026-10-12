@@ -133,6 +133,7 @@ namespace Semanticus.Tests
         /// give the model the thing the words took back.</summary>
         [Theory]
         [MemberData(nameof(TakeBacks))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR19_the_assistant_alone_never_runs_an_add_the_words_took_back(string first, string then, string mode)
         {
             using var f = await OpenAsync(new Jev(0.02, 0.02, mode == "last question says yes" ? "yes" : null));
@@ -183,6 +184,13 @@ namespace Semanticus.Tests
                 + v.State + " (" + v.Summary + ") and the model gained " + string.Join(", ", gained));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR19_the_assistant_alone_never_runs_an_add_the_words_took_back_SampleRows() => TakeBacks().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR19_the_assistant_alone_never_runs_an_add_the_words_took_back_SampleRows))]
+        public Task VR19_the_assistant_alone_never_runs_an_add_the_words_took_back_sample(string first, string then, string mode) => VR19_the_assistant_alone_never_runs_an_add_the_words_took_back(first, then, mode);
+
         public static IEnumerable<object[]> Lifts() => new[]
         {
             new object[] { "T37", "more", "add a column Line Total to Sales = Sales[Amount] * Sales[Quantity]", "take back the Line Total column" },
@@ -196,6 +204,7 @@ namespace Semanticus.Tests
         /// unticked is ticked.</summary>
         [Theory]
         [MemberData(nameof(Lifts))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR20_jev_answering_yes_to_everything_keeps_exactly_what_the_rule_keeps(string id, string flow, string first, string then, string door)
         {
             using var f = await OpenAsync(new Jev(0.99, 0.99, "yes"));
@@ -212,5 +221,12 @@ namespace Semanticus.Tests
             var kept = v.Steps.Concat(v.After ?? Array.Empty<DraftStepView>()).Where(s => s.Kept && AddIdOf(s.Id) != null).ToList();
             Assert.True(kept.Count == 0, id + " (" + door + "): \"" + string.Join("\" then \"", typed) + "\" => " + Shown(v));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR20_jev_answering_yes_to_everything_keeps_exactly_what_the_rule_keeps_SampleRows() => Lifts().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR20_jev_answering_yes_to_everything_keeps_exactly_what_the_rule_keeps_SampleRows))]
+        public Task VR20_jev_answering_yes_to_everything_keeps_exactly_what_the_rule_keeps_sample(string id, string flow, string first, string then, string door) => VR20_jev_answering_yes_to_everything_keeps_exactly_what_the_rule_keeps(id, flow, first, then, door);
     }
 }

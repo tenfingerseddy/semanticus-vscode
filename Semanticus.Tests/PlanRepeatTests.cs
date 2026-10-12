@@ -204,6 +204,7 @@ namespace Semanticus.Tests
                                                           string doer = PlanDoers.Assistant) =>
             (await engine.AddPlanRepeatAsync(new PlanRepeatRequest { Words = words, Doer = doer, Cadence = Weekly("monday") })).ItemId;
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_repeat_comes_due_once_per_period_as_one_ordinary_row()
         {
@@ -239,6 +240,7 @@ namespace Semanticus.Tests
         /// Sydney across the October change. The card is not there a minute before local midnight on Monday 5 October
         /// and is there at it; the next due is the following local midnight, an hour earlier in UTC than the first
         /// would have been before the change.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task On_a_second_model_a_repeat_comes_due_at_local_midnight_across_daylight_saving()
         {
@@ -270,6 +272,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Missed_periods_make_one_card_not_a_pile()
         {
@@ -283,6 +286,7 @@ namespace Semanticus.Tests
             Assert.Equal(Day(2026, 11, 9), Assert.Single(plan.Repeats).NextDueUtc);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_open_card_blocks_the_next_which_comes_only_after_it_is_done_and_the_date_passes()
         {
@@ -313,6 +317,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.NeedsYou, cards.Single(c => c.Id != first.Id).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_card_set_aside_no_longer_blocks_the_next()
         {
@@ -380,6 +385,7 @@ verify:
 ```
 ";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_stops_the_due_check_shows_the_Pro_line_refuses_add_and_change_and_still_deletes()
         {
@@ -410,6 +416,7 @@ verify:
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_restart_does_not_double_a_card()
         {
@@ -455,6 +462,7 @@ verify:
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.AddPlanRepeatAsync(new PlanRepeatRequest { Stock = "nightly-rebuild" }));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Pause_holds_it_back_an_edit_changes_it_and_a_delete_keeps_the_open_card()
         {
@@ -541,6 +549,7 @@ verify:
             Assert.Equal(fix.Id, Assert.Single(next.Repeats).OpenItemId);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_fix_repeat_names_a_row_Semanticus_does_that_is_on_the_plan_now()
         {
@@ -556,6 +565,7 @@ verify:
 
         private static ModelPlanItem Row(ModelPlanView plan, string id) => Assert.Single(plan.Items.Where(i => i.Id == id));
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_repeat_that_cannot_be_kept_or_done_is_refused_with_a_sentence()
         {
@@ -569,6 +579,7 @@ verify:
             Assert.Empty((await f.Engine.GetModelPlanAsync()).Repeats);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_with_nowhere_to_keep_repeats_keeps_them_for_the_session()
         {
@@ -580,24 +591,24 @@ verify:
             Assert.Single(Cards(await f.Engine.GetModelPlanAsync()));
         }
 
-        // ---- person-only ------------------------------------------------------------------------------------
+        // ---- both doors (Kane, 10 Oct 2026: the person's word in chat is enough) --------------------------------------
 
         private static readonly string[] Controls = { "addPlanRepeat", "setPlanRepeat", "deletePlanRepeat" };
 
         [Fact]
-        public void The_repeat_controls_are_on_the_person_target_and_no_other_door()
+        public void The_repeat_controls_are_on_the_pipe_target_and_have_MCP_tools()
         {
             foreach (var name in Controls)
             {
-                Assert.NotNull(typeof(HumanGovernanceRpcTarget).GetMethod(name));
-                Assert.Null(typeof(EngineRpcTarget).GetMethod(name));
+                Assert.NotNull(typeof(EngineRpcTarget).GetMethod(name));
+                Assert.Null(typeof(HumanGovernanceRpcTarget).GetMethod(name));
             }
             var toolNames = typeof(McpTools).Assembly.GetTypes()
                 .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 .Select(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name)
                 .Where(n => n != null).ToArray();
-            Assert.NotEmpty(toolNames);
-            Assert.DoesNotContain(toolNames, n => n.Contains("repeat", StringComparison.OrdinalIgnoreCase));
+            foreach (var tool in new[] { "add_plan_repeat", "set_plan_repeat", "delete_plan_repeat" })
+                Assert.Contains(tool, toolNames);
 
             // Add and change are Pro in the Workflows group; delete is free.
             Assert.True(FeatureMap.TryEngineMethod(nameof(IEngine.AddPlanRepeatAsync), out var add, out _));
@@ -607,54 +618,49 @@ verify:
             Assert.Contains(nameof(IEngine.DeletePlanRepeatAsync), FeatureMap.FreeEngineMethods);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task An_agent_connection_is_refused_every_repeat_control_and_the_person_is_not()
+        public async Task The_repeat_tools_do_what_the_buttons_do_through_the_gated_MCP_door()
+        {
+            using var f = await GappyAsync(file: null);
+            var gated = AssistantEngine.ForAssistant(f.Engine);
+            var added = await McpTools.AddPlanRepeat(gated, new PlanRepeatRequest { Words = "Check the Sales descriptions", Cadence = Weekly("monday") });
+            Assert.Matches("^rp-[0-9a-f]{8}$", added.ItemId);
+            var held = await McpTools.SetPlanRepeat(gated, added.ItemId, new PlanRepeatRequest { Held = true });
+            Assert.True(Assert.Single(held.Repeats).Held);
+            var gone = await McpTools.DeletePlanRepeat(gated, added.ItemId);
+            Assert.Empty(gone.Repeats);
+        }
+
+        [Fact]
+        public async Task An_agent_connection_adds_changes_and_deletes_a_repeat()
         {
             var f = await GappyAsync("RpPipe.bim");
             var pipeName = TestPipe.Mint("semanticus-rp-");
             using var server = new RpcServer(f.Sessions, f.Engine, pipeName, Challenge);
             using var stop = new CancellationTokenSource();
             var serving = server.RunAsync(stop.Token);
-            RpcClient human = null, agent = null;
+            RpcClient agent = null;
             RemoteEngine remote = null;
             try
             {
-                human = await RpcClient.ConnectAsync(pipeName, "human", Challenge);
                 agent = await RpcClient.ConnectAsync(pipeName, "agent");
                 remote = await RemoteEngine.ConnectAsync(pipeName);
 
-                var request = new PlanRepeatRequest { Words = "From the page", Cadence = Weekly("monday") };
-                var added = await human.InvokeAsync<ModelPlanActionResult>("addPlanRepeat", request);
+                var request = new PlanRepeatRequest { Words = "From Claude", Cadence = Weekly("monday") };
+                var added = await agent.InvokeAsync<ModelPlanActionResult>("addPlanRepeat", request);
                 Assert.Matches("^rp-[0-9a-f]{8}$", added.ItemId);
-                var held = await human.InvokeAsync<ModelPlanView>("setPlanRepeat", added.ItemId, new PlanRepeatRequest { Held = true });
+                var held = await remote.SetPlanRepeatAsync(added.ItemId, new PlanRepeatRequest { Held = true });
                 Assert.True(Assert.Single(held.Repeats).Held);
-
-                async Task Refused(Func<Task> call)
-                {
-                    var ex = await Assert.ThrowsAnyAsync<Exception>(call);
-                    Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
-                }
-                await Refused(() => agent.InvokeAsync<ModelPlanActionResult>("addPlanRepeat", request));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("setPlanRepeat", added.ItemId, new PlanRepeatRequest { Held = false }));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("deletePlanRepeat", added.ItemId));
-                await Refused(() => remote.AddPlanRepeatAsync(request));
-                await Refused(() => remote.SetPlanRepeatAsync(added.ItemId, new PlanRepeatRequest { Held = false }));
-                await Refused(() => remote.DeletePlanRepeatAsync(added.ItemId));
-
-                // Nothing landed, and the assistant can still READ the repeat and its date.
-                var after = await remote.GetModelPlanAsync();
-                var repeat = Assert.Single(after.Repeats);
-                Assert.True(repeat.Held);
-                Assert.Equal(Day(2026, 9, 28), repeat.NextDueUtc);
-
-                var gone = await human.InvokeAsync<ModelPlanView>("deletePlanRepeat", added.ItemId);
+                var resumed = await agent.InvokeAsync<ModelPlanView>("setPlanRepeat", added.ItemId, new PlanRepeatRequest { Held = false });
+                Assert.False(Assert.Single(resumed.Repeats).Held);
+                var gone = await remote.DeletePlanRepeatAsync(added.ItemId);
                 Assert.Empty(gone.Repeats);
             }
             finally
             {
                 remote?.Dispose();
                 agent?.Dispose();
-                human?.Dispose();
                 stop.Cancel();
                 try { await serving; } catch (OperationCanceledException) { }
                 f.Dispose();

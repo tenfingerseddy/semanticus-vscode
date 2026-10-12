@@ -47,12 +47,12 @@ check('3. the card says the count the preview scan gives, and the letter beside 
   v.grades.afterBuildBestPractice = 'D';
   v.grades.afterBuildBestPracticeOpen = 11;
   const t = readable(render(v));
-  assert.match(t, /11 errors and warnings stay open/, 'the count is the one the preview scan gave');
+  assert.match(t, /11 best practice problems stay open/, 'the count is the one the preview scan gave');
   assert.match(t, /Best practice D/, 'and the letter is the scan\'s');
-  assert.doesNotMatch(t, /\b0 errors and warnings stay open/, 'never "0 errors and warnings stay open" beside a D');
+  assert.doesNotMatch(t, /\b0 best practice problems stay open/, 'never "0 best practice problems stay open" beside a D');
   // One open finding reads as one.
   v.grades.afterBuildBestPracticeOpen = 1;
-  assert.match(readable(render(v)), /1 error or warning stays open/);
+  assert.match(readable(render(v)), /1 best practice problem stays open/);
   // The engine sent no count: the plan lists its own Best practice lines, but they are not the scan, so no count is claimed. The letter is said.
   delete v.grades.afterBuildBestPracticeOpen;
   const none = readable(render(v));

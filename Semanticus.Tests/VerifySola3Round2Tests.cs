@@ -51,6 +51,10 @@ namespace Semanticus.Tests
         // (Microsoft's FILTER page: "a table that represents a subset of another table"; ALL: "all the rows in a table"), so those two cases moved to Join11Tests.
         // Only a variable whose expression is no one plain table stays unknown (solfx fix round 2, Y3: a VAR over one plain table is that table).
 
+        [Theory, InlineData("VAR t = ADDCOLUMNS ( Sales, \"x\", 1 ) RETURN SUMX ( t, [Revenue] )")]
+        public Task A_two_table_name_inside_an_unknown_scan_is_left_alone_by_either_rename_sample(string formula) => A_two_table_name_inside_an_unknown_scan_is_left_alone_by_either_rename(formula);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("VAR t = ADDCOLUMNS ( Sales, \"x\", 1 ) RETURN SUMX ( t, [Revenue] )")]
         public async Task A_two_table_name_inside_an_unknown_scan_is_left_alone_by_either_rename(string formula)
@@ -73,6 +77,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The join 11 form of the two cases above (J-S2): the same formulas now bind Sales' row, whichever table hosts them.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("SUMX ( FILTER ( Sales, Sales[Region] = \"W\" ), [Revenue] )")]
         [InlineData("COUNTROWS ( TOPN ( 1, ALL ( Sales ), [Revenue] ) )")]
@@ -98,6 +103,7 @@ namespace Semanticus.Tests
 
         // ---- T1: three-deep nesting. Each bare name binds to the innermost open scan that has it.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Three_deep_nesting_binds_each_name_to_the_innermost_scan_that_has_it()
         {
@@ -184,6 +190,10 @@ namespace Semanticus.Tests
         }
 
         /// <summary>RANKX: expression per row of Sales, value once in the outer context (Metrics' row), order and ties are enumerations.</summary>
+        [Theory, InlineData("RANKX ( Sales, [Revenue] * 2, [Revenue] * 2, DESC, DENSE )", "RANKX ( Sales, [Gross Revenue] * 2, [Own Revenue] * 2, DESC, DENSE )")]
+        public Task Rankx_reads_the_value_in_the_outer_row_sample(string formula, string after) => Rankx_reads_the_value_in_the_outer_row(formula, after);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("RANKX ( Sales, [Revenue] * 2, [Revenue] * 2, DESC, DENSE )", "RANKX ( Sales, [Gross Revenue] * 2, [Own Revenue] * 2, DESC, DENSE )")]
         [InlineData("RANKX ( 'Sales', SUMX ( Sales, [Revenue] ), [Revenue] )", "RANKX ( 'Sales', SUMX ( Sales, [Gross Revenue] ), [Own Revenue] )")]
@@ -202,6 +212,7 @@ namespace Semanticus.Tests
         // Real DAX binds Sales[Revenue] (the row of the filtered Sales). Round 2 left the name, so after the rename the formula named a column that was gone and the strict
         // DAX check flagged it. Join 11 (J-S2) binds it: the name follows the rename, nothing is left behind to flag.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("SUMX ( FILTER ( Sales, Sales[Region] = \"W\" ), [Revenue] )")]
         [InlineData("SUMX ( Metrics, SUMX ( FILTER ( Sales, Sales[Region] = \"W\" ), Sales[Revenue] * [Rate] ) )")]
@@ -246,6 +257,7 @@ namespace Semanticus.Tests
             return dax.Substring("TREATAS ( { ".Length, dax.Length - "TREATAS ( { ".Length - " }, 'T'[C] )".Length);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public void Every_millisecond_of_a_day_and_200000_random_members_are_bit_for_bit()
         {
@@ -271,6 +283,7 @@ namespace Semanticus.Tests
         /// <summary>The lane keeps DATE + TIME for a whole second and calls it bit-exact. It is two rounded terms, so on a day with a small day number (1900 to
         /// about 1950) it misses ToOADate's one division in the last bit: 192 of the 86,399 seconds of 1900-07-11 (19:32:32 is one), none after 1950.
         /// DAX supports dates from March 1, 1900 (data types table), so these are valid members; TREATAS then matches no row and Explain shows a blank.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("1900-07-11")]
         [InlineData("1925-02-03")]

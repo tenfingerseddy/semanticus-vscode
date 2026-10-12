@@ -307,7 +307,7 @@ export function LineDetail({ line, view, tier, busy, away, modelKey, onEdit, onW
     <dl>
       {line.held && <><dt>{M.COPY.stateHeld}</dt><dd data-testid="sp-detail-held">{line.held}</dd></>}
       <dt>{M.COPY.detailWhy}</dt><dd>{line.why || item?.rationale || ''}</dd>
-      {(before || after) && <><dt>{M.COPY.detailChange}</dt><dd>{before ? <>{before} {'to'} </> : null}<code>{after ?? ''}</code></dd></>}
+      {(before || after) && <><dt>{M.COPY.detailChange}</dt><dd>{before ? <>{M.shownValue(line, before)} {'to'} </> : null}<code>{M.shownValue(line, after)}</code></dd></>}
       {(line.sets ?? []).length > 0 && <><dt>{M.COPY.detailSets}</dt><dd data-testid="sp-detail-sets">{(line.sets ?? []).map((x) => <div key={x.property}>{x.words}</div>)}</dd></>}
       {source && <><dt>{M.COPY.detailSource}</dt><dd><code data-testid="sp-detail-source">{source}</code></dd></>}
       <dt>{M.COPY.detailWho}</dt><dd>{whoWords(line, tier)}</dd>
@@ -496,7 +496,6 @@ export function StartPlanBody(p: BodyProps) {
   const foot = M.footOf(view, tier, p.prev);
   const built = !!view.built;
   const dest = view.destination, src = view.source;
-  const waiting = built ? 0 : M.questionsOf(view).length;
   const toBuild = M.buildCountOf(view), held = M.heldCountOf(view);
   const busy = !!p.busy || !!p.stale;
   // The typed-and-unsaved words of this model, by file (never the session id). They outlive any editor, so a row says so while its editor is shut.
@@ -574,7 +573,7 @@ export function StartPlanBody(p: BodyProps) {
     </div>}
     {opened && <div className="sp-note" role="status" data-testid="sp-opened-held"><span>{opened}</span><button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" onClick={() => setOpened(null)}>Close</button></div>}
     {/* Words typed into a line that is not in the plan now. A line is known by its name, so a rename by the assistant looks the same as a removal: the words are kept and the person is asked (join 11, W3). */}
-    <OrphanDrafts prefix="startplan|" live={p.stale || view.built ? null : rowIds} what="plan line" nameOf={() => 'A line of the plan'}
+    <OrphanDrafts prefix="startplan|" live={p.stale || view.built ? null : rowIds} what="plan change" nameOf={() => 'A change in the plan'}
       targetsFor={(fields) => M.moveTargets(view, fields)} onMoved={() => setMovedWords((n) => n + 1)} />
     {built && <WordsKeptAfterBuild modelKey={modelKey} />}
     <WordsKeptAfterBuild modelKey={modelKey} why="retired" />
@@ -585,11 +584,11 @@ export function StartPlanBody(p: BodyProps) {
     <section className="sem-card sp-strip" data-testid="sp-strip" aria-label="The plan at a glance">
       <div className="sp-cell">
         <span className="sp-cell-k">{M.COPY.linesInPlan}</span>
-        <span className="sp-cell-v sp-num">{totals.all}<small>{built ? `${toBuild} built` : waiting ? `${waiting} wait on you` : pro || !totals.default ? 'none wait on you' : `${totals.default} on plain defaults`}</small></span>
+        <span className="sp-cell-v sp-num">{totals.all}<small>{built ? `${toBuild} built` : !pro && totals.default ? `${totals.default} on plain defaults` : 'choices in the plan'}</small></span>
         <span className="sp-gauge" aria-hidden="true">
           {(['jev', 'default', 'rule', 'assistant', 'you'] as const).map((k) => totals[k] > 0 && <i key={k} className={`sp-g-${k}`} style={{ width: pct(totals[k]) }} />)}
         </span>
-        <span className="sp-keys">{pro ? <span>Jev {totals.jev}</span> : totals.default > 0 ? <span>Default {totals.default}</span> : null}<span>Rules {totals.rule}</span><span>Assistant {totals.assistant}</span><span>You {totals.you}</span></span>
+        <span className="sp-keys" data-testid="sp-chosen-by"><span>Chosen by</span>{M.chosenByParts(totals, pro).map((c) => <span key={c.key}>{c.text}</span>)}</span>
       </div>
       <div className="sp-cell">
         <span className="sp-cell-k">{M.COPY.wordsTitle}</span>
@@ -614,9 +613,9 @@ export function StartPlanBody(p: BodyProps) {
       <div className="sp-cell" data-testid="sp-bp">
         <span className="sp-cell-k">After the build</span>
         {grade.bestPracticeOpen != null
-          ? <><span className="sp-cell-v sp-num">{grade.bestPracticeOpen}<small>{grade.bestPracticeOpen === 1 ? 'error or warning stays open' : 'errors and warnings stay open'}</small></span>
+          ? <><span className="sp-cell-v sp-num">{grade.bestPracticeOpen}<small>{grade.bestPracticeOpen === 1 ? 'best practice problem stays open' : 'best practice problems stay open'}</small></span>
             <span className="sp-keys">{grade.bestPractice && <span data-testid="sp-grade-bp">{M.COPY.bpLetter(grade.bestPractice)}{built ? '' : ` ${M.COPY.gradeAfter}`}</span>}
-              <span>{pro ? 'Each becomes a Plan row you can work through' : 'Best practice fixes are one at a time, on the Plan'}</span></span></>
+              <span>{pro ? 'Each becomes a task on the Plan' : 'Best practice fixes are one at a time, on the Plan'}</span></span></>
           : <><span className="sp-cell-v sp-num">{grade.bestPractice
               ? <><span data-testid="sp-grade-bp">{M.COPY.bpLetter(grade.bestPractice)}</span><small>{built ? M.COPY.gradeBuilt : M.COPY.gradeAfter}</small></>
               : <small>{M.COPY.bpUnknown}</small>}</span>
@@ -627,15 +626,15 @@ export function StartPlanBody(p: BodyProps) {
     <div className="sp-facts" data-testid="sp-facts">
       <span><b className="sp-num">{tablesNamed}</b> tables</span>
       {graph && <span><b className="sp-num">{graph.edges.length}</b> links, {graph.edges.filter((e) => e.active).length} on</span>}
-      <span><b className="sp-num">{toBuild}</b> {built ? 'lines built' : 'lines kept'}</span>
+      <span><b className="sp-num">{toBuild}</b> {built ? 'changes built' : 'changes ready to build'}</span>
       {held > 0 && <span data-testid="sp-held-count"><b className="sp-num">{held}</b> {M.COPY.heldFact}</span>}
-      {left > 0 && <span><b className="sp-num">{left}</b> left out</span>}
+      {left > 0 && <span><b className="sp-num">{left}</b> changes left out</span>}
     </div>
 
     <NeedsBand view={view} tier={tier} busy={busy} onNeed={p.onNeed} />
 
     <div className="sp-filterbar" data-testid="sp-filters">
-      <div className="sp-filters" role="group" aria-label="Show lines by who decided them">
+      <div className="sp-filters" role="group" aria-label="Show changes by who decided them">
         {tabs.map((t) => <button key={t.id} type="button" className="sp-filter" aria-pressed={filter === t.id} data-testid={`sp-filter-${t.id}`} title={t.id === 'changed' ? M.COPY.changedTip : undefined} onClick={() => setFilter(t.id)}>{t.label}<b className="sp-num">{t.count}</b></button>)}
       </div>
       <span className="sp-hint">{M.COPY.filterHint}</span>
@@ -669,7 +668,7 @@ export function StartPlanBody(p: BodyProps) {
                 {g.table && <div className="sp-grp" aria-expanded={open} data-testid={`sp-group-${id}-${g.table}`} {...pressable(() => setGrpOpen((s) => ({ ...s, [key]: !open })))}>
                   <span className="sp-car" aria-hidden="true">{open ? '▾' : '▸'}</span><b>{g.table}</b>
                   {g.sourceName && g.sourceName !== g.table && <span className="sp-grp-src" title="The name in the source">{g.sourceName}</span>}
-                  <span className="sp-grp-r sp-num">{gl.length} {gl.length === 1 ? 'line' : 'lines'}</span>
+                  <span className="sp-grp-r sp-num">{gl.length} {gl.length === 1 ? 'change' : 'changes'}</span>
                 </div>}
                 {g.table && id === 'tables' && (() => {
                   const sample = M.sampleControlOf(view, g, tier);

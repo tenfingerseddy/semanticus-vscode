@@ -77,7 +77,7 @@ check('4. the foot says the right thing for each state', () => {
   assert.match(waiting.lead, /5 questions wait on you/, `a plan with questions says so: ${waiting.lead}`);
   const approved = asView((startPlanApprove(s, v.digest), s));
   const a = M.footOf(approved, PRO);
-  assert.match(a.lead, /You approved this plan/, `an approved plan says the person approved it: ${a.lead}`);
+  assert.match(a.lead, /This plan is approved/, `an approved plan says the person approved it: ${a.lead}`);
   assert.match(a.rest, /Build/, 'and what happens next');
   assert.doesNotMatch(a.lead + a.rest, /Ready to approve|questions? waits?/i, 'never "ready to approve" once approved');
   const stale = asView((startPlanAssistantWords(s, 2), s));
@@ -95,7 +95,7 @@ check('4. the foot says the right thing for each state', () => {
   assert.match(ready.lead, /question waits on you|Ready to approve/, `a free plan with only the composite key left: ${ready.lead}`);
   for (const f of [waiting, a, st, b, deciding, ready]) noJargon(f.lead + ' ' + f.rest, 'foot');
   const text = readable(render(approved));
-  assert.match(text, /You approved this plan\./, 'the rendered foot says it too');
+  assert.match(text, /This plan is approved\./, 'the rendered foot says it too');
 });
 
 // ---- 6. two links between one pair of tables are drawn apart ---------------------------------------------------------------
@@ -173,7 +173,7 @@ check('9. a held line is marked, and not counted as a change that will be built;
   assert.equal(M.heldCountOf(v), 1);
   const html = render(v); const text = readable(html);
   assert.match(html, /data-held="yes"/, 'the row is marked held');
-  assert.match(text, /1 held, not built/, 'the facts count it apart');
+  assert.match(text, /1 waiting, not built/, 'the facts count it apart');
   assert.match(text, /Held, because the table Codes was left out by you/, 'and the words are on the page');
   startPlanEdit(s, { op: 'keep_line', target: 't-in-Codes' });
   assert.equal(lineOf(asView(s), 'w-codes').held, null, 'putting Codes back releases it');
@@ -193,6 +193,15 @@ check('9. a held line is marked, and not counted as a change that will be built;
   assert.match(bh, /data-built="yes"/);
   assert.doesNotMatch(bt, /Model not built yet/, 'never "not built yet" on a built plan');
   assert.doesNotMatch(bt, /Needs you/, 'a built plan asks nothing');
+  // hero16 N5: a plan that was built while Jev still waited for its permission must not go on saying "Jev is waiting".
+  const waitedThenBuilt = JSON.parse(JSON.stringify(asView(makeStartPlanState({ granted: false, decide: 'waiting_grant' }))));
+  assert.notEqual(M.decideNote(waitedThenBuilt, PRO), null, 'before the build the waiting note is said');
+  waitedThenBuilt.built = true;
+  assert.equal(M.decideNote(waitedThenBuilt, PRO), null, 'after the build no Jev note is said');
+  // hero16 section 10: the person reads changes, not "lines", and who chose them is named.
+  assert.doesNotMatch([M.COPY.builtNote('X'), M.builtBandWords(bv), M.COPY.needsLead(1), M.COPY.needsLead(2), M.COPY.keepNote, M.COPY.pinNote, M.COPY.orphanLine].join(' '), /\blines?\b/i, 'the start plan says changes, never lines');
+  assert.match(M.builtBandWords(bv), /\d+ changes? built\. One undo takes it back\./, 'the band counts changes');
+  assert.match(bt, /Chosen by/, 'the counts under Changes in the plan say who chose them');
   assert.doesNotMatch(bt, /Left out until you answer|needs? you\b/, 'and no row on it waits on the person: what the build left out says Not built');
   assert.match(bt, /Not built/);
   assert.doesNotMatch(bh, /data-testid="sp-ask"/, 'nothing to ask the assistant to write for a plan already built');
@@ -336,7 +345,7 @@ check('C. "findings stay open" only when the preview scan gave a count; else the
   assert.doesNotMatch(t, /\d+ findings? stays? open/i, 'the best practice section is empty, so no count of open findings is claimed');
   assert.match(t, /Best practice C/, 'what is known is said: the letter');
   const pro = readable(render(asView(makeStartPlanState({})), true));
-  assert.match(pro, /2 errors and warnings stay open/, 'a plan whose preview scan gave a count says it (the count is the scan\'s: see psc3-fixes.test.mjs)');
+  assert.match(pro, /2 best practice problems stay open/, 'a plan whose preview scan gave a count says it (the count is the scan\'s: see psc3-fixes.test.mjs)');
 });
 
 // ---- D. a line that asks nothing carries no "asks" mark -----------------------------------------------------------------
@@ -364,7 +373,7 @@ check('F. the Changed filter keeps every line that moved since the person last c
   const a = new Set(['w-1']), b = new Set(['w-2']);
   assert.deepEqual([...M.mergeChanged(a, b, false)].sort(), ['w-1', 'w-2'], 'a second batch of words adds to the first');
   assert.deepEqual([...M.mergeChanged(a, b, true)], ['w-2'], 'the person\'s own change starts the count again, with what it moved');
-  assert.match(M.COPY.changedTip, /since your last change/i, 'the filter says what it counts');
+  assert.match(M.COPY.changedTip, /since your last edit/i, 'the filter says what it counts');
   assert.match(src('startplan.tsx'), /M\.mergeChanged\(/, 'the page uses it');
 });
 

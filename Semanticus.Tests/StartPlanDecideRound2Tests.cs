@@ -63,6 +63,7 @@ namespace Semanticus.Tests
             Assert.Contains("added after you agreed", rig.Doc.Decide.Reason);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_table_left_out_since_the_grant_is_narrower_and_the_asks_go_on()
         {
@@ -111,6 +112,7 @@ namespace Semanticus.Tests
 
         // ================================================================== 2. lost work: held, not deleted
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_round_run_while_a_table_is_out_holds_the_words_and_counts_them_in_neither_number_and_they_land_again_with_the_table()
         {
@@ -176,6 +178,7 @@ namespace Semanticus.Tests
             Assert.Contains(StartPlanDecide.NeedsYou(doc), n => n.Kind == StartNeedKind.UnsurePick && n.Id.EndsWith(bm.Identity, StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_pick_Jev_keeps_flipping_ends_the_loop_and_is_handed_to_the_person_never_called_settled_quietly()
         {
@@ -191,6 +194,7 @@ namespace Semanticus.Tests
 
         // ================================================================== 6. a suggestion left unticked is not offered again after the build
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_suggestion_the_person_left_unticked_is_not_offered_again_by_the_Plan_after_the_build_and_can_be_kept_from_the_Plan()
         {
@@ -272,6 +276,7 @@ namespace Semanticus.Tests
             Assert.Single(Engine.StartPlanDocForTest().Lines, l => l.Word == text);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_plan_whose_model_opens_again_is_decided_again_and_not_left_deciding_with_no_loop()
         {
@@ -287,6 +292,7 @@ namespace Semanticus.Tests
             Assert.True(doc.Decide.State == StartDecideState.Stable, doc.Decide.State + ": " + doc.Decide.Reason);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_real_scratch_carries_the_facts_of_the_sample_so_Jev_sees_before_the_build_what_the_Plan_sees_after_it()
         {

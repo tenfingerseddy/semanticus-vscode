@@ -70,6 +70,7 @@ namespace Semanticus.Tests
 
         // ---- row 1: no service ------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_the_null_oracle_nothing_is_proposed_and_nothing_is_sent()
         {
@@ -94,6 +95,7 @@ namespace Semanticus.Tests
 
         // ---- row 2: consent withdrawn -----------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_consent_withdrawn_nothing_is_proposed_and_nothing_is_sent()
         {
@@ -140,6 +142,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_reply_that_lands_after_the_model_moved_is_dropped()
         {
@@ -169,6 +172,7 @@ namespace Semanticus.Tests
         /// <summary>The fence has to be cut from the SAME read as the evidence. An edit that lands between the
         /// two used to give an old snapshot a fresh revision stamp, which is a stale piece of evidence wearing
         /// a current fence. Both doors, because a fence that only holds on one of them is not a fence.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_between_the_snapshot_and_the_fence_is_refused_on_both_doors()
         {
@@ -229,6 +233,7 @@ namespace Semanticus.Tests
         /// cannot say what it is (the live replay lost 17 points on format there). The NAMES of the measures it
         /// uses can, and names are inside the card's promise. They come from the dependency list, sorted, never
         /// from the text, so nothing else in the formula rides along.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_measure_built_from_measures_sends_their_names_and_no_text()
         {
@@ -252,6 +257,7 @@ namespace Semanticus.Tests
 
         /// <summary>Each fact the point may send, worked out from a formula that plainly has it or plainly does
         /// not. Function names come in the order the formula first uses them, so the outer function leads.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("DIVIDE ( SUM ( Sales[Amount] ), SUM ( Sales[Cost] ) )", "DIVIDE,SUM", true, false, false, false, false)]
         [InlineData("SUM ( Sales[Amount] ) / SUM ( Sales[Cost] )", "SUM", true, false, false, false, false)]
@@ -291,6 +297,7 @@ namespace Semanticus.Tests
         /// <summary>The length limit existed only because the formula text was sent, and a cut formula would
         /// have made two measures look like one piece of evidence. Nothing of the formula is sent now, so a
         /// long formula is asked about like any other, on both doors, and none of it reaches the service.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_long_formula_is_asked_about_on_both_doors_and_none_of_it_is_sent()
         {
@@ -353,6 +360,7 @@ namespace Semanticus.Tests
 
         // ---- row 4: a free session ---------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_session_is_told_it_is_Pro_and_nothing_is_sent()
         {
@@ -377,6 +385,7 @@ namespace Semanticus.Tests
 
         // ---- row 5: the point switched off -------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_the_point_switched_off_nothing_is_proposed_and_nothing_is_sent()
         {
@@ -426,6 +435,7 @@ namespace Semanticus.Tests
             Assert.Contains("never asks, whatever 'enabled' says", description, StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_point_whose_replay_bar_is_unmet_is_listed_as_not_live_on_both_doors()
         {
@@ -494,6 +504,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Below_the_bar_the_proposal_is_left_out_but_the_confidence_is_still_reported()
         {
@@ -516,6 +527,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_measure_that_already_has_a_folder_and_a_format_is_never_asked_about()
         {

@@ -80,6 +80,7 @@ namespace Semanticus.Engine
             // asked again. The parts as given are the question; the settled ones replace them when there are any.
             answer.Parts ??= AsAsked(ask);
             RecordDataQuestion(s, ask, answer, origin);
+            PublishAskAnswer(ask, answer, origin);
             return answer;
         }
 

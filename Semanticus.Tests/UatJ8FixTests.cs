@@ -64,6 +64,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- U3
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -213,6 +214,7 @@ namespace Semanticus.Tests
             },
         };
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -251,6 +253,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- U7
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]

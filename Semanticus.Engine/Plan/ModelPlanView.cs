@@ -187,6 +187,10 @@ namespace Semanticus.Engine
         /// <summary>Null on a short read of the plan, which names a row by its id only.</summary>
         [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         public string Title { get; set; }
+
+        /// <summary>Who does the blocking task: "you", "assistant" or "semanticus". Null when not known.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string Doer { get; set; }
     }
 
     /// <summary>Who holds a task right now. No live timer: the queue records a claim, not activity.</summary>
@@ -751,6 +755,10 @@ namespace Semanticus.Engine
         /// they got. On a free session, with no service, or below the bar this says so and no item carries a
         /// number.</summary>
         public string OrderedBy { get; set; }
+
+        /// <summary>Where billing is, set only when the order line says the Pro plan is not active, so the page can show a Billing link
+        /// beside it. Null every other time.</summary>
+        public string BillingUrl { get; set; }
 
         /// <summary>True when a value ranking was actually applied. False is the ordinary case and is not a
         /// failure: the plan is complete either way, in rule order, with the same reasons.</summary>

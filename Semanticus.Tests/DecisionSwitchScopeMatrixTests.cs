@@ -384,20 +384,18 @@ namespace Semanticus.Tests
 
         protected static string DoorFor(string a, string b) => ((a + "|" + b).Sum(ch => (int)ch) & 1) == 0 ? "studio" : "agent";
 
-        /// <summary>A theory that runs only when SEMANTICUS_SWITCH_MATRIX=full, and otherwise reports Skipped (not a pass). The whole
-        /// matrix is 1,044 cells and took 22 m 53 s on omarchy-yoga at the join (30 Sep), far past the six minutes a lane gate
-        /// may spend; the two big blocks (an on after every background, 525 cells, and a newer off after every on, 441) run
-        /// under this switch, and the rest (78 cells) runs every time.</summary>
+        /// <summary>The two big blocks of the matrix (an on after every background, 525 cells, and a newer off after every on, 441).
+        /// They took 22 m 53 s on omarchy-yoga at the join (30 Sep), so they carry the sweep trait (lean suite, 10 Oct): the nightly
+        /// sweep runs them, the per-PR run does not. They used to be skipped unless SEMANTICUS_SWITCH_MATRIX=full; a skip that
+        /// reports "not a pass" is gone because the sweep tier runs the same cells every night. The other 78 cells run every time.</summary>
         protected sealed class FullMatrixTheoryAttribute : TheoryAttribute
         {
-            public FullMatrixTheoryAttribute()
-            {
-                if (!string.Equals(Environment.GetEnvironmentVariable("SEMANTICUS_SWITCH_MATRIX"), "full", StringComparison.OrdinalIgnoreCase))
-                    Skip = "NOT RUN: the full switch-scope matrix runs only with SEMANTICUS_SWITCH_MATRIX=full (about 23 minutes). This is not a pass.";
-            }
         }
 
         public static IEnumerable<object[]> ClickerCells() => Kinds.Select(k => new object[] { k });
+        // Lean suite (10 Oct): the sample every pull request runs. One kind a person can tell apart by its path, one by its title, one in the cloud,
+        // so each reach rule is crossed; the full list of kinds is the sweep tier's.
+        public static IEnumerable<object[]> ClickerSample() => new[] { "P:east", "T:Sales", "Cloud" }.Select(k => new object[] { k });
         public static IEnumerable<object[]> BgClickerCells()
         {
             foreach (var bg in new[] { "none", "old", "lift4", "cleared4" }.Concat(Kinds))
@@ -454,6 +452,11 @@ namespace Semanticus.Tests
         public DecisionSwitchScopeMatrix_Off(ITestOutputHelper o) : base(o) { }
 
         [Theory]
+        [MemberData(nameof(ClickerSample))]
+        public Task Off_sample(string c) => Off(c);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
         [MemberData(nameof(ClickerCells))]
         public async Task Off(string c)
         {
@@ -485,6 +488,7 @@ namespace Semanticus.Tests
     {
         public DecisionSwitchScopeMatrix_On(ITestOutputHelper o) : base(o) { }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [FullMatrixTheory]
         [MemberData(nameof(BgClickerCells))]
         public async Task On(string bg, string c)
@@ -527,6 +531,11 @@ namespace Semanticus.Tests
     {
         public DecisionSwitchScopeMatrix_Own(ITestOutputHelper o) : base(o) { }
 
+        [Theory]
+        [MemberData(nameof(ClickerSample))]
+        public Task OnAfterOwnOff_sample(string c) => OnAfterOwnOff(c);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(ClickerCells))]
         public async Task OnAfterOwnOff(string c)
@@ -583,6 +592,7 @@ namespace Semanticus.Tests
             NoteChecks(c, cBefore, row, after, flags);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(ClickerCells))]
         public async Task OffAfterOwnOn(string c)
@@ -622,6 +632,7 @@ namespace Semanticus.Tests
     {
         public DecisionSwitchScopeMatrix_Revoke(ITestOutputHelper o) : base(o) { }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [FullMatrixTheory]
         [MemberData(nameof(PairCells))]
         public async Task NewerOff(string x, string c)
@@ -684,6 +695,12 @@ namespace Semanticus.Tests
             return (row, after, restart);
         }
 
+        [Theory]
+        [InlineData("P:west", "T:Sales")]
+        [InlineData("old", "Cloud")]
+        public Task Free_reads_and_switches_as_Pro_does_sample(string bg, string c) => Free_reads_and_switches_as_Pro_does(bg, c);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("P:west", "T:Sales")]
         [InlineData("T:Sales", "P:east")]

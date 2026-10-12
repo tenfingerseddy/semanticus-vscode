@@ -44,6 +44,8 @@ namespace Semanticus.Engine.Jev
         public string Id { get; set; }
         public string Title { get; set; }
         public string WaitsFor { get; set; }
+        /// <summary>Who must act first: "you", "your assistant" or "Semanticus". Null when not known.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string WaitsForWho { get; set; }
     }
 
     /// <summary>get_model_summary's ActiveWork.Tasks (contract 6.2). Omitted when there is nothing to say.</summary>
@@ -198,7 +200,7 @@ namespace Semanticus.Engine.Jev
         internal const string AllIndependentSentence = "They do not depend on each other, so take more than one if you can.";
         internal const string OneAtATimeSentence = "Take them one at a time.";
         internal const string UnknownFootprintNote = "Semanticus cannot tell what this one touches.";
-        internal const string PausedSentence = "Plan: tasks are paused by the person. Carry on with what they ask you directly.";
+        internal const string PausedSentence = "Plan: the person paused your tasks. Do what they ask you directly.";
         internal const string Footer = "Call list_assistant_requests, then claim_request.";
 
         /// <summary>"Plan: 2 tasks are ready for you." plus the independence sentence when every pair is independent.</summary>
@@ -249,7 +251,12 @@ namespace Semanticus.Engine.Jev
                         number[p.A].ToString(CultureInfo.InvariantCulture) + " and " + number[p.B].ToString(CultureInfo.InvariantCulture)
                         + " both change " + Plain(p.Key) + ".")) + " " + OneAtATimeSentence);
                 foreach (var w in o.Waiting.Take(waiting))
-                    lines.Add("Not offered yet: " + Short(w.Title) + ". It waits for " + Short(w.WaitsFor?.FirstOrDefault()?.Title ?? "another row") + ".");
+                    {
+                    var first = w.WaitsFor?.FirstOrDefault();
+                    var who = WhoWord(first?.Doer);
+                    lines.Add("Not offered yet: " + Short(w.Title) + ". It waits for " + Short(first?.Title ?? "another task") + " first"
+                              + (who == null ? "." : ", which " + who + " must do."));
+                }
                 lines.Add(Footer);
 
                 var text = string.Join("\n", lines);
@@ -269,6 +276,10 @@ namespace Semanticus.Engine.Jev
             var text = string.Join("\n", lines);
             return text.Length <= MaxChars ? text : text.Substring(0, MaxChars);
         }
+
+        /// <summary>The doer key in the words a person reads; null when unknown.</summary>
+        internal static string WhoWord(string doer) =>
+            doer == PlanDoers.You ? "you" : doer == PlanDoers.Assistant ? "your assistant" : doer == PlanDoers.Semanticus ? "Semanticus" : null;
 
         private static string Short(string title)
         {
@@ -321,7 +332,7 @@ namespace Semanticus.Engine.Jev
                 return new HandoffResult
                 {
                     Refusal = HandoffRefusal.NoConsent,
-                    Message = "Nothing is sent to your assistant while consent is off. Turn it on in Settings, or the job stops at a stub.",
+                    Message = "Nothing goes to your assistant while consent is off. Turn it on in Settings. Until then, the job stops here.",
                 };
             return await _engine.PostJobRequestAsync(post).ConfigureAwait(false);
         }

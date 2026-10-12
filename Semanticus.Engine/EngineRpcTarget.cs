@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Semanticus.Analysis;
@@ -57,6 +58,7 @@ namespace Semanticus.Engine
         public Task<RefreshReport> refreshPartition(string partitionRef, string refreshType = "Full", string endpoint = null, string database = null, string authMode = null, string rawToken = null, string tenantId = null, bool commit = false, string origin = "human") => _engine.RefreshPartitionAsync(partitionRef, refreshType, endpoint, database, authMode, rawToken, tenantId, commit, _origin);
         public Task<TreeNode[]> listTree(string parentRef) => _engine.ListTreeAsync(parentRef);
         public Task<ObjectInfo> getObject(string objRef) => _engine.GetObjectAsync(objRef);
+        public Task<bool> resolveFileRecovery(string expectedSession, bool restore) => _engine.ResolveFileRecoveryAsync(expectedSession, restore, _origin);
         public Task<string> getDax(string objRef) => _engine.GetDaxAsync(objRef);
         public Task<SetResult> setDax(string objRef, string expression, string origin = "human", string expectedSession = null, long? expectedRevision = null, string expectedExpression = null) => _engine.SetDaxAsync(objRef, expression, _origin, expectedSession, expectedRevision, expectedExpression);
         public Task<DaxLintResult> lintDax(string expression) => _engine.LintDaxAsync(expression);
@@ -69,7 +71,7 @@ namespace Semanticus.Engine
         public Task<ExplainDossier> explainValue(string measureRef, ExplainFilterContext context = null, bool decompose = true, string decomposeBy = null, int topK = 5, string origin = "human") => _engine.ExplainValueAsync(measureRef, context, decompose, decomposeBy, topK, _origin);
         public Task<VerifiedEditsChain> listVerifiedEdits() => _engine.ListVerifiedEditsAsync();
         public Task<string> exportVerifiedEdits(string format = "md") => _engine.ExportVerifiedEditsAsync(format);
-        public Task<TestSuiteRunResult> runTests(bool persist = false, string origin = "human", string[] only = null, string[] sections = null) => _engine.RunTestSuiteAsync(persist, _origin, only, sections);
+        public Task<TestSuiteRunResult> runTests(bool persist = false, string origin = "human", string[] only = null, string[] sections = null, string runId = null) => _engine.RunTestSuiteAsync(persist, _origin, only, sections, runId);
         public Task<ReconcileOutcome> tryTest(TestDefinition def, string origin = "human") => _engine.TryTestAsync(def, _origin);
         public Task<TestSuiteInfo> listTests() => _engine.ListTestDefinitionsAsync();
         public Task<TestDefinition> saveTest(TestDefinition def, string origin = "human", string expectedJson = null) => _engine.SaveTestDefinitionAsync(def, _origin, expectedJson);
@@ -167,8 +169,8 @@ namespace Semanticus.Engine
         public Task<ColumnRow[]> listColumns() => _engine.ListColumnsAsync();
         public Task<ModelObjects> getModelObjects() => _engine.GetModelObjectsAsync();
         // toEntry (contract 8.6): walk to that History entry in one commit; omitted, one step as before.
-        public Task<UndoState> undo(string origin = "human", string toEntry = null) =>
-            string.IsNullOrWhiteSpace(toEntry) ? _engine.UndoAsync(_origin) : _engine.UndoToEntryAsync(toEntry, _origin);
+        public Task<UndoState> undo(string origin = "human", string toEntry = null, long? throughRevision = null) =>
+            string.IsNullOrWhiteSpace(toEntry) ? _engine.UndoAsync(_origin) : _engine.UndoToEntryAsync(toEntry, _origin, throughRevision);
         public Task<UndoState> redo(string origin = "human", string toEntry = null) =>
             string.IsNullOrWhiteSpace(toEntry) ? _engine.RedoAsync(_origin) : _engine.RedoToEntryAsync(toEntry, _origin);
         public Task<PlanHistoryView> getPlanHistory(string by = null, string objectRef = null, string before = null, int limit = 50) =>
@@ -195,6 +197,20 @@ namespace Semanticus.Engine
         public Task<SetResult> applyFix(string ruleId, string objRef, string origin = "human") => _engine.ApplyFixAsync(ruleId, objRef, _origin);
         public Task<FixPrompt> getFixPrompt(string ruleId, string objRef) => _engine.GetFixPromptAsync(ruleId, objRef);
         public Task<GroundingBundle> getGrounding(string objRef) => _engine.GetGroundingAsync(objRef);
+        public Task<BatchEditResult> waiveFindings(FindingWaiverItem[] items, string origin = "human") => _engine.WaiveFindingsAsync(items, _origin);
+        public Task<BatchEditResult> unwaiveFindings(FindingFixItem[] items, string origin = "human") => _engine.UnwaiveFindingsAsync(items, _origin);
+        public Task<BatchEditResult> applyFixes(FindingFixItem[] items, string origin = "human") => _engine.ApplyFixesAsync(items, _origin);
+        public Task<BatchEditResult> duplicateObjects(ObjectDuplicateItem[] items, string origin = "human") => _engine.DuplicateObjectsAsync(items, _origin);
+        public Task<BatchEditResult> setDocSections(DocSectionItem[] items, string origin = "human") => _engine.SetDocSectionsAsync(items, _origin);
+        public Task<BatchEditResult> setPerspectiveMembers(PerspectiveMemberItem[] items, string origin = "human") => _engine.SetPerspectiveMembersAsync(items, _origin);
+        public Task<BatchEditResult> setObjectPermissions(ObjectPermissionItem[] items, string origin = "human") => _engine.SetObjectPermissionsAsync(items, _origin);
+        public Task<BatchPlanResult> setPlanItems(PlanItemEdit[] items, string origin = "human") => _engine.SetPlanItemsAsync(items, _origin);
+        public Task<BatchPlanResult> addPlanItems(PlanItemAdd[] items, string origin = "human") => _engine.AddPlanItemsAsync(items, _origin);
+        public Task<BatchStartPlanResult> editStartPlans(StartPlan.StartPlanEdit[] items, string origin = "human") => _engine.EditStartPlansAsync(items, _origin);
+        public Task<BatchEditResult> writeWords(WordsWriteItem[] items, string origin = "human") => _engine.WriteWordsAsync(items, _origin);
+        public Task<BatchPlanRowsResult> planRows(PlanRowEdit[] items, string origin = "human") => _engine.PlanRowsAsync(items, _origin);
+        public Task<BatchEditResult> editObjects(ObjectEditItem[] items, string origin = "human") => _engine.EditObjectsAsync(items, _origin);
+        public Task<BatchEditResult> createMeasures(MeasureCreateItem[] items, string origin = "human") => _engine.CreateMeasuresAsync(items, _origin);
         public Task<SetResult> waiveFinding(string system, string ruleId, string objRef, string reason, string origin = "human") => _engine.WaiveFindingAsync(system, ruleId, objRef, reason, _origin);
         public Task<SetResult> unwaiveFinding(string system, string ruleId, string objRef, string origin = "human") => _engine.UnwaiveFindingAsync(system, ruleId, objRef, _origin);
         public Task<Semanticus.Analysis.WaiverRecord[]> listWaivers() => _engine.ListWaiversAsync();
@@ -395,6 +411,7 @@ namespace Semanticus.Engine
             _engine.PurgeRestorePointsAsync(id, olderThanDays, confirm, confirmToken, _origin);
         public Task<FabricWorkspace[]> listWorkspaces(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspacesAsync(authMode, tenantId, _origin, cancellationToken);
         public Task<FabricSemanticModel[]> listWorkspaceModels(string workspaceId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspaceModelsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
+        public Task<WorkspaceSqlEndpointList> listWorkspaceSqlEndpoints(string workspaceId = null, string authMode = null, string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListWorkspaceSqlEndpointsAsync(workspaceId, authMode, tenantId, _origin, cancellationToken);
         public Task<DeploymentPipeline[]> listDeploymentPipelines(string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.ListDeploymentPipelinesAsync(authMode, tenantId, _origin, cancellationToken);
         public Task<PipelineStage[]> getPipelineStages(string pipelineId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetPipelineStagesAsync(pipelineId, authMode, tenantId, _origin, cancellationToken);
         public Task<StageItem[]> getStageItems(string pipelineId, string stageId, string authMode = "azcli", string tenantId = null, string origin = "human", CancellationToken cancellationToken = default) => _engine.GetStageItemsAsync(pipelineId, stageId, authMode, tenantId, _origin, cancellationToken);
@@ -466,6 +483,41 @@ namespace Semanticus.Engine
         public Task<ModelPlanView> removePlanTarget(string id, string origin = "human") => _engine.RemovePlanTargetAsync(id, _origin);
         public Task<ModelPlanActionResult> markPlanTargetDone(string id, string origin = "human") => _engine.MarkPlanTargetDoneAsync(id, _origin);
 
+        // ---- the Plan page's controls (Plan at the heart, contract sections 3.3, 4 and 12). Kane, 10 Oct 2026: the person's word in chat is
+        // enough, so an attached assistant reaches every one of these through the gate (AssistantEngine), and so does the person's page.
+        // Only the Permissions page and the person's own claim, Mark done and Could not stay on HumanGovernanceRpcTarget.
+
+        /// <summary>Add a task: the Plan's field, or a Send button with its page, brief, objects, done-when and link.</summary>
+        public Task<ModelPlanActionResult> addPlanTask(PlanTaskRequest request) => _engine.AddPlanTaskAsync(request);
+        /// <summary>Pause (held true) or Resume (held false) one row.</summary>
+        public Task<ModelPlanView> holdPlanItem(string id, bool held) => _engine.HoldPlanItemAsync(id, held);
+        /// <summary>"Give to your assistant", "I'll do it", or "Let it run" where the engine can apply it.</summary>
+        public Task<ModelPlanView> setPlanItemDoer(string id, string doer, string origin = "human") => _engine.SetPlanItemDoerAsync(id, doer, _origin);
+        /// <summary>Up, on a task for the assistant: one place earlier in its order.</summary>
+        public Task<ModelPlanView> movePlanTaskUp(string id) => _engine.MovePlanTaskUpAsync(id);
+        /// <summary>The switch "Tasks for your assistant": "on" or "paused".</summary>
+        public Task<ModelPlanView> setAssistantQueue(string state) => _engine.SetAssistantQueueAsync(state);
+        /// <summary>One note on a row; empty clears it.</summary>
+        public Task<ModelPlanView> setPlanTaskNote(string id, string text) => _engine.SetPlanTaskNoteAsync(id, text);
+        /// <summary>Remove a task or a draft row (and the draft's parts) from the Plan. A row Semanticus found is set aside instead.</summary>
+        public Task<PlanRemoveResult> removePlanRow(string id) => _engine.RemovePlanRowAsync(id);
+        /// <summary>Undo a removal: the row goes back where it stood.</summary>
+        public Task<ModelPlanView> restorePlanRow(string id) => _engine.RestorePlanRowAsync(id);
+        /// <summary>Refresh plan: scan again now, add what is new, take the finished rows off the list (they stay in History).</summary>
+        public Task<PlanRefreshResult> refreshPlan() => _engine.RefreshPlanAsync();
+        /// <summary>Save a repeat: words or a saved workflow, a doer, and a cadence; or one of the stock repeats. Pro.</summary>
+        public Task<ModelPlanActionResult> addPlanRepeat(PlanRepeatRequest request) => _engine.AddPlanRepeatAsync(request);
+        /// <summary>Change a repeat: its words, doer or cadence, or pause and resume it (Held). Pro.</summary>
+        public Task<ModelPlanView> setPlanRepeat(string id, PlanRepeatRequest request) => _engine.SetPlanRepeatAsync(id, request);
+        /// <summary>Delete a repeat. Its open card stays as an ordinary row. Free.</summary>
+        public Task<ModelPlanView> deletePlanRepeat(string id) => _engine.DeletePlanRepeatAsync(id);
+        /// <summary>Approve and run on a held draft.</summary>
+        public Task<Composer.DraftView> approveDraft(string draftId, string origin = "human") => _engine.ApproveHeldDraftAsync(draftId, _origin);
+        /// <summary>Continue past a stop, or past an assistant's step without its changes.</summary>
+        public Task<Composer.DraftView> continueDraft(string draftId) => _engine.ContinueDraftAsync(draftId);
+        /// <summary>Approve the start plan whose digest was shown. The approval is void the moment the plan changes at all.</summary>
+        public Task<StartPlan.StartPlanView> approveStartPlan(string digest, string origin = "human") => _engine.ApproveStartPlanAsync(digest, _origin);
+
         public Task<NextAction[]> getNextActions() => _engine.GetNextActionsAsync();
 
         // ---- the queue (Plan at the heart, lane E3, contract 3.3): the agent door's four ops, reached by an attached
@@ -480,7 +532,7 @@ namespace Semanticus.Engine
             _engine.DeclineAssistantRequestAsync(requestId, claimToken, reason, QueueReader, choices);
 
         // ---- the composer's drafts (lane L4): the same four ops as compose_task, get_draft, edit_draft and run_draft.
-        // The origin is this connection's, never a value off the wire. The held approval is on HumanGovernanceRpcTarget.
+        // The origin is this connection's, never a value off the wire. The held approval is approveDraft, above.
         public Task<Composer.DraftView> composeTask(string words = null, string workflow = null, string inputsJson = null, string stepsJson = null, string title = null, string origin = "human", string document = null) =>
             _engine.ComposeTaskAsync(words, workflow, inputsJson, stepsJson, title, _origin, document);
         public Task<Composer.DraftView> getDraft(string draftId) => _engine.GetDraftAsync(draftId);
@@ -503,8 +555,7 @@ namespace Semanticus.Engine
         // ---- the spec-first start (M11): the same eight verbs as start_model_from_sql, get_start_plan, edit_start_plan,
         // grant_start_disclosure, get_start_words, write_start_words, build_start_plan and discard_start_plan, all on the
         // same IEngine methods, so the Plan page and an assistant read one StartPlanView. The origin is this connection's,
-        // never a value off the wire. Approving the plan is NOT here: approveStartPlan is on HumanGovernanceRpcTarget,
-        // which an agent connection never registers.
+        // never a value off the wire. Approving the plan is approveStartPlan, above (Kane, 10 Oct 2026: the person's word in chat is enough).
         public Task<StartPlan.StartPlanView> startModelFromSql(StartPlan.StartModelRequest request, string origin = "human") => _engine.StartModelFromSqlAsync(request, _origin);
         public Task<StartPlan.StartPlanView> getStartPlan() => _engine.GetStartPlanAsync();
         public Task<StartPlan.StartPlanView> editStartPlan(StartPlan.StartPlanEdit edit, string origin = "human") => _engine.EditStartPlanAsync(edit, _origin);
@@ -513,5 +564,19 @@ namespace Semanticus.Engine
         public Task<StartPlan.StartWordsResult> writeStartWords(StartPlan.StartWord[] words, string origin = "human") => _engine.WriteStartWordsAsync(words, _origin);
         public Task<StartPlan.StartPlanBuildResult> buildStartPlan(string digest, string origin = "human") => _engine.BuildStartPlanAsync(digest, _origin);
         public Task<StartPlan.StartPlanView> discardStartPlan(string origin = "human") => _engine.DiscardStartPlanAsync(_origin);
+
+        // ---- the Studio wire (1.4). `call` is the attached assistant's call id (RemoteEngine sends the one its health filter minted),
+        // held ambient for the length of the call so a note or an assistant/call event carries it. The driver report is NOT here:
+        // setStudioDriver is on HumanGovernanceRpcTarget, which an agent connection never registers.
+        public Task<StudioShowResult> showInStudio(StudioShowRequest request, string call = null) => WithCall(call, () => _engine.ShowInStudioAsync(request));
+        public Task<StudioSuggestResult> suggestNext(StudioSuggestRequest request, string call = null) => WithCall(call, () => _engine.SuggestNextAsync(request));
+        public Task<StudioNotesView> getStudioNotes(string sessionId = null) => _engine.GetStudioNotesAsync(sessionId);
+        public Task noteAgentCall(string tool, string call = null, string focus = null, string client = null, string clientVersion = null) => WithCall(call, async () => { await _engine.NoteAgentCallAsync(tool, focus, client, clientVersion).ConfigureAwait(false); return 0; });
+
+        private static Task<T> WithCall<T>(string call, Func<Task<T>> body)
+        {
+            if (string.IsNullOrEmpty(call)) return body();
+            using (HealthCorrelation.Begin(call)) return body();
+        }
     }
 }

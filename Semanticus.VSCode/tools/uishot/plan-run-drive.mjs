@@ -241,7 +241,7 @@ async function runTheme(theme) {
   m = await measure(); snap.after = m;
   const rereads = m.calls.filter((c) => c.call === 'getModelPlan').length;
   check('after', m, (m) => [
-    ...has(/^Ran 3 rows\.\s*38 changes, one undo step\./.test(m.receipt), `receipt "${m.receipt}"`),
+    ...has(/^Ran 3 tasks\.\s*38 changes, one undo step\./.test(m.receipt), `receipt "${m.receipt}"`),
     ...has(JSON.stringify(m.receiptButtons) === '["Undo","Save","See in History"]', `receipt buttons ${JSON.stringify(m.receiptButtons)}`),
     ...has(m.calls.filter((c) => c.call === 'applyPlanItems').length === 1, 'one press made more than one call though the engine ran every wave in the first'),
     ...has(rereads >= 3, `the page re-read the plan after the press (getModelPlan x${rereads})`),

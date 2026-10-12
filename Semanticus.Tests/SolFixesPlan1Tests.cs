@@ -42,6 +42,7 @@ namespace Semanticus.Tests
 
         // ---- 1.1: Pro can total a part of a calculated key --------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Sol_1_1_a_part_of_a_calculated_key_is_never_totalled_when_Jev_is_unsure()
         {
@@ -84,6 +85,7 @@ namespace Semanticus.Tests
 
         // ---- 1.2: a numeric date column becomes a starter total -----------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Sol_1_2_a_date_held_as_a_number_is_never_a_starter_total_whatever_its_last_word()
         {
@@ -111,6 +113,7 @@ namespace Semanticus.Tests
 
         // ---- 1.3: a refresh drops an authored starter value ---------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("agent")]
         [InlineData("human")]
@@ -177,6 +180,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Sol_2_1_a_request_waiting_behind_six_others_sends_nothing_once_its_point_is_switched_off()
         {

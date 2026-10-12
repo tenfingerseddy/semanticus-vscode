@@ -81,6 +81,7 @@ namespace Semanticus.Tests
         /// description. Now the option says the model names that word as another name for the measure. Only a word the
         /// person typed goes: a synonym the question does not use is never sent.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_synonym_the_question_uses_is_named_in_the_option_and_no_other_goes()
         {
             using var rig = await BuildAsync(script: CoastScript, synonyms: new[] { ("measure:Sales/Net Sales", new[] { "turnover", "takings" }) });
@@ -627,6 +628,7 @@ namespace Semanticus.Tests
         /// the latest month by that column, and said; with none, the line says it could not apply last month and the
         /// run covers every date (K16).</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Last_month_beside_another_split_with_no_calendar_is_filtered_by_the_date_column_or_said_not_applied()
         {
             (string, double)? Script(DecisionRequest r, DecisionQuestion q) =>

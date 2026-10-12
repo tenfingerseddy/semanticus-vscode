@@ -91,18 +91,6 @@ namespace Semanticus.Tests
 
         // ---- S12, relabelled: one flat table that relates to nothing, beside the frame ----------------------------------
 
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false, true), InlineData(true, true), InlineData(false, false)]
-        public async Task S12_relabelled_a_single_flat_tables_columns_are_never_offered_with_the_frames_column_as_the_control(bool reportRead, bool pro)
-        {
-            using var f = await FlatBesideTheFrameAsync(FileFor("S12", reportRead, pro), reportRead, pro);
-            var (row, targets) = await CleanupAsync(f);
-            // Round 2's harm assertions, unchanged: the flat table's key, date and name, and its numbers.
-            AssertNeverOffered(row, targets, "column:sales/ORDER_ID", "column:sales/ORDER_DATE", "column:sales/CUSTOMER_NAME");
-            AssertNeverOffered(row, targets, "column:sales/QTY", "column:sales/AMOUNT", "column:sales/DISCOUNT");
-            // Version 2: a table nothing relates to is never offered, its text included (round 2's old control).
-            AssertNeverOffered(row, targets, "column:sales/NOTE_TXT", "column:sales/PRODUCT");
-        }
-
         // ---- The held-out run (round 4): two harmful offers, in every mode -------------------------------------------
         //
         // Sol's blind held-out set (10 models, labels sealed before the one run; evidence in
@@ -144,35 +132,5 @@ namespace Semanticus.Tests
             return f;
         }
 
-        /// <summary>H1 (held-out adv-4, UsageLedger[BilledAs]): a fact's text column that holds the billing date as text
-        /// ("2024-01-31") and has no date word. The promise: dates are never offered, however they are held. The fact is only
-        /// ever the many side and holds an amount, so the label gate is skipped and its text is offered.</summary>
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false, true), InlineData(true, true), InlineData(false, false)]
-        public async Task H1_a_facts_text_that_holds_a_date_with_no_date_word_is_never_offered(bool reportRead, bool pro)
-        {
-            using var f = await HeldOutShapeAsync(FileFor("H1", reportRead, pro),
-                e => e.CreateColumnAsync("table:fact_invoice", "BILLED_AS", "String", null, "human"), reportRead, pro);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:fact_invoice/BILLED_AS");
-        }
-
-        /// <summary>H2 (held-out real-wwi-dw, Stock Item[Barcode]): a dimension's text column that identifies each row (a
-        /// barcode, the item's alternate key) with no key word, on a table whose label is found. The promise: keys are never
-        /// offered, whatever their name.</summary>
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false, true), InlineData(true, true), InlineData(false, false)]
-        public async Task H2_a_dimensions_text_that_is_its_alternate_key_with_no_key_word_is_never_offered(bool reportRead, bool pro)
-        {
-            using var f = await HeldOutShapeAsync(FileFor("H2", reportRead, pro), async e =>
-            {
-                await e.CreateTableAsync("dim_item", "human");
-                await e.CreateColumnAsync("table:dim_item", "ITEM_KEY", "Int64", null, "human");
-                await e.CreateColumnAsync("table:dim_item", "Item", "String", null, "human");
-                await e.CreateColumnAsync("table:dim_item", "BARCODE", "String", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice", "ITEM_KEY", "Int64", null, "human");
-                await e.CreateRelationshipAsync("column:fact_invoice/ITEM_KEY", "column:dim_item/ITEM_KEY", null, true, "human");
-            }, reportRead, pro);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:dim_item/BARCODE");
-        }
     }
 }

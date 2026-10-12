@@ -76,6 +76,7 @@ namespace Semanticus.Tests
                 "A point switched off for a Desktop model Desktop named nothing about reads on when that file is opened by path.");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_the_next_yes_sends_what_was_switched_off_for_a_Desktop_file_opened_the_other_way()
         {

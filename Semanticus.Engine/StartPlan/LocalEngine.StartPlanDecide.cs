@@ -317,21 +317,62 @@ namespace Semanticus.Engine
         /// <summary>edit_start_plan, both doors (S12): one change to the structure, a pick, a line, an answer or the fiscal year end. It follows Needs
         /// (dropping a measure drops its followers, keeping a follower keeps its measure), says on each line it moved besides the one asked for why
         /// it moved, clears any approval, stops the loop in flight and starts the next one. A refused edit says why in plain words and changes nothing.</summary>
-        internal async Task<StartPlanView> EditStartPlanCoreAsync(StartPlanEdit edit, string origin)
+        internal async Task<StartPlanView> EditStartPlanCoreAsync(StartPlanEdit edit, string origin) =>
+            (await EditStartPlansCoreAsync(new[] { edit }, origin, throwOnRejected: true)).Plan;
+
+        public Task<BatchStartPlanResult> EditStartPlansAsync(StartPlanEdit[] items, string origin)
         {
+            RequireProFeature();
+            GuardOutsideWrite(origin);
+            return EditStartPlansCoreAsync(items, origin);
+        }
+
+        private async Task<BatchStartPlanResult> EditStartPlansCoreAsync(StartPlanEdit[] items, string origin, bool throwOnRejected = false)
+        {
+            if (items == null) throw new ArgumentException("Pass an items list.");
             await _startPlanGate.WaitAsync().ConfigureAwait(false);
             try
             {
                 var existing = LoadStartPlan() ?? throw new InvalidOperationException("There is no start plan to edit.");
                 // The loop is stopped first and waited for, so it can never write a round over the edit.
                 await CancelStartDecideAsync().ConfigureAwait(false);
-                StartEditOutcome outcome;
+                var outcome = new StartEditOutcome();
+                var rejected = new List<BatchRejection>();
+                var changed = new HashSet<string>(StringComparer.Ordinal);
+                var sampleChanged = false;
                 lock (_startPlanLock)
                 {
                     var doc = _startPlan;
                     // Apply to a copy: a refused edit, or one that fails half way, leaves the held document exactly as it was.
                     var trial = StartPlanStore.Copy(doc);
-                    outcome = StartPlanEditing.Apply(trial, edit, origin);
+                    for (var i = 0; i < items.Length; i++)
+                    {
+                        var candidate = StartPlanStore.Copy(trial);
+                        StartEditOutcome next;
+                        try
+                        {
+                            if (items[i] == null) throw new ArgumentException("A start-plan edit is required.");
+                            next = StartPlanEditing.Apply(candidate, items[i], origin);
+                        }
+                        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+                        {
+                            if (throwOnRejected) throw;
+                            rejected.Add(new BatchRejection { Index = i, ObjRef = items[i]?.Target, Reason = ex.Message });
+                            continue;
+                        }
+                        if (!next.Ok)
+                        {
+                            if (throwOnRejected) throw new InvalidOperationException(next.Refused);
+                            rejected.Add(new BatchRejection { Index = i, ObjRef = items[i]?.Target, Reason = next.Refused });
+                            continue;
+                        }
+                        if (!next.Changed) continue;
+                        trial = candidate;
+                        outcome.Changed = true;
+                        outcome.KnockOns.AddRange(next.KnockOns);
+                        changed.Add((items[i].Op ?? "").ToLowerInvariant() + "|" + items[i].Target);
+                        sampleChanged |= string.Equals(items[i].Op, "set_table_sample", StringComparison.OrdinalIgnoreCase);
+                    }
                     if (outcome.Ok && outcome.Changed)
                     {
                         trial.Version = doc.Version + 1;
@@ -353,10 +394,9 @@ namespace Semanticus.Engine
                         _startPlan = trial;
                     }
                 }
-                if (!outcome.Ok) throw new InvalidOperationException(outcome.Refused);   // the finally below restarts a loop this edit stopped
                 // A refusal takes the table out of the grant kept beside the model's permission, on disk, before the loop starts again (Sol, join 8, K6): the grant is what the
                 // sample is cut against, so a grant that still names the table would send its facts after the person said no.
-                if (outcome.Changed && string.Equals(edit.Op, "set_table_sample", StringComparison.OrdinalIgnoreCase))
+                if (sampleChanged)
                     await NarrowStartGrantToPlanAsync().ConfigureAwait(false);
                 if (outcome.Changed) await KickStartDecideOnPlanAsync().ConfigureAwait(false);
                 if (outcome.Changed) ScheduleStartPreview();   // a plan Jev is not deciding gets its preview now; one that is gets it when the decide ends
@@ -364,7 +404,9 @@ namespace Semanticus.Engine
                 if (outcome.Changed) NotifyStartPlanChanged(view, origin);
                 // What else moved, said on this answer (and not in the broadcast: it is about this edit, and nothing stores it).
                 if (outcome.KnockOns.Count > 0) view.KnockOns = outcome.KnockOns.ToList();
-                return view;
+                if (!throwOnRejected)
+                    NoteBatch(_sessions.Current?.Id, origin, changed.Count, "changed", "start-plan choices", "plan/start", undo: false);
+                return new BatchStartPlanResult { Revision = _sessions.Current?.Revision ?? 0, Applied = changed.Count, Rejected = rejected.ToArray(), Plan = view };
             }
             finally { await EnsureStartDecideNotOrphanedAsync().ConfigureAwait(false); _startPlanGate.Release(); }
         }

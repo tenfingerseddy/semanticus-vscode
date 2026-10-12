@@ -44,6 +44,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("delete the replaced measures before saving the model")]
         [InlineData("delete the replaced measures")]
@@ -64,6 +65,7 @@ namespace Semanticus.Tests
         /// <summary>The Pro path of the same defect. describe_workflow_steps' new text says the word match is used "when Jev is
         /// off or not sure", but when Jev is asked and says a sure no to every step (SaidNone), DescribedSteps.ApplyJev keeps
         /// the word match's Add a measure. Seen live on the lane's engine too: jevAsked true, chosenBy words, create_measure.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("delete the replaced measures before saving the model")]
         [InlineData("remove the old measures")]

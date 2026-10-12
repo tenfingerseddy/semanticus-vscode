@@ -93,11 +93,36 @@ const CASES = [
   { cmd: 'timeIntelCmd', args: [measure], answers: { input: ['column:Date/Date'] }, write: 'generateTimeIntelligence' },
   { cmd: 'markDateTableCmd', args: [table], answers: { input: ['Date'] }, write: 'markDateTable' },
   { cmd: 'renameFolderCmd', args: [folder], answers: { input: ['KPIs2'] }, write: 'renameDisplayFolder' },
-  { cmd: 'setHiddenCmd', args: [true, measure, [measure]], answers: {}, write: 'setObjectProperty', noPrompt: true },
+  { cmd: 'setHiddenCmd', args: [true, measure, [measure]], answers: {}, write: 'setObjectProperties', noPrompt: true },
   { cmd: 'setFormatCmd', args: [measure], answers: { pick: [(items) => items.find((i) => i.tpl?.kind === 'dynamic')] }, write: 'setMeasureFormatExpression' },
   { cmd: 'authorNewRole', args: [], answers: { input: ['Analysts'] }, write: 'createRole' },
   { cmd: 'authorNewCalcGroup', args: [], answers: { input: ['Currency'] }, write: 'createCalculationGroup', also: ['createAndRefresh'] },
 ];
+
+for (const hidden of [true, false]) {
+  test(`Hide / Show selection (${hidden}) makes one commit for all hideable objects`, async () => {
+    const commits = [];
+    const errors = [];
+    const scope = {
+      conn: { sendRequest: async (method, ...params) => {
+        // Unsupported objects refuse without a commit, like the real property setter.
+        if (method === 'setObjectProperty' && ![measure.ref, column.ref, table.ref].includes(params[0])) throw new Error('Not hideable');
+        commits.push({ method, params });
+      } },
+      vscode: { window: { showErrorMessage: (m) => errors.push(m) } },
+      tree: { refresh() {} }, warnNoEngine() {},
+      selectionRefs: () => [measure, column, table, role, rel, folder],
+    };
+    const fn = new Function(...Object.keys(scope), `${functionSource('setHiddenCmd')}\nreturn setHiddenCmd;`)(...Object.values(scope));
+    await fn(hidden);
+    assert.equal(commits.length, 1, 'one tree gesture must make one commit');
+    assert.deepEqual(commits[0], {
+      method: 'setObjectProperties',
+      params: [[measure.ref, column.ref, table.ref], 'IsHidden', String(hidden), 'human'],
+    });
+    assert.deepEqual(errors, []);
+  });
+}
 
 /** Run one case. `moment`: 'prompt' opens B during the last prompt; 'lag' opens B before the command starts but the host has not been told (a command with no prompt); 'never' is the control. */
 async function runCase(c, moment, personDoor = true) {

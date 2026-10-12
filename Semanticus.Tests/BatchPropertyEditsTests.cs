@@ -43,6 +43,30 @@ namespace Semanticus.Tests
         private static async Task<string> HiddenAsync(LocalEngine e, string objRef)
             => (await e.GetObjectPropertiesAsync(objRef)).First(p => p.Name == "IsHidden").Value;
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task Tree_hide_show_on_a_mixed_selection_is_one_commit_and_one_undo(bool hidden)
+        {
+            var (engine, sm, ms) = await FreshAsync();
+            using (engine)
+            {
+                var column = await engine.CreateColumnAsync("table:Sales", "Region", "String", null, "human");
+                var hierarchy = await engine.CreateHierarchyAsync("table:Sales", "Region levels", new[] { "Region" }, "human");
+                var refs = new[] { "table:Sales", ms[0], column, hierarchy };
+                if (!hidden) await engine.SetObjectPropertiesAsync(refs, "IsHidden", "true", "human");
+                var commits = new List<ChangeNotification>();
+                sm.Bus.Changed += commits.Add;
+                var revision = sm.Current.Revision;
+                await engine.SetObjectPropertiesAsync(refs, "IsHidden", hidden.ToString(), "human");
+                Assert.Single(commits);
+                Assert.Equal(revision + 1, sm.Current.Revision);
+                foreach (var r in refs) Assert.Equal(hidden.ToString(), await HiddenAsync(engine, r));
+                await engine.UndoAsync("human");
+                foreach (var r in refs) Assert.Equal((!hidden).ToString(), await HiddenAsync(engine, r));
+            }
+        }
+
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Batch_sets_a_property_on_many_objects_as_one_undo_step()

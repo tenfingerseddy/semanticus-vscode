@@ -53,6 +53,10 @@ namespace TabularEditor.TOMWrapper.Utils
             /// <summary>Each value a seal had to keep (what TE2 wrote outside its undo), as "Kind.Property". For tests and the cost report.</summary>
             public IReadOnlyList<string> Sealed { get { lock (_gate) return _sealed.ToList(); } }
             internal void AddSealed(string s) { lock (_gate) _sealed.Add(s); }
+            private int _captures;
+            /// <summary>How many whole-model reads <see cref="Capture"/> has taken on this model: the cost a bulk call must pay once, not once per item.</summary>
+            public int Captures => System.Threading.Volatile.Read(ref _captures);
+            internal void CountCapture() => System.Threading.Interlocked.Increment(ref _captures);
             internal void AddUnrestorable(string s) { lock (_gate) _unrestorable.Add(s); }
             internal void AddFailure(string s) { lock (_gate) _failures.Add(s); }
             public void Clear() { lock (_gate) { _unrestorable.Clear(); _failures.Clear(); _sealed.Clear(); } }
@@ -403,6 +407,7 @@ namespace TabularEditor.TOMWrapper.Utils
             var um = h.UndoManager;
             var stack = StackOf(um);
             if (stack == null || !um.Enabled || um.UndoInProgress) return null;
+            For(h).CountCapture();
             var b = new Bracket { Values = new(), Objects = new(), HeadStep = new Head(h), Parents = For(h).Detect ? new() : null };
             Walk(h, Root(h), new HashSet<object>(ReferenceEqualityComparer.Instance), (o, shape, key) =>
             {
@@ -472,6 +477,16 @@ namespace TabularEditor.TOMWrapper.Utils
             um.Add(new Tail(h, changes, annotations));
         }
 
+        /// <summary>Close a bracket without reading the model again: its HEAD step is taken off and nothing is kept. Only for a
+        /// bracket nested inside another one that is sealed later, which then keeps everything the work did (a bulk call's items
+        /// inside the call's own commit). A bracket that must take its work back is sealed instead.</summary>
+        public static void Release(TabularModelHandler h, Bracket b)
+        {
+            if (b == null) return;
+            var stack = StackOf(h.UndoManager);
+            if (stack != null) Remove(stack, b.HeadStep);
+        }
+
         private static void Remove(Stack<IUndoAction> stack, IUndoAction step)
         {
             var above = new List<IUndoAction>();
@@ -501,9 +516,18 @@ namespace TabularEditor.TOMWrapper.Utils
                 if (PropChangedIndex.GetValue(a) != null) continue;
                 if (PropChangedObject.GetValue(a) is not TabularObject w || PropChangedProp.GetValue(a) is not PropertyInfo p) continue;
                 set.Add((new MetadataKey(w), p.Name));
+                if (TomTwin(w, p.Name) is { } twin) set.Add(twin);
             }
             return set;
         }
+
+        /// <summary>The TOM value a wrapper property step writes when that value sits on another TOM object than the wrapper's own. A
+        /// culture's Content lives on its LinguisticMetadata (Culture.cs): read under that object's key, the text looked untracked, so
+        /// every synonym write kept a second full copy of the schema in its seal step. Matched here, TE2's step (packed, SchemaUndo)
+        /// puts the text back, and a write outside undo still shows as touched (its chain disagrees) and is kept.</summary>
+        private static (MetadataKey, string)? TomTwin(TabularObject w, string prop) =>
+            prop == nameof(Culture.Content) && w is Culture && !w.IsRemoved && (w.MetadataObject as TOM.Culture)?.LinguisticMetadata is { } lm
+                ? (new MetadataKey(lm), nameof(TOM.LinguisticMetadata.Content)) : null;
 
         // ---- values the batch's steps rewrite ------------------------------------------------------------------------------------
 
@@ -566,6 +590,7 @@ namespace TabularEditor.TOMWrapper.Utils
                         var k = (new MetadataKey(w), p.Name);
                         var newest = t.Chains.TryGetValue(k, out var c) ? c.LastNew : PropChangedNew?.GetValue(a);
                         t.Chains[k] = (PropChangedOld?.GetValue(a), newest);
+                        if (TomTwin(w, p.Name) is { } twin) t.Chains[twin] = t.Chains[k];
                         if (SiblingWriters.Contains(p.Name) && !w.IsRemoved) t.Sibling(ParentObject(w.MetadataObject), p.Name);
                     }
                     else if (n == "UndoCalculationItemsOrderAction" && ItemsOrderGroup?.GetValue(a) is CalculationGroupTable g)

@@ -142,7 +142,7 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
   const failed = err || (d && d.status !== 'ok');
 
   return (
-    <div data-explain-panel className="fixed inset-y-0 right-0 flex flex-col" style={{
+    <div data-explain-panel data-testid="explain-panel" className="fixed inset-y-0 right-0 flex flex-col" style={{
       width: 400, zIndex: 70, background: 'var(--sem-surface)', borderLeft: '1px solid var(--sem-border)',
       boxShadow: '-18px 0 44px -24px rgba(0,0,0,.7)',
     }}>

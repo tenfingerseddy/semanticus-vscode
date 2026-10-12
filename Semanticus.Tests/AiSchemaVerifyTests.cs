@@ -1604,8 +1604,8 @@ namespace Semanticus.Tests
 
             Assert.True(relay.Refused > 0, "precondition: the service refused");
             Assert.DoesNotContain(plan.Items, i => i.Id == AiSchemaFamily.NotFinishedItemId);
-            Assert.DoesNotContain(plan.Items, i => (i.Why ?? Array.Empty<string>()).Any(w => w.Contains("looked at", StringComparison.Ordinal)));
-            Assert.Equal("Jev is not available right now. The Plan is in rule order.", plan.OrderedBy);
+            Assert.DoesNotContain(plan.Items, i => (i.Why ?? Array.Empty<string>()).Any(w => w.Contains("Jev looked at", StringComparison.Ordinal)));
+            Assert.Equal("Jev could not be reached this time, so the tasks are in the order Semanticus found them.", plan.OrderedBy);
             var everything = string.Join(" | ", plan.Items.SelectMany(i => i.Why ?? Array.Empty<string>()).Append(plan.OrderedBy));
             foreach (var old in new[] { "sign-in", "tries", "try again", "401", "advice service" })
                 Assert.DoesNotContain(old, everything, StringComparison.OrdinalIgnoreCase);

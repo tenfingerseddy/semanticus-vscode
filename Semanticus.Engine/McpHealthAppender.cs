@@ -50,20 +50,42 @@ namespace Semanticus.Engine
         /// boundary; order-agnostic — it tolerates both a thrown exception and an IsError result from next).</summary>
         public static McpRequestHandler<CallToolRequestParams, CallToolResult> Wrap(
             IEngine engine, McpRequestHandler<CallToolRequestParams, CallToolResult> next)
-            => (request, ct) => InvokeAsync(engine, () => next(request, ct), request?.Params?.Name);
+            => (request, ct) => InvokeAsync(engine, () => next(request, ct), request?.Params?.Name, request?.Params?.Arguments,
+                request?.Server?.ClientInfo?.Name, request?.Server?.ClientInfo?.Version);
 
         /// <summary>The testable core: mint the call id, run the tool under it, then drain-and-append this
         /// call's health block (success or failure — failure carries it on the exception's Data).</summary>
         internal static ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next)
             => InvokeAsync(engine, next, null);
 
-        internal static async ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next, string toolName)
+        /// <summary>The object a call is about, for the Studio's automatic note: an object ref in the arguments (objRef, ref, objectRef) or a table name.
+        /// Null when the call names none or names it in a form the Studio cannot select.</summary>
+        internal static string FocusOf(IEnumerable<KeyValuePair<string, JsonElement>> arguments)
+        {
+            if (arguments == null) return null;
+            string table = null;
+            foreach (var kv in arguments)
+            {
+                if (kv.Value.ValueKind != JsonValueKind.String) continue;
+                var text = kv.Value.GetString()?.Trim();
+                if (string.IsNullOrEmpty(text)) continue;
+                if ((kv.Key == "objRef" || kv.Key == "ref" || kv.Key == "objectRef") && text.IndexOf(':') >= 1) return text;
+                if (kv.Key == "table") table = text;
+            }
+            return table == null ? null : "table:" + table;
+        }
+
+        internal static async ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next, string toolName, IEnumerable<KeyValuePair<string, JsonElement>> arguments = null,
+            string client = null, string clientVersion = null)
         {
             var callId = Guid.NewGuid().ToString("N");
             CallToolResult result;
             using (HealthCorrelation.Begin(callId))
             using (TaskCause(engine, ChangeJournal.InProcessReader))
             {
+                // The Studio's "next prompt" signal (contract section 4): this tool call began. First thing, so a show inside the call
+                // arrives after it. Never fails the call; the owner path publishes in this process, the attached path tells the owner.
+                try { await engine.NoteAgentCallAsync(toolName ?? "", FocusOf(arguments), client, clientVersion).ConfigureAwait(false); } catch { /* a ride-along */ }
                 try { result = await next().ConfigureAwait(false); }
                 catch (Exception ex)
                 {

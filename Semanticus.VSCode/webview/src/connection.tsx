@@ -53,6 +53,8 @@ export interface SessionInfo {
   hasUnsavedChanges?: boolean;
   /** The person's own unsaved work: hasUnsavedChanges without the marker that records Jev's permission. The warnings read this one. Absent from an older engine. */
   hasUnsavedEdits?: boolean;
+  keepsUnsavedWork?: boolean;
+  fileRecovery?: import('./file-recovery').FileRecovery;
   diskDiverged?: boolean;
   tables?: number;
   measures?: number;
@@ -129,7 +131,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         rpc<ModelConnectionContext>('connectionContext').catch(() => null),
       ]);
       setConn(c);
-      setSession(s);
+      if (s) setSession(s);
       setContext(x);
     } catch { /* leave prior state; the connect UI stays available */ }
     finally { setContextResolved(true); }

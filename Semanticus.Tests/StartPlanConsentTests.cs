@@ -161,6 +161,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_grant_needs_the_models_own_permission_first_and_a_pro_session_and_the_digest_the_person_saw()
         {
@@ -469,6 +470,7 @@ namespace Semanticus.Tests
 
         // ---- F-177 replay: another model at the same path is asked again --------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Another_model_at_the_same_path_is_asked_again()
         {
@@ -533,7 +535,7 @@ namespace Semanticus.Tests
             using (var r = await Rig.StartAsync())
             {
                 var seen = r.Digest;
-                var person = new HumanGovernanceRpcTarget(r.Engine);
+                var person = new EngineRpcTarget(r.Engine);
 
                 await Assert.ThrowsAsync<InvalidOperationException>(() => person.approveStartPlan("a-digest-nobody-saw"));
                 await Assert.ThrowsAsync<InvalidOperationException>(() => person.approveStartPlan(null));
@@ -552,7 +554,7 @@ namespace Semanticus.Tests
         {
             using (var r = await Rig.StartAsync())
             {
-                var person = new HumanGovernanceRpcTarget(r.Engine);
+                var person = new EngineRpcTarget(r.Engine);
                 await person.approveStartPlan(r.Digest);
                 var approved = r.Host.Current().Approval.Digest;
                 Assert.Null(StartPlanConsent.WhyNoApproval(r.Host.Current(), r.Digest, approved));
@@ -601,10 +603,10 @@ namespace Semanticus.Tests
             Assert.Null(doc.Approval);
         }
 
-        // ---- no MCP twin ---------------------------------------------------------------------------------------
+        // ---- the MCP twin (Kane, 10 Oct 2026: the person's word in chat is enough) -----------------------------------------
 
         [Fact]
-        public void The_MCP_tool_list_has_no_approve_for_a_start_plan()
+        public void The_MCP_tool_list_has_approve_start_plan_and_the_pipe_target_carries_it_too()
         {
             var tools = typeof(McpTools).Assembly.GetTypes()
                 .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance))
@@ -612,67 +614,9 @@ namespace Semanticus.Tests
                 .Where(a => a != null)
                 .Select(a => (string)a.GetType().GetProperty("Name").GetValue(a))
                 .ToList();
-            Assert.NotEmpty(tools);
-            Assert.DoesNotContain(tools, name => name.IndexOf("approve", StringComparison.OrdinalIgnoreCase) >= 0
-                && (name.IndexOf("start", StringComparison.OrdinalIgnoreCase) >= 0 || name.IndexOf("plan", StringComparison.OrdinalIgnoreCase) >= 0 && name.IndexOf("action", StringComparison.OrdinalIgnoreCase) < 0));
-            Assert.DoesNotContain(tools, name => name.Equals("approve_start_plan", StringComparison.OrdinalIgnoreCase));
-        }
-
-        [Fact]
-        public void The_approval_is_on_the_person_only_target_and_on_no_agent_target()
-        {
-            Assert.NotNull(typeof(HumanGovernanceRpcTarget).GetMethod("approveStartPlan"));
-            Assert.Null(typeof(EngineRpcTarget).GetMethod("approveStartPlan"));
-            Assert.Null(typeof(EngineRpcTarget).GetMethod("ApproveStartPlanAsync"));
-            Assert.Null(typeof(McpTools).GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-                .FirstOrDefault(m => m.Name.IndexOf("ApproveStartPlan", StringComparison.OrdinalIgnoreCase) >= 0));
-        }
-
-        [Fact]
-        public void No_door_an_assistant_can_reach_calls_the_approval_in_its_source()
-        {
-            var engineDir = Path.Combine(DecisionRegistryTests.RepoRoot(), "Semanticus.Engine");
-            var reach = Directory.EnumerateFiles(engineDir, "*.cs", SearchOption.AllDirectories)
-                .Where(f => Path.GetFileName(f).StartsWith("McpTools", StringComparison.Ordinal)
-                            || Path.GetFileName(f).StartsWith("EngineRpcTarget", StringComparison.Ordinal)
-                            || Path.GetFileName(f).StartsWith("McpHost", StringComparison.Ordinal)
-                            || Path.GetFileName(f).StartsWith("McpDoor", StringComparison.Ordinal)
-                            || Path.GetFileName(f).StartsWith("RpcServer", StringComparison.Ordinal))
-                .ToList();
-            Assert.NotEmpty(reach);
-            foreach (var file in reach)
-            {
-                // Code only: a comment may NAME the approval to say it is not here (McpTools.StartPlan.cs does), and that is no door to it.
-                var text = string.Join("\n", File.ReadAllLines(file).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-                Assert.DoesNotContain("ApproveStartPlan", text, StringComparison.OrdinalIgnoreCase);
-                Assert.DoesNotContain("approve_start_plan", text, StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
-        [Fact]
-        public async Task An_agent_connection_cannot_see_the_approval_over_the_wire()
-        {
-            const string challenge = "start-plan-consent-challenge-0123456789abcdef";
-            var pipeName = TestPipe.Mint("semanticus-spc-");
-            var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, Semanticus.Engine.Entitlement.LicenseEntitlement.DevPro());
-            using var server = new RpcServer(sessions, engine, pipeName, challenge);
-            using var stop = new CancellationTokenSource();
-            var serving = server.RunAsync(stop.Token);
-            RpcClient agent = null;
-            try
-            {
-                agent = await RpcClient.ConnectAsync(pipeName, "agent");
-                var ex = await Assert.ThrowsAnyAsync<Exception>(() => agent.InvokeAsync<StartPlanView>("approveStartPlan", "any-digest"));
-                Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
-            }
-            finally
-            {
-                agent?.Dispose();
-                stop.Cancel();
-                try { await serving; } catch (OperationCanceledException) { }
-                sessions.Dispose();
-            }
+            Assert.Contains(tools, name => name.Equals("approve_start_plan", StringComparison.OrdinalIgnoreCase));
+            Assert.NotNull(typeof(EngineRpcTarget).GetMethod("approveStartPlan"));
+            Assert.Null(typeof(HumanGovernanceRpcTarget).GetMethod("approveStartPlan"));
         }
 
         // ---- the record is kept beside the model's own permission, outside the model ----------------------------

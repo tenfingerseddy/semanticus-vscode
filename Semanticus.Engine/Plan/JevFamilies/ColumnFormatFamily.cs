@@ -310,13 +310,13 @@ namespace Semanticus.Engine
                     refused.Add(new ModelPlanChangeRefusal
                     {
                         Target = ask.Ref,
-                        Reason = ask.ColumnName + " reads as money, but this model has no money format yet, so no "
+                        Reason = ask.ColumnName + " looks like money, but this model has no money format yet, so no "
                                + "currency was picked for it. Choose one by hand.",
                     });
                     return;
                 }
                 format = ask.MoneyFormat;
-                reason = ask.ColumnName + " reads as an amount of money, and " + format + " is the money format this model already uses.";
+                reason = ask.ColumnName + " looks like an amount of money, and " + format + " is the money format this model already uses.";
                 check = format + " is already used " + JevFamily.Count(ask.MoneyFormatUses, "time", "times") + " in this model.";
             }
             else
@@ -368,11 +368,11 @@ namespace Semanticus.Engine
         {
             switch (family)
             {
-                case "percent": return ask.ColumnName + " reads as a share or a rate, so it shows out of 100.";
+                case "percent": return ask.ColumnName + " looks like a share or a rate, so it shows out of 100.";
                 case "whole_number": return ask.ColumnName + " counts whole things, so it shows no decimal places.";
                 case "decimal": return ask.ColumnName + " is a measured amount that can have a fraction, so it shows two decimal places.";
                 case "date_or_time": return ask.ColumnName + " holds dates, so it shows as a date.";
-                default: return ask.ColumnName + " reads as a number of this kind, so it uses the matching format.";
+                default: return ask.ColumnName + " looks like a number of this kind, so it uses the matching format.";
             }
         }
 

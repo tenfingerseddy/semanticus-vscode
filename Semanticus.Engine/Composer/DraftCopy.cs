@@ -124,7 +124,7 @@ namespace Semanticus.Engine.Composer
         public static string HeldRefusal(string hold) =>
             "This one waits for the person because it "
             + (hold == DraftHolds.RowSecurity ? "sets who can see which data" : "publishes after the change")
-            + ". Ask them to press Approve and run in Semanticus.";
+            + ". When they say yes, call approve_draft.";
 
         /// <summary>Approve and run pressed on a held draft before every part passed: any part for the assistant went on
         /// its queue and nothing is approved yet, so the person reads the words before approving them.</summary>

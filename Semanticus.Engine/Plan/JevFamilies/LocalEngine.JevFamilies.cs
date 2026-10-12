@@ -1369,7 +1369,7 @@ namespace Semanticus.Engine
                 else if (stale && !string.Equals(line.Status, "rejected", StringComparison.OrdinalIgnoreCase))
                 {
                     ToSuggestion(line, Semanticus.Engine.Decisions.JevFormatSuggestion.StaleNote);
-                    line.Reason = line.Rationale = "Jev's earlier reading is out of date, because the model changed after Jev worked it out.";
+                    line.Reason = line.Rationale = "Jev's earlier answer is out of date, because the model changed after Jev chose it.";
                     changed = true;
                 }
                 else if (Semanticus.Engine.Decisions.JevFormatSuggestion.IsSuggestion(line.CheckText)) continue;   // already only a suggestion

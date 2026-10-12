@@ -135,6 +135,7 @@ namespace Semanticus.Tests
 
         // ---- 1: a real Analysis Services model opened while Power BI Desktop runs ------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
@@ -159,6 +160,7 @@ namespace Semanticus.Tests
             Assert.False(asked);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
@@ -257,6 +259,7 @@ namespace Semanticus.Tests
             Assert.True(f.Sessions.Current.LiveOrigin.LocalDesktop);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
@@ -280,6 +283,7 @@ namespace Semanticus.Tests
             Assert.False(asked);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]

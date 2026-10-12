@@ -168,51 +168,5 @@ namespace Semanticus.Tests
             Assert.Single(SecondOpinions(rig));
             Assert.Contains("read the change off the rows", a.Note ?? "");
         }
-
-        /// <summary>Both doors, an answered question whose gap the reading covers: the same statement, note, reading and rows.
-        /// And the offered reading of a stopped question, taken through each door: the same run, with no Jev call.
-        /// Void by a later ruling (join part 2, 30 Sep): it scripts a SURE change (0.98) and expects the engine to clear it, and
-        /// round 6's ruling (the coordinator's ruling 1 for round 5, JevQueryCheck.Sure) is that a gap Jev names at 0.7 or more is
-        /// never cleared. The same two-door facts, with a weaker gap, are Verify5_both_doors_..._with_a_weaker_gap (passing).</summary>
-        [Fact(Skip = "Void by the round-6 ruling: a gap Jev is sure of (0.7 or more, JevQueryCheck.Sure) is never cleared, and this test scripts change at 0.98 and expects it cleared. Restated with a weaker gap as Verify5_both_doors_give_the_same_cleared_answer_and_the_same_offered_run_with_a_weaker_gap, which passes.")]
-        public async Task Verify4_both_doors_give_the_same_cleared_answer_and_the_same_offered_run()
-        {
-            (string, double)? Script(DecisionRequest r, DecisionQuestion q) =>
-                q.Name == JevQueryReader.CheckGapQ ? ("change", 0.98) : V2Split(q, 1, "Date[Year]") ?? V3(r, q, splits: "1");
-            using var rig = await BuildAsync(script: Script);
-            string Shape(DataAnswer a) => JsonSerializer.Serialize(new
-            {
-                a.Outcome, a.Statement, a.Reading, a.Note, a.Dax, a.RowCount, a.ReadBy, Unsure = a.Unsure ?? Array.Empty<string>(),
-                Others = (a.Others ?? Array.Empty<DataOther>()).Select(o => new { o.Line, o.Reading, o.Instead, o.Anyway, o.Parts }).ToArray(), a.Parts,
-            });
-            var studio = new EngineRpcTarget(rig.Engine);
-            var held = await McpTools.AskData(rig.Engine, question: "net sales trend by year");
-            if (held.ApprovalId != null) Semanticus.Engine.ApprovalLedger.Approve(held.ApprovalId, "human");
-            var viaStudio = await studio.askData(new DataAsk { Question = "net sales trend by year" });
-            var viaAgent = await McpTools.AskData(rig.Engine, question: "net sales trend by year");
-            Assert.True(Answered(viaStudio), V4Seen(viaStudio, rig));
-            Assert.Contains("read the change off the rows", viaStudio.Note ?? "");
-            Assert.StartsWith("This shows Net Sales for each Year", viaStudio.Statement);
-            Assert.Equal(Shape(viaStudio), Shape(viaAgent));
-
-            // A stopped reading, offered as it is; taking the offer through either door runs the same parts, with no Jev call.
-            using var stop = await BuildAsync(script: Gate("change", 0.98, parts: VerifySure));
-            var stopped = await stop.Engine.AskDataAsync(new DataAsk { Question = "how did net sales change in 2025" });
-            Assert.Equal(DataAnswer.NeedsYou, stopped.Outcome);
-            var offer = Assert.Single(stopped.Others, o => o.Anyway);
-            var calls = stop.Jev.All.Count;
-            var agentHeld = await McpTools.AskData(stop.Engine, measures: offer.Parts.Measures, filters: JsonDocument.Parse(JsonSerializer.Serialize(
-                offer.Parts.Filters.Select(f => new { column = f.Column, op = f.Op, values = f.Values }))).RootElement);
-            if (agentHeld.ApprovalId != null) Semanticus.Engine.ApprovalLedger.Approve(agentHeld.ApprovalId, "human");
-            var anywayStudio = await new EngineRpcTarget(stop.Engine).askData(offer.Parts);
-            var anywayAgent = await McpTools.AskData(stop.Engine, measures: offer.Parts.Measures, filters: JsonDocument.Parse(JsonSerializer.Serialize(
-                offer.Parts.Filters.Select(f => new { column = f.Column, op = f.Op, values = f.Values }))).RootElement);
-            Assert.True(Answered(anywayStudio), V4Seen(anywayStudio, stop));
-            Assert.Equal(DataAnswer.Answered, anywayAgent.Outcome);
-            Assert.Equal(anywayStudio.Statement, anywayAgent.Statement);
-            Assert.Equal(anywayStudio.Dax, anywayAgent.Dax);
-            Assert.Equal(stopped.Statement, anywayStudio.Statement);
-            Assert.Equal(calls, stop.Jev.All.Count);
-        }
     }
 }

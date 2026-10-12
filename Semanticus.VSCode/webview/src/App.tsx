@@ -1,12 +1,16 @@
 import { Component, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type ErrorInfo } from 'react';
 import { publishStageName } from './publishcopy';
-import { rpc, onDidChange, onPlanChange, onReconnect, onActivity, onNavigate, dispatchNavigate, type NavigateMessage, onTreeSelection, onOpenConnections, onWorkflowChange, onStudioZoom, onEngineState, onReconnectPending, postStudioZoom, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, runHostCommand, loadState, saveState, type ChangeNotification, revealInTree } from './bridge';
+import { StudioLayer } from './studio/layer';
+import { rpc, onDidChange, onAssistantCall, onPlanChange, onReconnect, onActivity, onNavigate, dispatchNavigate, type NavigateMessage, onTreeSelection, onOpenConnections, onWorkflowChange, onStudioZoom, onEngineState, onReconnectPending, postStudioZoom, signalReady, selectInProperties, focusSelectInProperties, focusModelTree, runHostCommand, loadState, saveState, type ChangeNotification, revealInTree } from './bridge';
 import { RevealBtn, rowKeyProps } from './objectactions';
 import { ShortcutsOverlay, tabForKey, isTypingTarget, hostCommandForKey } from './shortcuts';
+import { FirstRun } from './firstrun';
 import { ActivityProvider, LiveActivity, ClaudeRanBanner, useClaudeReflection, KIND_TAB, type ActivityEvent } from './activity';
+import { SaidLine, noteAssistantChange } from './studio/said-line';
 import { useFixState } from './hooks';
 import { useConnection, ConnectBar, type SessionInfo } from './connection';
 import { ContextBar, compareSeedFromSession, QueryStalenessChip } from './contextbar';
+import { FileRecoveryOffer } from './file-recovery';
 import { ConnectionsHub, openConnectionsOnCreate, openConnectionsOnView, type HubView } from './connectionshub';
 import type { ModelRef } from './compare';
 import { VpaqComponentBars, VPAQ_COMPONENT_COLORS, VPAQ_UNATTRIBUTED_COLOR, Sparkline, type VpaqColumn, type VpaqTable, type VpaqBarItem } from './echart';
@@ -41,7 +45,7 @@ import { busyAffordance } from './tabbusy.mjs';
 import { AiInstructionsPage, type InstructionsTab } from './instructions';
 import { PermissionsView, permissionPresetDescription, publishPermissionDescription, type AgentPolicy } from './permissions';
 import { CustomRulesPanel } from './rulesauthor';
-import { GiveOrOnPlan, GiveToAssistant, clampWords, findingBuilder, storageTask, type PlanTaskRequest } from './sendtask';
+import { GiveOrOnPlan, GiveToAssistant, clampWords, findingBuilder, notOnPlan, storageTask, usePlanRowsSeen, type PlanTaskRequest } from './sendtask';
 import { PlanView } from './plan';
 import { keepPlanThroughOutage, useAnyWordsDraft } from './startplan-drafts';
 import { modelKeyOfSession, setDraftModel } from './drafts';
@@ -52,8 +56,9 @@ import { draftRowId } from './composer-model';
 import { ProDecisionsHost } from './decisions-settings';
 import { findBoxFor, namesOfTarget } from './search-names';
 import { band } from './readinessband.mjs';
+import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { RagBars } from './ragbars';
-import { AREA_ALIASES, DESTINATION_OF_TOOL, SQL_DRAFT_TARGET, areaHomeTool, landingOf, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
+import { AREA_ALIASES, DESTINATION_OF_TOOL, PLAN_START_TARGET, SQL_DRAFT_TARGET, areaHomeTool, landingOf, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
 
 // M Code is the heaviest tab (the @microsoft/powerquery-* parser/formatter/language-services + the 866-symbol
 // M standard-library dataset — ~1.7 MB). Lazy-load it so that whole cluster lands in its own chunk and only
@@ -373,6 +378,7 @@ export function App() {
     // Open Ask your data from the Plan's field carries the typed words (askbox.tsx ASK_WORDS_TARGET).
     if (tool === 'askdata' && target?.startsWith('words:')) return { kind: 'askWords', value: target.slice('words:'.length) };
     if (tool === 'spec' && target === SQL_DRAFT_TARGET) return { kind: 'specStart', value: 'sql' };
+    if (tool === 'plan' && target === PLAN_START_TARGET) return { kind: 'planStart', value: 'start' };
     return undefined;
   };
   const goTab = (raw: string, approvalId?: string, target?: string, sessionId?: string, explicitSeed?: Seed) => {
@@ -383,8 +389,8 @@ export function App() {
     const land = landingOf(raw);
     if (!land) { console.warn(`[Studio] ignoring navigation to unknown tab id '${raw}' (host/webview version skew?)`); return; }
     const t = land.tool;
-    if (land.view === 'history') setPlanHistory({ nonce: ++navNonce.current });
-    else if (t === 'plan') setPlanHistory(null);
+    if (land.view === 'history') setPlanHistory({ nonce: ++navNonce.current, entry: target?.startsWith('entry:') ? target.slice(6) : undefined });
+    else if (t === 'plan') { setPlanHistory(null); if (target === 'work') setPlanHome(++navNonce.current); }
     setUnseen((s) => { if (!s.has(t)) return s; const n = new Set(s); n.delete(t); return n; });
     const object = refToObject(target);
     const seed = explicitSeed ?? seedForTarget(t, target, object, approvalId);
@@ -456,7 +462,7 @@ export function App() {
   const [planTrack, setPlanTrack] = useState<{ doer: PlanDoer; nonce: number } | null>(null);
   // A route to the old Edit History id (a saved link, the object line's History, Ctrl+Alt+H, an older engine's jump)
   // opens the Plan on its History view. Page state, bumped by its nonce like the track above.
-  const [planHistory, setPlanHistory] = useState<{ nonce: number } | null>(null);
+  const [planHistory, setPlanHistory] = useState<{ nonce: number; entry?: string } | null>(null);
   // Bumped by the Plan area button (and More > Plan, and Ctrl+Shift+1): the Plan goes to its Work view.
   const [planHome, setPlanHome] = useState(0);
   // Ctrl J (lane U5; composer contract 10.2): the ask box under the header on any page. A task typed there drafts, and
@@ -534,6 +540,7 @@ export function App() {
   // Native selection is context only. It may update the Plan's route object, but never a DAX, Search or Tests seed.
   // Session identity makes a queued event from model A harmless after model B has opened, even when names match.
   useEffect(() => onTreeSelection((selection) => {
+    if (selection.by === 'assistant') return;
     const sid = sessionRef.current?.sessionId;
     if (sid && selection.sessionId && selection.sessionId !== sid) return;
     const object = refToObject(selection.ref);
@@ -630,6 +637,7 @@ export function App() {
     const off = onDidChange((n: ChangeNotification) => {
       if (sessionRef.current?.sessionId && n.sessionId !== sessionRef.current.sessionId) return;
       setModelChangeNonce((value) => value + 1);
+      noteAssistantChange(n);
       // There is no page-held list of edits any more. It fed Edit History, that tab's count and the Overview's
       // Changes tile, and all three retired in slice 11 (lanes R1, R2). History is the engine's ledger, read by the
       // Plan's History view (getPlanHistory), which survives a reload the way a list in this page never did.
@@ -644,7 +652,9 @@ export function App() {
       if (connected) void refreshSession();
     });
     const offReconnectPending = onReconnectPending(setReconnectName);
-    return () => { off(); offReconnect(); offEngine(); offReconnectPending(); window.clearTimeout(rescanTimer.current); };
+    // The assistant's own AI readiness scan (show-checks, 12 Oct): scan again at once, so the page it opened on shows the result and not an older card.
+    const offAssistantScan = onAssistantCall((call) => { if (SCAN_PAGE_OF_TOOL[call.tool] === 'readiness') void scan(); });
+    return () => { off(); offReconnect(); offEngine(); offReconnectPending(); offAssistantScan(); window.clearTimeout(rescanTimer.current); };
   }, []);
 
   async function applySafeFixes() {
@@ -707,6 +717,8 @@ export function App() {
   const askWordsTarget = tab === 'askdata' && seed?.kind === 'askWords' ? { words: String(seed.value), nonce: route.nonce } : null;
   // The new model wizard's SQL step (route.ts SQL_DRAFT_TARGET), as the route's nonce so each ask opens it once.
   const draftStartSql = tab === 'spec' && seed?.kind === 'specStart' ? route.nonce : 0;
+  // The Plan's start view, asked for by the Studio's plan/start place (route.ts PLAN_START_TARGET), also once.
+  const showPlanStart = tab === 'plan' && seed?.kind === 'planStart' ? route.nonce : 0;
   // What the Plan's "Showing <object>" line shows: an explicit route object wins, and with none the model tree's
   // current selection stands in, as it did on the Overview. So a table picked in the tree while another page is
   // open is still the Plan's object when the area button is pressed (coordinator, slice 11). Clear filter clears both.
@@ -728,6 +740,8 @@ export function App() {
   };
 
   return (
+    <>
+    <FirstRun />
     <DaxModelProvider key={session?.sessionId ?? 'no-model'}>
     {/* Lineage's report-analysis holder stays mounted while the conditional tab body below changes. The surrounding
         session key still drops model-scoped state atomically when a different model opens. */}
@@ -788,12 +802,13 @@ export function App() {
           focus={tab === 'optimize' ? 'changes' : tab === 'spec' ? 'draft' : undefined}
           focusNonce={route.nonce + planSeed}
           draftStartSql={draftStartSql} onDraftStartTaken={() => consumeRouteSeed(draftStartSql)}
+          showStart={showPlanStart} onShowStartTaken={() => consumeRouteSeed(showPlanStart)}
           track={planTrack?.doer ?? null} trackNonce={planTrack?.nonce}
           openRow={planOpen?.id ?? null} openRowNonce={planOpen?.nonce} onRunUpdate={foldRun}
           focusObject={planObject && planObject.kind !== 'model'
             ? { ref: objectToRef(planObject), label: objectLabel(planObject) ?? objectToRef(planObject) } : null}
           onClearObject={() => selectOnPlan(undefined)}
-          historyNonce={planHistory?.nonce} homeNonce={planHome || undefined} fieldTakenNonce={askTaken || undefined}
+          historyEntry={planHistory?.entry} historyNonce={planHistory?.nonce} homeNonce={planHome || undefined} fieldTakenNonce={askTaken || undefined}
           onGoObject={(tool, target, addTables) => goTab(tool, undefined, target, undefined,
             addTables?.length ? { kind: 'addTables', value: addTables } : undefined)}
           onGo={(tool, target) => {
@@ -879,6 +894,7 @@ export function App() {
     </ActivityProvider>
     </LineageTabStateProvider>
     </DaxModelProvider>
+    </>
   );
 }
 
@@ -1130,7 +1146,7 @@ function useAssistantPlanCount(sessionId: string | undefined, revision: number |
 function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingApprovalCount, firstPendingApprovalId,
   onConnections, activeRun, liveRunCount, onWorkflowRuns, onPublish, agentPolicy, assistantCount = null,
   onAssistantCount, askBar, children }: {
-  route: Route; onTab: (t: string, approvalId?: string, target?: string) => void; onGroup: (gid: string) => void;
+  route: Route; onTab: (t: string, approvalId?: string, target?: string, sessionId?: string) => void; onGroup: (gid: string) => void;
   onDone: () => void; onShortcuts: () => void; unseen: Set<string>; pendingApprovalCount: number;
   firstPendingApprovalId?: string; onConnections: (section?: HubView) => void;
   activeRun: WorkflowRunView | null; liveRunCount: number; onWorkflowRuns: () => void; onPublish: () => void;
@@ -1141,7 +1157,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   const tab = route.tool;
   const activeGroup = route.destination === 'utility' ? null : route.destination;
   const group = activeGroup ? TAB_GROUPS.find((item) => item.id === activeGroup) : undefined;
-  const { session: shellSession, context, contextResolved } = useConnection();
+  const { session: shellSession, context, contextResolved, refresh } = useConnection();
   // Set by the Published page's own comparison against the destination. Null until something has actually tried.
   const unreachable = usePublishReach(shellSession?.sessionId, context?.publishing?.connectionId);
   // The tools this plan does not reach. The row keeps every one of them in its place and marks it; the
@@ -1162,7 +1178,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
   const publishTarget = publishing?.available ? (publishing.modelName || publishing.database || 'linked model') : null;
   const publishStageLabel = publishing?.effectiveLabel || publishing?.label;
   const publishStage = publishStageLabel ? publishStageName(publishStageLabel)
-    : (publishing?.unlabelled ? 'production' : 'destination needed');
+    : (publishing?.unlabelled ? 'development' : 'destination needed');
   const permissionLine = agentPolicy ? publishPermissionDescription(agentPolicy, publishing?.effectiveLabel || publishing?.label, !!publishTarget)
     : agentPolicy === null ? 'assistant permissions unavailable' : 'checking your assistant permissions';
   const publishLine = publishTarget ? `to ${publishTarget} · ${publishStage}` : 'no publish target · choose before publishing';
@@ -1270,6 +1286,9 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
         </div>}
       </div>
     </header>
+    <StudioLayer />
+    {shellSession?.fileRecovery && shellSession.sessionId && <FileRecoveryOffer key={shellSession.sessionId} copy={shellSession.fileRecovery} sessionId={shellSession.sessionId}
+      onResolved={refresh} />}
     {/* Row two, the same 40px on every page: the area name, then either the area's segment strip or the name of the
         page you are on, then the page notes behind ⓘ. This replaces the old breadcrumb row AND the always-open page
         guide, which together cost 93px above every tool.
@@ -1287,6 +1306,7 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
     {/* pb-4: the scroll region ends exactly where the context bar starts, so without it the last control on a page sits
         flush against the bar at the end of the scroll. One rule here rather than per-page padding. */}
     {askBar}
+    <SaidLine onHistory={(entry, sessionId) => onTab('history', undefined, entry ? `entry:${entry}` : undefined, sessionId)} />
     <main className="flex-1 overflow-auto min-h-0 pb-4">
       {/* M23, kept and strengthened: the segment strip used to sticky-pin to the top of this scroll region. It now
           sits in the chrome above it, so it cannot scroll away at all, on any page, at any scroll position. */}
@@ -1473,7 +1493,9 @@ function restTask(list: Finding[]): PlanTaskRequest {
 }
 
 function Hero({ card, trend, busy, onSafe }: { card: Scorecard; trend: number[]; busy: boolean; onSafe: () => void }) {
-  const rest = restOfFindings(card);
+  usePlanRowsSeen();
+  // Only what no plan row carries yet: readiness findings join the Plan by themselves (Kane, 11 Oct).
+  const rest = notOnPlan(restOfFindings(card));
   // The grade is a big letter (--sem-text-grade) and the score a number beside it, both in the band colour (Kane, 8 Oct):
   // one band function, readinessband.mjs, so the letter and every bar below it cannot disagree. The colour is never
   // alone, the number is always shown. The coverage figures are one line of text, not a row of pills.

@@ -6,8 +6,8 @@
 // link back is the draft) goes with its draft, never on its own: removing one part alone would leave the draft pointing
 // at a request that no longer exists.
 //
-// PERSON-ONLY, like adding a task (contract 12): an assistant must not be able to take the person's work off the Plan.
-// The two calls live on HumanGovernanceRpcTarget and on no MCP tool.
+// ON BOTH DOORS (Kane, 10 Oct 2026: the person's word in chat is enough): removePlanRow and restorePlanRow on EngineRpcTarget,
+// remove_plan_row and restore_plan_row on the MCP door, each through the gate.
 //
 // UNDO. Removing writes the Plan's own file, not the model, so it is not a step on the model's undo timeline. The row is
 // kept in this engine's memory instead, and restorePlanRow puts it back where it stood. The toast that offers Undo lives
@@ -72,7 +72,7 @@ namespace Semanticus.Engine
         {
             var key = id?.Trim();
             if (string.IsNullOrEmpty(key))
-                throw new ArgumentException("Name the row to remove. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task to remove. Call get_model_plan for the ids.", nameof(id));
             return DraftRows.IsDraftRow(key) ? await RemoveDraftRowAsync(key).ConfigureAwait(false)
                                              : await RemoveTaskRowAsync(key).ConfigureAwait(false);
         }
@@ -87,9 +87,9 @@ namespace Semanticus.Engine
                 if (task == null)
                     throw new ArgumentException(PlanTasks.IsTaskId(id)
                         ? "No task on the plan has that id. It may have been removed already."
-                        : "Only a task or a draft can be removed. A row Semanticus found comes back while the model still has the gap; set it aside instead.", nameof(id));
+                        : "Only a task or a draft can be removed. A task Semanticus found comes back while the problem is still in the model. Set it aside instead.", nameof(id));
                 if (task.OriginLink?.Kind == PlanOriginKinds.Draft)
-                    throw new InvalidOperationException("This is a part of a draft. Remove the draft's row, and its parts go with it.");
+                    throw new InvalidOperationException("This is a part of a draft. Remove the draft itself, and its parts go with it.");
 
                 RemovedPlanRow kept = null;
                 WritePlanTasks(bound, state =>
@@ -110,7 +110,7 @@ namespace Semanticus.Engine
                 return new PlanRemoveResult
                 {
                     ItemId = kept.Task.Id, Title = kept.Task.Words, Kind = "task", ToldAssistant = told, Plan = plan,
-                    Sentence = "Removed from the Plan." + (told ? " Your assistant was working on it; it reads that it was removed on its next call." : ""),
+                    Sentence = "Removed from the Plan." + (told ? " Your assistant was working on it. It will see that it was removed the next time it acts." : ""),
                 };
             }
             finally { _queueGate.Release(); }
@@ -175,10 +175,10 @@ namespace Semanticus.Engine
         {
             var key = id?.Trim();
             if (string.IsNullOrEmpty(key) || !_removedPlanRows.TryGetValue(key, out var kept))
-                throw new ArgumentException("There is nothing to put back for that row.", nameof(id));
+                throw new ArgumentException("There is nothing to put back for that task.", nameof(id));
             var bound = BindPlanMemory();
             if (!ReferenceEquals(bound.Context, kept.Bound.Context))
-                throw new InvalidOperationException("That row belongs to a model that is not open now, so it cannot be put back here.");
+                throw new InvalidOperationException("That task belongs to a model that is not open now, so it cannot be put back here.");
 
             if (kept.Draft != null)
             {

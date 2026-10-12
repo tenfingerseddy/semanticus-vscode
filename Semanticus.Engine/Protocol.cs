@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using System;
+using System.Linq;
 
 namespace Semanticus.Engine
 {
@@ -88,8 +90,66 @@ namespace Semanticus.Engine
         public string After { get; set; }
     }
 
+    public sealed class ChangeWords
+    {
+        public string Verb { get; set; }
+        public string Noun { get; set; }
+        public int Count { get; set; }
+        public string[] Targets { get; set; }
+        public string Sentence
+        {
+            get
+            {
+                var names = (Targets ?? Array.Empty<string>()).Select(Name).ToArray();
+                var what = Count <= 3 && names.Length > 0 && Noun != "findings"
+                    ? names.Length <= 2 ? string.Join(" and ", names) : string.Join(", ", names.Take(names.Length - 1)) + " and " + names.Last()
+                    : $"{Count} {(Count == 1 ? Noun.TrimEnd('s') : Noun)}";
+                return $"Your assistant {Verb} {what}.";
+            }
+        }
+        internal static ChangeWords For(string verb, string noun, params string[] targets)
+        {
+            var distinct = targets.Where(t => !string.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal).ToArray();
+            return new ChangeWords { Verb = verb, Noun = noun, Targets = distinct, Count = distinct.Length };
+        }
+        private static string Name(string reference)
+        {
+            var colon = reference.IndexOf(':');
+            if (colon < 0) return reference;
+            var kind = reference.Substring(0, colon);
+            var rest = reference.Substring(colon + 1);
+            var slash = rest.IndexOf('/');
+            return slash >= 0 && new[] { "measure", "column", "calcColumn", "hierarchy", "level", "partition", "calcitem" }.Contains(kind)
+                ? rest.Substring(slash + 1) : rest;
+        }
+        internal static ChangeWords From(string label, IEnumerable<ChangeDelta> changes)
+        {
+            var deltas = changes.Where(d => d.Ref != null).ToArray();
+            if (deltas.Length == 0) return null;
+            if (label == "set AI instructions") return For("changed", "sets of AI instructions", "the AI instructions");
+            if (label == "create linguistic schema") return For("set up synonyms for", "models", "the model");
+            var refs = deltas.Select(d => d.Ref).Distinct().ToArray();
+            var props = deltas.SelectMany(d => d.Props ?? Array.Empty<string>()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            var kinds = deltas.Select(d => d.Kind).Distinct().ToArray();
+            var verb = kinds.Length == 1 && kinds[0] == "add" ? "added" : kinds.Length == 1 && kinds[0] == "remove" ? "removed" : "changed";
+            var types = refs.Select(r => r.Split(':')[0] == "calcColumn" ? "column" : r.Split(':')[0]).Distinct().ToArray();
+            var noun = types.Length == 1 && new[] { "measure", "column", "table", "relationship" }.Contains(types[0]) ? types[0] + "s"
+                : types.All(t => new[] { "measure", "column", "table", "hierarchy", "level" }.Contains(t)) ? "fields" : "model settings";
+            if (verb == "changed" && props.Length == 1)
+            {
+                if (props[0].Equals("Description", StringComparison.OrdinalIgnoreCase)) verb = "changed the description of";
+                if (props[0].Equals("FormatString", StringComparison.OrdinalIgnoreCase)) verb = "changed the format of";
+            }
+            refs = refs.Select(r => r.StartsWith("culture:") || r.StartsWith("model:Culture", StringComparison.OrdinalIgnoreCase)
+                ? props.Any(p => p.Equals("Content", StringComparison.OrdinalIgnoreCase)) ? "the Copilot settings" : "the model's language"
+                : r == "model:" ? props.Contains("Description") ? "the model's description" : "the model settings" : r).Distinct().ToArray();
+            return For(verb, noun, refs);
+        }
+    }
+
     public sealed class UndoState
     {
+        public bool HistoryRequired { get; set; }
         public bool CanUndo { get; set; }
         public bool CanRedo { get; set; }
         public bool AtCheckpoint { get; set; }
@@ -134,6 +194,7 @@ namespace Semanticus.Engine
         /// wrote it (contract 8.4). Null for an edit that served none of them.</summary>
         public ChangeCauseInfo Cause { get; set; }
         public ChangeDelta[] Deltas { get; set; }
+        public ChangeWords Words { get; set; }
         public UndoState Undo { get; set; }
         /// <summary>The health movement THIS commit caused (grade letter, net-new findings on touched objects,
         /// blast-radius count). Pro-only and threshold-suppressed: null on the free tier and below threshold —
@@ -633,6 +694,7 @@ namespace Semanticus.Engine
     {
         public long Revision { get; set; }
         public bool Changed { get; set; }
+        public ChangeWords Words { get; set; }
         public string Warning { get; set; }   // non-fatal advisory (e.g. corrupt existing data was preserved aside) — null on the clean path
     }
 
@@ -804,6 +866,10 @@ namespace Semanticus.Engine
     /// <summary>Result of make_model_ai_ready: deterministic fixes applied + the AI-content work queue (with grounding) for Claude.</summary>
     public sealed class ReadinessPlan
     {
+        [Newtonsoft.Json.JsonProperty(Order = -100, NullValueHandling = Newtonsoft.Json.NullValueHandling.Ignore)]
+        [System.Text.Json.Serialization.JsonPropertyOrder(-100)]
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public LeanResultSummary Summary { get; set; }
         public long Revision { get; set; }
         public string[] Applied { get; set; } = System.Array.Empty<string>();
         public Semanticus.Analysis.Scorecard Scorecard { get; set; }
@@ -951,6 +1017,9 @@ namespace Semanticus.Engine
         /// <summary>The person's own unsaved work: <see cref="HasUnsavedChanges"/> without the marker that records Jev's permission. The window
         /// warns about this one (the status line, the close question); a model whose only unsaved change is that marker has lost nothing of theirs.</summary>
         public bool HasUnsavedEdits { get; set; }
+        /// <summary>File edits have a recovery copy; live and never-saved edits stay in the owner after the editor closes.</summary>
+        public bool KeepsUnsavedWork { get; set; }
+        public FileRecoveryInfo FileRecovery { get; set; }
         public bool DiskDiverged { get; set; }
         public int Tables { get; set; }
         public int Measures { get; set; }
@@ -1434,5 +1503,108 @@ namespace Semanticus.Engine
         public string RuleId { get; set; }
         public string Tool { get; set; }        // the MCP tool the agent should call (e.g. set_description)
         public string Prompt { get; set; }      // the natural-language instruction (copy to Claude Code)
+    }
+
+    // ---- the Studio wire (1.4, Claude drives; contract sections 1, 4, 5 and 6) -----------------------------------------------
+
+    /// <summary>One thing the assistant said to the person while it works (show_in_studio), or a line of the Learn tour. Broadcast as
+    /// <c>studio/show</c>; kept in the session's note ring and read back by <c>getStudioNotes</c>.</summary>
+    public sealed class StudioNote
+    {
+        public string Id { get; set; }          // "sn-" + 12 hex from the engine; "tour-<chapter>-<n>" from the tour
+        public string Say { get; set; }         // the sentence for the person, 200 characters at most
+        public string How { get; set; }         // the place's "To do this yourself" sentence, filled from the place map
+        public string Place { get; set; }       // a place id from the place map
+        public string Focus { get; set; }       // an object ref, optional
+        public string Press { get; set; }       // a press id, optional
+        public string At { get; set; }          // ISO time (UTC) the engine took it
+        public string By { get; set; }          // "assistant" | "tour"
+        public string Call { get; set; }        // the agent call id, so notes group with the call's toasts; may be null
+        public string SessionId { get; set; }
+        public bool Auto { get; set; }          // the engine wrote it from the assistant's tool call (follow), not the assistant (show_in_studio)
+        public int? Count { get; set; }         // an automatic note: how many calls of its kind it covers so far; null for the first
+        public bool Update { get; set; }        // true on a re-send of a note the Studio already has: replace its words, queue nothing
+        public bool ProStep { get; set; }
+        public bool Upgrade { get; set; }      // a Free session can use the existing Pro link
+    }
+
+    /// <summary>A data answer the assistant asked for (ask_data), broadcast as <c>studio/answer</c> so the Ask page shows it as the current answer.</summary>
+    public sealed class StudioAnswer
+    {
+        public string Id { get; set; }          // "sa-" + 12 hex
+        public string SessionId { get; set; }
+        public string At { get; set; }
+        public string Question { get; set; }    // the words the assistant asked, when it asked in words
+        public Query.DataAnswer Answer { get; set; }
+    }
+
+    /// <summary>What show_in_studio asks for.</summary>
+    public sealed class StudioShowRequest
+    {
+        public string Place { get; set; }
+        public string Say { get; set; }
+        public string Focus { get; set; }
+        public string Press { get; set; }
+    }
+
+    /// <summary>What show_in_studio answers: the note's id, the place's "how" sentence, and whether the screen moved.</summary>
+    public sealed class StudioShowResult
+    {
+        public string Id { get; set; }
+        public string Place { get; set; }
+        public string How { get; set; }
+        /// <summary>"moved" | "noted" | "noStudio".</summary>
+        public string Screen { get; set; }
+    }
+
+    /// <summary>One button of suggest_next: a short label and the words the person would type to the assistant.</summary>
+    public sealed class StudioStep
+    {
+        public string Label { get; set; }
+        public string Prompt { get; set; }
+    }
+
+    /// <summary>What suggest_next asks for: 2 or 3 steps and an optional lead line.</summary>
+    public sealed class StudioSuggestRequest
+    {
+        public StudioStep[] Steps { get; set; }
+        public string Say { get; set; }
+    }
+
+    /// <summary>The session's one current suggestion (suggest_next). Broadcast as <c>studio/suggest</c>.</summary>
+    public sealed class StudioSuggestion
+    {
+        public string Id { get; set; }          // "sg-" + 12 hex
+        public string Say { get; set; }
+        public StudioStep[] Steps { get; set; }
+        public string At { get; set; }
+        public string SessionId { get; set; }
+    }
+
+    /// <summary>What suggest_next answers.</summary>
+    public sealed class StudioSuggestResult
+    {
+        public string Id { get; set; }
+        public bool Shown { get; set; }
+    }
+
+    /// <summary>What the Studio reads on mount: the session's notes (newest last, 100 at most) and its current suggestion.</summary>
+    public sealed class StudioNotesView
+    {
+        public string SessionId { get; set; }
+        public StudioNote[] Notes { get; set; }
+        public StudioSuggestion Suggestion { get; set; }
+        public StudioAnswer Answer { get; set; }    // the assistant's latest data answer for this session, for an Ask page that mounts after it
+    }
+
+    /// <summary>One assistant tool call began. Broadcast as <c>assistant/call</c> so the Studio can tell a new prompt from the work
+    /// the assistant was already doing (the driver bar's 15 second rule). Never written to History.</summary>
+    public sealed class AgentCallEvent
+    {
+        public string SessionId { get; set; }
+        public string Call { get; set; }        // the call id the health filter minted
+        public string Tool { get; set; }
+        public string At { get; set; }          // ISO time (UTC)
+        public AssistantInfo Assistant { get; set; }   // who is calling, for the driver bar's sign; null when the client sent no name
     }
 }

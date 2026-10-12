@@ -47,6 +47,7 @@ namespace Semanticus.Tests
         // best-practice warning is not there, so it was never shown, never decided). The measure is then deleted: the
         // relationship is now dead, a real best-practice warning appears, and it must be OPEN. The pairing reads the old
         // acceptance as covering it, so it shows as accepted (with a reason that is no longer true) and Best practice stays A.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_dead_relationship_warning_that_appears_after_the_readiness_acceptance_is_open_not_accepted()
         {
@@ -67,6 +68,7 @@ namespace Semanticus.Tests
         }
 
         // Item 3b: ONE undo of the acceptance reopens both pages' findings for that relationship, and never touches another one.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task One_undo_of_a_paired_acceptance_reopens_both_and_only_that_relationship()
         {
@@ -130,6 +132,7 @@ namespace Semanticus.Tests
         }
 
         // Item 6, the agent door: the MCP tool get_model_plan (through its read shape, not the engine call) carries the names.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_MCP_get_model_plan_tool_carries_the_collisions_rows_names()
         {
@@ -157,6 +160,7 @@ namespace Semanticus.Tests
         // The J8 test's letter, re-derived: count the open errors and warnings by hand, run the grading formula on them, and check
         // that nothing was accepted except by the relationships row (the twins), and that the words row never asks for one
         // object's format twice.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J8_best_practice_letter_rederived()
         {
@@ -191,17 +195,17 @@ namespace Semanticus.Tests
             for (var next = queue.Next; next != null;) { var p = await e.GetWordsQueueAsync(0, next.Value); all.AddRange(p.Items); next = p.Next; }
             Assert.Equal(queue.Total, all.Count);
             var formats = all.Where(i => i.Kind == "format").ToArray();
-            _out.WriteLine($"queue {all.Count} items, {formats.Length} formats ({formats.Count(i => i.Tool == "set_property")} columns)");
+            _out.WriteLine($"queue {all.Count} items, {formats.Length} formats ({formats.Count(i => i.ObjectRef.StartsWith("column:", StringComparison.Ordinal))} columns)");
             Assert.Equal(formats.Length, formats.Select(i => i.ObjectRef).Distinct(StringComparer.OrdinalIgnoreCase).Count());   // never twice
             var openFmtColumn = (await e.AiReadinessScanAsync()).Findings.Where(x => x.RuleId == "FMT-COLUMN" && !x.Waived).Select(x => x.ObjectRef).ToHashSet(StringComparer.OrdinalIgnoreCase);
             Assert.DoesNotContain(formats, i => openFmtColumn.Contains(i.ObjectRef));
-            var words = (await e.GetModelPlanAsync()).Items.Single(i => i.Id == LocalEngine.WordsItemId);
+            var words = (await e.GetModelPlanAsync()).Items.Single(i => i.Id == LocalEngine.WordsItemId || i.OriginLink?.Ref == LocalEngine.WordsItemId);   // Run the plan hands the words row to the assistant as a task linked to it (002e790f)
             _out.WriteLine($"words row: {words.Title} / {words.Sub}");
             // (The row's preview lines are capped, so the count on the row is the lane's unit test The_words_row_stays_while_only_a_column_format_is_left.)
 
             foreach (var i in formats)
             {
-                if (i.Tool == "set_measure_format") await e.SetMeasureFormatAsync(i.ObjectRef, "#,0.00", "agent");
+                if (i.ObjectRef.StartsWith("measure:", StringComparison.Ordinal)) await e.SetMeasureFormatAsync(i.ObjectRef, "#,0.00", "agent");
                 else await e.SetObjectPropertyAsync(i.ObjectRef, "FormatString", "0", "agent");
             }
             foreach (var x in (await e.AiReadinessScanAsync()).Findings.Where(x => x.RuleId == "FMT-COLUMN" && !x.Waived).ToArray())

@@ -6,6 +6,12 @@ namespace Semanticus.Engine
     /// <summary>
     /// Governance mutations exist only on an authenticated human connection. Agent connections never register this
     /// target, so they cannot discover or invoke these methods even if they forge a request origin.
+    ///
+    /// Kane, 10 Oct 2026: the person's word in chat is enough. Every Plan control (add a task or an aim, mark done, Pause and
+    /// Resume, the doer switch, Up, the queue switch, a note, remove and restore, repeats, approving and continuing a draft,
+    /// approving a start plan) moved to <see cref="EngineRpcTarget"/>, where an attached assistant reaches it through the gate.
+    /// What stays HERE is the Permissions page (the agent policy, and approving or denying a held action), the person's own
+    /// claim, Mark done and Could not on a task, and the window's own business (licence, parent lifetime, clean stop).
     /// </summary>
     internal sealed class HumanGovernanceRpcTarget
     {
@@ -67,6 +73,8 @@ namespace Semanticus.Engine
                 ? Task.FromResult(holder.ApplyLicense(token, verifyOnly))
                 : throw new NotSupportedException("This engine cannot change its licence while it runs. Restart it to read the new licence.");
 
+        // ---- the Permissions page: the one thing the assistant never changes (Kane, 10 Oct 2026) ---------------------------
+
         public Task<AgentPolicy> setAgentPolicyPreset(string preset, string legacyOrigin = null) =>
             _engine.SetAgentPolicyPresetAsync(preset, "human");
         public Task<AgentPolicy> setAgentPolicyCell(string capability, string label, string action, string legacyOrigin = null) =>
@@ -78,34 +86,10 @@ namespace Semanticus.Engine
         public Task<bool> denyAgentAction(string id, string legacyOrigin = null) =>
             _engine.DenyAgentActionAsync(id, "human");
 
-        // ---- the person's Plan controls (Plan at the heart, contract sections 3.3, 4 and 12) ----------------
-        // HERE and on no MCP tool, the approveAgentAction precedent: adding a task, Pause and Resume, the doer
-        // switch, Up, the queue switch and the note are the person's. An assistant must not be able to invent work
-        // for itself or another assistant, or steer these over it; it reads them on get_model_plan. This is a
-        // governance exception, not a missing door, and it adds nothing only one door can do to the model itself.
-
-        /// <summary>Add a task: the Plan's field, or a Send button with its page, brief, objects, done-when and link.</summary>
-        public Task<ModelPlanActionResult> addPlanTask(PlanTaskRequest request) => _engine.AddPlanTaskAsync(request);
-
-        /// <summary>Pause (held true) or Resume (held false) one row.</summary>
-        public Task<ModelPlanView> holdPlanItem(string id, bool held) => _engine.HoldPlanItemAsync(id, held);
-
-        /// <summary>"Give to your assistant", "I'll do it", or "Let it run" where the engine can apply it.</summary>
-        public Task<ModelPlanView> setPlanItemDoer(string id, string doer) => _engine.SetPlanItemDoerAsync(id, doer);
-
-        /// <summary>Up, on a task for the assistant: one place earlier in its order.</summary>
-        public Task<ModelPlanView> movePlanTaskUp(string id) => _engine.MovePlanTaskUpAsync(id);
-
-        /// <summary>The switch "Tasks for your assistant": "on" or "paused".</summary>
-        public Task<ModelPlanView> setAssistantQueue(string state) => _engine.SetAssistantQueueAsync(state);
-
-        /// <summary>One note from the person on a row; empty clears it.</summary>
-        public Task<ModelPlanView> setPlanTaskNote(string id, string text) => _engine.SetPlanTaskNoteAsync(id, text);
-
         // ---- the person's side of the queue (lane E3, contract 3.3, Sol 24 Sep) --------------------------------
         // Not person-only as a CAPABILITY: the assistant claims, answers and declines with the four queue ops on
-        // EngineRpcTarget and the MCP door. These three are the person's own hand on the same PlanTaskQueue, so they
-        // live here, where an agent connection cannot claim AS the person.
+        // EngineRpcTarget and the MCP door, and marks a row done with model_plan_action. These three are the person's own
+        // hand on the same PlanTaskQueue, so they live here, where an agent connection cannot claim AS the person.
 
         /// <summary>I'll take it: the person claims the task, the doer becomes You, and it leaves the assistant's offer.</summary>
         public Task<ModelPlanView> claimPlanTask(string id) => _engine.ClaimPlanTaskAsync(id);
@@ -116,50 +100,11 @@ namespace Semanticus.Engine
         /// <summary>Could not, with a reason: the row reads Needs you and offers Give to your assistant and Set aside.</summary>
         public Task<ModelPlanView> declinePlanTask(string id, string reason) => _engine.DeclinePlanTaskAsync(id, reason);
 
-        // ---- Remove, and its Undo (Kane's UAT, 25 Sep: "no way to delete a task once you add it") -------------------
-        // Person-only like adding a task: an assistant must not be able to take the person's work off the Plan. A task
-        // an assistant holds is removed all the same, and it reads so on its next call.
+        // ---- the Studio's driver report (1.4, contract section 1). The Studio tells the engine who drives its screen, so show_in_studio can
+        // answer "moved" or "noted". Person-only: an assistant must not be able to report that the person gave up the wheel. It reads the
+        // answer in show_in_studio's result.
 
-        /// <summary>Remove a task or a draft row (and the draft's parts) from the Plan. A row Semanticus found is set aside instead.</summary>
-        public Task<PlanRemoveResult> removePlanRow(string id) => _engine.RemovePlanRowAsync(id);
-
-        /// <summary>Undo a removal, from the toast: the row goes back where it stood.</summary>
-        public Task<ModelPlanView> restorePlanRow(string id) => _engine.RestorePlanRowAsync(id);
-
-        // ---- repeat cards (lane RP, contract 1.7 and 12) -----------------------------------------------------------
-        // Person-only for the reason the controls above are: an assistant must not be able to set up work that keeps
-        // coming back to it. It reads every repeat and its next due date on get_model_plan.
-
-        /// <summary>Save a repeat: words or a saved workflow, a doer, and a cadence; or one of the stock repeats. Pro.</summary>
-        public Task<ModelPlanActionResult> addPlanRepeat(PlanRepeatRequest request) => _engine.AddPlanRepeatAsync(request);
-
-        /// <summary>Change a repeat: its words, doer or cadence, or pause and resume it (Held). Pro.</summary>
-        public Task<ModelPlanView> setPlanRepeat(string id, PlanRepeatRequest request) => _engine.SetPlanRepeatAsync(id, request);
-
-        /// <summary>Delete a repeat. Its open card stays as an ordinary row. Free.</summary>
-        public Task<ModelPlanView> deletePlanRepeat(string id) => _engine.DeletePlanRepeatAsync(id);
-
-        // ---- the composer's held drafts (lane L4, composer contract 5.4) ------------------------------------------
-        // A draft with a row filter, or one that publishes after the change with a part an assistant wrote, never runs
-        // by itself. Approve and run is the person's, HERE, like approveAgentAction: run_draft refuses a held draft on
-        // every door, and an agent connection cannot see this method at all.
-
-        /// <summary>Approve and run on a held draft.</summary>
-        public Task<Composer.DraftView> approveDraft(string draftId) => _engine.ApproveHeldDraftAsync(draftId);
-
-        /// <summary>Continue past a person's stop ("Stop and ask me here"), or past an assistant's step without its
-        /// changes. The person's own for the same reason: a stop that asks the person must not be passed by the
-        /// assistant it would otherwise be asking about (lane author-gaps, B9).</summary>
-        public Task<Composer.DraftView> continueDraft(string draftId) => _engine.ContinueDraftAsync(draftId);
-
-        // ---- the start plan's approval (spec-first start, design S1, lane sf-consent) ---------------------------------------
-        // Person-only like approveDraft: the approval is the one thing that lets a start plan be built, so the assistant that wrote the
-        // plan must not be able to make it. The assistant may BUILD an approved plan (build_start_plan on both doors); it cannot approve.
-        // No MCP tool and no method on EngineRpcTarget carries this name, and StartPlanConsentTests pins both.
-
-        /// <summary>Approve the plan whose digest the person was shown. The approval is void the moment the plan changes at all.</summary>
-        // Through the fence's IEngine, which declares the verb itself: `_engine is IStartPlanEngine` was false for the fence's proxy (it implements IEngine only), so after drafts-sol put the
-        // fence in front of this target every approval threw "cannot start a model from a SQL source" (join 11, J-A1: StartPlanConsentTests).
-        public Task<StartPlan.StartPlanView> approveStartPlan(string digest) => _engine.ApproveStartPlanAsync(digest);
+        /// <summary>The Studio reports its mode (claudeDrives or iDrive) and state (idle, claudeDriving or personHasWheel).</summary>
+        public Task setStudioDriver(string mode, string state) => _engine.SetStudioDriverAsync(mode, state);
     }
 }

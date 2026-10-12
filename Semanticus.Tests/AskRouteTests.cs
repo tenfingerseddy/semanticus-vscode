@@ -281,6 +281,7 @@ namespace Semanticus.Tests
         [InlineData("how much did we sell in March", true)]
         [InlineData("units sold per brand last year", false)]
         [InlineData("total sales by region", false)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R4_a_data_question_the_words_place_lands_on_ask_your_data_with_no_permission_on_both_doors(string ask, bool first)
         {
             using var f = new DecisionFixture();
@@ -305,6 +306,11 @@ namespace Semanticus.Tests
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("how much did we sell in March", true)]
+        public Task R4_a_data_question_the_words_place_lands_on_ask_your_data_with_no_permission_on_both_doors_sample(string ask, bool first) => R4_a_data_question_the_words_place_lands_on_ask_your_data_with_no_permission_on_both_doors(ask, first);
+
         /// <summary>fix-askdata-r5 (verify-askdata-r4 V1; coordinator's ruling, 28 September): when no page's words won, a
         /// line is NOT sent to Ask your data because it names one of the model's fields. That fallback sent nearly every
         /// task typed in the Plan's field there, since nearly every task names a field. So a question that only names a
@@ -316,6 +322,7 @@ namespace Semanticus.Tests
         [InlineData("what were total sales last month")]
         [InlineData("is order count up on last year?")]
         [InlineData("what were sales last month?")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R5_a_question_that_only_names_a_field_is_placed_nowhere_without_permission_on_both_doors(string ask)
         {
             using var f = new DecisionFixture();
@@ -336,6 +343,11 @@ namespace Semanticus.Tests
             }
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("what were total sales last month")]
+        public Task R5_a_question_that_only_names_a_field_is_placed_nowhere_without_permission_on_both_doors_sample(string ask) => R5_a_question_that_only_names_a_field_is_placed_nowhere_without_permission_on_both_doors(ask);
 
         /// <summary>Route one line with permission and a recorded service answer for exactly that line: first an empty
         /// oracle learns the digest the engine really sends, then the answer is recorded for it.</summary>
@@ -359,6 +371,7 @@ namespace Semanticus.Tests
         [InlineData("what were sales last month?", AskRouteCatalog.NoTool, 0.83)]
         [InlineData("order a pizza", AskRouteCatalog.NoTool, 0.97)]
         [InlineData("what were sales last month?", "askdata", 0.31)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R5_a_line_the_service_leaves_unplaced_reads_no_place_at_the_service_s_own_confidence(string words, string choice, double confidence)
         {
             using var f = new DecisionFixture();
@@ -376,9 +389,15 @@ namespace Semanticus.Tests
             }
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("what were sales last month?", AskRouteCatalog.NoTool, 0.83)]
+        public Task R5_a_line_the_service_leaves_unplaced_reads_no_place_at_the_service_s_own_confidence_sample(string words, string choice, double confidence) => R5_a_line_the_service_leaves_unplaced_reads_no_place_at_the_service_s_own_confidence(words, choice, confidence);
+
         /// <summary>fix-askdata-r5: where the service does place a question on Ask your data, it lands there at the
         /// service's own confidence, not a fixed 1.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R5_the_service_s_ask_your_data_is_reported_at_its_own_confidence()
         {
             using var f = new DecisionFixture();
@@ -404,6 +423,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("Give Total Sales a currency format")]
         [InlineData("Only let managers see Total Sales")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R6_a_task_the_service_places_on_ask_your_data_keeps_both_readings(string words)
         {
             using var f = new DecisionFixture();
@@ -427,6 +447,11 @@ namespace Semanticus.Tests
                 Assert.Null(result.Reason);
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Give Total Sales a currency format")]
+        public Task R6_a_task_the_service_places_on_ask_your_data_keeps_both_readings_sample(string words) => R6_a_task_the_service_places_on_ask_your_data_keeps_both_readings(words);
 
         /// <summary>The coordinator's ruling of 28 September (fix-askdata-r6), which replaces round 5's "never" rule.
         /// Every line labelled a task, a where-question or nothing-in-the-model BEFORE any routing run was measured:
@@ -703,6 +728,7 @@ namespace Semanticus.Tests
         [InlineData("Turn off auto date time")]
         [InlineData("Relate Sales to Store on StoreKey")]
         [InlineData("where do I set the sort order for MonthName")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_r4_a_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data(string words)
         {
             using var f = new DecisionFixture();
@@ -739,6 +765,11 @@ namespace Semanticus.Tests
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Give Net Sales a currency format")]
+        public Task Verify_r4_a_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data_sample(string words) => Verify_r4_a_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data(words);
+
         /// <summary>verify-askdata-r5 (full, 28 September 2026, m11/askdata add41625), left failing on purpose. The ruling
         /// is that a task typed in the Plan's field is never sent to Ask your data. The task check (ReadsAsATask) knows a
         /// change verb at the start of a clause, a stated need, a fault word and a thing to become; a business person also
@@ -752,6 +783,7 @@ namespace Semanticus.Tests
         [InlineData("Totals per region are double counting")]
         [InlineData("Can we group customers into new vs returning")]
         [InlineData("Two decimal places on Average Order Value")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_r5_a_business_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data(string words)
         {
             using var f = new DecisionFixture();
@@ -778,6 +810,11 @@ namespace Semanticus.Tests
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Totals per region are double counting")]
+        public Task Verify_r5_a_business_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data_sample(string words) => Verify_r5_a_business_task_typed_in_the_plan_field_is_not_sent_to_ask_your_data(words);
+
         /// <summary>verify-askdata-r5 (full, 28 September 2026, m11/askdata add41625), left failing on purpose. Kane, 28
         /// September: Jev stays on for data questions. The task check reads "need", "please" and "broken" anywhere in a line
         /// as a task, and add41625 holds back every Ask your data answer for such a line, the catalogue's own ("sales by")
@@ -790,6 +827,7 @@ namespace Semanticus.Tests
         [InlineData("I need to see sales by region for last year")]
         [InlineData("please show me net sales by region")]
         [InlineData("net sales broken down by region for 2025")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_r5_a_data_question_asked_politely_reaches_ask_your_data_from_the_assistant_door(string words)
         {
             using var f = new DecisionFixture();
@@ -821,6 +859,11 @@ namespace Semanticus.Tests
             Assert.True(AskRoutePoint.AsksAQuestion("please show me net sales by region"));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("I need to see sales by region for last year")]
+        public Task Verify_r5_a_data_question_asked_politely_reaches_ask_your_data_from_the_assistant_door_sample(string words) => Verify_r5_a_data_question_asked_politely_reaches_ask_your_data_from_the_assistant_door(words);
+
 
 
         /// <summary>fix-askdata-r6, then fix-askdata-final (verify-askdata-r6 F3): a question the WORDS place nowhere and the
@@ -832,6 +875,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("best selling product", false)]
         [InlineData("which product sells best", true)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_a_question_only_the_service_places_is_ordered_by_its_words_at_the_service_s_number(string words, bool first)
         {
             using var f = new DecisionFixture();
@@ -853,6 +897,11 @@ namespace Semanticus.Tests
                 Assert.Equal(first ? 0.91 : 0, result.Confidence, 6);
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("best selling product", false)]
+        public Task Final_a_question_only_the_service_places_is_ordered_by_its_words_at_the_service_s_number_sample(string words, bool first) => Final_a_question_only_the_service_places_is_ordered_by_its_words_at_the_service_s_number(words, first);
 
         /// <summary>fix-askdata-r6, then fix-askdata-final: where Ask your data is not part of the tier, the question reading
         /// goes to Queries with the quiet Pro line, first or second by the same rule, and the task reading is unchanged.
@@ -969,6 +1018,7 @@ namespace Semanticus.Tests
         [InlineData("Net sales per store two decimals")]
         [InlineData("Net sales broken down by region is wrong for March")]
         [InlineData("Units split by channel don't add up")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_r6_a_task_that_does_not_plainly_ask_is_not_answered_with_ask_your_data_first(string words)
         {
             using var f = new DecisionFixture();
@@ -995,6 +1045,11 @@ namespace Semanticus.Tests
             Assert.Equal(0, f.Engine.Decisions.RequestsStarted);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Units per order would be handy on the dashboard")]
+        public Task Verify_r6_a_task_that_does_not_plainly_ask_is_not_answered_with_ask_your_data_first_sample(string words) => Verify_r6_a_task_that_does_not_plainly_ask_is_not_answered_with_ask_your_data_first(words);
+
         private static string RouteAskDescription() =>
             typeof(McpTools).GetMethod(nameof(McpTools.RouteAsk))
                 .GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false)
@@ -1014,6 +1069,7 @@ namespace Semanticus.Tests
         [InlineData("customer count by city")]
         [InlineData("total sales by region")]
         [InlineData("top 10 products")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_r6_route_ask_s_description_states_the_order_the_code_returns(string words)
         {
             var d = RouteAskDescription();
@@ -1031,6 +1087,11 @@ namespace Semanticus.Tests
                 $"route_ask's description says \"{claim}\", and its own example \"{words}\" does not plainly ask, "
                 + $"yet it comes back with the question reading first (tool {result.Tool}, reading {result.Reading})");
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("units per brand")]
+        public Task Verify_r6_route_ask_s_description_states_the_order_the_code_returns_sample(string words) => Verify_r6_route_ask_s_description_states_the_order_the_code_returns(words);
 
         /// <summary>verify-askdata-r6, left failing on purpose. route_ask's description says "'confidence' is 1 when the
         /// words decided and nothing was asked, and the service's own number when it was asked". Where the service places a
@@ -1078,6 +1139,7 @@ namespace Semanticus.Tests
         [InlineData("Store managers should only see their own store", "advmodels", 0.87)]
         [InlineData("Only let managers see Total Cost", "advmodels", 0.96)]
         [InlineData("Relate Sales to Store on StoreKey", "diagram", 0.92)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_the_row_enter_adds_names_the_page_jev_named_in_the_field(string words, string page, double confidence)
         {
             using var f = new DecisionFixture();
@@ -1099,6 +1161,11 @@ namespace Semanticus.Tests
             Assert.Equal(PlanSources.Words, row.Source);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("The ops team should only see their own stores", "advmodels", 0.88)]
+        public Task Final_the_row_enter_adds_names_the_page_jev_named_in_the_field_sample(string words, string page, double confidence) => Final_the_row_enter_adds_names_the_page_jev_named_in_the_field(words, page, confidence);
+
         /// <summary>fix-askdata-final (verify-askdata-r6 F1): the field and the row agree in every other shape too, and in
         /// each of them the row names no page the field did not show.
         ///   The service placed the line on Ask your data: the task reading is the words' own, so no page, on both.
@@ -1107,6 +1174,7 @@ namespace Semanticus.Tests
         [InlineData("Give Total Sales a currency format", "askdata", 0.95)]
         [InlineData("The ops team should only see their own stores", "advmodels", 0.62)]
         [InlineData("The ops team should only see their own stores", AskRouteCatalog.NoTool, 0.97)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_the_row_and_the_field_agree_whatever_the_service_said(string words, string choice, double confidence)
         {
             using var f = new DecisionFixture();
@@ -1120,11 +1188,17 @@ namespace Semanticus.Tests
             Assert.Null(PlanQueueKit.Row(await f.Engine.GetModelPlanAsync(), added.ItemId).Jump);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Give Total Sales a currency format", "askdata", 0.95)]
+        public Task Final_the_row_and_the_field_agree_whatever_the_service_said_sample(string words, string choice, double confidence) => Final_the_row_and_the_field_agree_whatever_the_service_said(words, choice, confidence);
+
         /// <summary>fix-askdata-final (verify-askdata-r6 F1): what the engine keeps of a field page. Ask your data is never a
         /// row's page (it answers questions and changes nothing), a page this build does not know is not kept, and neither
         /// stops the task being added: the row reads the words, as it always did. A Send's own page still wins. And the
         /// engine's own answers ("what changed") name their page in the field, which Enter sends like any other.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_a_field_page_is_kept_only_when_it_is_a_real_page_for_a_task()
         {
             using var f = new DecisionFixture();
@@ -1156,6 +1230,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_a_long_task_keeps_the_page_the_field_named_for_its_whole_text(bool lineBreak)
         {
             using var f = new DecisionFixture();
@@ -1173,11 +1248,17 @@ namespace Semanticus.Tests
             Assert.Equal("advmodels", PlanQueueKit.Row(await f.Engine.GetModelPlanAsync(), added.ItemId).Jump?.Tool);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData(false)]
+        public Task Final_a_long_task_keeps_the_page_the_field_named_for_its_whole_text_sample(bool lineBreak) => Final_a_long_task_keeps_the_page_the_field_named_for_its_whole_text(lineBreak);
+
         /// <summary>fix-askdata-final (Sol's second pass): a task longer than a title whose field reading names NO page
         /// gives a row that names none either. The field reads the whole text, where "sales by region" places the line on
         /// Ask your data and the task reading names no page; the row used to read its 280-character title, which loses
         /// that phrase, and named Find and replace for the "Rename" left in it.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_a_long_task_the_field_names_no_page_for_gets_a_row_with_none()
         {
             using var f = new DecisionFixture();
@@ -1292,6 +1373,7 @@ namespace Semanticus.Tests
         /// asks (its number, on top); the service placed Ask your data and the task is first (no tool at 0 on top, its number
         /// on 'other', with a 'reading'); and the service left the line unplaced (its number, no 'reading', no 'other').</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Final_route_ask_s_description_states_the_confidence_the_code_returns()
         {
             var d = RouteAskDescription();
@@ -1462,11 +1544,11 @@ namespace Semanticus.Tests
         {
             var answer = AskRoutePoint.AnswerFromState("how many checks",
                 new AskDeterministicFacts { SavedCheckCount = 0 });
-            Assert.Equal("This model has no saved checks yet.", answer!.Sentence);
+            Assert.Equal("This model has no checks yet.", answer!.Sentence);
 
             var one = AskRoutePoint.AnswerFromState("how many checks",
                 new AskDeterministicFacts { SavedCheckCount = 1 });
-            Assert.Equal("This model has one saved check.", one!.Sentence);
+            Assert.Equal("This model has one check.", one!.Sentence);
         }
 
         [Theory]
@@ -1490,6 +1572,7 @@ namespace Semanticus.Tests
         // ---- the no-service path ---------------------------------------------------------------------
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task With_no_service_the_box_hands_back_the_menu_and_says_why()
         {
             using var f = new DecisionFixture();
@@ -1703,6 +1786,7 @@ namespace Semanticus.Tests
         /// <summary>The count questions are answered before the words are looked at, so "how many measures
         /// are there" is still a number and not a trip to the Calculations page on the word "measure".</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_count_question_is_still_answered_as_a_count()
         {
             using var f = new DecisionFixture();
@@ -1747,6 +1831,7 @@ namespace Semanticus.Tests
         /// reads a plain sentence about their words and NOT a sentence about permission. The gate's own
         /// wording still travels, in Reason, where the assistant door and the logs can read it.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_gated_service_never_becomes_the_sentence_a_person_reads()
         {
             using var f = new DecisionFixture();
@@ -1820,6 +1905,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task An_empty_box_asks_for_words_rather_than_sending_an_empty_question()
         {
             using var f = new DecisionFixture();

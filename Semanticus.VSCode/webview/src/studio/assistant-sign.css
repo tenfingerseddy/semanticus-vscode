@@ -1,0 +1,17 @@
+/* The assistant sign in the driver bar. Tokens only. Only transform and opacity animate; every other change is a still state. */
+.as-sign { position: relative; flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; }
+.as-tile {
+  position: relative; z-index: 1; width: 22px; height: 22px; display: grid; place-items: center;
+  border-radius: var(--sem-radius-card); border: 1px solid var(--sem-border);
+  background: var(--sem-surface-2); color: var(--sem-muted);
+  font: 700 calc(var(--sem-text-label) - 1px) / 1 var(--sem-font-ui); letter-spacing: .02em;
+}
+.as-tile svg { width: 14px; height: 14px; fill: currentColor; }
+.as-halo { position: absolute; inset: 0; border-radius: var(--sem-radius-card); background: var(--sem-accent); opacity: 0; }
+.as-sign[data-state="working"] .as-tile { background: var(--sem-accent); border-color: var(--sem-accent); color: var(--sem-on-accent); animation: as-tile-pulse 2.6s ease-in-out infinite; }
+.as-sign[data-state="working"] .as-halo { animation: as-halo-pulse 2.6s ease-out infinite; }
+@keyframes as-tile-pulse { 0%, 100% { transform: scale(1); } 40% { transform: scale(1.07); } }
+@keyframes as-halo-pulse { 0%, 8% { opacity: .38; transform: scale(1); } 100% { opacity: 0; transform: scale(1.75); } }
+/* Reduced motion: the tile is still. It keeps the accent colour, so working still reads without any movement. */
+@media (prefers-reduced-motion: reduce) { .as-sign .as-tile, .as-sign .as-halo { animation: none !important; } }
+body.vscode-reduce-motion .as-sign .as-tile, body.vscode-reduce-motion .as-sign .as-halo { animation: none !important; }

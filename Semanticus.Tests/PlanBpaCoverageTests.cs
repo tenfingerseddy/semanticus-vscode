@@ -54,7 +54,7 @@ namespace Semanticus.Tests
 
             var queue = await e.GetWordsQueueAsync();
             var item = Assert.Single(queue.Items, i => i.ObjectRef == "column:fact/DATE_KEY" && i.Kind == "format");
-            Assert.Equal("set_property", item.Tool);
+            Assert.Equal("edit_objects", item.Tool);
             Assert.Equal(ColumnRule, item.RuleId);
             Assert.Contains("FormatString", item.Message);
             Assert.Contains(queue.Items, i => i.ObjectRef == "column:dim_date/DATE_KEY" && i.Kind == "format");
@@ -89,8 +89,8 @@ namespace Semanticus.Tests
             var left = new[] { new WordsQueueItem { Kind = "format", Tool = "set_property", ObjectRef = "column:fact/DATE_KEY", ObjectName = "DATE_KEY" } };
             var row = LocalEngine.WordsItemForTest(Array.Empty<ReadinessFinding>(), 2, left);
             Assert.NotNull(row);
-            Assert.Equal("Write a format for 1 column", row.Title);
-            Assert.Equal("DATE_KEY", row.Sub);
+            Assert.Equal("Choose formats for the model", row.Title);
+            Assert.Equal("a format for 1 column", row.Sub);
             Assert.Equal("1 object", row.Touches);
             // Nothing left, or a model with no tables: no row.
             Assert.Null(LocalEngine.WordsItemForTest(Array.Empty<ReadinessFinding>(), 2, Array.Empty<WordsQueueItem>()));
@@ -103,7 +103,7 @@ namespace Semanticus.Tests
             switch (i.Kind)
             {
                 case "describe": await e.SetDescriptionAsync(i.ObjectRef, "Written by the assistant.", "agent"); break;
-                case "format" when i.Tool == "set_measure_format": await e.SetMeasureFormatAsync(i.ObjectRef, "#,0.00", "agent"); break;
+                case "format" when i.ObjectRef.StartsWith("measure:", StringComparison.Ordinal): await e.SetMeasureFormatAsync(i.ObjectRef, "#,0.00", "agent"); break;
                 case "format": await e.SetObjectPropertyAsync(i.ObjectRef, "FormatString", i.ObjectRef.Contains("CAL_DT") ? "yyyy-mm-dd" : "0", "agent"); break;
             }
         }
@@ -218,7 +218,7 @@ namespace Semanticus.Tests
 
             var row = Assert.Single((await e.GetModelPlanAsync()).Items, i => i.Id == "proposal/relationships");
             Assert.Contains(bpa.ObjectRef, row.Objects);
-            Assert.Equal("Sort out 1 relationship", row.Title);
+            Assert.Equal("Fix 1 relationship with a model warning", row.Title);
 
             // One acceptance, on Model quality (the finding the readiness page does not have), closes the row.
             await e.WaiveFindingAsync("bpa", SnowflakeRule, bpa.ObjectRef, Why, "human");
@@ -313,7 +313,7 @@ namespace Semanticus.Tests
                 var plan = await e.GetModelPlanAsync();
                 var formatAsked = new HashSet<string>(queue.Items.Where(i => i.Kind == "format").Select(i => i.ObjectRef ?? ""), StringComparer.OrdinalIgnoreCase);
                 foreach (var x in (await e.AiReadinessScanAsync()).Findings.Where(x => x.RuleId == "FMT-COLUMN" && !x.Waived)) formatAsked.Add(x.ObjectRef);
-                var relRow = plan.Items.Where(i => i.Id == "proposal/relationships" && PlanStateWords.IsOpen(i.StateWord))
+                var relRow = plan.Items.Where(i => (i.Id == "proposal/relationships" || i.OriginLink?.Ref == "proposal/relationships") && PlanStateWords.IsOpen(i.StateWord))   // a press hands the row to the assistant as a linked task (002e790f)
                     .SelectMany(i => i.Objects ?? Array.Empty<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var other = new HashSet<string>(queue.Items.Select(i => i.ObjectRef ?? ""), StringComparer.OrdinalIgnoreCase);
                 foreach (var r in plan.Items.Where(i => PlanStateWords.IsOpen(i.StateWord)))
@@ -342,7 +342,7 @@ namespace Semanticus.Tests
             // What is left is the relationships row: accept each finding it names, with a reason (system air, as the row's page does).
             var left = (await e.BpaScanAsync()).Violations.Where(v => v.Severity >= 2 && !v.IsAccepted()).ToArray();
             Assert.All(left, v => Assert.True(v.RuleId == InactiveRule || v.RuleId == SnowflakeRule, v.RuleId + " " + v.ObjectRef));
-            var row = Assert.Single((await e.GetModelPlanAsync()).Items, i => i.Id == "proposal/relationships");
+            var row = Assert.Single((await e.GetModelPlanAsync()).Items, i => i.Id == "proposal/relationships" || i.OriginLink?.Ref == "proposal/relationships");
             foreach (var air in (await e.AiReadinessScanAsync()).Findings.Where(x => x.RuleId.StartsWith("REL-") && !x.Waived).ToArray())
                 await e.WaiveFindingAsync("air", air.RuleId, air.ObjectRef, Why, "human");
             Assert.Empty((await e.BpaScanAsync()).Violations.Where(v => v.Severity >= 2 && !v.IsAccepted()).Select(v => v.RuleId + " " + v.ObjectRef));

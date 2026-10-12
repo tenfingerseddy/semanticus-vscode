@@ -110,14 +110,14 @@ namespace Semanticus.Engine
             (line.JevItem ?? "") + "\u001f" + (line.Kind ?? "") + "\u001f" + (line.ObjectRef ?? "") + "\u001f" + (line.Target ?? "");
 
         /// <summary>What a held line says about itself, so its words stay on the plan and nobody reads them as a suggestion of the family's.</summary>
-        internal const string HeldReason = "Your words are kept here. Semanticus no longer proposes this line, so it waits for your tick, and it is checked against the object as it is when you apply it.";
+        internal const string HeldReason = "Your words are kept here. Semanticus no longer suggests this change, so it waits for you to tick it. When you run it, it is checked against the model as it is then.";
 
         /// <summary>What a line says when a new plan (propose_plan, propose_replace) or a redraw of its row came along while it carried somebody's words:
         /// the words are kept, and nothing about them was ticked for the new plan.</summary>
-        internal const string HeldCarriedReason = "Your words are kept here from the plan before. They wait for your tick on this one, and they are checked against the object as it is when you apply them.";
+        internal const string HeldCarriedReason = "Your words are kept here from the plan before. They wait for you to tick them on this plan. When you run them, they are checked against the model as it is then.";
 
-        internal const string HeldMissingReason = "Your words are kept here, but what they were written for is not in the model now, so they cannot be applied until it is back. Semanticus no longer proposes this line.";
-        internal const string HeldChangedReason = "Your words are kept here. What they were written over has changed since, so applying them would overwrite something new, and Semanticus will skip them unless that goes back. Semanticus no longer proposes this line.";
+        internal const string HeldMissingReason = "Your words are kept here, but what they were written for is not in the model now, so they cannot be used until it is back. Semanticus no longer suggests this change.";
+        internal const string HeldChangedReason = "Your words are kept here. What they were written over has changed since. Using them would write over something new, so Semanticus skips them unless that change is undone. Semanticus no longer suggests this change.";
 
         /// <summary>A line somebody wrote over is HELD when its family stops offering it: its text stays visible on the plan, it is no
         /// longer ticked for anyone (the family's reason for it is gone, and so is the line it needed), and applying it is checked against
@@ -267,20 +267,20 @@ namespace Semanticus.Engine
             [MeasuresFamily.Name] = new Words
             {
                 Section = ModelPlanSections.Meaning,
-                Title = (n, table) => "Tidy " + Count(n, "measure", "measures") + " in " + table,
+                Title = (n, table) => "Add folders and formats to " + Count(n, "measure", "measures") + " in " + table,
                 ObjectOne = "measure",
                 ObjectMany = "measures",
                 Missing = (n, table) => Count(n, "measure", "measures") + " in " + table
-                    + (n == 1 ? " has" : " have") + " no display folder or no number format yet, so "
-                    + (n == 1 ? "it reads" : "they read") + " as raw numbers in a flat list.",
+                    + (n == 1 ? " has" : " have") + " no folder or no number format yet. "
+                    + (n == 1 ? "It shows" : "They show") + " as plain numbers in one long list.",
                 Jump = new ModelPlanJump { Tool = "optimize", Label = "Pending changes" },
             },
             [StarterMeasuresFamily.Name] = new Words
             {
                 Section = ModelPlanSections.Meaning,
-                Title = (n, table) => "Add " + Count(n, "starter measure", "starter measures") + " in " + table,
-                ObjectOne = "starter measure",
-                ObjectMany = "starter measures",
+                Title = (n, table) => "Add " + Count(n, "simple measure", "simple measures") + " in " + table,
+                ObjectOne = "simple measure",
+                ObjectMany = "simple measures",
                 Missing = StarterMeasuresFamily.Missing,
                 Jump = new ModelPlanJump { Tool = "optimize", Label = "Pending changes" },
             },
@@ -305,7 +305,7 @@ namespace Semanticus.Engine
             [AiSchemaFamily.Name] = new Words
             {
                 Section = ModelPlanSections.Trust,
-                Title = (n, table) => "Choose what Copilot sees: " + Count(n, "thing", "things") + " in " + table,
+                Title = (n, table) => "Choose which " + Count(n, "field", "fields") + " Copilot can see in " + table,
                 ObjectOne = "thing",
                 ObjectMany = "things",
                 Missing = AiSchemaFamily.Missing,
@@ -326,7 +326,7 @@ namespace Semanticus.Engine
             [ColumnCategoryFamily.Name] = new Words
             {
                 Section = ModelPlanSections.Meaning,
-                Title = (n, table) => "Categorize " + Count(n, "column", "columns") + " in " + table,
+                Title = (n, table) => "Mark what " + Count(n, "column", "columns") + " in " + table + " hold",
                 ObjectOne = "column",
                 ObjectMany = "columns",
                 Missing = ColumnCategoryFamily.Missing,
@@ -386,7 +386,7 @@ namespace Semanticus.Engine
                 var policy = lines.Count(l => PolicyRuleIds.Contains(l.RuleId ?? ""));
                 var ruled = lines.Count(l => !l.DecisionConfidence.HasValue && !string.IsNullOrWhiteSpace(l.RuleId)) - policy;
                 var byJev = lines.Length - ruled - policy;
-                const string Wrote = "Semanticus wrote every line and checked it before showing it.";
+                const string Wrote = "Semanticus wrote every change and checked it before showing it.";
                 var basis = words.Basis ?? "the names, types and settings on this computer";
                 var why = new List<string> { words.Missing(objects, parts.Table) };
                 if (words.WhoChose != null)
@@ -401,16 +401,16 @@ namespace Semanticus.Engine
                         + ruled.ToString("N0", CultureInfo.InvariantCulture) + ", because Jev was not sure of "
                         + (ruled == 1 ? "it" : "them") + ". " + Wrote);
                 if (dropped > 0)
-                    why.Add(Count(dropped, "line arrives", "lines arrive") + " dropped because Jev was unsure. Keep "
+                    why.Add(Count(dropped, "change is", "changes are") + " unticked because Jev was not sure. Tick "
                         + (dropped == 1 ? "it" : "them") + " to include " + (dropped == 1 ? "it" : "them") + ".");
                 if (putBack > 0)
-                    why.Add(Count(putBack, "line puts", "lines put") + " back something you left out, so "
-                        + (putBack == 1 ? "it arrives" : "they arrive") + " dropped and "
-                        + (putBack == 1 ? "waits" : "wait") + " for you. Keep " + (putBack == 1 ? "it" : "them") + " to include "
+                    why.Add(Count(putBack, "change puts", "changes put") + " back something you left out, so "
+                        + (putBack == 1 ? "it is" : "they are") + " unticked and "
+                        + (putBack == 1 ? "waits" : "wait") + " for you. Tick " + (putBack == 1 ? "it" : "them") + " to include "
                         + (putBack == 1 ? "it" : "them") + ".");
                 if (droppedOnReview > 0)
-                    why.Add(Count(droppedOnReview, "line is", "lines are") + " dropped, so approving leaves "
-                        + (droppedOnReview == 1 ? "it" : "them") + " out. Keep " + (droppedOnReview == 1 ? "it" : "them")
+                    why.Add(Count(droppedOnReview, "change is", "changes are") + " unticked, so running the plan leaves "
+                        + (droppedOnReview == 1 ? "it" : "them") + " out. Tick " + (droppedOnReview == 1 ? "it" : "them")
                         + " to include " + (droppedOnReview == 1 ? "it" : "them") + ".");
                 var suggestions = lines.Select(l => (l.Status, l.CheckText)).ToArray();
                 var suggestedWhy = JevFormatSuggestion.Why(suggestions);
@@ -421,7 +421,8 @@ namespace Semanticus.Engine
                     Id = group.Key,
                     Section = words.Section,
                     Title = words.TitleFromLines != null ? words.TitleFromLines(lines, parts.Table) : words.Title(objects, parts.Table),
-                    Sub = Join(names, 4),
+                    Sub = parts.Family == ColumnSummarizeFamily.Name
+                        ? "These columns and measures change: " + Join(names, 4) : Join(names, 4),
                     Value = string.Empty,
                     // A row that holds only format suggestions waits on the person (the doer is you): Run the plan cannot take it.
                     Who = JevFormatSuggestion.WaitsOnPerson(suggestions) ? ModelPlanOwners.You : ModelPlanOwners.Jev,

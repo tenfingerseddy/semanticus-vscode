@@ -11,6 +11,9 @@ import { chartRulePick } from './chartpick.mjs';
 import { useDaxModelContext } from './daxeditor';
 import { AuthorDrawer } from './tests-authoring';
 import { useClaudeReflection } from './activity';
+import { useLearn, learnActive, learnExamples } from './studio/learn-state';
+import { answerIsFor, useAssistantAnswer } from './studio/answer-store';
+import { answerOf } from './studio/tour-model';
 import { useSurfaceEscape } from './surface-escape';
 import { plainDaxError } from './daxErrorText';
 import { isSignInError, SIGN_IN_AGAIN } from './authcopy';
@@ -68,11 +71,14 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
 }) {
   const { conn, session, connectXmla, busy: connBusy } = useConnection();
   const model = useDaxModelContext();
+  const learn = useLearn();
   // The question and the words survive leaving the page (Studio unmounts a tab), per model. The answer does not:
   // its rows are the model's data, so coming back shows the question with a Run button instead.
   const persistKey = session?.sessionId ?? 'no-model';
   const [parts, setParts] = usePersistedState<DataAsk>('askdata.parts.' + persistKey, cleanParts(null));
   const [answer, setAnswer] = useState<DataAnswer | null>(null);
+  // The answer on screen is one the assistant asked for (ask_data), not the person's: labelled so, until the person asks.
+  const [byAssistant, setByAssistant] = useState<{ id: string; question: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
   const [stopped, setStopped] = useState(false);
   const [history, setHistory] = useState<DataQuestionHistory | null>(null);
@@ -102,7 +108,7 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
   // The open model changed: nothing asked of the last one stays on screen, and a question still running for it lands nowhere.
   useEffect(() => {
     gen.current++;
-    setAnswer(null); setBusy(false); setStopped(false); setMenu(null); setSaving(null); setDraft(null); setAnnounce('');
+    setAnswer(null); setByAssistant(null); setBusy(false); setStopped(false); setMenu(null); setSaving(null); setDraft(null); setAnnounce('');
     setHistory(null);
     loadHistory();
   }, [persistKey, loadHistory]);
@@ -131,8 +137,23 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
     setAnnounce(announcement(a));
     loadHistory();
   };
+  // The assistant asked a question (ask_data) and the engine sent the answer here: it becomes the current answer, labelled. It takes the place
+  // of whatever the page showed, and a question the person is waiting on is not cut off (the person's own answer lands over it afterwards).
+  const fromAssistant = useAssistantAnswer();
+  const takenAnswer = useRef<string | null>(null);
+  useEffect(() => {
+    if (!fromAssistant || takenAnswer.current === fromAssistant.id || !answerIsFor(fromAssistant, session?.sessionId)) return;
+    takenAnswer.current = fromAssistant.id;
+    if (busy) return;
+    const a = fromAssistant.answer as DataAnswer;
+    gen.current++;
+    setMenu(null); setSaving(null); setStopped(false); setFromWords(false);
+    setByAssistant({ id: fromAssistant.id, question: fromAssistant.question ?? null });
+    settle(a.parts ?? parts, a);
+  }, [fromAssistant, session?.sessionId]);  // eslint-disable-line react-hooks/exhaustive-deps
   const ask = async (next: DataAsk) => {
     const mine = ++gen.current;
+    setByAssistant(null);
     setMenu(null); setSaving(null); setStopped(false); setBusy(true); setParts(cleanParts(next)); setFromWords(false);
     setAnnounce('Semanticus is building, checking and running the query.');
     const a = await runAsk(send, next);
@@ -145,6 +166,7 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
     const q = words.trim();
     if (!q || busy) return;
     const mine = ++gen.current;
+    setByAssistant(null);
     setMenu(null); setSaving(null); setBusy(true); setStopped(false); setFromWords(true);
     setAnnounce('Jev is reading the question, then Semanticus builds, checks and runs the query.');
     const a = await runWords(send, q);
@@ -163,7 +185,7 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
   };
   const again = (r: DataQuestionRecord) => {
     if (r.parts && (r.parts.measures ?? []).length) void ask(r.parts);
-    else if (r.question) { setWords(r.question); void (async () => { const mine = ++gen.current; setBusy(true); const a = await runWords(send, r.question!); if (mine === gen.current) { setBusy(false); settle(parts, a); } })(); }
+    else if (r.question) { setWords(r.question); void (async () => { const mine = ++gen.current; setByAssistant(null); setBusy(true); const a = await runWords(send, r.question!); if (mine === gen.current) { setBusy(false); settle(parts, a); } })(); }
   };
 
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -211,7 +233,7 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
         <form className="sem-inline" onSubmit={(e) => { e.preventDefault(); void askWords(); }} aria-label="Ask in your own words">
           <input value={words} onChange={(e) => setWords(e.target.value)} disabled={busy} placeholder="Ask about your numbers, like net sales by region for 2025"
             aria-label="Ask in your own words" className="sem-field flex-1" />
-          <button type="submit" className="sem-btn sem-btn-primary" disabled={busy || !words.trim()}>Ask</button>
+          <button type="submit" data-testid="askdata-ask" className="sem-btn sem-btn-primary" disabled={busy || !words.trim()}>Ask</button>
         </form>
 
         <div className="relative">
@@ -238,6 +260,8 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
             filterColumns={filterableColumns(askableColumns(columns, calcGroups))} onMenu={setMenu} onClose={() => setMenu(null)} onAsk={(p) => void ask(p)} />}
         </div>
 
+        {learnActive(learn) && <ExampleAnswers example={learn.tour.example} />}
+
         {!answer && !busy && !stopped && (parts.measures ?? []).length > 0 && (
           <div className="sem-inline" data-testid="askdata-idle">
             <span className={meta} style={muted}>This question has not run since you came back.</span>
@@ -253,6 +277,12 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
         )}
         {stopped && !busy && <div className={meta} style={muted} data-testid="askdata-stopped">The question was stopped. Nothing was kept from it. Change a part or press Run again to ask it again.</div>}
 
+        {answer && !busy && !stopped && byAssistant && (
+          <div className="sem-inline" data-testid="askdata-by-assistant">
+            <span className="sem-doer sem-doer-agent text-(length:--sem-text-label)">Asked by your assistant</span>
+            {byAssistant.question && <span className={meta} style={muted}>{byAssistant.question}</span>}
+          </div>
+        )}
         {answer && !busy && !stopped && (
           <AnswerBody answer={answer} parts={parts} connected={!!conn?.connected} view={view} viz={viz} onViz={setViz} showDax={showDax}
             showError={showError} onShowError={setShowError}
@@ -466,6 +496,39 @@ export function AnswerBody({ answer, parts, connected, view, viz = 'bar', onViz,
           <span className="sem-label">DAX, written by Semanticus</span>
           <pre className={`m-0 overflow-x-auto sem-num ${meta}`}>{answer.dax}</pre>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** The Learn tour's recorded answers (1.4, lane tour). The demo model holds no data to ask, so the tour shows answers recorded on
+ *  the same model, tagged Example. It never calls the engine. `example` is the answer the tour step names, if any. */
+function ExampleAnswers({ example }: { example: number | null }) {
+  const [picked, setPicked] = useState<number | null>(example);
+  const [view, setView] = useState<'table' | 'chart'>('table');
+  const [showDax, setShowDax] = useState(false);
+  useEffect(() => { if (example !== null) setPicked(example); }, [example]);
+  const examples = learnExamples();
+  const shown = picked !== null && examples[picked] ? answerOf(examples[picked]) : null;
+  const [viz, setViz] = useState<VizType | null>(null);
+  return (
+    <div className="st-example" data-testid="askdata-examples">
+      <span className={meta} style={muted}>Questions this model can answer:</span>
+      <div className="sem-inline flex-wrap">
+        {examples.map((a, i) => (
+          <button key={a.question} type="button" className="sem-btn sem-btn-sm" aria-pressed={picked === i} data-testid="askdata-example-pick"
+            onClick={() => { setPicked(i); setViz(null); }}>{a.question}</button>
+        ))}
+      </div>
+      {shown && (
+        <>
+          <div className="sem-inline">
+            <span className="st-example-tag" data-testid="askdata-example">Example</span>
+            <p className="st-example-line">Example answer. Live answers need your own model.</p>
+          </div>
+          <AnswerBody answer={shown.answer as DataAnswer} parts={shown.parts as DataAsk} connected view={view} viz={viz ?? shown.viz} onViz={setViz}
+            showDax={showDax} onView={setView} onShowDax={setShowDax} />
+        </>
       )}
     </div>
   );

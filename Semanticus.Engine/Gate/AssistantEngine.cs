@@ -131,11 +131,7 @@ namespace Semanticus.Engine
             return (await HoldAsync(entry, call).ConfigureAwait(false), args);
         }
 
-        private static string PersonSentenceFor(string method) => method switch
-        {
-            "AddPlanTargetAsync" or "RemovePlanTargetAsync" or "MarkPlanTargetDoneAsync" or "AddPlanTaskAsync" => GateRegistry.PlanPersonOnlySentence,
-            _ => GateRegistry.PersonOnlySentence,
-        };
+        private static string PersonSentenceFor(string method) => GateRegistry.PersonOnlySentence;
 
         /// <summary>The ask-approve-retry step for a write the matrix does not simply allow. Returns the ticket to run under, or
         /// null when the matrix allows it outright (the sinks read the same matrix), and throws the refusal when it does not.</summary>

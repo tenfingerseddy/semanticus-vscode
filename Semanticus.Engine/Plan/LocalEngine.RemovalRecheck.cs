@@ -80,7 +80,7 @@ namespace Semanticus.Engine
                 // held and had not moved.
                 if (!_unusedByRef.TryGetValue(it.ObjectRef, out var now)
                     || (now.Verdict != "safe" && now.Verdict != "visibleAttribute"))
-                    return "not removed: the unused verdict no longer holds at apply time. "
+                    return "not removed: it no longer looks safe to remove. "
                          + NotSafeReason(m, it.ObjectRef, _unusedByRef, _parts != null);
                 return null;
             }

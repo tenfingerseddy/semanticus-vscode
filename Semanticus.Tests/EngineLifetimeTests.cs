@@ -372,6 +372,53 @@ namespace Semanticus.Tests
 
         // ---- the defect itself, across real processes -------------------------------------------------
 
+        [Fact]
+        public async Task Owner_lifetime_ignores_a_Jev_marker_but_keeps_the_persons_edits()
+        {
+            using var sessions = new SessionManager();
+            using var session = await sessions.BuildCreateAsync("Sales", 1604);
+            Assert.False(session.HasUnsavedEdits);
+            await session.ReadAsync(_ => { session.MarkConsentMarkerDirty(); return true; });
+            Assert.True(session.HasUnsavedChanges);
+            Assert.False(session.HasUnsavedEdits);
+            Assert.False(Program.KeepOwnerAlive(false, 0, session), "a Jev marker is not unsaved work");
+            Assert.False(Program.KeepOwnerAlive(true, 0, session));
+            Assert.True(Program.KeepOwnerAlive(true, 1, session), "an assistant connection still keeps its owner alive");
+            await session.MutateAsync("human", "Add Sales", model => model.AddTable("Sales"));
+            Assert.True(session.HasUnsavedEdits);
+            Assert.True(Program.KeepOwnerAlive(false, 0, session), "the person's work still survives a reload");
+        }
+
+        [EngineApphostFact]
+        public async Task An_editor_owner_keeps_dirty_work_after_the_window_closes_without_an_unsaved_tab()
+        {
+            var apphost = EngineApphost.Find();
+            using var workspace = new TempDir("smx-dirty-");
+            using var parentDir = new TempDir("smx-dirty-parent-");
+            var parent = StartSleeper(apphost, parentDir.Path);
+            Process engine = null;
+            HumanClient client = null;
+            try
+            {
+                engine = StartEngine(apphost, new[] { "serve", "--workspace", workspace.Path, "--ui-challenge-stdin", ParentWatchdog.Option, parent.Id.ToString() }, graceMs: 300);
+                engine.StandardInput.WriteLine(Challenge);
+                engine.StandardInput.Flush();
+                var info = await WaitForOwnerAsync(workspace.Path, engine);
+                client = await HumanClient.ConnectAsync(info);
+                await client.InvokeAsync<OpenResult>("createModel", "Sales", 1604, false);
+                await client.InvokeAsync<string>("createTable", "Sales");
+                Assert.True((await client.InvokeAsync<SessionInfo>("sessionInfo")).HasUnsavedEdits);
+                client.Dispose(); client = null;
+                parent.Kill(entireProcessTree: true); parent.WaitForExit(10000);
+                await Task.Delay(2500);
+                Assert.False(engine.HasExited, "unsaved work must stay available after the editor closes");
+                client = await HumanClient.ConnectAsync(EngineBroker.ReadInfo(workspace.Path));
+                Assert.True(await client.AdoptAsync(Environment.ProcessId));
+                Assert.Equal(1, (await client.InvokeAsync<SessionInfo>("sessionInfo")).Tables);
+            }
+            finally { client?.Dispose(); Kill(engine); Kill(parent); }
+        }
+
         /// <summary>THE REPRODUCTION. An engine whose spawning process dies, and whose window never comes
         /// back, must go. Before the watchdog it was still listening long after its parent was killed, which
         /// is exactly the pile of orphans Kane found.</summary>
@@ -607,6 +654,89 @@ namespace Semanticus.Tests
             }
         }
 
+        [EngineApphostFact]
+        public async Task Killed_engine_keeps_file_edits_for_restore_on_reopen()
+        {
+            using var workspace = new TempDir("smx-crash-");
+            var state = Path.Combine(workspace.Path, "state");
+            var path = Path.Combine(workspace.Path, "Sales.bim");
+            File.Copy(TestModels.FindBim(), path);
+            var original = File.ReadAllText(path);
+            Process engine = null;
+            HumanClient client = null;
+            try
+            {
+                engine = StartEngine(EngineApphost.Find(), new[] { "serve", "--workspace", workspace.Path,
+                    "--state-dir", state, "--ui-challenge-stdin", ParentWatchdog.Option, Environment.ProcessId.ToString() });
+                engine.StandardInput.WriteLine(Challenge);
+                engine.StandardInput.Flush();
+                client = await HumanClient.ConnectAsync(await WaitForOwnerAsync(workspace.Path, engine));
+                await client.InvokeAsync<OpenResult>("open", path);
+                await client.InvokeAsync<SetResult>("setDescription", "table:Product", "survives a kill", "human");
+                Assert.True(await WaitForAsync(() => Directory.Exists(Path.Combine(state, "restore")) &&
+                    Directory.GetFiles(Path.Combine(state, "restore"), "unsaved.json", SearchOption.AllDirectories).Length == 1,
+                    TimeSpan.FromSeconds(8)), "the debounce never wrote a recovery copy before the crash");
+                var copyPath = Directory.GetFiles(Path.Combine(state, "restore"), "unsaved.json", SearchOption.AllDirectories)[0];
+                var kept = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(copyPath));
+                engine.Kill(entireProcessTree: true);
+                engine.WaitForExit(10000);
+                client.Dispose(); client = null;
+                engine.Dispose(); engine = null;
+                engine = StartEngine(EngineApphost.Find(), new[] { "serve", "--workspace", workspace.Path,
+                    "--state-dir", state, "--ui-challenge-stdin", ParentWatchdog.Option, Environment.ProcessId.ToString() });
+                engine.StandardInput.WriteLine(Challenge);
+                engine.StandardInput.Flush();
+                Assert.True(await WaitForAsync(() => EngineBroker.ReadInfo(workspace.Path)?.Pid == engine.Id,
+                    TimeSpan.FromSeconds(10)), "the replacement engine never published its own owner record");
+                client = await HumanClient.ConnectAsync(await WaitForOwnerAsync(workspace.Path, engine));
+                var opened = await client.InvokeAsync<OpenResult>("open", path);
+                var info = await client.InvokeAsync<Newtonsoft.Json.Linq.JObject>("sessionInfo");
+                Assert.NotNull(info["fileRecovery"]);
+                await client.InvokeAsync<bool>("resolveFileRecovery", opened.SessionId, true);
+                var obj = await client.InvokeAsync<ObjectInfo>("getObject", "table:Product");
+                Assert.Contains("survives a kill", Newtonsoft.Json.JsonConvert.SerializeObject(obj));
+                Assert.True((await client.InvokeAsync<SessionInfo>("sessionInfo")).HasUnsavedEdits);
+                Assert.Equal(original, File.ReadAllText(path));
+                Assert.True(await WaitForAsync(() => Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(copyPath))["capturedUtc"]?.ToString()
+                    != kept["capturedUtc"]?.ToString(), TimeSpan.FromSeconds(8)), "the restored working model never reached recovery");
+                var restored = Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(copyPath));
+                Assert.True(Newtonsoft.Json.Linq.JToken.DeepEquals(Newtonsoft.Json.Linq.JToken.Parse(kept["bimJson"]!.ToString()),
+                    Newtonsoft.Json.Linq.JToken.Parse(restored["bimJson"]!.ToString())), "the model after the killed engine was not restored exactly");
+                Assert.Equal(0, (await client.InvokeAsync<UndoState>("undo", "human")).Steps);
+                Assert.False((await client.InvokeAsync<SessionInfo>("sessionInfo")).HasUnsavedEdits);
+            }
+            finally { client?.Dispose(); Kill(engine); }
+        }
+
+        [EngineApphostFact]
+        public async Task Closing_the_editor_flushes_file_recovery_before_the_engine_exits()
+        {
+            using var workspace = new TempDir("smx-close-");
+            using var parentDir = new TempDir("smx-close-parent-");
+            var apphost = EngineApphost.Find();
+            var parent = StartSleeper(apphost, parentDir.Path);
+            var state = Path.Combine(workspace.Path, "state");
+            var path = Path.Combine(workspace.Path, "Sales.bim");
+            File.Copy(TestModels.FindBim(), path);
+            Process engine = null;
+            HumanClient client = null;
+            try
+            {
+                engine = StartEngine(apphost, new[] { "serve", "--workspace", workspace.Path, "--state-dir", state,
+                    "--ui-challenge-stdin", ParentWatchdog.Option, parent.Id.ToString() }, graceMs: 300);
+                engine.StandardInput.WriteLine(Challenge); engine.StandardInput.Flush();
+                client = await HumanClient.ConnectAsync(await WaitForOwnerAsync(workspace.Path, engine));
+                await client.InvokeAsync<OpenResult>("open", path);
+                await client.InvokeAsync<SetResult>("setDescription", "table:Product", "flushed on exit", "human");
+                client.Dispose(); client = null;
+                parent.Kill(entireProcessTree: true); parent.WaitForExit(10000);
+                Assert.True(engine.WaitForExit(6000), "a file owner must flush recovery and exit after the window closes");
+                var copy = Assert.Single(Directory.GetFiles(Path.Combine(state, "restore"), "unsaved.json", SearchOption.AllDirectories));
+                Assert.Contains("flushed on exit", File.ReadAllText(copy));
+            }
+            finally { client?.Dispose(); Kill(engine); Kill(parent); }
+        }
+
         // ---- helpers ----------------------------------------------------------------------------------
 
         private static string Quote(string value) => "'" + value.Replace("'", "'\\''") + "'";
@@ -715,6 +845,7 @@ namespace Semanticus.Tests
             }
 
             public Task<bool> AdoptAsync(int pid) => _rpc.InvokeAsync<bool>("adoptParent", pid);
+            public Task<T> InvokeAsync<T>(string method, params object[] args) => _rpc.InvokeAsync<T>(method, args);
 
             public void Dispose()
             {

@@ -372,60 +372,42 @@ namespace Semanticus.Tests
             Assert.Equal(3, heard.Count);                                            // nothing left to take back: nothing to announce
         }
 
-        // ---- the approval is the person's: agent origin, null origin, the wire ---------------------------------
+        // ---- the approval, on both doors (Kane, 10 Oct 2026: the person's word in chat is enough) ---------------------------
 
         [Fact]
-        public async Task An_agent_connection_cannot_approve_a_real_plan_with_any_origin_including_none_and_the_person_can()
+        public async Task An_agent_connection_approves_a_real_plan_with_the_digest_it_read_and_a_wrong_digest_is_refused()
         {
             var r = await StartAsync();
             var pipeName = TestPipe.Mint("semanticus-spr-");
             using var server = new RpcServer(r.Sessions, r.Engine, pipeName, Challenge);
             using var stop = new CancellationTokenSource();
             var serving = server.RunAsync(stop.Token);
-            RpcClient agent = null, human = null;
+            RpcClient agent = null;
             try
             {
                 agent = await RpcClient.ConnectAsync(pipeName, "agent");
-                // The digest alone, with a person's origin, with the assistant's, and with NO origin (the engine reads a null origin as the
-                // person elsewhere, so this is the call most worth refusing): every one finds no such method on this connection.
-                foreach (var args in new object[][]
-                {
-                    new object[] { r.Digest },
-                    new object[] { r.Digest, "human" },
-                    new object[] { r.Digest, "agent" },
-                    new object[] { r.Digest, null },
-                })
-                {
-                    var ex = await Assert.ThrowsAnyAsync<Exception>(() => agent.InvokeAsync<StartPlanView>("approveStartPlan", args));
-                    Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
-                }
+                await Assert.ThrowsAnyAsync<Exception>(() => agent.InvokeAsync<StartPlanView>("approveStartPlan", new object[] { "a-digest-nobody-saw" }));
                 Assert.Null(r.Engine.StartPlanDocForTest().Approval);
                 Assert.Null(StartPlanStore.Read(r.View.Id).Approval);
 
-                // The person's own connection reaches the same plan and approves it.
-                human = await RpcClient.ConnectAsync(pipeName, "human", Challenge);
-                var view = await human.InvokeAsync<StartPlanView>("approveStartPlan", r.Digest);
+                var view = await agent.InvokeAsync<StartPlanView>("approveStartPlan", new object[] { r.Digest });
                 Assert.Equal(r.Digest, view.Approval.Digest);
                 Assert.Equal(r.Digest, r.Engine.StartPlanDocForTest().Approval.Digest);
             }
             finally
             {
                 agent?.Dispose();
-                human?.Dispose();
                 stop.Cancel();
                 try { await serving; } catch (OperationCanceledException) { }
             }
         }
 
         [Fact]
-        public async Task The_agent_door_target_has_no_way_to_approve_even_when_built_with_no_origin()
+        public async Task The_pipe_target_approves_a_real_plan()
         {
             var r = await StartAsync();
-            // The agent's RPC target and the MCP tools never name the approval; a target built with a null origin is still that target.
-            var target = new EngineRpcTarget(r.Engine, null, null);
-            Assert.Null(target.GetType().GetMethods().FirstOrDefault(m => m.Name.IndexOf("ApproveStartPlan", StringComparison.OrdinalIgnoreCase) >= 0));
             Assert.Null(r.Engine.StartPlanDocForTest().Approval);
-            Assert.NotNull((await new HumanGovernanceRpcTarget(r.Engine).approveStartPlan(r.Digest)).Approval);
+            Assert.NotNull((await new EngineRpcTarget(r.Engine).approveStartPlan(r.Digest)).Approval);
         }
 
         private sealed class RpcClient : IDisposable

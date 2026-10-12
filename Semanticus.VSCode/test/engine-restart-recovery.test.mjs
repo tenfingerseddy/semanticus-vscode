@@ -215,7 +215,7 @@ assert.match(source, /function describeSession\(/, 'the descriptor is derived fr
 {
   const bench = makeBench();
   bench.sandbox.currentSession = liveSession();
-  await bench.sandbox.bindGridAndTree('SM_NFM', { refresh: () => {} });
+  await bench.sandbox.bindGridAndTree('SM_NFM', { refresh: () => {}, clearAssistantFlash: () => {} });
   const got = bench.remembered();
   assert.equal(got?.kind, 'live', 'a native open of a live model must stay live, not become its temp snapshot path');
   assert.equal(got?.endpoint, LIVE_TARGET.endpoint, 'and must keep the endpoint');

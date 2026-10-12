@@ -59,6 +59,8 @@
     <Compile Include="CompatibilityGatedMembers.cs" />
     <!-- A sidecar change (the Primer) as one step on the model's undo timeline (same-assembly access to IUndoAction). -->
     <Compile Include="SidecarUndo.cs" />
+    <Compile Include="ModelRecovery.cs" />
+    <Compile Include="AssistantUndo.cs" />
     <!-- A restored table permission points at its table and columns again (same-assembly: the wrapper's ReapplyReferences is internal). -->
     <Compile Include="TablePermissionUndo.cs" />
     <!-- A switched-off incremental refresh policy comes back whole on undo (same-assembly: Table.MetadataObject is internal). -->
@@ -67,6 +69,8 @@
     <Compile Include="PerspectiveTableUndo.cs" />
     <!-- Every edit takes back exactly: the values the wrapper writes outside its undo are sealed into the batch (same-assembly: UndoManager.Add and the wrapper lookup are internal). -->
     <Compile Include="ModelSeal.cs" />
+    <!-- A linguistic schema step holds its two texts packed, not two full copies (same-assembly: TE2's property step is internal). -->
+    <Compile Include="SchemaUndo.cs" />
     <!-- The typed decision contract (Jev M0a): IDecisionOracle plus the request, answer, registry, consent,
          cache and budget types. Pure data and one digest; no transport, no key, no network. It lives HERE and
          not in Semanticus.Engine because Semanticus.Analysis references Core but not Engine, and the rules

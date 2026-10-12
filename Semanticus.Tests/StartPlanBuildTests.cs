@@ -85,6 +85,19 @@ namespace Semanticus.Tests
             };
         }
 
+        [Fact]
+        public async Task A_built_Jev_choice_names_Pro_and_uses_the_recorded_decider()
+        {
+            using var rig = new Rig(); await rig.InitAsync();
+            rig.F.Sessions.Bus.HumanClientAttached = () => true;
+            var doc = SmallDoc();
+            doc.Manifest.BaseMeasures[0].DecidedBy = StartDecidedBy.Jev;
+            await rig.PlanAsync(doc);
+            Assert.True((await rig.BuildAsync(doc)).Built);
+            var note = Assert.Single((await rig.Engine.GetStudioNotesAsync(rig.Person.Id)).Notes);
+            Assert.Equal("Pro built the model with 1 Jev choice in one step. One undo takes the build back.", note.Say);
+        }
+
         /// <summary>A person's empty model, saved, with permission given (so the consent marker is an undo step already on
         /// the stack), and a scratch clone of it opened the way sf-core opens one.</summary>
         private sealed class Rig : IDisposable
@@ -132,6 +145,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- the build is one undo step
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_build_adds_exactly_one_undo_step()
         {
@@ -152,6 +166,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>History groups the build under a parent row of its own kind, never under "item", which is a Plan line.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task History_shows_the_build_under_a_start_plan_parent_not_a_plan_item()
         {
@@ -166,6 +181,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(rows, r => r.Kind == "item");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Undo_leaves_no_tables_with_the_marker_and_permission_in_force_and_redo_restores()
         {
@@ -195,6 +211,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- a mismatch commits nothing
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_forced_mismatch_commits_nothing()
         {
@@ -237,6 +254,7 @@ namespace Semanticus.Tests
             Assert.Equal(2, await rig.TablesAsync());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_build_that_passed_leaves_one_audit_record_and_a_refused_one_leaves_none()
         {
@@ -316,6 +334,7 @@ namespace Semanticus.Tests
             Assert.Equal(d0, Moved(b => b.Preview = new StartPreview { ProjectionDigest = "q", AiReadiness = 9 }));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_stale_preview_never_matches_what_is_built_so_the_build_refuses_it()
         {
@@ -379,6 +398,7 @@ namespace Semanticus.Tests
             Assert.Equal(0, await rig.TablesAsync());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_kept_line_whose_needed_line_was_dropped_is_not_built()
         {
@@ -404,6 +424,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- the preview equals the build
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Grades_after_the_build_equal_the_preview()
         {
@@ -419,6 +440,7 @@ namespace Semanticus.Tests
             Assert.Equal(doc.Preview.BestPractice, after.BestPractice);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_same_document_previewed_twice_gives_the_same_digest()
         {
@@ -434,6 +456,7 @@ namespace Semanticus.Tests
 
         /// <summary>J8 (7 tables, 9 foreign keys) with a rename, a link turned off, an excluded table and a pinned value:
         /// the preview scratch and the person's model give equal projections, and the build says so by committing.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J8_with_renames_a_link_off_an_excluded_table_and_a_pinned_value_gives_equal_projections()
         {
@@ -493,6 +516,7 @@ namespace Semanticus.Tests
         /// <summary>The same J8 edits through the REAL manifest and the REAL structure build (ToSpec into BuildSpecInto), with
         /// the identities the manifest allocates from the seed (S3). The preview scratch and the person's model give equal
         /// projections, the relationship names are the manifest's own, and a second preview of the same document repeats.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J8_through_the_real_manifest_gives_equal_projections_with_the_manifests_own_identities()
         {
@@ -534,6 +558,7 @@ namespace Semanticus.Tests
         /// a column that the same list renames lands on that column (S5: the apply order puts renames after the edits that name
         /// the old ref); and the document is left exactly as it was, because the executor writes statuses onto the lines it is
         /// given, and a preview must never do that to the person's plan.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Kept_lines_land_in_the_same_step_through_the_executor_and_never_mark_the_document()
         {
@@ -731,6 +756,7 @@ namespace Semanticus.Tests
             return (e, sessions, StartPlanViewBuilder.Digest(e.StartPlanDocForTest()));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("human")]
         [InlineData("agent")]
@@ -758,6 +784,7 @@ namespace Semanticus.Tests
             Assert.Equal(0, await sessions.Current.ReadAsync(m => m.Tables.Count()));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("human")]
         [InlineData("agent")]
@@ -791,6 +818,7 @@ namespace Semanticus.Tests
             Assert.NotNull(e.StartPlanDocForTest());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_parked_plan_is_not_built_and_there_is_nothing_to_build_with_no_plan()
         {

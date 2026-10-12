@@ -196,7 +196,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(oracle.Seen, r => r.PointName == Point);
             Assert.DoesNotContain(plan.Items, i => i.Id.StartsWith("jev.relationship.", StringComparison.Ordinal));
             var rule = Assert.Single(plan.Items, i => i.Id == "proposal/relationships");
-            Assert.StartsWith("Sort out", rule.Title, StringComparison.Ordinal);
+            Assert.StartsWith("Fix ", rule.Title, StringComparison.Ordinal);   // "Sort out N relationships" became "Fix N relationships with model warnings" (6343ed4b, hero15 words)
         }
 
         // ---- Pro, bar met -----------------------------------------------------------------------------------
@@ -427,7 +427,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { true, true, true, false }, resolved.OrderBy(p => Array.IndexOf(picks, p)).Select(p => p.Active).ToArray());
             var line = RelationshipFamily.Line(resolved.Single(p => p.Ask.TableName == "Geography"));
             Assert.Contains("inactive", line.After, StringComparison.Ordinal);
-            Assert.Contains("a second one would make filters ambiguous", line.Reason, StringComparison.Ordinal);
+            Assert.Contains("A second link would make it unclear which way a filter goes", line.Reason, StringComparison.Ordinal);
 
             // The same last pick, both ways, is refused rather than quietly made one way.
             var bothWays = picks.Take(3).Concat(new[] { P(Col("Geography", "TerritoryKey", ("Territory", "TerritoryKey")), "Territory/TerritoryKey", "both_ways") }).ToArray();

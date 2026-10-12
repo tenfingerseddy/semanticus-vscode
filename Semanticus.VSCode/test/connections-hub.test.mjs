@@ -115,7 +115,8 @@ assert.doesNotMatch(listView, /max-h-\[336px\]/, 'the list is never capped at a 
 // ---- honest identity + fail-closed governance -----------------------------------------------------------------
 assert.match(hub, /as \$\{account\} \(was \$\{was\}\)/, 'per-row identity must show "as bob@ (was alice@)" provenance');
 assert.match(hub, /account unknown/, 'an unknown next-open account must read honestly as "account unknown"');
-assert.match(hub, /text: 'No label \(Production settings\)'/, 'an unlabelled cloud model must read "No label (Production settings)", never "Production"');
+assert.match(hub, /text: 'No label \(Development settings\)'/, 'an unlabelled cloud model must read "No label (Development settings)", never "Production"');
+assert.match(hub, /if \(l\) return \{ text: 'Production', tone: 'warn' \}/, 'a hand-edited label the engine does not know ("Production", "staging") must read Production, because the engine applies prod to it');
 
 // ---- honest friendly naming for local running models (T164 P5) ------------------------------------------------
 assert.match(hub, /isGuidName/, 'the hub must detect a bare-GUID local database name');
@@ -301,7 +302,7 @@ assert.match(accountMenu, /No saved accounts yet\. Pick a workspace model to sig
 assert.doesNotMatch(accountMenu, /Kept on this device/, 'the account menu does not repeat the History line (C10)');
 assert.match(hub, /Models and sign-ins, kept on this device/, 'the one "kept on this device" note lives in History');
 assert.doesNotMatch(hub, /No switchable live model/, 'the "No switchable live model" dead-end must be retired');
-assert.match(read('webview', 'src', 'connectpickers-model.ts'), /No label \(Production settings\)/, 'the unlabelled env option must be short enough not to truncate');
+assert.match(read('webview', 'src', 'connectpickers-model.ts'), /No label \(Development settings\)/, 'the unlabelled env option must be short enough not to truncate');
 
 // ---- connection-relevant notifications broadcast to BOTH panels (the standalone hub is not deaf) ----------------
 assert.match(extension, /function postToPanels\(msg: unknown\)/, 'a multi-panel broadcast helper must exist');
@@ -456,7 +457,7 @@ assert.match(hub, /data-testid="hub-endpoint-input" value=\{endpoint\} onChange=
 assert.match(hub, /r\.kind === 'file'/, 'remembered local files have their own kind');
 assert.match(hub, /else if \(r\.kind === 'file'\) await rpc\('open', r\.endpoint/,
   'opening a remembered local file uses the file open path');
-assert.match(hub, /if \(r\.kind === 'localDesktop' \|\| r\.kind === 'file' \|\| r\.label === 'local'\)/,
+assert.match(hub, /if \(r\.kind === 'localDesktop' \|\| r\.kind === 'file' \|\| l === 'local'\)/,
   'a local file row reads as Local, never as a published model');
 assert.match(extension, /record\.kind === 'file'/, 'the native picker can reopen a remembered local file');
 

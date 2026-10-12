@@ -7,6 +7,7 @@ import { App } from './App';
 import { ConnectionProvider } from './connection';
 import { ConnectionsStandalone } from './connectionshub';
 import './styles.css';
+import './studio/tour';   // Learn Semanticus (1.4): registers the chapters and the player before any page draws
 
 // The SAME bundle serves two hosts. When the host page sets window.__semanticusInitialView = 'connections' (the
 // dedicated "Manage connections" panel opened while Studio is closed), the bundle mounts ONLY the Connections hub —

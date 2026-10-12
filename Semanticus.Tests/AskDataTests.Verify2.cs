@@ -114,6 +114,7 @@ namespace Semanticus.Tests
         /// Right: South and Coast side by side on Store Region, Customer named. Acceptable: needs-you. HARMFUL: Store
         /// Region = South and Customer Region = Coast together, one total that no one asked for.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify2_A02_south_and_coast_leaning_to_customer_region_is_not_read_on_two_tables()
         {
             (string, double)? Script(DecisionRequest r, DecisionQuestion q) => IsTwinQ(q) ? (TwinOption(r, q, "Customer[Region]"), 0.55) : V2Base(r, q);

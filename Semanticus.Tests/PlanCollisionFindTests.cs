@@ -30,6 +30,7 @@ namespace Semanticus.Tests
             return f;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_collisions_row_hands_find_and_replace_every_clashing_name()
         {
@@ -54,6 +55,7 @@ namespace Semanticus.Tests
             Assert.All(plan.Items.Where(i => i.Id != "proposal/collisions"), i => Assert.Null(i.Jump?.Find));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_long_list_of_clashes_is_capped_for_the_search_box()
         {

@@ -43,9 +43,9 @@ export function PlanStrip({ plan, track, onTrack, onLatest }: {
         <span className="pw-track-who"><DoerMark doer={t.doer} />{P.DOER_LABEL[t.doer]}</span>
         <span className="pw-bar" aria-hidden="true">
           {segs.map((s, i) => <i key={i} className={`pw-seg pw-seg-${s}`} />)}
-          {more > 0 && <span className="pw-bar-more sem-num">+{more}</span>}
+          {more > 0 && <span className="pw-bar-more sem-num" title={`${more} more tasks than the bar shows`}>+{more} more</span>}
         </span>
-        <span className="pw-counts sem-num">
+        <span className="pw-counts" data-testid={`plan-counts-${t.doer}`}>
           {P.trackCounts(t).map((c) => <span key={c.key} className={c.warn ? 'pw-count-warn' : undefined}>{c.text}</span>)}
         </span>
       </button>;
@@ -53,7 +53,7 @@ export function PlanStrip({ plan, track, onTrack, onLatest }: {
     {track && <div className="pw-legend plan-muted">
       <span />
       <span />
-      <span>Choose the track again to see every row</span>
+      <span>Choose the track again to see every task</span>
     </div>}
   </section>;
 }

@@ -355,6 +355,7 @@ namespace Semanticus.Tests
         /// person "this session has used its suggestion budget" although the other ask's hold was given back a moment
         /// later and nothing had been spent (Sol on the round 5 fix). Two sizes of allowance: one where the other hold
         /// makes the budget read as used up, one where it only leaves too little room for this ask.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(1.0)]
         [InlineData(1.5)]
@@ -392,6 +393,7 @@ namespace Semanticus.Tests
         /// passed) in the moment between waking with its own hold and sending must not go out, and costs nothing. A
         /// continuation woken by a settle runs later than the settle, so that moment is real; the check before the send
         /// is what closes it, and the seam puts the cancel exactly there (Sol on the round 5 fix, second pass).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_ask_stopped_between_waking_with_its_hold_and_sending_sends_nothing_and_costs_nothing()
         {
@@ -622,6 +624,7 @@ namespace Semanticus.Tests
         /// <summary>An ask stopped by its caller while it waited for another ask's hold never went out, so the operator log
         /// must not count an attempt for it. It used to say attempts=1, because the count was set before the hold was taken
         /// (ai.schema final verify, low item 2; the verifier's attack T1).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_callers_cancel_while_waiting_for_another_asks_hold_is_logged_with_no_attempt_and_costs_nothing()
         {
@@ -659,6 +662,7 @@ namespace Semanticus.Tests
 
         /// <summary>The same for an ask whose deadline passed while it waited for another ask's hold: it is dropped unsent
         /// with the queue's reason, costs nothing, and the log counts no attempt (low item 2; the verifier's attack T2).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_ask_whose_deadline_passes_while_it_waits_for_a_hold_is_logged_with_no_attempt_and_costs_nothing()
         {
@@ -783,6 +787,46 @@ namespace Semanticus.Tests
                 var after = await oracle.AskAsync(DecisionFixture.SampleRequest(), CancellationToken.None);
                 Assert.Equal(2, handler.Sends);
                 Assert.True(after.Decided, after.NotDecidedReason);
+            }
+        }
+
+        /// <summary>The relay refuses an inactive subscription (403 subscription_inactive). The reason is the engine's own plain sentence
+        /// (the relay's two-sentence text used to be joined into the Plan line), the oracle says the plan is not active, and the
+        /// session stops asking for the hold-off instead of being refused on every model change. After it, the next ask goes out, and
+        /// a decided answer clears the flag.</summary>
+        [Fact]
+        public async Task An_inactive_subscription_is_said_once_and_holds_off_the_next_asks()
+        {
+            const string Relay = "This subscription is not active. Check your billing details to use cloud advice again.";
+            var now = new DateTime(2026, 10, 12, 9, 0, 0, DateTimeKind.Utc);
+            var budget = new DecisionBudget(capInputTokens: 100000);
+            using (var handler = new HeaderRelay())
+            using (var oracle = JevDecisionOracle.ForRelay(Licence, RelayBase, budget, handler))
+            {
+                oracle.UtcNowForTest = () => now;
+                Assert.False(oracle.SubscriptionInactive);
+                handler.Replies.Enqueue((HttpStatusCode.Forbidden, RefusalBody("subscription_inactive", Relay), null));
+
+                var refused = await oracle.AskAsync(DecisionFixture.SampleRequest(), CancellationToken.None);
+                Assert.False(refused.Decided);
+                Assert.Equal(JevDecisionOracle.SubscriptionInactiveReason, refused.NotDecidedReason);
+                Assert.True(oracle.SubscriptionInactive);
+                Assert.Equal(1, handler.Sends);
+
+                now = now.AddMinutes(1);
+                var held = await oracle.AskAsync(DecisionFixture.SampleRequest(), CancellationToken.None);
+                var heldOther = await oracle.AskAsync(RealRequests().Last(), CancellationToken.None);
+                Assert.Equal(1, handler.Sends);
+                Assert.Equal(JevDecisionOracle.SubscriptionInactiveReason, held.NotDecidedReason);
+                Assert.Equal(JevDecisionOracle.SubscriptionInactiveReason, heldOther.NotDecidedReason);
+                Assert.True(oracle.SubscriptionInactive);
+
+                now = now.Add(JevDecisionOracle.RefusedHoldOff);
+                handler.Replies.Enqueue((HttpStatusCode.OK, DecidedReply, null));
+                var after = await oracle.AskAsync(DecisionFixture.SampleRequest(), CancellationToken.None);
+                Assert.Equal(2, handler.Sends);
+                Assert.True(after.Decided, after.NotDecidedReason);
+                Assert.False(oracle.SubscriptionInactive, "a decided answer means the plan is active again");
             }
         }
 

@@ -1,0 +1,39 @@
+table 'Date'
+
+	column Date
+		dataType: dateTime
+		sourceColumn: Date
+		formatString: Long Date
+		summarizeBy: none
+
+	column Year
+		dataType: int64
+		sourceColumn: Year
+		formatString: 0
+		summarizeBy: none
+
+	column 'Month Number'
+		isHidden
+		dataType: int64
+		sourceColumn: MonthNumber
+		formatString: 0
+		summarizeBy: none
+
+	column Month
+		dataType: string
+		sourceColumn: Month
+		sortByColumn: 'Month Number'
+		summarizeBy: none
+
+	column Quarter
+		dataType: string
+		sourceColumn: Quarter
+		summarizeBy: none
+
+	partition 'Date' = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [Date = date, Year = Int64.Type, MonthNumber = Int64.Type, Month = text, Quarter = text], {})
+			in
+				Source

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { runHostCommand } from './bridge';
 import { EDIT_ACTION_COPY, SAFETY_CHECK_COPY } from './copy';
 import { requestPlanGuide, WHAT_CHANGED, WHAT_CHANGED_CARD_ID } from './plan-guide';
+import { learnChapters, startTour } from './studio/learn-state';
 
 // ===================================================================================================
 // Per-tab in-context help, the USER GUIDE (Studio v2). A '?' in the header opens a slide-over with
@@ -1198,6 +1199,9 @@ export function HelpButton({ tab, onGo, onShortcuts, onTextSize, onAllTools, zoo
   items.push({ id: 'page', label: 'Help for this page', note: h?.title,
     title: h ? `Guide: the ${h.title} tab (and “Where do I…?”)` : 'Help for this page',
     run: () => { setView('tab'); setGuideOpen(true); } });
+  // Learn Semanticus (1.4 lane tour): five short chapters on a copy of a demo model, played by the same notes and cursor the assistant uses.
+  learnChapters().forEach((c, i) => items.push({ id: `learn-${c.id}`, label: c.title, note: `${c.minutes} min`, section: i === 0 ? 'Learn Semanticus' : undefined,
+    title: c.line, run: () => startTour(c.id) }));
   // The header's Find a tool moved here: it opens the same menu of every tool.
   if (onAllTools) items.push({ id: 'all-tools', label: 'All tools', title: 'Every tool in Studio, by area', run: onAllTools });
   if (onShortcuts) items.push({ id: 'shortcuts', label: 'Keyboard shortcuts', note: '?',

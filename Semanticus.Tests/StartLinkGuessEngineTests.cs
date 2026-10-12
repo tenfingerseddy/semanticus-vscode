@@ -97,6 +97,7 @@ namespace Semanticus.Tests
 
         // ================================================================== the Free start finds the links, the fact table and the measures
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -120,6 +121,7 @@ namespace Semanticus.Tests
             Assert.Contains(LinesOf(view), l => l.Item.Kind == "mark_date_table" && l.Item.ObjectName == "Date");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -143,6 +145,7 @@ namespace Semanticus.Tests
             Assert.Contains("Total NetSalesAmount", model.Measures);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -168,6 +171,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "Date", "Product", "Store" }, rels);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Dropping_every_guess_leaves_no_fact_table_and_no_measures_in_the_plan()
         {
@@ -179,6 +183,7 @@ namespace Semanticus.Tests
             Assert.Empty(LinkLines(view).Where(l => l.Kept));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -227,6 +232,7 @@ namespace Semanticus.Tests
 
         // ================================================================== a sample that lands after the plan
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_sample_that_shows_a_key_repeating_takes_that_link_out_and_voids_an_approval()
         {
@@ -244,6 +250,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(LinkLines(view), l => l.Item.Title.Contains("Customer["));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_sample_that_shows_the_keys_unique_changes_the_words_to_from_the_sample()
         {

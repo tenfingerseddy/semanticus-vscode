@@ -92,12 +92,20 @@ namespace Semanticus.Tests
         /// own action is an adding one", and "the one thing that must never happen is an add nobody asked for".</summary>
         [Theory]
         [MemberData(nameof(Deletes))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR5_words_that_ask_to_take_something_away_draft_no_kept_add(string door, string words, string[] asked)
         {
             using var f = await ProAsync("VR5" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".bim");
             var v = await ComposeOnDoor(f.Engine, door, words);
             Assert.Equal(asked, KeptAdds(v));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR5_words_that_ask_to_take_something_away_draft_no_kept_add_SampleRows() => Deletes().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR5_words_that_ask_to_take_something_away_draft_no_kept_add_SampleRows))]
+        public Task VR5_words_that_ask_to_take_something_away_draft_no_kept_add_sample(string door, string words, string[] asked) => VR5_words_that_ask_to_take_something_away_draft_no_kept_add(door, words, asked);
 
         public static IEnumerable<object[]> Adds() => new[]
         {
@@ -113,12 +121,20 @@ namespace Semanticus.Tests
         /// adds.</summary>
         [Theory]
         [MemberData(nameof(Adds))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR6_words_that_ask_to_add_keep_their_add_when_the_action_is_not_the_first_word(string words, string add)
         {
             using var f = await ProAsync("VR6" + Guid.NewGuid().ToString("N").Substring(0, 8) + ".bim");
             var v = await ComposeOnDoor(f.Engine, "agent", words);
             Assert.Contains(add, KeptAdds(v));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR6_words_that_ask_to_add_keep_their_add_when_the_action_is_not_the_first_word_SampleRows() => Adds().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR6_words_that_ask_to_add_keep_their_add_when_the_action_is_not_the_first_word_SampleRows))]
+        public Task VR6_words_that_ask_to_add_keep_their_add_when_the_action_is_not_the_first_word_sample(string words, string add) => VR6_words_that_ask_to_add_keep_their_add_when_the_action_is_not_the_first_word(words, add);
         /// <summary>Author's edits, one per key, as it sends them for a field typed from <paramref name="from"/> to
         /// <paramref name="to"/>: every value in between, each expecting the one before it.</summary>
         private static object[] Typed(string target, string field, string from, string to)

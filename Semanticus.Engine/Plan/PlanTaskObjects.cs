@@ -269,6 +269,59 @@ namespace Semanticus.Engine
             return changed;
         }
 
+        private static readonly string[] RefKinds = { "table:", "column:", "measure:", "hierarchy:" };
+
+        /// <summary>The object ref a plan row's id ends with ("table:dim_product" in "jev.column-summarize.table:dim_product",
+        /// "measure:Sales/Margin" in "check/measure:Sales/Margin"), or null when it names none.</summary>
+        internal static string RefInItemId(string id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            for (var i = 0; i < id.Length; i++)
+                if ((i == 0 || !char.IsLetterOrDigit(id[i - 1])) && RefKinds.Any(k => string.CompareOrdinal(id, i, k, 0, k.Length) == 0))
+                    return id.Substring(i);
+            return null;
+        }
+
+        /// <summary>What a skip of this row keeps to follow a rename: the ref its id ends with and that object's lineage tag.
+        /// Null when the id names no object in the model, or the object has no tag. Best effort, like the task grounds.</summary>
+        internal async Task<PlanObjectGround> SkipGroundAsync(string itemId)
+        {
+            var r = RefInItemId(itemId);
+            var s = _sessions.Current;
+            if (r == null || s == null) return null;
+            try
+            {
+                var g = await s.ReadAsync(m => PlanTaskObjects.GroundsOf(m, new[] { r })).ConfigureAwait(false);
+                // Kept only when the id spells the ref the way the model does, so the id can be rewritten from the ref alone.
+                return g is { Length: 1 } && g[0].Tag != null && string.Equals(g[0].Ref, r, StringComparison.Ordinal) ? g[0] : null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Move every skip whose object was renamed to the row's id now. Best effort: a read that fails moves nothing.</summary>
+        internal async Task FollowSkipRenamesAsync(PlanMemoryBinding binding)
+        {
+            var grounded = ReadPlanState(binding).Skips.Where(k => k.Ref != null && k.Tag != null).ToList();
+            if (grounded.Count == 0) return;
+            var now = await GroundsNowAsync(binding.Session, grounded.Select(k => new PlanObjectGround { Ref = k.Ref, Tag = k.Tag })).ConfigureAwait(false);
+            var moved = now.Where(p => !p.Value.Gone && p.Value.Current != p.Key).ToDictionary(p => p.Key, p => p.Value.Current, StringComparer.Ordinal);
+            if (moved.Count > 0) TryWritePlanMemory(binding, state => FollowSkipRenamesIn(state, moved));
+        }
+
+        /// <summary>Rewrite the skips whose ref moved: the id keeps everything before the ref and ends with the new ref. A skip
+        /// already kept under the new id wins, being the newer decision about the row as it is named now.</summary>
+        internal static void FollowSkipRenamesIn(PlanMemoryState state, IReadOnlyDictionary<string, string> moved)
+        {
+            foreach (var k in state.Skips.ToList())
+            {
+                if (k.Ref == null || !moved.TryGetValue(k.Ref, out var current) || !k.ItemId.EndsWith(k.Ref, StringComparison.Ordinal)) continue;
+                var id = k.ItemId.Substring(0, k.ItemId.Length - k.Ref.Length) + current;
+                if (state.Skips.Any(o => !ReferenceEquals(o, k) && string.Equals(o.ItemId, id, StringComparison.Ordinal))) { state.Skips.Remove(k); continue; }
+                k.ItemId = id;
+                k.Ref = current;
+            }
+        }
+
         /// <summary>The sentence a claim or an answer is refused with when the task's object is gone, or null.</summary>
         internal async Task<string> GoneRefusalAsync(PlanTask task)
         {

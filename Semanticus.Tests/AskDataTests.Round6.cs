@@ -99,6 +99,7 @@ namespace Semanticus.Tests
         [InlineData("what percentage of sales were returned")]
         [InlineData("what is the return rate %")]
         [InlineData("return rate percent by region")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_share_question_answered_by_a_ratio_the_words_name_or_divide_by_runs(string question)
         {
             using var rig = await BuildAsync(script: Gate("nothing", 0.96, measure: "Return Rate %"));
@@ -107,6 +108,11 @@ namespace Semanticus.Tests
             ScriptTaken(a);
             Assert.True(Answered(a), Seen(a));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("what percentage of sales were returned")]
+        public Task A_share_question_answered_by_a_ratio_the_words_name_or_divide_by_runs_sample(string question) => A_share_question_answered_by_a_ratio_the_words_name_or_divide_by_runs(question);
 
         // ---- D2. G4, the period's kind ---------------------------------------------------------------------------------------
 

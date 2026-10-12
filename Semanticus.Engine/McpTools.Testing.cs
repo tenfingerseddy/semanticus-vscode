@@ -18,7 +18,40 @@ namespace Semanticus.Engine
             [Description("Also append this run's health to .semanticus/tests/runs.jsonl: the drift-trend history. A partial scope cannot be recorded.")] bool persist = false,
             [Description("Optional saved-test ids to run. Omit to run every saved test. A partial list never mints a grade and cannot be recorded.")] string[] only = null,
             [Description("Optional section names to run: measures, relationships, tableCounts. Omit for every section. Any other name, and an empty list, is refused with a plain note rather than quietly ignored. A partial list never mints a grade and cannot be recorded.")] string[] sections = null)
-            => engine.RunTestSuiteAsync(persist, "agent", only, sections);
+            => RunTestsForStudioAsync(engine, persist, only, sections);
+
+        /// <summary>The run, and the same run on the Studio's Validation page. The page used to show only a run its own Run button made, so
+        /// an assistant's run changed nothing on screen (show-checks, Kane 12 Oct). The whole run rides the activity stream, like run_dax
+        /// and preview_table, and a run that threw or was refused still says so.</summary>
+        private static async Task<TestSuiteRunResult> RunTestsForStudioAsync(IEngine engine, bool persist, string[] only, string[] sections)
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            TestSuiteRunResult run = null;
+            string failure = null;
+            try { run = await engine.RunTestSuiteAsync(persist, "agent", only, sections); return run; }
+            catch (System.Exception e) { failure = e.Message; throw; }
+            finally
+            {
+                McpTools.Emit(engine, new ActivityEvent
+                {
+                    Kind = "run_tests", Origin = "agent", Label = RunLabel(run, failure), Ok = run != null && run.Error == null, Error = failure ?? run?.Error,
+                    ElapsedMs = clock.ElapsedMilliseconds, Result = run,
+                });
+            }
+        }
+
+        /// <summary>One plain sentence for the page's line above the results.</summary>
+        internal static string RunLabel(TestSuiteRunResult run, string failure = null)
+        {
+            if (run == null) return "Your checks did not run.";
+            if (run.Error != null) return run.Error;
+            var h = run.Health;
+            if (h == null) return string.IsNullOrWhiteSpace(run.Note) ? "Your checks did not run." : run.Note;
+            var counts = h.Passed.ToString(System.Globalization.CultureInfo.InvariantCulture) + " of " + h.Checked.ToString(System.Globalization.CultureInfo.InvariantCulture) + " pass";
+            return run.Scope?.Partial == true
+                ? "Ran part of your checks (" + run.Scope.GradeCovers + "): " + counts + "."
+                : "Ran your checks: grade " + h.Grade + ", " + counts + ".";
+        }
 
         [McpServerTool(Name = "try_test"), Description("TESTS: run one unsaved test definition once and return its outcome. Writes nothing to the suite. kind='measureValue' checks a measure against a trusted number; kind='measureReconcile' is the SQL-vs-DAX reconciliation. Offline the outcome is NotVerifiable. To see one measure's values across many contexts without a pass or fail, use probe_measure.")]
         public static Task<ReconcileOutcome> TryTest(IEngine engine,

@@ -293,7 +293,7 @@ namespace Semanticus.Engine
         public Task<ModelObjects> GetModelObjectsAsync() => _rpc.InvokeAsync<ModelObjects>("getModelObjects");
         public Task<UndoState> UndoAsync(string origin) => _rpc.InvokeAsync<UndoState>("undo", origin);
         public Task<UndoState> RedoAsync(string origin) => _rpc.InvokeAsync<UndoState>("redo", origin);
-        public Task<UndoState> UndoToEntryAsync(string entryId, string origin) => _rpc.InvokeAsync<UndoState>("undo", origin, entryId);
+        public Task<UndoState> UndoToEntryAsync(string entryId, string origin, long? throughRevision = null) => _rpc.InvokeAsync<UndoState>("undo", origin, entryId, throughRevision);
         public Task<UndoState> RedoToEntryAsync(string entryId, string origin) => _rpc.InvokeAsync<UndoState>("redo", origin, entryId);
         public Task<PlanHistoryView> GetPlanHistoryAsync(string by = null, string objectRef = null, string before = null, int limit = 50) =>
             _rpc.InvokeAsync<PlanHistoryView>("getPlanHistory", by, objectRef, before, limit);
@@ -315,6 +315,20 @@ namespace Semanticus.Engine
         public Task<SetResult> ApplyFixAsync(string ruleId, string objRef, string origin) => _rpc.InvokeAsync<SetResult>("applyFix", ruleId, objRef, origin);
         public Task<FixPrompt> GetFixPromptAsync(string ruleId, string objRef) => _rpc.InvokeAsync<FixPrompt>("getFixPrompt", ruleId, objRef);
         public Task<GroundingBundle> GetGroundingAsync(string objRef) => _rpc.InvokeAsync<GroundingBundle>("getGrounding", objRef);
+        public Task<BatchEditResult> WaiveFindingsAsync(FindingWaiverItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("waiveFindings", items, origin);
+        public Task<BatchEditResult> UnwaiveFindingsAsync(FindingFixItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("unwaiveFindings", items, origin);
+        public Task<BatchEditResult> ApplyFixesAsync(FindingFixItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("applyFixes", items, origin);
+        public Task<BatchEditResult> DuplicateObjectsAsync(ObjectDuplicateItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("duplicateObjects", items, origin);
+        public Task<BatchEditResult> SetDocSectionsAsync(DocSectionItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("setDocSections", items, origin);
+        public Task<BatchEditResult> SetPerspectiveMembersAsync(PerspectiveMemberItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("setPerspectiveMembers", items, origin);
+        public Task<BatchEditResult> SetObjectPermissionsAsync(ObjectPermissionItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("setObjectPermissions", items, origin);
+        public Task<BatchPlanResult> SetPlanItemsAsync(PlanItemEdit[] items, string origin) => _rpc.InvokeAsync<BatchPlanResult>("setPlanItems", items, origin);
+        public Task<BatchPlanResult> AddPlanItemsAsync(PlanItemAdd[] items, string origin) => _rpc.InvokeAsync<BatchPlanResult>("addPlanItems", items, origin);
+        public Task<BatchStartPlanResult> EditStartPlansAsync(StartPlan.StartPlanEdit[] items, string origin) => _rpc.InvokeAsync<BatchStartPlanResult>("editStartPlans", items, origin);
+        public Task<BatchEditResult> WriteWordsAsync(WordsWriteItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("writeWords", items, origin);
+        public Task<BatchPlanRowsResult> PlanRowsAsync(PlanRowEdit[] items, string origin) => _rpc.InvokeAsync<BatchPlanRowsResult>("planRows", items, origin);
+        public Task<BatchEditResult> EditObjectsAsync(ObjectEditItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("editObjects", items, origin);
+        public Task<BatchEditResult> CreateMeasuresAsync(MeasureCreateItem[] items, string origin) => _rpc.InvokeAsync<BatchEditResult>("createMeasures", items, origin);
         public Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin) => _rpc.InvokeAsync<SetResult>("waiveFinding", system, ruleId, objRef, reason, origin);
         public Task<SetResult> UnwaiveFindingAsync(string system, string ruleId, string objRef, string origin) => _rpc.InvokeAsync<SetResult>("unwaiveFinding", system, ruleId, objRef, origin);
         public Task<Semanticus.Analysis.WaiverRecord[]> ListWaiversAsync() => _rpc.InvokeAsync<Semanticus.Analysis.WaiverRecord[]>("listWaivers");
@@ -445,7 +459,7 @@ namespace Semanticus.Engine
         public Task<ExplainDossier> ExplainValueAsync(string measureRef, ExplainFilterContext context, bool decompose, string decomposeBy, int topK, string origin) => _rpc.InvokeAsync<ExplainDossier>("explainValue", measureRef, context, decompose, decomposeBy, topK, origin);
         public Task<VerifiedEditsChain> ListVerifiedEditsAsync() => _rpc.InvokeAsync<VerifiedEditsChain>("listVerifiedEdits");
         public Task<string> ExportVerifiedEditsAsync(string format) => _rpc.InvokeAsync<string>("exportVerifiedEdits", format);
-        public Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null) => _rpc.InvokeAsync<TestSuiteRunResult>("runTests", persist, origin, only, sections);
+        public Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null, string runId = null) => _rpc.InvokeAsync<TestSuiteRunResult>("runTests", persist, origin, only, sections, runId);
         public Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin) => _rpc.InvokeAsync<ReconcileOutcome>("tryTest", def, origin);
         public Task<TestSuiteInfo> ListTestDefinitionsAsync() => _rpc.InvokeAsync<TestSuiteInfo>("listTests");
         public Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin, string expectedJson = null) => _rpc.InvokeAsync<TestDefinition>("saveTest", def, origin, expectedJson);
@@ -586,6 +600,7 @@ namespace Semanticus.Engine
         public Task<ApprovalRecord[]> ListPendingApprovalsAsync() => _rpc.InvokeAsync<ApprovalRecord[]>("listPendingApprovals");
         public Task<ApprovalRecord> ApproveAgentActionAsync(string id, string origin) => _rpc.InvokeAsync<ApprovalRecord>("approveAgentAction", id, origin);
         public Task<bool> DenyAgentActionAsync(string id, string origin) => _rpc.InvokeAsync<bool>("denyAgentAction", id, origin);
+        public Task<bool> ResolveFileRecoveryAsync(string expectedSession, bool restore, string origin) => _rpc.InvokeAsync<bool>("resolveFileRecovery", expectedSession, restore);
         public Task<RestorePointRecord[]> ListRestorePointsAsync(string endpoint = null, string database = null) => _rpc.InvokeAsync<RestorePointRecord[]>("listRestorePoints", endpoint, database);
         public Task<RollbackResult> RollbackPushAsync(string restorePointId, bool commit, string authMode = null, string origin = "human") => _rpc.InvokeAsync<RollbackResult>("rollbackPush", restorePointId, commit, authMode, origin);
         public Task<RestorePointPurgeResult> PurgeRestorePointsAsync(string id = null, int? olderThanDays = null,
@@ -593,6 +608,7 @@ namespace Semanticus.Engine
             _rpc.InvokeAsync<RestorePointPurgeResult>("purgeRestorePoints", id, olderThanDays, confirm, confirmToken, origin);
         public Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricWorkspace[]>("listWorkspaces", cancellationToken, authMode, tenantId, origin);
         public Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<FabricSemanticModel[]>("listWorkspaceModels", cancellationToken, workspaceId, authMode, tenantId, origin);
+        public Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpointsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<WorkspaceSqlEndpointList>("listWorkspaceSqlEndpoints", cancellationToken, workspaceId, authMode, tenantId, origin);
         public Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<DeploymentPipeline[]>("listDeploymentPipelines", cancellationToken, authMode, tenantId, origin);
         public Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<PipelineStage[]>("getPipelineStages", cancellationToken, pipelineId, authMode, tenantId, origin);
         public Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default) => _rpc.InvokeWithCancellationAsync<StageItem[]>("getStageItems", cancellationToken, pipelineId, stageId, authMode, tenantId, origin);
@@ -639,7 +655,7 @@ namespace Semanticus.Engine
         // the owner's own surface rather than from a local stub that could drift from it.
         public Task<ModelPlanActionResult> AddPlanTaskAsync(PlanTaskRequest request) => _rpc.InvokeAsync<ModelPlanActionResult>("addPlanTask", request);
         public Task<ModelPlanView> HoldPlanItemAsync(string id, bool held) => _rpc.InvokeAsync<ModelPlanView>("holdPlanItem", id, held);
-        public Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer) => _rpc.InvokeAsync<ModelPlanView>("setPlanItemDoer", id, doer);
+        public Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer, string origin = "human") => _rpc.InvokeAsync<ModelPlanView>("setPlanItemDoer", id, doer, origin);
         public Task<ModelPlanView> MovePlanTaskUpAsync(string id) => _rpc.InvokeAsync<ModelPlanView>("movePlanTaskUp", id);
         public Task<ModelPlanView> SetAssistantQueueAsync(string state) => _rpc.InvokeAsync<ModelPlanView>("setAssistantQueue", state);
         public Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text) => _rpc.InvokeAsync<ModelPlanView>("setPlanTaskNote", id, text);
@@ -657,16 +673,16 @@ namespace Semanticus.Engine
         public Task<Composer.DraftView> GetDraftAsync(string draftId) => _rpc.InvokeAsync<Composer.DraftView>("getDraft", draftId);
         public Task<Composer.DraftView> EditDraftAsync(string draftId, string action, string step, string blank, string question, string text, string origin) => _rpc.InvokeAsync<Composer.DraftView>("editDraft", draftId, action, step, blank, question, text, origin);
         public Task<Composer.DraftView> RunDraftAsync(string draftId, string origin) => _rpc.InvokeAsync<Composer.DraftView>("runDraft", draftId, origin);
-        /// <summary>Only a person's connection has this method: an agent pipe is refused by method-not-found.</summary>
-        public Task<Composer.DraftView> ApproveHeldDraftAsync(string draftId) => _rpc.InvokeAsync<Composer.DraftView>("approveDraft", draftId);
+        public Task<Composer.DraftView> ApproveHeldDraftAsync(string draftId, string origin = "human") => _rpc.InvokeAsync<Composer.DraftView>("approveDraft", draftId, origin);
         public Task<Composer.DraftView> ContinueDraftAsync(string draftId) => _rpc.InvokeAsync<Composer.DraftView>("continueDraft", draftId);
         /// <summary>The attached path's offer pull, the same pull F-246 uses for the foreign-change line.</summary>
         public Task<string> PullPlanOfferAsync(string reader = null) => _rpc.InvokeAsync<string>("pullPlanOffer");
-        // The person's side: refused by the owner with method-not-found, as the six controls above are.
+        // The person's side: refused by the owner with method-not-found (the assistant claims with claimRequest).
         public Task<ModelPlanView> ClaimPlanTaskAsync(string id) => _rpc.InvokeAsync<ModelPlanView>("claimPlanTask", id);
-        // Person-only on the owner: an attached assistant's connection has no such method, so these are refused there.
+        // On both doors (Kane, 10 Oct 2026).
         public Task<PlanRemoveResult> RemovePlanRowAsync(string id) => _rpc.InvokeAsync<PlanRemoveResult>("removePlanRow", id);
         public Task<ModelPlanView> RestorePlanRowAsync(string id) => _rpc.InvokeAsync<ModelPlanView>("restorePlanRow", id);
+        public Task<PlanRefreshResult> RefreshPlanAsync() => _rpc.InvokeAsync<PlanRefreshResult>("refreshPlan");
         public Task<Composer.DescribedWorkflow> DescribeWorkflowStepsAsync(string words) => _rpc.InvokeAsync<Composer.DescribedWorkflow>("describeWorkflowSteps", words);
         public Task<Query.DataAnswer> AskDataAsync(Query.DataAsk ask, string origin = "human") => _rpc.InvokeAsync<Query.DataAnswer>("askData", ask, origin);
         public Task<Query.DataQuestionHistory> ListDataQuestionsAsync(int limit = 50) => _rpc.InvokeAsync<Query.DataQuestionHistory>("listDataQuestions", limit);
@@ -677,17 +693,24 @@ namespace Semanticus.Engine
         public Task<AskRouteResult> RouteAskAsync(string text) => _rpc.InvokeAsync<AskRouteResult>("routeAsk", text);
 
         // ---- the spec-first start (M11). The owner decides the origin from this connection, so the origin sent is only
-        // for the wire's shape. There is NO approve method an agent pipe can reach: ApproveStartPlanAsync is the
-        // person's own, on HumanGovernanceRpcTarget, and an agent connection is refused by method-not-found.
+        // for the wire's shape. ApproveStartPlanAsync is on both doors (Kane, 10 Oct 2026); the approval is void the moment the plan changes.
         public Task<StartPlan.StartPlanView> StartModelFromSqlAsync(StartPlan.StartModelRequest request, string origin) => _rpc.InvokeAsync<StartPlan.StartPlanView>("startModelFromSql", request, origin);
         public Task<StartPlan.StartPlanView> GetStartPlanAsync() => _rpc.InvokeAsync<StartPlan.StartPlanView>("getStartPlan");
         public Task<StartPlan.StartPlanView> EditStartPlanAsync(StartPlan.StartPlanEdit edit, string origin) => _rpc.InvokeAsync<StartPlan.StartPlanView>("editStartPlan", edit, origin);
         public Task<StartPlan.StartPlanView> GrantStartDisclosureAsync(string digest, string origin) => _rpc.InvokeAsync<StartPlan.StartPlanView>("grantStartDisclosure", digest, origin);
-        public Task<StartPlan.StartPlanView> ApproveStartPlanAsync(string digest) => _rpc.InvokeAsync<StartPlan.StartPlanView>("approveStartPlan", digest);
+        public Task<StartPlan.StartPlanView> ApproveStartPlanAsync(string digest, string origin = "human") => _rpc.InvokeAsync<StartPlan.StartPlanView>("approveStartPlan", digest, origin);
         public Task<StartPlan.StartWordsPage> GetStartWordsAsync(int max, int offset) => _rpc.InvokeAsync<StartPlan.StartWordsPage>("getStartWords", max, offset);
         public Task<StartPlan.StartWordsResult> WriteStartWordsAsync(StartPlan.StartWord[] words, string origin) => _rpc.InvokeAsync<StartPlan.StartWordsResult>("writeStartWords", words, origin);
         public Task<StartPlan.StartPlanBuildResult> BuildStartPlanAsync(string digest, string origin) => _rpc.InvokeAsync<StartPlan.StartPlanBuildResult>("buildStartPlan", digest, origin);
         public Task<StartPlan.StartPlanView> DiscardStartPlanAsync(string origin) => _rpc.InvokeAsync<StartPlan.StartPlanView>("discardStartPlan", origin);
+
+        // ---- the Studio wire (1.4). The call id the health filter minted rides along, so the owner groups a note with its call.
+        // SetStudioDriverAsync is the person's: an agent pipe has no such method, so the owner refuses it by method-not-found.
+        public Task<StudioShowResult> ShowInStudioAsync(StudioShowRequest request) => _rpc.InvokeAsync<StudioShowResult>("showInStudio", request, HealthCorrelation.CurrentId);
+        public Task<StudioSuggestResult> SuggestNextAsync(StudioSuggestRequest request) => _rpc.InvokeAsync<StudioSuggestResult>("suggestNext", request, HealthCorrelation.CurrentId);
+        public Task<StudioNotesView> GetStudioNotesAsync(string sessionId) => _rpc.InvokeAsync<StudioNotesView>("getStudioNotes", sessionId);
+        public Task SetStudioDriverAsync(string mode, string state) => _rpc.InvokeAsync("setStudioDriver", mode, state);
+        public Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null) => _rpc.InvokeAsync("noteAgentCall", tool, HealthCorrelation.CurrentId, focus, client, clientVersion);
 
         public void Dispose() => _rpc.Dispose();
     }

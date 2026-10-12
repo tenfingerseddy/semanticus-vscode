@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "review",
+  "title": "Check your model",
+  "minutes": 2,
+  "tryWithClaude": "Ask Claude: what should I fix first to make this model ready for AI?",
+  "steps": [
+    { "place": "review/model-quality", "focus": null, "press": null,
+      "say": "Model quality checks the model against good practice and lists what to fix.",
+      "how": null, "wait": "read" },
+    { "place": "review/ai-readiness", "focus": null, "press": null,
+      "say": "AI readiness scores how well Copilot and your assistant can use this model.",
+      "how": null, "wait": "read" },
+    { "place": "review/validation", "focus": null, "press": null,
+      "say": "Validation keeps checks you can run again, like a total that must match.",
+      "how": null, "wait": "read" },
+    { "place": "review/docs", "focus": null, "press": null,
+      "say": "Docs writes up the model for people who did not build it.",
+      "how": null, "wait": "read" },
+    { "place": "plan", "focus": null, "press": null,
+      "say": "What you find in these pages turns into rows in the Plan.",
+      "how": null, "wait": "read" }
+  ]
+}

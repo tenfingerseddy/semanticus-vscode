@@ -64,7 +64,7 @@ export interface StartPlanView {
   sections: StartSection[]; needsYou: StartNeed[];
   decide?: StartDecide; words?: { total: number; open: number };
   grades?: StartGrades;
-  digest?: string; approval?: { digest?: string | null; utc?: string | null } | null;
+  digest?: string; approval?: { digest?: string | null; utc?: string | null; by?: string | null } | null;
   canBuild?: boolean; blockedBecause?: string | null;
   /** The plan was built and its model still holds what it built (an undo makes it false again). */
   built?: boolean;
@@ -97,12 +97,12 @@ export const COPY = {
   // What a real Free plan holds (sf-wiring-real-drive, 2 Oct): the source's own draft and the assistant's words. No line is
   // marked Default there, so the note promises none.
   freeNotice: 'Free plan. Semanticus drafts the model from the source: the tables, the links, the date table and the starter measures. Your assistant writes the words. Jev is Pro, so nothing here was decided by Jev. Best practice fixes come after the build, one at a time.',
-  changedTip: 'Lines that moved since your last change here, including what your assistant wrote.',
+  changedTip: 'Changes updated since your last edit here. This count overlaps the other filters.',
   bpLetter: (letter: string) => `Best practice ${letter}`,
   bpUnknown: 'not measured yet',
   bpOneAtATime: 'Best practice fixes come one at a time, on the Plan, after the build',
   needsTitle: 'Needs you',
-  needsLead: (n: number) => `Jev left ${n} ${n === 1 ? 'line' : 'lines'} for you to decide. Each stays out of the build until you answer. Skip it and it becomes a Plan row after the build.`,
+  needsLead: (n: number) => `Jev left ${n} ${n === 1 ? 'change' : 'changes'} for you to decide. Each stays out of the build until you answer. Skip it and it becomes a task on the Plan after the build.`,
   needsOther: 'These wait on you. The rest of the plan is ready.',
   // A pick the rule made because Jev was not sure is IN the build (the plan uses it); only a line Jev left out stays out (UAT-J7-S2-004).
   needsPicks: (n: number) => `Jev was not sure about ${n} ${n === 1 ? 'total' : 'totals'}, so the plan builds the rule's pick for ${n === 1 ? 'it' : 'each'}. Answer to change it.`,
@@ -117,11 +117,12 @@ export const COPY = {
   buildTip: 'Builds the plan you approved, as one step. One undo takes it back.',
   undoLine: 'One undo takes the whole build back.',
   approvalNone: '',
-  approvalCurrent: 'You approved this plan. You or your assistant can build it. Any change you make, or words your assistant adds, removes the approval.',
+  approvalCurrent: 'This plan is approved. You or your assistant can build it. Any edit removes the approval.',
+  approvalCurrentByAssistant: 'Your assistant approved this plan. You or your assistant can build it. Any edit removes the approval.',
   approvalStale: 'Your approval no longer matches the plan. Something changed after you approved, such as words your assistant wrote. Approve again to build.',
   approvedByYou: 'Approved by you',
   noPlan: 'There is no plan to approve.',
-  approveFirst: 'Approve the plan first. Only you can approve it.',
+  approveFirst: 'You or your assistant must approve the plan first.',
   alreadyApproved: 'You already approved this plan.',
   stillMoving: 'Jev is still deciding. Approve when it stops.',
   waitingGrant: 'Jev is waiting for your answer to the first question.',
@@ -136,11 +137,11 @@ export const COPY = {
   footWaiting: (n: number) => `${n} ${n === 1 ? 'question waits' : 'questions wait'} on you.`,
   footReady: 'Ready to approve.',
   footDeciding: 'Jev is still deciding.', footDecidingRest: 'You can approve the plan when it stops.',
-  footApproved: 'You approved this plan.', footApprovedRest: 'Build makes it as one step. You or your assistant can press Build. One undo takes the whole build back.',
+  footApproved: 'This plan is approved.', footApprovedRest: 'Build makes it as one step. You or your assistant can press Build. One undo takes the whole build back.',
   footStale: 'The plan changed after you approved it.', footStaleRest: 'Look it over and approve it again before it can be built.',
   footBuilt: (name: string) => `Built into ${name}.`,
   footBuiltRest: 'Undo takes the whole build back. Discard the plan when you are done with it, and the Plan shows the model\'s own tasks.',
-  builtNote: (name: string) => `${name} was built from this plan. Lines left out or held were not built.`,
+  builtNote: (name: string) => `${name} was built from this plan. Changes left out or held were not built.`,
   sourceNotBuilt: 'Model not built yet', sourceBuilt: 'Model built from this plan',
   // the grades
   gradeProvisionalJev: 'may still change while Jev works',
@@ -148,7 +149,7 @@ export const COPY = {
   gradeBuilt: 'as built',
   gradeBestPractice: (letter: string) => `Best practice ${letter}`,
   // what the facts count
-  heldFact: 'held, not built',
+  heldFact: 'waiting, not built',
   // a start that made no plan
   startNoPlan: 'Semanticus could not start a plan from that source. Check the server and database, then try again.',
   askAssistant: 'Ask your assistant',
@@ -161,8 +162,8 @@ export const COPY = {
   filterHint: 'Open any row to see why, or change it.',
   groupWhole: 'Whole model',
   keep: 'Keep', drop: 'Drop', pin: 'Keep this value',
-  rename: 'Rename', keepName: 'Keep this name', nameFlagged: 'Name reads as a code',
-  orphanLine: 'A line the plan no longer shows', keepNameNote: 'Keep it and the question closes: the build accepts the finding and your assistant is not asked for a new name.', editWords: 'Edit the words', save: 'Save', cancel: 'Cancel', newName: 'New name', theWords: 'The words',
+  rename: 'Rename', keepName: 'Keep this name', nameFlagged: 'Use a name people recognise',
+  orphanLine: 'A change the plan no longer shows', keepNameNote: 'Keep it and the question closes: the build accepts the finding and your assistant is not asked for a new name.', editWords: 'Edit the words', save: 'Save', cancel: 'Cancel', newName: 'New name', theWords: 'The words',
   // The words editor meeting newer words (UAT-J8-A-002): the same choice every other editor offers (editbase.tsx).
   keepMine: 'Keep mine', useNew: 'Use the new one', yourWords: 'Your words', newWords: 'The new words',
   wordsMoved: 'These words changed while you were editing them. Your words are still here, and nothing was saved yet.',
@@ -183,10 +184,10 @@ export const COPY = {
   columnLeaveOut: 'Leave out', columnBringBack: 'Bring back', columnLeftOut: 'left out', columnHidden: 'hidden', columnKey: 'key', columnRenamed: (from: string) => `was ${from}`,
   gradeBuiltScored: 'Scored on the model as built',
   dateTableNote: 'The plan chooses the date table. Leave the table out or rename it to change it.',
-  pinNote: 'A change you make holds: no later round undoes it. Only the lines that depend on it are worked out again.',
-  keepNote: 'Keep puts the line back in the build. Drop leaves it out.',
+  pinNote: 'A change you make holds: no later round undoes it. Only the changes that depend on it are worked out again.',
+  keepNote: 'Keep puts the change back in the build. Drop leaves it out.',
   detailWhy: 'Why', detailChange: 'What changes', detailSource: 'From the source', detailWho: 'Who decides this', detailChoice: 'Your choice',
-  whoRule: 'A Semanticus rule. It works the same every time.',
+  whoRule: 'Semanticus makes this choice the same way every time.',
   whoJev: 'Jev, the decision service. It decides how columns total, formats, measure folders and what Copilot sees.',
   whoDefault: 'Jev is Pro, so this keeps its plain default. You can change it here.',
   whoAssistant: 'Your assistant writes it, on its own calls.',
@@ -199,9 +200,9 @@ export const COPY = {
   gradeNow: 'Raw tables', gradeAfter: 'after the build',
   gradeUnknown: 'not measured yet',
   gradeNotScored: 'The raw tables are not scored yet',
-  linesInPlan: 'Lines in the plan', wordsTitle: 'Words',
-  legendJev: 'Jev decided', legendRule: 'Semanticus rule', legendYou: 'You', legendAssistant: 'Your assistant wrote', legendDefault: 'Default, no Jev (Free)',
-  tabAll: 'All', tabJev: 'Jev', tabDefault: 'Default', tabRule: 'Rules', tabAssistant: 'Your assistant', tabYou: 'You', tabChanged: 'Changed',
+  linesInPlan: 'Changes in the plan', wordsTitle: 'Words',
+  legendJev: 'Jev chose this', legendRule: 'Semanticus chose this', legendYou: 'You', legendAssistant: 'Your assistant wrote', legendDefault: 'Default, no Jev (Free)',
+  tabAll: 'All', tabJev: 'Jev', tabDefault: 'Default', tabRule: 'Semanticus', tabAssistant: 'Your assistant', tabYou: 'You', tabChanged: 'Updated since your edit',
   sectionTitles: { tables: 'Tables and columns', links: 'Links and dates', measures: 'Measures', words: 'Words for Copilot', bestpractice: 'Best practice' } as Record<string, string>,
   sectionBlurbs: {
     tables: 'What is built, keys, totals, formats', links: 'Each link on or off, the date table, year to date',
@@ -234,12 +235,12 @@ export const SECTION_ORDER = ['tables', 'links', 'measures', 'words', 'bestpract
 
 export interface Mark { key: 'jev' | 'rule' | 'assistant' | 'you' | 'default'; label: string }
 
-/** Who decided a line. On Free the lines Jev would have decided say Default: Jev decided nothing there. */
+/** Who decided a line. A recorded Jev choice stays attributed if the person's tier changes. */
 export function lineMark(line: StartLine, tier: Tier): Mark {
   switch (line.decidedBy) {
     case 'person': return { key: 'you', label: 'You' };
     case 'assistant': return { key: 'assistant', label: 'Assistant' };
-    case 'jev': return tier.pro ? { key: 'jev', label: 'Jev' } : { key: 'default', label: 'Default' };
+    case 'jev': return { key: 'jev', label: line.kept ? 'Jev chose this' : 'Jev asks you' };
     default: return !tier.pro && line.point ? { key: 'default', label: 'Default' } : { key: 'rule', label: 'Rule' };
   }
 }
@@ -292,12 +293,19 @@ export function lineSource(line: StartLine, group?: Pick<StartGroup, 'table' | '
 
 /** The lines the build will make: kept, and not held. */
 export const buildCountOf = (view: Pick<StartPlanView, 'sections'>): number => linesOf(view).filter((l) => l.kept && !l.held).length;
-export const heldCountOf = (view: Pick<StartPlanView, 'sections'>): number => linesOf(view).filter((l) => !!l.held).length;
+export const heldCountOf = (view: Pick<StartPlanView, 'sections'>): number => linesOf(view).filter((l) => l.kept && !!l.held).length;
 /** The short value the line settles on, beside its title (not for a measure: its formula is the second line). */
 export function lineChoice(line: StartLine): string | null {
   const a = line.item?.after;
-  if (!a || isMeasure(line) || a.length > 28 || lineTitle(line).includes(a)) return null;
-  return a;
+  if (!a || isMeasure(line) || a.length > 28) return null;
+  const shown = shownValue(line, a);
+  return lineTitle(line).includes(shown) ? null : shown;
+}
+export function shownValue(line: StartLine, value: string | null | undefined): string {
+  if (line.item?.kind === 'set_summarize_by' && value === 'None') return "Don't summarize";
+  if (line.item?.kind === 'set_ai_data_schema' && value === 'Excluded') return 'Hidden from Copilot';
+  if (line.item?.kind === 'set_ai_data_schema' && value === 'Included') return 'Visible to Copilot';
+  return value ?? '';
 }
 /** The number in the right-hand cell, when the line's value is one. Never invented. */
 export function lineValue(line: StartLine): string | null {
@@ -482,7 +490,7 @@ export interface Approval { state: 'none' | 'current' | 'stale'; text: string }
  *  clears the approval when the plan moves gives no stale record, so a standing approval that has gone is told. */
 export function approvalOf(view: StartPlanView, prev?: StartPlanView | null): Approval {
   const a = view.approval?.digest;
-  if (a && view.digest && a === view.digest) return { state: 'current', text: COPY.approvalCurrent };
+  if (a && view.digest && a === view.digest) return { state: 'current', text: view.approval?.by === 'agent' ? COPY.approvalCurrentByAssistant : COPY.approvalCurrent };
   if (a) return { state: 'stale', text: COPY.approvalStale };
   if (prev && prev.exists && prev.digest !== view.digest && approvalOf(prev).state === 'current') return { state: 'stale', text: COPY.approvalStale };
   return { state: 'none', text: COPY.approvalNone };
@@ -663,6 +671,8 @@ export function decideNote(view: StartPlanView, tier: Tier): Note | null {
   if (!tier.pro || !view.decide) return null;
   // The person said Not now: the Needs you line says so and offers Allow, so no Jev progress is told here.
   if (view.jevDeclined) return null;
+  // A built plan has nothing left for Jev to do: it must not say Jev is waiting (hero16 N5).
+  if (view.built) return null;
   const d = view.decide;
   switch (d.state) {
     case 'waiting_grant': return { tone: 'need', text: 'Jev is waiting for you. Answer the first question in Needs you and it starts.' };
@@ -696,6 +706,17 @@ export function totalsOf(view: StartPlanView, tier: Tier): Record<Mark['key'], n
   return t;
 }
 
+/** The "Chosen by" counts under Changes in the plan: only who chose something, never "Jev 0". Semanticus's choices are rules, so they read as rules. */
+export function chosenByParts(totals: Record<Mark['key'], number>, pro: boolean): { key: string; text: string }[] {
+  const parts: { key: string; text: string }[] = [
+    { key: pro ? 'jev' : 'default', text: pro ? `Jev ${totals.jev}` : `Default ${totals.default}` },
+    { key: 'rule', text: `Semanticus rules ${totals.rule}` },
+    { key: 'assistant', text: `Your assistant ${totals.assistant}` },
+    { key: 'you', text: `You ${totals.you}` },
+  ];
+  return parts.filter((p) => totals[p.key as Mark['key']] > 0);
+}
+
 // ---------------------------------------------------------------- the foot and the grades
 
 export interface Foot { lead: string; rest: string; state: 'built' | 'stale' | 'approved' | 'deciding' | 'waiting' | 'ready' }
@@ -705,7 +726,7 @@ export function footOf(view: StartPlanView, tier: Tier, prev?: StartPlanView | n
   if (view.built) return { state: 'built', lead: COPY.footBuilt(view.destination?.name || 'the model'), rest: COPY.footBuiltRest };
   const approval = approvalOf(view, prev).state;
   if (approval === 'stale') return { state: 'stale', lead: COPY.footStale, rest: COPY.footStaleRest };
-  if (approval === 'current') return { state: 'approved', lead: COPY.footApproved, rest: COPY.footApprovedRest };
+  if (approval === 'current') return { state: 'approved', lead: view.approval?.by === 'agent' ? 'Your assistant approved this plan.' : COPY.footApproved, rest: COPY.footApprovedRest };
   if (tier.pro && view.decide?.state === 'deciding') return { state: 'deciding', lead: COPY.footDeciding, rest: COPY.footDecidingRest };
   const waiting = questionsOf(view).length;
   if (waiting > 0) return { state: 'waiting', lead: COPY.footWaiting(waiting), rest: COPY.undoLine };
@@ -853,7 +874,7 @@ export function startPageMode(view: Pick<StartPlanView, 'built'> | null | undefi
 
 /** The band's one line: what was built, how many lines went in, how to take it back. */
 export function builtBandWords(view: Pick<StartPlanView, 'destination' | 'sections'>): string {
-  return `${view.destination?.name || 'The model'} was built from this plan. ${buildCountOf(view)} lines built. One undo takes it back.`;
+  return `${view.destination?.name || 'The model'} was built from this plan. ${buildCountOf(view)} ${buildCountOf(view) === 1 ? 'change' : 'changes'} built. One undo takes it back.`;
 }
 
 /** The start plan belongs only to the model it was made for. A model opened live is not the model this plan builds, so an

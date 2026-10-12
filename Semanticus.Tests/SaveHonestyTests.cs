@@ -994,10 +994,13 @@ Finish up.
         }
 
         // The edit ledger's file (.semanticus/history.json, Plan-heart E4) is left out: it is this machine's record of
-        // edits, rewritten after every edit and git-ignored, not part of the saved model these tests compare.
+        // edits, rewritten after every edit and git-ignored, not part of the saved model these tests compare. The
+        // .semanticus/.gitignore that ledger writes in the background is left out for the same reason (it lands on its
+        // own timing, so a snapshot taken before and after a save could differ by that one file).
         private static string Snapshot(string dir) => string.Join("\n",
             Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
                 .Where(p => !Path.GetFileName(p).StartsWith(EditLedger.FileName, StringComparison.Ordinal))
+                .Where(p => !(Path.GetFileName(p) == ".gitignore" && Path.GetFileName(Path.GetDirectoryName(p)) == ".semanticus"))
                 .OrderBy(p => p, StringComparer.Ordinal)
                 .Select(p => Path.GetRelativePath(dir, p).Replace('\\', '/') + ":" + File.ReadAllText(p)));
 

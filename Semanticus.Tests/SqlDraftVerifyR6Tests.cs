@@ -103,6 +103,7 @@ namespace Semanticus.Tests
         /// though no fact links to it; and a source with no date table at all (S08) gets the same unlinked Date marked.
         /// A marked date table that nothing filters by is the harm Sol was asked to find (H2), and it is the table any
         /// time calculation written later, by a person or by Copilot, is written against.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(Schemas))]
         public async Task A_held_out_source_marks_the_date_table_its_facts_link_to_and_nothing_else(string id)
@@ -122,6 +123,7 @@ namespace Semanticus.Tests
 
         /// <summary>Stop rule (a), the numbers: a guard, and it passes at 2f75a1d2 on all 15. No time measure in any held-out
         /// build runs over a date table that does not reach its fact.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(Schemas))]
         public async Task No_held_out_time_measure_runs_over_a_date_table_its_fact_does_not_reach(string id)

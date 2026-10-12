@@ -103,12 +103,13 @@ namespace Semanticus.Tests
 
         /// <summary>Unit Price average (sure), Fiscal Year none (sure), CustomerKey none (sure), Amount sum (sure,
         /// the setting it already has), Order Number sum (sure, the setting it already has), Quantity sum (unsure),
-        /// Month Number none (unsure), Customer/CustomerKey none (unsure).</summary>
-        private static async Task<CapturingOracle> AnswerAsync(DecisionFixture f)
+        /// Month Number none (unsure), Customer/CustomerKey none (unsure).
+        /// <paramref name="renamedSales"/> answers the Sales columns again under that table name too, as Jev would after a rename.</summary>
+        private static async Task<CapturingOracle> AnswerAsync(DecisionFixture f, string renamedSales = null)
         {
             await f.ConsentAsync();
             var d = await DigestsAsync(f);
-            var recorded = new ByObjectRecordedOracle(Fixture(new[]
+            var rows = new[]
             {
                 (d["Sales/Unit Price"], "average", 0.93),
                 (d["Sales/Fiscal Year"], "none", 0.9),
@@ -118,7 +119,11 @@ namespace Semanticus.Tests
                 (d["Sales/Quantity"], "sum", 0.5),
                 (d["Sales/Month Number"], "none", 0.6),
                 (d["Customer/CustomerKey"], "none", 0.6),
-            }), "jev-test-1");
+            };
+            if (renamedSales != null)
+                rows = rows.Concat(rows.Where(r => r.Item1.StartsWith("column:Sales/", StringComparison.Ordinal))
+                                       .Select(r => ("column:" + renamedSales + "/" + r.Item1.Substring("column:Sales/".Length), r.Item2, r.Item3))).ToArray();
+            var recorded = new ByObjectRecordedOracle(Fixture(rows), "jev-test-1");
             var capturing = new CapturingOracle(recorded);
             f.Engine.UseDecisionsForTest(new DecisionService(capturing, new DecisionBudget()));
             return capturing;
@@ -238,6 +243,13 @@ namespace Semanticus.Tests
             Assert.Equal("The average Unit Price in Sales.", avg.Description);
             Assert.NotNull(await MeasureAsync(f, "Total Quantity"));
 
+            var beforeRefresh = await f.Engine.GetModelPlanAsync();
+            Assert.DoesNotContain(beforeRefresh.Items, i => i.Id == sales.Id);
+            var refreshed = await f.Engine.RefreshPlanAsync();
+            Assert.True(refreshed.Cleared > beforeRefresh.Items.Count(i => i.Status == ModelPlanStatuses.Done));
+            Assert.Contains(refreshed.Plan.History.Last(h => h.Sentence?.StartsWith("Refreshed the plan:") == true).Detail, t => t == sales.Title);
+            Assert.Equal("Nothing new.", (await f.Engine.RefreshPlanAsync()).Sentence);
+
             await f.Engine.UndoAsync("human");
             Assert.Equal("Default", await SummarizeOf(f, "column:Sales/Unit Price"));
             Assert.Equal("Default", await SummarizeOf(f, "column:Sales/Amount"));
@@ -281,6 +293,28 @@ namespace Semanticus.Tests
             Assert.Contains(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.Target == "measure:Sales/Order Number Sum");
             // Averages have no pattern in this model, so they keep the engine's name.
             Assert.Contains(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.Target == "measure:Sales/Average Unit Price");
+        }
+
+        // hero15 H13 (hero14 D12): the assistant set "jev.column-summarize.table:dim_product" aside, the table was renamed to
+        // Product, the row's id moved with the table's name, and the skip, kept by the old id, matched nothing: the row came back.
+        [Fact]
+        public async Task A_row_set_aside_stays_set_aside_when_a_rename_gives_it_a_new_id()
+        {
+            using var f = await ModelAsync("ColSumSkipRename.bim");
+            await AnswerAsync(f, renamedSales: "Sales Facts");
+            Assert.Contains((await SettledPlanAsync(f)).Items, i => i.Id == "jev.column-summarize.table:Sales");
+            await f.Engine.SkipModelPlanItemAsync("jev.column-summarize.table:Sales", "a sum here means nothing", "agent");
+
+            await f.Engine.RenameObjectAsync("table:Sales", "Sales Facts", "agent");
+
+            var after = await SettledPlanAsync(f);
+            var moved = Assert.Single(after.Items, i => i.Id == "jev.column-summarize.table:Sales Facts");
+            Assert.Equal(ModelPlanStatuses.Skipped, moved.Status);
+            Assert.Equal("a sum here means nothing", moved.SkipReason);
+
+            // It can be put back by the id it has now.
+            var back = await f.Engine.UnskipModelPlanItemAsync("jev.column-summarize.table:Sales Facts", "agent");
+            Assert.NotEqual(ModelPlanStatuses.Skipped, back.Items.Single(i => i.Id == "jev.column-summarize.table:Sales Facts").Status);
         }
 
         [Fact]

@@ -273,6 +273,13 @@ namespace Semanticus.Engine
         /// to ask (Sol 6.1 on the M11 delta, finding A1, the second strike of 1.3).</summary>
         internal int RemoveSynced(Predicate<ChangeItem> match) => _items.RemoveAll(l => l.AuthoredAfter == null && match(l));
         public ChangeItem[] Snapshot() => _items.ToArray();
+
+        internal ChangePlanState Copy()
+        {
+            var copy = new ChangePlanState(PlanId, Scope) { Note = Note, _itemSeq = _itemSeq };
+            copy._items.AddRange(_items.Select(x => x.Clone()));
+            return copy;
+        }
     }
 
     /// <summary>Holds the one current change plan for the session and allocates plan ids. Access is serialized
@@ -290,6 +297,8 @@ namespace Semanticus.Engine
 
         public ChangePlanState Require() =>
             _current ?? throw new InvalidOperationException("No change plan is open. Call propose_plan (or add_plan_item) first.");
+
+        internal void Replace(ChangePlanState plan) => _current = plan;
 
         public void Clear() => _current = null;
     }

@@ -518,7 +518,7 @@ namespace Semanticus.Tests
             // The paused row is named FIRST, ahead of the rows the plan's order puts before it (a safe fix, the other task).
             Assert.Equal(ly, row.WaitsFor[0].Id);
             Assert.Equal(new[] { ly, ytd }, Tasks(row));
-            Assert.StartsWith("Waits for: Check Sales LY and ", row.Sub, StringComparison.Ordinal);
+            Assert.StartsWith(PlanFootprint.WaitsForWords(row.WaitsFor[0].Doer) + "Check Sales LY and ", row.Sub, StringComparison.Ordinal);
 
             await f.Engine.HoldPlanItemAsync(ly, false);
             row = Assert.Single(DateRows(await f.Engine.GetModelPlanAsync()));

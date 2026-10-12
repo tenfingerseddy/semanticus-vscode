@@ -22,6 +22,7 @@ namespace Semanticus.Tests
 {
     public sealed class PlanFoldTests
     {
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_line_appears_once_per_offer_change_and_not_again()
         {
@@ -74,6 +75,7 @@ namespace Semanticus.Tests
             Assert.False(Row(plan, b).FootprintKnown);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task No_line_when_nothing_is_offered()
         {
@@ -83,6 +85,7 @@ namespace Semanticus.Tests
             Assert.Null(PlanLine(await CallAsync(f.Engine)));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_line_names_at_most_five_tasks_and_is_never_longer_than_600_characters()
         {
@@ -99,6 +102,7 @@ namespace Semanticus.Tests
             Assert.Contains("and " + (7 - numbered) + " more", line);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_Semanticus_cannot_read_keeps_the_persons_order_carries_the_note_and_nothing_is_called_independent()
         {
@@ -126,6 +130,7 @@ namespace Semanticus.Tests
         /// third, because the offer moved every such task behind the rest. Up is the person's order and the
         /// contract says the queue is read in it (4.1, Up), so the offer keeps that order and the task carries the
         /// "cannot tell" note in place.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Up_on_a_task_Semanticus_cannot_read_moves_it_in_the_assistants_queue_as_on_the_Plan()
         {
@@ -150,6 +155,7 @@ namespace Semanticus.Tests
             Assert.Contains("3. Describe the Cost measure (" + cost + ")", line);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Two_tasks_on_the_same_object_are_never_offered_together_and_the_second_is_named_as_waiting()
         {
@@ -162,7 +168,7 @@ namespace Semanticus.Tests
             Assert.StartsWith("Plan: 1 task is ready for you.\n", line);
             Assert.Contains("(" + first + ")", line);
             Assert.DoesNotContain("(" + second + ")", line);
-            Assert.Contains("Not offered yet: Rename the Margin measure. It waits for Describe the Margin measure.", line);
+            Assert.Contains("Not offered yet: Rename the Margin measure. It waits for Describe the Margin measure first", line);
         }
 
         [Fact]
@@ -181,6 +187,7 @@ namespace Semanticus.Tests
             Assert.False(offer.IsIndependent(a.Id));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_that_waits_for_a_Semanticus_row_is_not_offered_and_is_named_once()
         {
@@ -199,6 +206,7 @@ namespace Semanticus.Tests
             Assert.Contains("Not offered yet: Describe that object. It waits for ", line);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_paused_line_comes_once_and_names_what_this_assistant_may_finish()
         {
@@ -218,6 +226,7 @@ namespace Semanticus.Tests
             Assert.StartsWith("Plan: 1 task is ready for you.", back);      // the held one is no longer offered
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_owner_path_and_the_attached_path_each_keep_their_own_fingerprint()
         {
@@ -237,6 +246,7 @@ namespace Semanticus.Tests
             Assert.Null(await pipe.Human.InvokeAsync<string>("pullPlanOffer"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_user_edit_line_and_the_plan_line_sit_together_on_one_result()
         {

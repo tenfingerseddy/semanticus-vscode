@@ -5,8 +5,8 @@
 //   the doer switch keeps the order and the done-when honest, and never makes Semanticus do words
 //   Up moves one task one place among the assistant's tasks and nothing else
 //   the switch pauses the offer's wording and nothing else
-//   every control is absent from an agent connection: refused by method-not-found over the pipe, through
-//   RemoteEngine (the attached assistant's engine), and absent from the MCP surface
+//   every control is on both doors since 10 Oct 2026 (Kane): the pipe target, RemoteEngine and one MCP tool each;
+//   only the Permissions page stays the person's
 
 using System;
 using System.Collections.Generic;
@@ -87,6 +87,7 @@ namespace Semanticus.Tests
 
         // ---- each control changes only what it names ------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Pause_on_a_task_changes_only_its_held_flag_and_state_word()
         {
@@ -124,6 +125,7 @@ namespace Semanticus.Tests
             Assert.True(Row(await f.Engine.GetModelPlanAsync(), derived.Id).Held);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_note_changes_only_the_note_and_empty_clears_it()
         {
@@ -141,6 +143,7 @@ namespace Semanticus.Tests
                 f.Engine.SetPlanTaskNoteAsync(id, new string('x', PlanTasks.MaxNoteChars + 1)));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_doer_switch_moves_the_task_between_you_and_your_assistant()
         {
@@ -168,6 +171,7 @@ namespace Semanticus.Tests
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetPlanItemDoerAsync(id, "jev"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_doer_switch_on_a_derived_row_is_residue_and_let_it_run_only_where_the_engine_can()
         {
@@ -195,6 +199,7 @@ namespace Semanticus.Tests
                 await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetPlanItemDoerAsync(personRow.Id, "semanticus"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Up_moves_one_task_one_place_and_nothing_else()
         {
@@ -220,6 +225,7 @@ namespace Semanticus.Tests
                 f.Engine.MovePlanTaskUpAsync(before.Items.First(i => !PlanTasks.IsTaskId(i.Id)).Id));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_switch_changes_only_the_offer_wording()
         {
@@ -240,6 +246,7 @@ namespace Semanticus.Tests
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetAssistantQueueAsync("off"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_control_on_an_id_nobody_can_see_is_refused()
         {
@@ -248,30 +255,93 @@ namespace Semanticus.Tests
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetPlanTaskNoteAsync("pt-00000000", "x"));
         }
 
-        // ---- person-only: absent from every agent route -----------------------------------------------------
+        // ---- both doors (Kane, 10 Oct 2026: the person's word in chat is enough) ---------------------------------
 
         [Fact]
-        public void The_controls_live_on_the_human_target_and_on_no_agent_surface()
+        public void The_controls_live_on_the_pipe_target_and_each_has_an_MCP_tool()
         {
             foreach (var name in Controls)
             {
-                Assert.NotNull(typeof(HumanGovernanceRpcTarget).GetMethod(name));
-                Assert.Null(typeof(EngineRpcTarget).GetMethod(name));
+                Assert.NotNull(typeof(EngineRpcTarget).GetMethod(name));
+                Assert.Null(typeof(HumanGovernanceRpcTarget).GetMethod(name));
             }
-
-            // No MCP tool reaches any of them: no tool method calls the engine methods behind them.
             var toolNames = typeof(McpTools).Assembly.GetTypes()
                 .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static))
                 .Select(m => m.GetCustomAttribute<McpServerToolAttribute>()?.Name)
                 .Where(n => n != null).ToArray();
-            Assert.NotEmpty(toolNames);
-            foreach (var forbidden in new[] { "add_plan_task", "hold_plan_item", "set_plan_item_doer", "move_plan_task_up",
-                                              "set_assistant_queue", "set_plan_task_note" })
-                Assert.DoesNotContain(forbidden, toolNames);
+            foreach (var tool in new[] { "add_plan_task", "pause_plan_item", "set_plan_doer", "move_plan_task_up",
+                                         "set_assistant_queue", "set_plan_task_note", "remove_plan_row", "restore_plan_row" })
+                Assert.Contains(tool, toolNames);
         }
 
+        // Kane, 10 Oct 2026: one test per tool through the gated engine the MCP door holds. Each calls the same IEngine method the button calls.
         [Fact]
-        public async Task An_agent_connection_is_refused_every_control_and_the_person_is_not()
+        public async Task Each_plan_control_tool_does_what_the_button_does_through_the_gated_MCP_door()
+        {
+            using var f = await GappyAsync("McpCtl.bim");
+            var gated = AssistantEngine.ForAssistant(f.Engine);
+
+            // add_plan_task
+            var added = await McpTools.AddPlanTask(gated, "Check the Sales descriptions");
+            Assert.Matches("^pt-[0-9a-f]{8}$", added.ItemId);
+            var id = added.ItemId;
+            var second = (await McpTools.AddPlanTask(gated, "Check the Customer descriptions")).ItemId;
+            Assert.Equal(PlanDoers.Assistant, Row(await f.Engine.GetModelPlanAsync(), id).Doer);
+
+            // pause_plan_item, both ways
+            var paused = await McpTools.PausePlanItem(gated, id, true);
+            Assert.Equal(PlanStateWords.Paused, Row(paused, id).StateWord);
+            Assert.False(Row(await McpTools.PausePlanItem(gated, id, false), id).Held);
+
+            // set_plan_doer
+            Assert.Equal(PlanDoers.You, Row(await McpTools.SetPlanDoer(gated, id, "you"), id).Doer);
+            Assert.Equal(PlanDoers.Assistant, Row(await McpTools.SetPlanDoer(gated, id, "assistant"), id).Doer);
+
+            // move_plan_task_up: the second task moves above the first
+            var up = await McpTools.MovePlanTaskUp(gated, second);
+            Assert.True(Row(up, second).Order < Row(up, id).Order);
+
+            // set_assistant_queue
+            Assert.Equal(PlanAssistantQueue.Paused, (await McpTools.SetAssistantQueue(gated, "paused")).AssistantQueue);
+            Assert.Equal(PlanAssistantQueue.On, (await McpTools.SetAssistantQueue(gated, "on")).AssistantQueue);
+
+            // set_plan_task_note
+            Assert.Equal("Start with Amount", Row(await McpTools.SetPlanTaskNote(gated, id, "Start with Amount"), id).Note);
+
+            // remove_plan_row and restore_plan_row
+            var removed = await McpTools.RemovePlanRow(gated, id);
+            Assert.Equal("task", removed.Kind);
+            Assert.DoesNotContain((await f.Engine.GetModelPlanAsync()).Items, i => i.Id == id);
+            Assert.Contains((await McpTools.RestorePlanRow(gated, id)).Items, i => i.Id == id);
+        }
+
+        // Kane, 10 Oct 2026: the Permissions page is the one thing the assistant never changes.
+        [Fact]
+        public async Task The_Permissions_controls_are_still_refused_to_the_agent_through_the_gated_MCP_door()
+        {
+            foreach (var method in new[] { "SetAgentPolicyPresetAsync", "SetAgentPolicyCellAsync", "SetAgentPolicyEnabledAsync", "ApproveAgentActionAsync", "DenyAgentActionAsync" })
+                Assert.Equal(GateKind.Person, GateRegistry.Find(method).Kind);
+
+            using var f = await GappyAsync("McpPerm.bim");
+            var gated = AssistantEngine.ForAssistant(f.Engine);
+            var calls = new Func<Task>[]
+            {
+                () => gated.SetAgentPolicyPresetAsync("open", "agent"),
+                () => gated.SetAgentPolicyCellAsync("EditLocal", "local", "allow", "agent"),
+                () => gated.SetAgentPolicyEnabledAsync(false, "agent"),
+                () => gated.ApproveAgentActionAsync("any-id", "agent"),
+                () => gated.DenyAgentActionAsync("any-id", "agent"),
+            };
+            foreach (var call in calls)
+            {
+                var ex = await Assert.ThrowsAsync<InvalidOperationException>(call);
+                Assert.Equal(GateRegistry.PersonOnlySentence, ex.Message);
+            }
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task An_agent_connection_uses_every_control_and_the_Permissions_page_stays_the_persons()
         {
             var f = await GappyAsync("CtlPipe.bim");
             var pipeName = TestPipe.Mint("semanticus-ctl-");
@@ -291,36 +361,30 @@ namespace Semanticus.Tests
                 var held = await human.InvokeAsync<ModelPlanView>("holdPlanItem", added.ItemId, true);
                 Assert.Equal(PlanStateWords.Paused, Row(held, added.ItemId).StateWord);
 
+                // The agent pipe does what the page does, with its own origin.
+                var byAgent = await agent.InvokeAsync<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "From Claude" });
+                Assert.Matches("^pt-[0-9a-f]{8}$", byAgent.ItemId);
+                Assert.Equal(PlanStateWords.Paused, Row(await agent.InvokeAsync<ModelPlanView>("holdPlanItem", byAgent.ItemId, true), byAgent.ItemId).StateWord);
+                Assert.False(Row(await agent.InvokeAsync<ModelPlanView>("holdPlanItem", byAgent.ItemId, false), byAgent.ItemId).Held);
+                Assert.Equal(PlanDoers.You, Row(await agent.InvokeAsync<ModelPlanView>("setPlanItemDoer", byAgent.ItemId, "you"), byAgent.ItemId).Doer);
+                Assert.Equal("note", Row(await agent.InvokeAsync<ModelPlanView>("setPlanTaskNote", byAgent.ItemId, "note"), byAgent.ItemId).Note);
+                Assert.Equal(PlanAssistantQueue.Paused, (await agent.InvokeAsync<ModelPlanView>("setAssistantQueue", "paused")).AssistantQueue);
+
+                // The attached assistant's own engine reaches the same methods.
+                Assert.Equal(PlanDoers.Assistant, Row(await remote.SetPlanItemDoerAsync(byAgent.ItemId, "assistant"), byAgent.ItemId).Doer);
+                Assert.Equal(PlanAssistantQueue.On, (await remote.SetAssistantQueueAsync("on")).AssistantQueue);
+                Assert.Equal("again", Row(await remote.SetPlanTaskNoteAsync(byAgent.ItemId, "again"), byAgent.ItemId).Note);
+
+                // The person's own claim, Mark done and Could not, and the Permissions page, are not on the agent connection.
                 async Task Refused(Func<Task> call)
                 {
                     var ex = await Assert.ThrowsAnyAsync<Exception>(call);
                     Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
                 }
-                var revision = f.Sessions.Current.Revision;
-                var planBefore = Row(await f.Engine.GetModelPlanAsync(), added.ItemId);
-
-                await Refused(() => agent.InvokeAsync<ModelPlanActionResult>("addPlanTask", new PlanTaskRequest { Words = "Invented" }));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("holdPlanItem", added.ItemId, false));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("setPlanItemDoer", added.ItemId, "you"));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("movePlanTaskUp", added.ItemId));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("setAssistantQueue", "paused"));
-                await Refused(() => agent.InvokeAsync<ModelPlanView>("setPlanTaskNote", added.ItemId, "x"));
-
-                // The attached assistant's own engine: the same refusal, from the owner's surface.
-                await Refused(() => remote.AddPlanTaskAsync(new PlanTaskRequest { Words = "Invented" }));
-                await Refused(() => remote.HoldPlanItemAsync(added.ItemId, false));
-                await Refused(() => remote.SetPlanItemDoerAsync(added.ItemId, "you"));
-                await Refused(() => remote.MovePlanTaskUpAsync(added.ItemId));
-                await Refused(() => remote.SetAssistantQueueAsync("paused"));
-                await Refused(() => remote.SetPlanTaskNoteAsync(added.ItemId, "x"));
-
-                // Nothing any of them tried landed, and the assistant can still READ the setting.
-                var after = await remote.GetModelPlanAsync();
-                Assert.Equal(revision, f.Sessions.Current.Revision);
-                Assert.DoesNotContain(after.Items, i => i.Title == "Invented");
-                Assert.Equal(Face(planBefore), Face(Row(after, added.ItemId)));
-                Assert.True(Row(after, added.ItemId).Held);
-                Assert.Equal(PlanAssistantQueue.On, after.AssistantQueue);
+                await Refused(() => agent.InvokeAsync<ModelPlanView>("claimPlanTask", byAgent.ItemId));
+                await Refused(() => agent.InvokeAsync<AgentPolicy>("setAgentPolicyPreset", "open"));
+                await Refused(() => agent.InvokeAsync<AgentPolicy>("setAgentPolicyEnabled", false));
+                await Refused(() => remote.CompletePlanTaskAsync(byAgent.ItemId, "x"));
             }
             finally
             {

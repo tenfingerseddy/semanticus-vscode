@@ -581,7 +581,7 @@ namespace Semanticus.Engine
                     ? "Semanticus checked that no measure Copilot still sees uses anything in " + a.ObjectName + "."
                     : "Semanticus checked that no measure Copilot still sees uses " + a.ObjectName + ".")
                 : p.Needs.Count > 0
-                    ? a.ObjectName + " uses " + JoinNames(p.Needs) + ", which Copilot does not see yet. Keep the line that puts "
+                    ? a.ObjectName + " uses " + JoinNames(p.Needs) + ", which Copilot does not see yet. Tick the change that puts "
                       + (p.Needs.Count == 1 ? "it" : "them") + " back too, or " + a.ObjectName + " is seen without "
                       + (p.Needs.Count == 1 ? "it" : "them") + "."
                 : (a.Kind == KindMeasure
@@ -630,13 +630,13 @@ namespace Semanticus.Engine
             var usedBy = prepared.Measures.Count(kv => kv.Value.Uses.Contains(a.Ref));
             if (a.Kind == KindMeasure && usedBy > 0)
                 return a.ObjectName + " is a step inside " + JevFamily.Count(usedBy, "other measure", "other measures") + " that are left out too, so Copilot does not need it.";
-            return a.ObjectName + " reads as a technical " + (a.Kind == KindMeasure ? "measure" : a.Kind == KindTable ? "table" : "field")
+            return a.ObjectName + " looks like a technical " + (a.Kind == KindMeasure ? "measure" : a.Kind == KindTable ? "table" : "field")
                  + " rather than something people ask about, and nothing Copilot sees uses it.";
         }
 
         /// <summary>The first "why" line of an AI data schema item.</summary>
         internal static string Missing(int n, string table) =>
-            JevFamily.Count(n, "thing", "things") + " in " + table + " should change in what Copilot and data agents see, "
-            + "so their answers come from what people ask about and nothing that could confuse them.";
+            JevFamily.Count(n, "thing", "things") + " in " + table + " should be shown to Copilot or hidden from it. "
+            + "Then Copilot answers from what people ask about, not from parts that could confuse it.";
     }
 }

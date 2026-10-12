@@ -1,0 +1,31 @@
+table Store
+
+	column 'Store Key'
+		isKey
+		isHidden
+		dataType: int64
+		sourceColumn: StoreKey
+		summarizeBy: none
+
+	column 'Store Name'
+		dataType: string
+		sourceColumn: StoreName
+		summarizeBy: none
+
+	column 'Store Type'
+		dataType: string
+		sourceColumn: StoreType
+		summarizeBy: none
+
+	column Country
+		dataType: string
+		sourceColumn: Country
+		summarizeBy: none
+
+	partition Store = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [StoreKey = Int64.Type, StoreName = text, StoreType = text, Country = text], {})
+			in
+				Source

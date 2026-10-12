@@ -1,0 +1,35 @@
+table Customer
+
+	column 'Customer Key'
+		isKey
+		dataType: int64
+		sourceColumn: CustomerKey
+		summarizeBy: none
+
+	column Segment
+		dataType: string
+		sourceColumn: Segment
+		summarizeBy: none
+
+	column 'Age Band'
+		dataType: string
+		sourceColumn: AgeBand
+		summarizeBy: none
+
+	column City
+		dataType: string
+		sourceColumn: City
+		summarizeBy: none
+
+	column Country
+		dataType: string
+		sourceColumn: Country
+		summarizeBy: none
+
+	partition Customer = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [CustomerKey = Int64.Type, Segment = text, AgeBand = text, City = text, Country = text], {})
+			in
+				Source

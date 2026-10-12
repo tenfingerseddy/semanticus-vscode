@@ -396,6 +396,40 @@ const GROUP_LABEL: Record<string, string> = { measures: 'Measures', columns: 'Co
 const GROUP_ORDER = ['measures', 'columns', 'relationships', 'tables', 'other'];
 
 /** "3 measures - 1 column - 1 relationship", or "nothing" when the list is empty. */
+// ---- a rename or removal under the shown field (N11) --------------------------------------------------
+export interface RenameDelta { kind: string; ref: string; props?: string[]; before?: string | null }
+
+/** The ref of the same object after the renames in one change. A column, measure or hierarchy keeps its table; a renamed
+ * table moves every field under it. Anything else leaves the ref as it was. */
+export function followRename(root: string, deltas: RenameDelta[] | undefined): string {
+  let ref = root;
+  for (const d of deltas ?? []) {
+    if (d.kind !== 'update' || !d.props?.includes('Name') || typeof d.before !== 'string' || !d.before) continue;
+    const at = d.ref.indexOf(':');
+    if (at < 0) continue;
+    const kind = d.ref.slice(0, at);
+    const rest = d.ref.slice(at + 1);
+    if (kind === 'table') {
+      const oldTable = d.before;
+      if (ref === 'table:' + oldTable) ref = d.ref;
+      else {
+        const m = /^([a-zA-Z]+):/.exec(ref);
+        if (m && ref.slice(m[0].length).startsWith(oldTable + '/')) ref = m[0] + rest + ref.slice(m[0].length + oldTable.length);
+      }
+    } else {
+      const slash = rest.lastIndexOf('/');
+      if (slash >= 0 && kind + ':' + rest.slice(0, slash + 1) + d.before === ref) ref = d.ref;
+    }
+  }
+  return ref;
+}
+
+/** What the person reads when the shown field can no longer be found. The engine's own words name a ref. */
+export const GONE_FROM_IMPACT = 'That field was renamed or removed, so there is nothing to show for it. Pick another from the list.';
+export function impactErrorLine(message: string): string {
+  return /not found/i.test(message) ? GONE_FROM_IMPACT : message;
+}
+
 export function modelRowCounts(impact: ImpactShape): string {
   if (!impact) return 'nothing';
   const parts: string[] = [];

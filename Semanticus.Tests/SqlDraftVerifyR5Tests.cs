@@ -203,6 +203,7 @@ namespace Semanticus.Tests
         /// "Mark the date table" row) sleeps until the model already uses time-intelligence DAX, and no Plan row adds
         /// time-intelligence measures at all. Whatever the fix (a true sentence, or a Plan that offers both), a promise
         /// the note makes must hold.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_no_date_note_promises_only_what_the_plan_then_offers()
         {

@@ -24,6 +24,8 @@ const required = [
   'extension/out/extension.js',
   'extension/media/studio/studio.js',
   'extension/media/studio/studio.css',
+  'extension/assets/learn/ask.json',
+  'extension/assets/learn/contoso-shop/tables/Sales.tmdl',
   'extension/node_modules/vscode-jsonrpc/node.js',
   'extension/engine/Semanticus.Engine.exe',
   'extension/engine/Semanticus.Engine.dll',

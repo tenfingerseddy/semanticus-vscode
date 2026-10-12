@@ -859,12 +859,26 @@ namespace Semanticus.Engine
                     // TMDL writes these semantic defaults explicitly while a valid .bim may omit them. Scrub only
                     // the default values on their exact root types: non-zero ordering remains an authored change.
                     if (rootObject is TOM.CalculationItem && (int?)root["ordinal"] == 0) root.Remove("ordinal");
+                    if (rootObject is TOM.ModelRole) NormalizeRoleMembers(root);
                     if (rootObject is TOM.NamedExpression
                         && string.Equals((string)root["kind"], "m", StringComparison.OrdinalIgnoreCase)) root.Remove("kind");
                 }
                 return tok.ToString(Newtonsoft.Json.Formatting.Indented);
             }
             catch { return json; }   // a normalizer failure must never SWALLOW a diff — fall back to the raw text
+        }
+
+        // A role member is the same person or group whether or not one side carries memberId. The server assigns that id
+        // (Power BI hands it back on every read; TMDL, .bim and Desktop never author it, and TabularEditor's own deployer
+        // strips it for Azure), so it can never be an authored difference. Order is not meaning either: the server may list
+        // members in another order than the file did. What stays is name, provider and type, so a real member change reads.
+        private static void NormalizeRoleMembers(Newtonsoft.Json.Linq.JObject root)
+        {
+            if (!(root["members"] is Newtonsoft.Json.Linq.JArray members)) return;
+            foreach (var m in members.OfType<Newtonsoft.Json.Linq.JObject>()) m.Remove("memberId");
+            var sorted = members.OrderBy(m => (string)(m as Newtonsoft.Json.Linq.JObject)?["memberName"], StringComparer.Ordinal)
+                .ThenBy(m => (string)(m as Newtonsoft.Json.Linq.JObject)?["identityProvider"], StringComparer.Ordinal).ToList();
+            members.RemoveAll(); foreach (var m in sorted) members.Add(m);
         }
 
         private static void Scrub(Newtonsoft.Json.Linq.JToken tok)

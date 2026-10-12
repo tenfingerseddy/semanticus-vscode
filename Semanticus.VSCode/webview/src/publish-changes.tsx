@@ -7,7 +7,7 @@ import type { ApplyDiffResult, CompareSeed, ModelDiff } from './compare';
 import { KIND_ICON, ReviewCardBody } from './diffview';
 import {
   checkingCopy, clockTime, failureReasons, groupRows, isRemoval, neededParent, notPublishedLine, nothingToPublishCopy,
-  couldNotGoLine, freeNewModelName, newModelLabel, newModelSignIn, publishableRows, publishCounts, publishedLine, publishLabel, rowNote, undoneLine, unreachableCopy,
+  couldNotGoLine, freeNewModelName, heldReason, newModelLabel, newModelSignIn, publishableRows, publishCounts, publishedLine, publishLabel, rowNote, undoneLine, unreachableCopy,
 } from './publishcopy';
 import { engineSentence, sortWorkspaces, workspaceName, type FabricWorkspace, type Load } from './connectpickers-model';
 
@@ -100,7 +100,7 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
     for (const it of items) { if (!wish.has(it.ref)) continue; const p = neededParent(it, items, wish); if (p) m.set(it.ref, p); }
     return m;
   }, [items, wish]);
-  const effective = useMemo(() => new Set(items.filter((i) => wish.has(i.ref) && !needs.has(i.ref) && !refused.has(i.ref)).map((i) => i.ref)), [items, wish, needs, refused]);
+  const effective = useMemo(() => new Set(items.filter((i) => wish.has(i.ref) && !needs.has(i.ref) && !refused.has(i.ref) && !heldReason(i)).map((i) => i.ref)), [items, wish, needs, refused]);
   const counts = useMemo(() => publishCounts(items, effective), [items, effective]);
   const groups = useMemo(() => groupRows(items), [items]);
 
@@ -196,7 +196,7 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
               </div>
               {g.rows.map((row) => {
                 const parent = needs.get(row.ref);
-                const reason = refused.get(row.ref);
+                const reason = refused.get(row.ref) ?? heldReason(row);
                 const blocked = !!parent || !!reason;
                 return (
                   <div key={row.ref + ':' + row.action} data-testid="publish-row" data-ref={row.ref} className="px-4"

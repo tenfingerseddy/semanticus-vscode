@@ -111,6 +111,7 @@ namespace Semanticus.Tests
             await r.Engine.StartDecideSettledForTest();
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("words every word refused")]
         [InlineData("words that change nothing")]
@@ -223,6 +224,7 @@ namespace Semanticus.Tests
         }
 
         // ITEM 4. The queue kept asking for a name the object has, the check refused the name it has ("It already has that name"), and there was no way to keep it.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("agent")]
         [InlineData("human")]
@@ -255,6 +257,7 @@ namespace Semanticus.Tests
             Assert.All(findings, f => Assert.True(f.Waived, f.RuleId + " still flags the kept name " + keep.Ref + " after the build"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_business_name_the_naming_rules_would_flag_is_refused_and_one_it_accepts_is_not_flagged_after_the_build()
         {
@@ -308,6 +311,7 @@ namespace Semanticus.Tests
         }
 
         // A change of case only is a change ("Average BILL RATE" to "Average Bill Rate" was refused as "It already has that name").
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_change_of_case_only_is_a_rename()
         {
@@ -322,6 +326,7 @@ namespace Semanticus.Tests
         }
 
         // A new name settles the question the other way: the assistant's keep goes; the person's keep stands.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_new_name_replaces_the_assistants_keep_and_never_the_persons()
         {

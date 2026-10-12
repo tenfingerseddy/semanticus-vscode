@@ -196,33 +196,6 @@ namespace Semanticus.Tests
             f.Sessions.Current.LiveOrigin = new LiveOrigin("localhost:" + port, database, null, localName: title, localPath: path, localDesktop: desktop);
         }
 
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so two Sales.pbix in two folders are one identity, the Sales title.")]
-        public async Task A_Desktop_file_whose_path_is_known_is_never_switched_by_another_file_with_its_title()
-        {
-            // D1: key by the file whenever Desktop names it. A title is only a last resort, and a file whose path is
-            // known is never switched on or off by another file that merely shares its title.
-            using var f = new DecisionFixture();
-            var a = Path.Combine(f.Home, "east", "Sales.pbix");
-            var c = Path.Combine(f.Home, "west", "Sales.pbix");
-            await OpenDesktopAsync(f, "52001", "Sales", a);
-            await Set(f, "studio", Point, false);
-
-            await OpenDesktopAsync(f, "52002", "Sales", c);
-            Assert.True((await Row(f, "agent")).Enabled, "another Sales.pbix whose path Desktop named read A's off");
-
-            // A Sales that Desktop opened from its own Open dialog could be A, so it errs toward off and says why.
-            await OpenDesktopAsync(f, "52003", "Sales");
-            var b = await Row(f, "agent");
-            Assert.False(b.Enabled);
-            Assert.Contains("same name", b.Note);
-            await Set(f, "agent", Point, true);
-
-            await OpenDesktopAsync(f, "61234", "Sales", a);
-            Assert.False((await Row(f, "studio")).Enabled, "a Sales opened by title switched A back on");
-            await OpenDesktopAsync(f, "61235", "Sales", c);
-            Assert.True((await Row(f, "studio")).Enabled);
-        }
-
         [Fact]
         public async Task A_title_only_Desktop_file_switched_off_and_on_again_stays_on_after_Desktop_restarts()
         {
@@ -264,38 +237,6 @@ namespace Semanticus.Tests
             Assert.True((await Row(f, "studio")).Enabled, "an on for a Desktop file did not survive a Desktop restart");
             await OpenDesktopAsync(f, "52001", "Sales", database: a);   // A, in the run that switched it off
             Assert.False((await Row(f, "agent")).Enabled, "A's own off in its own run was switched back on");
-        }
-
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so no Desktop file is known by its path; that a Desktop on leaves a cloud and a saved model under the old off is held by DecisionSwitchScopeR4Tests.An_on_for_a_model_known_by_nothing_is_for_models_known_by_nothing_and_says_so.")]
-        public async Task A_Desktop_on_never_reaches_a_Desktop_file_whose_path_is_known_nor_a_cloud_or_saved_model()
-        {
-            // The on crosses only between models nothing tells apart. A file Desktop named keeps its own off, and a cloud or
-            // saved model reads none of the Desktop files; the workspace's old off stays in place for them.
-            using var f = new DecisionFixture();
-            var shared = Path.Combine(f.Workspace, LayoutStore.DirName, "decision-settings.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(shared));
-            File.WriteAllText(shared, "{\"points\":{\"" + Point + "\":{\"enabled\":false}}}");
-            var east = Path.Combine(f.Home, "east", "Sales.pbix");
-            await OpenDesktopAsync(f, "52001", "Sales", east);
-            Assert.False((await Row(f, "agent")).Enabled);
-            await Set(f, "agent", Point, false);
-            await OpenDesktopAsync(f, "52002", path: Path.Combine(f.Home, "north", "Stock.pbix"));
-            await Set(f, "agent", Point, false);
-
-            await OpenDesktopAsync(f, "52003");   // Desktop names nothing: it reads every Desktop off, and the old one
-            Assert.False((await Row(f, "studio")).Enabled);
-            Assert.Equal(LocalEngine.OnForModelsWithNoNameNote, (await Set(f, "studio", Point, true)).Single(p => p.Name == Point).Note);
-
-            await OpenDesktopAsync(f, "61234", "Sales", east);
-            Assert.False((await Row(f, "agent")).Enabled, "an on for a Desktop model Desktop names nothing about switched on a file whose path is known");
-            await OpenDesktopAsync(f, "61235", path: Path.Combine(f.Home, "north", "Stock.pbix"));
-            Assert.False((await Row(f, "agent")).Enabled, "an on reached a file whose own off it could not be");
-            await OpenLiveAsync(f, "Model A");
-            Assert.False((await Row(f, "agent")).Enabled, "a Desktop on lifted the old workspace off for a cloud model");
-            await f.Engine.CreateModelAsync("On disk", 1604, discardUnsaved: true);
-            await f.SaveAsAsync("OnDisk.bim");
-            Assert.False((await Row(f, "studio")).Enabled, "a Desktop on lifted the old workspace off for a model saved in the workspace");
-            Assert.Equal("{\"points\":{\"" + Point + "\":{\"enabled\":false}}}", File.ReadAllText(shared));
         }
 
         [Fact]

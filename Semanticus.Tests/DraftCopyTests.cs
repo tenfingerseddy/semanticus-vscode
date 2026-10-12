@@ -76,9 +76,9 @@ namespace Semanticus.Tests
             Assert.Equal("Your assistant changes the model here. This step is its own undo step.", DraftCopy.DirectStep);
             Assert.Equal("Your assistant also changed 3 things outside this run", DraftCopy.OutsideRun(3));
             Assert.Equal("Your assistant also changed 1 thing outside this run", DraftCopy.OutsideRun(1));
-            Assert.Equal("This one waits for the person because it sets who can see which data. Ask them to press Approve and run in Semanticus.",
+            Assert.Equal("This one waits for the person because it sets who can see which data. When they say yes, call approve_draft.",
                 DraftCopy.HeldRefusal(DraftHolds.RowSecurity));
-            Assert.Equal("This one waits for the person because it publishes after the change. Ask them to press Approve and run in Semanticus.",
+            Assert.Equal("This one waits for the person because it publishes after the change. When they say yes, call approve_draft.",
                 DraftCopy.HeldRefusal(DraftHolds.Publish));
             Assert.Equal("Also dropped: needs step 1", DraftCopy.AlsoDropped(new[] { 1 }));
             Assert.Equal("Also dropped: needs steps 1 and 3", DraftCopy.AlsoDropped(new[] { 1, 3 }));

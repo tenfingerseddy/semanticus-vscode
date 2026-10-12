@@ -201,37 +201,6 @@ namespace Semanticus.Tests
         // dimension of its own) has ITEM_COUNT and FX_RATE offered, while the same Plan's "Add explicit measures" row
         // proposes a measure for each of them: the contradiction the guard's own comment says it prevents.
 
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData("none", true), InlineData("read", true), InlineData("none", false)]
-        public async Task N9_a_header_fact_that_two_facts_share_keeps_its_counts_and_its_rates(string report, bool pro)
-        {
-            using var f = await ShapeAsync(FileFor("N9", report, pro), Build("N9"), report, pro);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:fact_order_line/LINE_AMT", "column:fact_order_line/QTY", "column:fact_shipment/SHIPPED_QTY",
-                "column:fact_shipment/SHIP_COST", "column:fact_order_hdr/FREIGHT_AMT", "column:fact_order_hdr/ORDER_DT");
-            AssertNeverOffered(row, targets, "column:fact_order_hdr/ITEM_COUNT", "column:fact_order_hdr/FX_RATE");
-        }
-
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData("none"), InlineData("read")]
-        public async Task N10b_a_budget_fact_joined_many_to_many_from_the_dimensions_side_keeps_its_numbers(string report)
-        {
-            // The guard reads the From end of a relationship as the many side and never looks at its cardinality, so a
-            // many-to-many stored from the dimension's side makes the dimension "the fact" and the budget "a lookup".
-            using var f = await ShapeAsync(FileFor("N10b", report), Build("N10b"), report);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:fact_budget/CATEGORY", "column:dim_product/CATEGORY", "column:fact_budget/BUDGET_AMT");
-            AssertNeverOffered(row, targets, "column:fact_budget/BUDGET_UNITS");
-        }
-
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task X1_a_facts_one_to_one_extension_keeps_its_numbers()
-        {
-            // A fact split in two, one to one (the second table holds the rest of each invoice's numbers).
-            using var f = await ShapeAsync(FileFor("X1", "none"), Build("X1"), "none");
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:fact_invoice/INV_KEY", "column:fact_invoice_ext/INV_KEY", "column:fact_invoice_ext/DISCOUNT_AMT");
-            AssertNeverOffered(row, targets, "column:fact_invoice_ext/LOYALTY_POINTS");
-        }
-
         // ---- D-B (MEDIUM): an aggregation table's group-by column ----------------------------------------------------
 
         [Theory, InlineData("none"), InlineData("read")]
@@ -249,44 +218,11 @@ namespace Semanticus.Tests
 
         // ---- D-C (MEDIUM): a period table that holds a date hierarchy -------------------------------------------------
 
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task X3_a_period_table_holding_a_date_hierarchy_is_read_as_a_calendar()
-        {
-            // The fix brief: "a month-grain calendar (any table marked as the date table, or holding a date hierarchy)".
-            // IsCalendar (LocalEngine.Plan.cs:1926) checks "at least half the columns are calendar, date or key shaped"
-            // BEFORE it looks at the hierarchies, so a period table with a Year > Month hierarchy and four other columns
-            // is not a calendar, and its columns are offered.
-            using var f = await ShapeAsync(FileFor("X3", "none"), Build("X3"), "none");
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:dim_period/CLOSE_STATUS", "column:dim_period/SEASON", "column:dim_period/BUDGET_VERSION", "column:dim_period/OWNER_TXT");
-        }
-
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task X6_an_unmarked_calendar_snowflaked_to_its_fiscal_periods_is_still_a_calendar()
-        {
-            // A calendar on the many side is never read as one ("never a table on the many side of a relationship"), and
-            // DAY_KEY has no DT or DATE word, so no date relationship points at it: dim_day is read as a fact, its date
-            // is held, and its calendar columns are offered.
-            using var f = await ShapeAsync(FileFor("X6", "none"), Build("X6"), "none");
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:dim_day/CAL_DATE", "column:dim_fiscal_period/FISCAL_YEAR");
-            AssertNeverOffered(row, targets, "column:dim_day/WEEKDAY_FLG", "column:dim_day/HOLIDAY_TXT");
-        }
-
         // ---- D5's sibling: the singulariser ------------------------------------------------------------------------------
-
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task X7_a_name_column_named_after_its_entity_on_an_es_or_irregular_plural_is_never_offered()
-        {
-            // NamedAfterItsTable (LocalEngine.Plan.cs:1982) drops a final s ("branches" becomes "branche") and knows no
-            // irregular plural ("people").
-            using var f = await ShapeAsync(FileFor("X7", "none"), Build("X7"), "none");
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:Branches/Branch", "column:People/Person");
-        }
 
         // ---- a calculation group's own column ------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("none", true), InlineData("read", true), InlineData("none", false)]
         public async Task X8_a_calculation_groups_own_column_is_never_offered(string report, bool pro)
         {
@@ -301,25 +237,5 @@ namespace Semanticus.Tests
 
         // ---- D9's sibling: an assistant's removal of a held-back column -------------------------------------------------------
 
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task B5_an_assistants_removal_of_a_held_back_column_does_not_become_the_cleanup_rows_own_offer()
-        {
-            // The D9 fix files an assistant's delete_if_unused of a MEASURE on its own row; a name column or a date still files
-            // on cleanup/model (Plan/LocalEngine.PlanChanges.cs:132-139), whose sentence says both are never offered.
-            using var f = await ShapeAsync(FileFor("B5", "none"), async fx =>
-            {
-                await fx.Engine.CreateColumnAsync("table:dim_client", "ONBOARDED_ON", "DateTime", null, "human");
-            }, "none");
-            await f.Engine.AddPlanItemAsync("column:dim_client/CLNT_NM", "delete_if_unused", null, "Remove CLNT_NM", null, null, "agent");
-            await f.Engine.AddPlanItemAsync("column:dim_client/ONBOARDED_ON", "delete_if_unused", null, "Remove ONBOARDED_ON", null, null, "agent");
-
-            var plan = await f.Engine.GetModelPlanAsync();
-            var row = Assert.Single(plan.Items, i => i.Id == "cleanup/model");
-            var lines = row.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>();
-            Assert.Contains(row.Why, w => w.Contains("name columns", StringComparison.Ordinal) && w.Contains("never offered", StringComparison.Ordinal));
-            var onTheRow = lines.Select(l => l.Target ?? "").Where(t => t == "column:dim_client/CLNT_NM" || t == "column:dim_client/ONBOARDED_ON").ToArray();
-            Assert.True(onTheRow.Length == 0, "the cleanup row carries the assistant's removal of " + string.Join(", ", onTheRow)
-                + ", while it says name columns and dates are never offered");
-        }
     }
 }

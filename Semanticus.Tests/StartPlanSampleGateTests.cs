@@ -161,6 +161,10 @@ namespace Semanticus.Tests
 
         // ============================================================ the Plan's runs after the build
 
+        [Theory, InlineData(Answer.NotNow, false)]
+        public Task The_plan_after_the_build_sends_the_samples_facts_only_under_a_grant_that_covered_it_sample(Answer answer, bool expectSample) => The_plan_after_the_build_sends_the_samples_facts_only_under_a_grant_that_covered_it(answer, expectSample);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(Answer.NotNow, false)]
         [InlineData(Answer.Allow, true)]
@@ -177,6 +181,7 @@ namespace Semanticus.Tests
 
         // ============================================================ the decide rounds and the words (the scratch they read)
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(Answer.NotNow, false)]
         [InlineData(Answer.Allow, true)]
@@ -208,6 +213,7 @@ namespace Semanticus.Tests
 
         // ============================================================ a Free start, later upgraded to Pro
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_start_later_upgraded_to_Pro_sends_no_sample_facts_until_the_person_allows_the_source()
         {
@@ -226,6 +232,7 @@ namespace Semanticus.Tests
 
         // ============================================================ an engine restart
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(Answer.NotNow, false)]
         [InlineData(Answer.Allow, true)]
@@ -244,6 +251,7 @@ namespace Semanticus.Tests
 
         // ============================================================ the gate itself
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_gate_says_yes_only_for_the_plan_a_current_grant_named_the_sample_for()
         {

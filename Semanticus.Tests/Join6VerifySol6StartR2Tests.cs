@@ -112,6 +112,7 @@ namespace Semanticus.Tests
         // ================================================================== S1's class: more orders
 
         /// <summary>Pro: permission, grant and approval, then the permission is set AGAIN after the approval (a new marker value). The build stands, both doors.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(false, "mcp")]
@@ -134,6 +135,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Pro: the person takes permission back after the approval. Whatever the build then says, it is never the false "not the one you were shown".</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -152,6 +154,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The readiness rules and the installed-library list, multi-line, written into the model between the preview and the build: the build stands.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(true, "mcp")]
@@ -173,6 +176,7 @@ namespace Semanticus.Tests
 
         /// <summary>A person's own model change between the preview and the build still stops it, and writes nothing: a description on the model, a culture, and
         /// best-practice rules loaded into the model by the engine's own call (an engine-written annotation that is NOT bookkeeping).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("description", "ui")]
         [InlineData("description", "mcp")]
@@ -201,6 +205,7 @@ namespace Semanticus.Tests
         // ================================================================== no unseen write behind the bookkeeping list
 
         /// <summary>The build writes none of the bookkeeping annotations (so leaving them out of the compare hides no build write), and every object it writes is reviewed.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(false, "mcp")]
@@ -261,6 +266,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Drop all six, keep them all again: the digest is the first one and all six are built, both doors, Free and Pro.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(false, "mcp")]
@@ -286,6 +292,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Drop a time measure, drop its base, keep the base again: the time measure the person dropped stays dropped, the review says so, the model agrees.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(true, "mcp")]
@@ -310,6 +317,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Pin on a time measure is refused on the agent door too, by key and by ref, and nothing moves.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("key")]
         [InlineData("ref")]
@@ -324,6 +332,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The stored plan (what an engine restart reads back) carries the drop: same digest, same left-out measure.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task V10_a_time_drop_is_in_the_stored_plan()
         {

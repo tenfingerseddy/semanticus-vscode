@@ -34,6 +34,7 @@ namespace Semanticus.Tests
         // Semanticus's own fiscal calendar template (LocalEngine.CalendarTemplates.cs:212, 214) labels these "FY2025 Q1" and "FY2025 M01".
         [InlineData("Fiscal Quarter", "String", "FY2025 Q1", "January")]
         [InlineData("Fiscal Month", "String", "FY2025 M01", "January")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify6_R16_a_period_of_another_kind_is_not_said_in_calendar_dates(string column, string type, string value, string calendarMonth)
         {
             using var rig = await BuildAsync();
@@ -45,10 +46,16 @@ namespace Semanticus.Tests
                 "a " + column + " label said in calendar dates, which the engine cannot know: '" + stated.Person + "'");
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Fiscal Quarter", "String", "Q2", "April")]
+        public Task Verify6_R16_a_period_of_another_kind_is_not_said_in_calendar_dates_sample(string column, string type, string value, string calendarMonth) => Verify6_R16_a_period_of_another_kind_is_not_said_in_calendar_dates(column, type, value, calendarMonth);
+
         [Theory]
         [InlineData("Fiscal Quarter", "String")]
         [InlineData("Financial Year", "Int64")]
         [InlineData("Tax Year", "Int64")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify6_R16_a_split_by_a_period_of_another_kind_is_not_called_a_calendar_period(string column, string type)
         {
             using var rig = await BuildAsync();
@@ -57,6 +64,11 @@ namespace Semanticus.Tests
             var stated = StatedReading.From(Spec(cat, new[] { "Date[" + column + "]" }, new[] { "Net Sales" }), null, cat);
             Assert.False(stated.Person.Contains("calendar"), "each row of " + column + " called a calendar period: '" + stated.Person + "'");
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Fiscal Quarter", "String")]
+        public Task Verify6_R16_a_split_by_a_period_of_another_kind_is_not_called_a_calendar_period_sample(string column, string type) => Verify6_R16_a_split_by_a_period_of_another_kind_is_not_called_a_calendar_period(column, type);
 
         [Fact]
         public async Task Verify6_R16_a_calendar_quarter_answered_by_the_fiscal_quarter_is_not_shown_under_calendar_dates()

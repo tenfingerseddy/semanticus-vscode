@@ -1364,6 +1364,28 @@ namespace Semanticus.Tests
         // ---- publish as a new model (r1/newmodel) ------------------------------------------------------
 
         [Fact]
+        public async System.Threading.Tasks.Task Published_Direct_Lake_copy_has_no_leftover_provider_data_source()
+        {
+            using var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
+            await engine.CreateModelAsync("Sales", 1604);
+            await sessions.Current.MutateAsync("human", "source", m =>
+            {
+                m.AddDataSource("FabricSql");
+                m.Culture = NewModelPublish.DefaultCulture;
+                m.AddExpression("FabricSource", "let Source = Sql.Database(\"abc.datawarehouse.fabric.microsoft.com\", \"Gold\") in Source");
+            });
+            await engine.CreateImportTableAsync("Sales", "let Source = #\"FabricSource\", Data = Source{[Schema=\"dbo\",Item=\"fact_sales\"]}[Data] in Data", "human");
+            var published = await sessions.Current.ReadAsync(m => NewModelPublish.Prepare(TOM.JsonSerializer.SerializeDatabase(m.Database.TOMDatabase), "Sales"));
+            Assert.True(NewModelPublish.ToDirectLake(published, "abc.datawarehouse.fabric.microsoft.com", "ep-1"));
+            await sessions.Current.MutateAsync("human", "publish", m => LocalEngine.SessionToDirectLake(m, "abc.datawarehouse.fabric.microsoft.com", "ep-1"));
+            Assert.Equal(0, await sessions.Current.ReadAsync(m => m.DataSources.Count));
+            Assert.Equal(TabularEditor.TOMWrapper.ModeType.DirectLake, await sessions.Current.ReadAsync(m => m.Tables["Sales"].Partitions[0].Mode));
+            var diff = await sessions.Current.ReadAsync(m => ModelCompare.Diff(m.Database.TOMDatabase.Model, published.Model, "working copy", "published"));
+            Assert.Empty(diff.Items);
+        }
+
+        [Fact]
         public void A_new_model_takes_the_chosen_name_and_drops_the_legacy_data_source_Power_BI_refuses()
         {
             var m = NewStar();

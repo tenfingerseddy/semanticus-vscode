@@ -107,6 +107,14 @@ namespace Semanticus.Engine
     {
         object Capture();
         void Seal(object before);
+        /// <summary>Close a capture without reading the model again: for an inner capture whose work an outer seal covers.</summary>
+        void Release(object before);
+    }
+
+    /// <summary>Make a sealed commit's steps hold less: a linguistic schema step keeps its two texts packed (SchemaUndo).</summary>
+    internal interface IUndoPacker
+    {
+        void PackSince(int undoSize);
     }
 
     internal interface IRedoPreserve
@@ -150,7 +158,7 @@ namespace Semanticus.Engine
     /// dispatcher lifecycle governs model replacement, and the next handler's ctor resets the Singleton); the
     /// adapter holds no other unmanaged state, so it owns no <c>IDisposable</c>.
     /// </summary>
-    internal sealed class Te2ModelSession : IModelSession, IStructureGuard
+    internal sealed class Te2ModelSession : IModelSession, IStructureGuard, IUndoPacker
     {
         private readonly TabularModelHandler _h;
         private readonly Te2UndoLog _undo;
@@ -245,6 +253,11 @@ namespace Semanticus.Engine
             PerspectiveTableUndo.Seal(_h, tables);
             ModelSeal.Seal(_h, values);
         }
+        void IStructureGuard.Release(object before)
+        {
+            if (before is ValueTuple<ModelSeal.Bracket, object> (var values, _)) ModelSeal.Release(_h, values);
+        }
+        void IUndoPacker.PackSince(int undoSize) => SchemaUndo.Pack(_h, undoSize);
 
         public event ObjectDeletedEventHandler ObjectDeleted
         {

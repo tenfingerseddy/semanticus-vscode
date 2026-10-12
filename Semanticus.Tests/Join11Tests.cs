@@ -59,6 +59,7 @@ namespace Semanticus.Tests
         public static System.Collections.Generic.IEnumerable<object[]> SalesScanCases() { foreach (var s in SalesScans) yield return new object[] { s }; }
 
         /// <summary>The check's items (d) and (e): Revenue is in BOTH tables, the column is on Metrics. Real DAX binds the row of the table the scan returns (Sales).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(SalesScanCases))]
         public async Task A_bare_name_inside_a_scan_of_a_table_expression_over_Sales_follows_the_Sales_column_and_not_the_home_tables(string formula)
@@ -76,6 +77,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The check's item 6: Revenue is only in Sales, the scan is a table expression over Sales, the host is Metrics. The name must follow the rename, not be left behind.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(SalesScanCases))]
         public async Task A_bare_name_inside_a_scan_of_a_table_expression_over_Sales_hosted_on_Metrics_follows_the_rename_when_only_Sales_has_it(string formula)
@@ -106,6 +108,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Still not knowable, still left alone: ALL over a COLUMN, a VALUES table, and a UNION (no one plain table name), with Revenue in both tables.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("SUMX ( ALL ( Sales[Region] ), [Revenue] )")]
         [InlineData("SUMX ( FILTER ( VALUES ( Sales[Region] ), TRUE () ), [Revenue] )")]

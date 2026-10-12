@@ -1,0 +1,23 @@
+/* The Learn tour bar (1.4, lane tour). One small bar at the foot of the page. Tokens only. The tour is Semanticus teaching, so it
+   wears the app accent (jade) and not the assistant's purple; the strip and cursor it drives keep their own colours. */
+.st-bar {
+  position: fixed; left: 50%; bottom: var(--sem-space-4); transform: translateX(-50%);
+  z-index: 80; box-sizing: border-box; max-width: calc(100vw - 2 * var(--sem-page-margin));
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sem-space-3);
+  padding: var(--sem-space-2) var(--sem-space-3);
+  background: var(--sem-surface); color: var(--sem-fg);
+  border: var(--sem-hairline) solid var(--sem-border); border-left: var(--sem-space-1) solid var(--sem-accent);
+  border-radius: var(--sem-radius-card); box-shadow: var(--sem-shadow-pop);
+  font-family: var(--sem-font-ui); font-size: var(--sem-text-body); line-height: var(--sem-lh-body);
+}
+.st-say { min-width: 0; overflow-wrap: anywhere; }
+.st-acts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
+
+/* The Ask page's example answer (askdata.tsx, one block). */
+.st-example { display: grid; gap: var(--sem-space-2); }
+.st-example-tag {
+  display: inline-flex; align-items: center; align-self: start; padding: 0 var(--sem-space-2); min-height: var(--sem-chip-h);
+  border: var(--sem-hairline) solid var(--sem-accent); border-radius: var(--sem-radius-chip);
+  font-size: var(--sem-text-label); font-weight: var(--sem-weight-strong); color: var(--sem-fg);
+}
+.st-example-line { margin: 0; font-size: var(--sem-text-meta); color: var(--sem-muted); }

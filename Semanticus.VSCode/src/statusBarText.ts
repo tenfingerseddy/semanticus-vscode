@@ -80,10 +80,9 @@ export function healthText(h: HealthLike): string {
     return `$(pulse) Affects ${things}`;
 }
 
-/** True when VS Code should ask before it closes: the open model holds the person's own unsaved edits. A model nobody edited, or one only marked for
- *  Jev's permission (hasUnsavedEdits false), or one open live (its edits stay in the engine), has nothing to lose. An engine that predates hasUnsavedEdits is read by hasUnsavedChanges. */
-export function guardWanted(info: { sessionId?: string; hasUnsavedEdits?: boolean; hasUnsavedChanges?: boolean; liveBound?: boolean } | undefined): boolean {
-    // A model open from a live workspace keeps its edits in the engine, which stays running after the window closes, and the model reopens
-    // with them (round 2, J4). Nothing is lost, so no tab opens by itself after a run (K2).
-    return !!info?.sessionId && !info.liveBound && !!(info.hasUnsavedEdits ?? info.hasUnsavedChanges);
+/** Older engines need a close question for the person's unsaved edits. Current owners keep dirty work for the next window.
+ *  An engine that predates hasUnsavedEdits is read by hasUnsavedChanges. */
+export function guardWanted(info: { sessionId?: string; hasUnsavedEdits?: boolean; hasUnsavedChanges?: boolean; liveBound?: boolean; keepsUnsavedWork?: boolean } | undefined): boolean {
+    // Keep the legacy fallback for engines that cannot retain local work after the window closes.
+    return !!info?.sessionId && !info.keepsUnsavedWork && !info.liveBound && !!(info.hasUnsavedEdits ?? info.hasUnsavedChanges);
 }

@@ -25,6 +25,7 @@
 
   <ItemGroup>
     <None Include="TestSources.txt" />
+    <None Update="fixtures/lean-gold-shape.json" Link="TestData/lean-gold-shape.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="..\docs\mcp-surface-inventory.json"
           Link="mcp-surface-inventory.json"
           CopyToOutputDirectory="PreserveNewest" />

@@ -781,6 +781,8 @@ function embeddedResourcePaths() {
 // to be classified by a human instead of silently escaping the check below.
 const FIRST_PARTY_EMBEDDED = new Map([
   ['Semanticus.Engine/format-templates.json', 'ours: the DAX format-string template catalogue'],
+  ['Semanticus.VSCode/webview/src/studio/places.json', 'ours: the Studio place map authored for show_in_studio'],
+  ['Semanticus.VSCode/webview/src/studio/presses.json', 'ours: the Studio control map authored for the Claude cursor'],
   ['docs/interview-fix-map.json', 'ours: maps interview findings to fix ops'],
   ['docs/interview-hard-pack.json', 'ours: the authored hard-question interview pack'],
   ['Semanticus.Engine/Facts/Data/gazetteer.json', 'ours: the model facts place list, compiled from public facts (Facts/Data/README.md)'],

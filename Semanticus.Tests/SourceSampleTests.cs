@@ -141,6 +141,13 @@ namespace Semanticus.Tests
             }
         }
 
+        // An unlabelled target counts as dev since 1.4, so the tests of the ask loop label theirs production first.
+        private static void LabelProd()
+        {
+            var rec = ConnectionRegistry.Remember("sql", Server, Db);
+            ConnectionRegistry.SetLabel(rec.Id, "prod", "human");
+        }
+
         private static SourceSampleTarget Target(string server = Server) => new SourceSampleTarget { Server = server, Database = Db };
 
         private static SourceSampleTable[] Tables(FabricSchema s) =>
@@ -174,6 +181,10 @@ namespace Semanticus.Tests
         private static ColumnFacts Col(ModelFacts f, string table, string column) =>
             f.Tables.Single(t => t.Name == table).Columns.Single(c => c.Name == column);
 
+        // An unlabelled target counts as test since 1.4 (3a4dc874), so a test of the QueryData gate labels the source production first.
+        private static void LabelSourceProd() =>
+            ConnectionRegistry.SetLabel(ConnectionRegistry.Remember("xmla", Server, Db, Db).Id, "prod", "human");
+
         // ---- Fails first 1: the QueryData gate -------------------------------------------------------------
 
         [Fact]
@@ -181,7 +192,9 @@ namespace Semanticus.Tests
         {
             var src = new FakeSource();
             using var e = NewEngine(src);
+            LabelProd();
             AgentPolicyStore.SetPreset("client", "human");   // QueryData on a production target: deny
+            LabelSourceProd();
 
             var refused = await e.ReadSourceSampleAsync(Target(), Tables(Schema()), "agent", CancellationToken.None);
 
@@ -204,7 +217,9 @@ namespace Semanticus.Tests
         {
             var src = new FakeSource();
             using var e = NewEngine(src);
+            LabelProd();
             AgentPolicyStore.SetPreset("standard", "human");   // QueryData on a production target: ask
+            LabelSourceProd();
 
             var r = await e.ReadSourceSampleAsync(Target(), Tables(Schema()), "agent", CancellationToken.None);
 
@@ -545,6 +560,7 @@ namespace Semanticus.Tests
             using var built = NewEngine(null);
             await built.OpenAsync(folder);
             AgentPolicyStore.SetPreset("client", "human");
+            LabelSourceProd();
             var refusal = await Assert.ThrowsAnyAsync<InvalidOperationException>(() => built.GetModelFactsAsync("agent"));
             Assert.Equal(LocalEngine.FactsDeniedMessage, refusal.Message);
             var person = await built.GetModelFactsAsync("human");

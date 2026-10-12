@@ -230,6 +230,12 @@ test('a refunded subscription id is refused, including when the status is stored
     assert.equal((await res.json()).error, 'subscription_inactive');
 });
 
+test('an active subscription whose old payment was refunded is served (the row carries a refund record, not the status)', async () => {
+    const row = { status: 'active', refundedAt: '2026-10-01T00:00:00.000Z', refundedInvoice: 'in_OLD' };
+    const w = await world({ status: { 'sid:sub_test_1': JSON.stringify(row) } });
+    assert.equal((await w.decide(await w.token())).status, 200);
+});
+
 test('an active subscription id is served', async () => {
     const w = await world({ status: { 'sid:sub_test_1': 'active' } });
     assert.equal((await w.decide(await w.token())).status, 200);

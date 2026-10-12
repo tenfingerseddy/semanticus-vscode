@@ -92,6 +92,7 @@ namespace Semanticus.Tests
 
         // ---- UAT-S12-3-002: a draft whose change was undone to a point -------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_draft_undone_to_a_point_is_not_done_or_approved_and_redo_makes_it_done_again()
         {
@@ -147,6 +148,7 @@ namespace Semanticus.Tests
         // ---- UAT-S01-j5-004: a Semanticus row whose change the model no longer holds -----------------------------
 
         // S01-j5-004 reopened the saved file first (a restore); S11-1-006 showed the keys again in the same session.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -222,7 +224,7 @@ namespace Semanticus.Tests
             Assert.True(row.Title.Length <= PlanTasks.MaxWordsChars);
             Assert.StartsWith("word1 word2 word3", row.Title, StringComparison.Ordinal);
             Assert.Equal(text, row.FullText);
-            Assert.Contains("whole text", added.Sentence, StringComparison.Ordinal);
+            Assert.Contains("keeps all of your text", added.Sentence, StringComparison.Ordinal);
 
             // The assistant gets every word when it claims the task.
             var claim = await f.Engine.ClaimAssistantRequestAsync(added.ItemId);
@@ -241,6 +243,7 @@ namespace Semanticus.Tests
 
         // ---- N15: line breaks a person typed are kept ---------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_typed_on_several_lines_keeps_its_line_breaks()
         {
@@ -256,6 +259,7 @@ namespace Semanticus.Tests
 
         // ---- the same lost-work class on a draft from words (coordinator, after S12-1-005) ------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_draft_from_long_words_keeps_every_word_and_refuses_only_past_the_limit()
         {
@@ -310,6 +314,7 @@ namespace Semanticus.Tests
 
         // ---- UAT-S12-2-005: an object answer must name an object -------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_object_answer_that_names_nothing_in_the_model_is_refused_and_stays_unanswered()
         {

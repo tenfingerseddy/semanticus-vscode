@@ -49,17 +49,24 @@ namespace Semanticus.Engine
         }
 
         /// <summary>The open model's queue, one page: the revision is taken before the read, as the queue always did.</summary>
-        internal static async Task<WordsQueue> ReadWordsQueueAsync(Session s, int max, int offset)
+        internal static async Task<WordsQueue> ReadWordsQueueAsync(Session s, int max, int offset, bool isPro = false)
         {
             var revision = s.Revision;
-            return await s.ReadAsync(m => PageWordsQueue(m, revision, max, offset)).ConfigureAwait(false);
+            return await s.ReadAsync(m => PageWordsQueue(m, revision, max, offset, isPro)).ConfigureAwait(false);
         }
 
         /// <summary>One page of the words queue of a model: <paramref name="max"/> is the page size (0 = everything from
         /// <paramref name="offset"/> on) and never changes <see cref="WordsQueue.Total"/>.</summary>
-        internal static WordsQueue PageWordsQueue(Model m, long revision, int max, int offset)
+        internal static WordsQueue PageWordsQueue(Model m, long revision, int max, int offset, bool isPro = false)
         {
             var items = ReadWordsQueueItems(m, out var card);
+            // Project the tool at the open-model door, before measuring the page. The start plan still classifies single tools.
+            if (isPro) foreach (var item in items) item.Tool = item.Tool switch
+            {
+                "set_description" or "set_synonyms" => "write_words",
+                "rename_object" or "set_measure_format" or "set_property" => "edit_objects",
+                _ => item.Tool,
+            };
             var total = items.Count;
             var from = Math.Max(0, Math.Min(offset, total));
             var kinds = items.GroupBy(x => x.Kind, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);

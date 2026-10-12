@@ -59,6 +59,12 @@ namespace Semanticus.Engine
             _sessions.Bus.DraftChanged += OnDraftChanged;
             _sessions.Bus.StartPlanChanged += OnStartPlanChanged;
             _sessions.Bus.SessionChanged += OnSessionChanged;
+            // The Studio wire (1.4): the assistant says something, suggests a next step, or starts a call.
+            _sessions.Bus.StudioShow += OnStudioShow;
+            _sessions.Bus.StudioSuggest += OnStudioSuggest;
+            _sessions.Bus.StudioAnswer += OnStudioAnswer;
+            _sessions.Bus.AgentCall += OnAgentCall;
+            _sessions.Bus.HumanClientAttached = () => { lock (_gate) return _clients.Count > _agentClients.Count; };
         }
 
         public string PipeName => _pipeName;
@@ -77,6 +83,10 @@ namespace Semanticus.Engine
         private void OnProgress(OperationProgress v) => Broadcast("progress/didChange", v);
         private void OnSpecChanged(SpecView v) => Broadcast("spec/didChange", v);
         private void OnActivity(ActivityEvent e) => Broadcast("model/activity", e);
+        private void OnStudioShow(StudioNote n) => Broadcast("studio/show", n);
+        private void OnStudioSuggest(StudioSuggestion v) => Broadcast("studio/suggest", v);
+        private void OnStudioAnswer(StudioAnswer v) => Broadcast("studio/answer", v);
+        private void OnAgentCall(AgentCallEvent v) => Broadcast("assistant/call", v);
         private void OnLayoutChanged(LayoutChange v) => Broadcast("layout/didChange", v);
         private void OnWorkflowChanged(WorkflowRunView v) => Broadcast("workflow/didChange", v);
         private void OnWorkflowLibraryChanged(WorkflowInfo[] v) => Broadcast("workflow/libraryDidChange", v);
@@ -232,6 +242,7 @@ namespace Semanticus.Engine
                 NamingStrategy = new CamelCaseNamingStrategy { ProcessDictionaryKeys = false, OverrideSpecifiedNames = true },
             };
             s.NullValueHandling = NullValueHandling.Ignore;
+            s.Converters.Add(new JsonElementWire());   // System.Text.Json elements (edit_objects values) must survive this wire
         }
 
         public void Dispose()
@@ -250,6 +261,11 @@ namespace Semanticus.Engine
             _sessions.Bus.DraftChanged -= OnDraftChanged;
             _sessions.Bus.StartPlanChanged -= OnStartPlanChanged;
             _sessions.Bus.SessionChanged -= OnSessionChanged;
+            _sessions.Bus.StudioShow -= OnStudioShow;
+            _sessions.Bus.StudioSuggest -= OnStudioSuggest;
+            _sessions.Bus.StudioAnswer -= OnStudioAnswer;
+            _sessions.Bus.AgentCall -= OnAgentCall;
+            _sessions.Bus.HumanClientAttached = null;
             JsonRpc[] snapshot;
             lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); _agentClients.Clear(); }
             foreach (var c in snapshot) { try { c.Dispose(); } catch { } }

@@ -38,6 +38,6 @@ test('the built band says what was built and how to take it back, in plain words
     destination: { name: 'Contoso Sales (test K25)' },
     sections: [{ id: 'tables', groups: [{ lines: [{ kept: true }, { kept: true }, { kept: false }, { kept: true, held: true }] }] }],
   };
-  assert.equal(builtBandWords(view), 'Contoso Sales (test K25) was built from this plan. 2 lines built. One undo takes it back.');
-  assert.equal(builtBandWords({ destination: {}, sections: [] }), 'The model was built from this plan. 0 lines built. One undo takes it back.');
+  assert.equal(builtBandWords(view), 'Contoso Sales (test K25) was built from this plan. 2 changes built. One undo takes it back.');
+  assert.equal(builtBandWords({ destination: {}, sections: [] }), 'The model was built from this plan. 0 changes built. One undo takes it back.');
 });

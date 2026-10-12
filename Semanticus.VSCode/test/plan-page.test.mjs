@@ -435,6 +435,21 @@ assert.equal(byId(planUnskip(skipped, CLEANUP), CLEANUP).skipReason, undefined);
   const rows = html.split('data-line="').slice(1);
   assert.equal(rows.length, 2, 'both lines are drawn');
   const [provedRow, suggestionRow] = rows;
+  assert.match(readable(provedRow), /Jev chose this/, 'the recorded Jev decision is visible beside its value');
+  for (const [word, kept, label] of [
+    ['unsure', false, 'Jev asks you'],
+    ['unsure', true, 'Jev chose this'],
+    ['likely', false, 'Jev chose this'],
+    ['sure', false, 'Jev chose this'],
+  ]) {
+    const line = { ...proved, kept, provenance: { ...proved.provenance, confidenceWord: word } };
+    const row = readable(renderToStaticMarkup(React.createElement(Page.ChangeList, {
+      set: { ...set, lines: [line] }, position: 1, busy: null, onDecideLine: () => {},
+    })));
+    assert.ok(row.includes(label), `${word}, kept=${kept}: ${label}`);
+    if (label === 'Jev asks you') assert.doesNotMatch(row, /Jev chose this/, 'an unsure dropped line asks the person');
+  }
+  assert.doesNotMatch(readable(suggestionRow), /Jev chose this/, 'a suggestion does not claim a choice was applied');
   assert.match(readable(suggestionRow), /Jev suggests this format; check it fits before you run it\./, 'the note is visible text on the suggestion row');
   assert.doesNotMatch(suggestionRow, /plan-tick|plan-jevword|data-jev-word/, 'and the row has no check mark and no confidence word');
   assert.doesNotMatch(readable(suggestionRow), /\bsure\b/, 'so the word "sure" is not on it');

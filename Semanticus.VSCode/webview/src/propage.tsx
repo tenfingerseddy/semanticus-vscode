@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { onProState, postProAction, rpc } from './bridge';
-import { useTier, upgradeToPro } from './pro';
+import { onProState, openExternal, postProAction, rpc } from './bridge';
+import { useProPlan, useTier, upgradeToPro } from './pro';
 import { DecisionSettingsSection } from './decisions-settings';
 import { chipOf, jevStateOf, longDate, PLAN_PRICE, proPageView, type BillingPlan, type JevBudgetW, type JevConsentW, type JevStateView, type ProAccount, type ProPageState } from './propage-model';
 
@@ -33,17 +33,25 @@ const Icon = {
 
 /** Get Pro when free, a quiet Pro when Pro (both hairline header buttons, Instrument), nothing before the
  *  engine answers. Either way it opens the Pro page. */
-export function ProChipView({ tier, here, flash, onOpen }: { tier: string; here: boolean; flash?: boolean; onOpen: () => void }) {
+export function ProChipView({ tier, here, flash, onOpen, planInactive = false, billingUrl, onBilling }: {
+  tier: string; here: boolean; flash?: boolean; onOpen: () => void; planInactive?: boolean; billingUrl?: string; onBilling?: () => void;
+}) {
   const kind = chipOf(tier);
   if (!kind) return null;
-  const cls = `pro-chip ${kind === 'pro' ? 'pro-chip-is' : 'pro-chip-get'}${here ? ' pro-chip-here' : ''}${flash ? ' pro-chip-flash' : ''}`;
-  return (
-    <button type="button" data-testid="pro-chip" className={cls} onClick={onOpen} title={kind === 'pro' ? 'Semanticus Pro' : 'Get Pro'}
-      aria-label={kind === 'pro' ? 'Semanticus Pro' : 'Get Pro'} aria-current={here ? 'page' : undefined}>
+  // The licence is Pro but the Pro service refused it: the chip says so and carries the Billing link, so the screen never says Pro and refuses Pro at once.
+  const inactive = kind === 'pro' && planInactive;
+  const label = inactive ? 'Pro, plan not active' : kind === 'pro' ? 'Pro' : 'Get Pro';
+  const cls = `pro-chip ${kind === 'pro' ? 'pro-chip-is' : 'pro-chip-get'}${inactive ? ' pro-chip-off' : ''}${here ? ' pro-chip-here' : ''}${flash ? ' pro-chip-flash' : ''}`;
+  const chip = (
+    <button type="button" data-testid="pro-chip" className={cls} onClick={onOpen} title={inactive ? 'Your Pro plan is not active' : kind === 'pro' ? 'Semanticus Pro' : 'Get Pro'}
+      aria-label={label} aria-current={here ? 'page' : undefined}>
       {/* The star is always there for Pro, and for Get Pro only on a folded header, where the words go. */}
-      <span className="pro-chip-star">{Icon.star}</span><span className="pro-chip-label">{kind === 'pro' ? 'Pro' : 'Get Pro'}</span>
+      <span className="pro-chip-star">{Icon.star}</span><span className="pro-chip-label">{label}</span>
     </button>
   );
+  if (!inactive) return chip;
+  return <span className="pro-chip-wrap">{chip}
+    <button type="button" data-testid="pro-chip-billing" className="pro-chip-billing" onClick={onBilling ?? (() => billingUrl && openExternal(billingUrl))}>Billing</button></span>;
 }
 
 export function ProChip({ here }: { here: boolean }) {
@@ -56,7 +64,8 @@ export function ProChip({ here }: { here: boolean }) {
     if (tier !== 'unknown') previous.current = tier;
   }, [tier]);
   useEffect(() => { if (!flash) return; const t = window.setTimeout(() => setFlash(false), 1400); return () => window.clearTimeout(t); }, [flash]);
-  return <ProChipView tier={tier} here={here} flash={flash} onOpen={upgradeToPro} />;
+  const { inactive, manageUrl } = useProPlan();
+  return <ProChipView tier={tier} here={here} flash={flash} onOpen={upgradeToPro} planInactive={inactive} billingUrl={manageUrl} />;
 }
 
 // ---- the page ------------------------------------------------------------------------------------

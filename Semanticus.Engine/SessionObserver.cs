@@ -23,6 +23,15 @@ namespace Semanticus.Engine
         void AfterCommit(SessionCommit commit);
     }
 
+    /// <summary>An observer whose first commit pays a one-time cost (the health probe's baseline scan: about 0.9 s on 3,000 fields).
+    /// Session runs <see cref="Warm"/> once, right after the model opens, so the first edit does not wait for it.
+    /// It does exactly what the observer's own BeforeCommit would do first, so skipping it changes nothing but when the cost lands.</summary>
+    public interface IWarmableObserver
+    {
+        /// <summary>Dispatcher thread. Must be idempotent and must not edit the model.</summary>
+        void Warm(Model model);
+    }
+
     /// <summary>One tracked commit as observers see it (shared by all observers of that commit), plus the
     /// observer-contributed notification payload.</summary>
     public sealed class SessionCommit

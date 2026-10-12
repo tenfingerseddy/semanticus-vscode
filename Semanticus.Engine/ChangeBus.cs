@@ -150,6 +150,41 @@ namespace Semanticus.Engine
         public event Action<LayoutChange> LayoutChanged;
 
         public void PublishLayout(LayoutChange v) => LayoutChanged?.Invoke(v);
+
+        /// <summary>Fired when the assistant calls show_in_studio. The RpcServer re-broadcasts it as <c>studio/show</c> to every
+        /// client; only the extension listens. A show is not a commit, so it never rides <see cref="Changed"/>.</summary>
+        public event Action<StudioNote> StudioShow;
+
+        public void PublishStudioShow(StudioNote n) => PublishIsolated(StudioShow, n);
+
+        /// <summary>Fired when the assistant calls suggest_next. Broadcast as <c>studio/suggest</c>.</summary>
+        public event Action<StudioSuggestion> StudioSuggest;
+
+        public void PublishStudioSuggest(StudioSuggestion v) => PublishIsolated(StudioSuggest, v);
+
+        /// <summary>Fired when the assistant asked a data question (ask_data). Broadcast as <c>studio/answer</c> so the Ask page shows it.</summary>
+        public event Action<StudioAnswer> StudioAnswer;
+
+        public void PublishStudioAnswer(StudioAnswer v) => PublishIsolated(StudioAnswer, v);
+
+        /// <summary>Fired first thing in every assistant tool call. Broadcast as <c>assistant/call</c>.</summary>
+        public event Action<AgentCallEvent> AgentCall;
+
+        public void PublishAgentCall(AgentCallEvent v) => PublishIsolated(AgentCall, v);
+
+        /// <summary>Set by the RpcServer: true while a person's Studio connection is attached. show_in_studio answers "noStudio" without it.</summary>
+        public Func<bool> HumanClientAttached { get; set; }
+
+        // Observational, like progress: a broken listener must never fail the tool call or starve a healthy one.
+        private static void PublishIsolated<T>(Action<T> evt, T value)
+        {
+            if (evt == null) return;
+            foreach (var h in evt.GetInvocationList())
+            {
+                try { ((Action<T>)h)(value); }
+                catch { /* isolate subscribers */ }
+            }
+        }
     }
 
     /// <summary>One start-plan change as the journal's fold needs it: the view it ended on, who wrote it (a pipe

@@ -32,7 +32,7 @@ namespace Semanticus.Engine
         public string ModelName { get; set; }
         public string TenantId { get; set; }
         public string AuthMode { get; set; }        // a mode NAME (azcli / interactive / serviceprincipal) — NOT a secret
-        public string Label { get; set; }           // dev | uat | prod | local. NULL = unlabelled = treated as prod.
+        public string Label { get; set; }           // dev | uat | prod | local. NULL = unlabelled = counts as test (dev) since 1.4.
         public string WorkingFolder { get; set; }   // durable local copy for the query-live / edit-local pattern; null = transient snapshot
         public string PublishConnectionId { get; set; } // optional XMLA destination for this source's working folder
         // True once the person let go of the publish destination for this source's local copy (contract 19.2). It
@@ -618,17 +618,19 @@ namespace Semanticus.Engine
         private static bool IsHuman(string origin) => string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
-        /// The label a policy must gate on — and the ONLY reading a policy is allowed to use (never raw
+        /// The label a policy must gate on, and the ONLY reading a policy is allowed to use (never raw
         /// <see cref="ModelConnectionRecord.Label"/>, which can hold anything a hand-edited file put there). An
-        /// unlabelled target, or one carrying a value outside <see cref="Labels"/>, is <b>prod</b>: the strictest
-        /// option, and the only inference we make. We never read a label out of an endpoint name — one real client's
-        /// <c>UAT_SEM</c> IS their dev workspace, and someone else's <c>SEM_TEST</c> is what the board reads. A name is
-        /// a convention, not a fact about risk; the label is a declaration by the user, never a detection by us.
+        /// unlabelled target (no record, or no label) counts as TEST (<c>dev</c>): production rules apply only to a target the
+        /// person labelled production (Kane, 10 Oct 2026: the person's word in chat is enough, so a model nobody labelled does not
+        /// wait for a Permissions-page click). A value that IS there but is outside <see cref="Labels"/> (a hand-edited file) is still
+        /// <b>prod</b>, the strictest: it is not "no label", it is a label nobody understands. We never read a label out of an
+        /// endpoint name: a name is a convention, not a fact about risk; the label is a declaration by the user.
         /// </summary>
         public static string EffectiveLabel(ModelConnectionRecord r)
         {
             var l = r?.Label?.Trim().ToLowerInvariant();
-            return !string.IsNullOrEmpty(l) && Labels.Contains(l) ? l : "prod";
+            if (string.IsNullOrEmpty(l)) return "dev";
+            return Labels.Contains(l) ? l : "prod";
         }
 
         public static bool IsUnlabelled(ModelConnectionRecord r) =>
@@ -684,11 +686,16 @@ namespace Semanticus.Engine
 
         /// <summary>Find a target by its endpoint (+ dataset), independent of kind — for label resolution, where all we
         /// have is where a write/query is headed. Null when we've never connected there, which the caller reads as
-        /// unlabelled ⇒ prod.</summary>
-        public static ModelConnectionRecord FindByEndpoint(string endpoint, string database) =>
-            string.IsNullOrWhiteSpace(endpoint) ? null : List().FirstOrDefault(r =>
-                string.Equals(r.Endpoint, endpoint, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(r.Database ?? "", database ?? "", StringComparison.OrdinalIgnoreCase));
+        /// unlabelled ⇒ test (dev). Both sides are compared in their canonical form (trimmed, no trailing slash): a miss now reads as
+        /// dev, so a prod-labelled target written with a stray "/" or space must still find its own record.</summary>
+        public static ModelConnectionRecord FindByEndpoint(string endpoint, string database)
+        {
+            if (string.IsNullOrWhiteSpace(endpoint)) return null;
+            var e = LocalEngine.CanonicalEndpoint(endpoint); var d = LocalEngine.CanonicalDatabase(database);
+            return List().FirstOrDefault(r =>
+                string.Equals(LocalEngine.CanonicalEndpoint(r.Endpoint), e, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(LocalEngine.CanonicalDatabase(r.Database), d, StringComparison.OrdinalIgnoreCase));
+        }
 
         /// <summary>
         /// Record a successful connect/open. Idempotent on (kind, endpoint, database): an existing record is refreshed
@@ -745,24 +752,35 @@ namespace Semanticus.Engine
             });
         }
 
+        internal const string LabelChangePersonOnlySentence =
+            "Changing a connection's label changes what your assistant may do there, so only you can change it, in Connections.";
+
+        internal static void GuardAgentLabelChange(ModelConnectionRecord record)
+        {
+            if (!string.IsNullOrWhiteSpace(record?.Label))
+                throw new InvalidOperationException(LabelChangePersonOnlySentence);
+        }
+
         /// <summary>
-        /// Declare what a target is. <paramref name="origin"/> is required and REFUSED when it is the agent: a label is
-        /// a governance statement, and an agent that can relabel prod as dev has defeated the matrix it is gated by.
-        /// Pass a null/empty label to clear it — which returns the target to unlabelled, i.e. treated as prod.
+        /// Declare what a target is. The agent can set the first label; only the person can change or clear it.
+        /// LocalEngine applies the local-write policy. The live-action policy reads the resulting label.
+        /// A null or empty label clears it. An unlabelled target counts as test (dev).
         /// </summary>
         public static ModelConnectionRecord SetLabel(string id, string label, string origin)
         {
-            if (!IsHuman(origin))
-                throw new InvalidOperationException("Only a human can label a target. An agent cannot. Labelling declares what an environment is, and the agent's permissions are gated on that label. Ask the user to set it.");
+            if (!IsHuman(origin) && !string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Identify the connection change as human or agent.");
 
             var normalized = string.IsNullOrWhiteSpace(label) ? null : label.Trim().ToLowerInvariant();
             if (normalized != null && !Labels.Contains(normalized))
-                throw new ArgumentException($"'{label}' is not a target label. Use one of: {string.Join(", ", Labels)} (or clear it, which means the target is treated as prod).");
+                throw new ArgumentException($"'{label}' is not a target label. Use one of: {string.Join(", ", Labels)} (or clear it, which means the target is treated as dev, a test target).");
 
             return Mutate(all =>
             {
                 var rec = all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("No connection with that id. Open Connections to see what is known.");
+                // Check under both registry locks so a label the person just set cannot be overwritten.
+                if (!IsHuman(origin)) GuardAgentLabelChange(rec);
                 rec.Label = normalized;
                 return rec;
             });
@@ -819,7 +837,7 @@ namespace Semanticus.Engine
 
         /// <summary>Remove a connection. <paramref name="origin"/> is required: an agent may forget an unlabelled
         /// scratch connection, but NOT one the user labelled — the label is governance data, not the agent's to drop.
-        /// (Forgetting fails closed regardless: a forgotten target is unlabelled, hence prod, hence stricter.)</summary>
+        /// (A forgotten target is unlabelled, so it counts as test again: that is the default, not a loosening of anything the person declared.)</summary>
         public static bool Forget(string id, string origin)
         {
             return Mutate(all =>

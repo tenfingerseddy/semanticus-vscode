@@ -101,6 +101,36 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public void Every_bulk_item_type_reads_in_words_in_a_held_question()
+        {
+            string Say(object items) => GateWords.Value("items", items);
+            Assert.Equal("FMT-SUMMARIZE on [Total]", Say(new[] { new FindingFixItem { System = "bpa", RuleId = "FMT-SUMMARIZE", ObjRef = "measure:Sales/Total" } }));
+            Assert.Equal("[Total]", Say(new[] { new ObjectDuplicateItem { ObjRef = "measure:Sales/Total", NewName = "Total copy" } }));
+            Assert.Equal("[Total] (purpose)", Say(new[] { new DocSectionItem { ObjRef = "measure:Sales/Total", SectionKey = "purpose", Markdown = "x" } }));
+            Assert.Equal(GateWords.NameOf("table:Sales") + " in " + GateWords.NameOf("perspective:View"),
+                Say(new[] { new PerspectiveMemberItem { PerspectiveRef = "perspective:View", ObjRef = "table:Sales", Include = true } }));
+            Assert.Equal(GateWords.NameOf("table:Sales") + " for Managers", Say(new[] { new ObjectPermissionItem { RoleName = "Managers", ObjRef = "table:Sales", Permission = "none" } }));
+            Assert.Equal("describe/model", Say(new[] { new PlanRowEdit { Id = "describe/model", Action = "pause" } }));
+            Assert.All(new[] { "FMT-SUMMARIZE on [Total]", "[Total] (purpose)" }, t => Assert.DoesNotContain("{", t));
+        }
+
+        /// <summary>One real item for each bulk row (a call with an empty list asks about nothing).</summary>
+        private static readonly Dictionary<string, object> BulkItems = new(StringComparer.Ordinal)
+        {
+            ["WaiveFindingsAsync"] = new[] { new FindingWaiverItem { System = "bpa", RuleId = "AVOID_FLOATING_POINT_DATA_TYPES", ObjRef = "measure:Sales/Total", Reason = "known" } },
+            ["WriteWordsAsync"] = new[] { new WordsWriteItem { ObjRef = "measure:Sales/Total", Description = "Sales total." } },
+            ["EditObjectsAsync"] = new[] { new ObjectEditItem { ObjRef = "measure:Sales/Total", Set = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>("{\"description\":\"Sales total.\"}") } },
+            ["CreateMeasuresAsync"] = new[] { new MeasureCreateItem { TableRef = "table:Sales", Name = "Bulk total", Expression = "1" } },
+            ["UnwaiveFindingsAsync"] = new[] { new FindingFixItem { System = "bpa", RuleId = "AVOID_FLOATING_POINT_DATA_TYPES", ObjRef = "measure:Sales/Total" } },
+            ["ApplyFixesAsync"] = new[] { new FindingFixItem { System = "bpa", RuleId = "FMT-SUMMARIZE", ObjRef = "measure:Sales/Total" } },
+            ["DuplicateObjectsAsync"] = new[] { new ObjectDuplicateItem { ObjRef = "measure:Sales/Total", NewName = "Total copy" } },
+            ["SetDocSectionsAsync"] = new[] { new DocSectionItem { ObjRef = "measure:Sales/Total", SectionKey = "purpose", Markdown = "It sums the sales." } },
+            ["SetPerspectiveMembersAsync"] = new[] { new PerspectiveMemberItem { PerspectiveRef = "perspective:View", ObjRef = "table:Sales", Include = true } },
+            ["SetObjectPermissionsAsync"] = new[] { new ObjectPermissionItem { RoleName = "Managers", ObjRef = "table:Sales", Permission = "none" } },
+            ["PlanRowsAsync"] = new[] { new PlanRowEdit { Id = "describe/model", Action = "pause" } },
+        };
+
+        [Fact]
         public async Task Every_question_for_a_row_that_holds_names_the_model_and_an_object_or_a_loss()
         {
             var (engine, _, path) = await OpenAsync("sweep");
@@ -134,6 +164,8 @@ namespace Semanticus.Tests
                         else if (row.Method == "ApplyTmdlScriptAsync" && name == "script") args[i] = "// @object measure:Sales/Total\nmeasure Total = SUM(Sales[Amount])";
                         else if (row.Method == "ApplyPlanAsync" && name == "approvedIds") args[i] = Array.Empty<string>();
                         else if (method.GetParameters()[i].ParameterType == typeof(ReplaceRequest)) args[i] = new ReplaceRequest { Find = "Total", Replace = "Grand Total" };
+                        // a bulk row asks about its items: an empty list names nothing, so each is given one real item
+                        else if (name == "items" && BulkItems.TryGetValue(row.Method, out var items)) args[i] = items;
                     }
                     var call = new GateCall { Engine = engine, Method = method, Parameters = method.GetParameters(), Args = args };
                     GateEntry holding;

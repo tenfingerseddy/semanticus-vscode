@@ -52,6 +52,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_explicit_step_engine_run()
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true);
@@ -154,6 +155,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Without_a_live_value_the_after_check_could_not_check_and_is_not_a_pass()
         {
             var (engine, sm) = await ComposerFrame.OpenAsync(pro: true);

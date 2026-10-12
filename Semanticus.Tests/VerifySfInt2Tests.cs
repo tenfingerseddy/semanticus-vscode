@@ -118,10 +118,9 @@ namespace Semanticus.Tests
                 await engine.SetConsentAsync(DecisionRegistry.DeclaredFields.ToArray(), DecisionRegistry.ConsentSchemaVersion, "human");
                 if (mcpDoor)
                 {
-                    // the source grant is the person's question in every preset (join 6, Sol item 1): the assistant's call asks, the person says yes, the same call goes through
-                    Assert.True((await McpTools.GrantStartDisclosure(engine, view.Digest)).Asked);
-                    await engine.ApproveAgentActionAsync((await engine.ListPendingApprovalsAsync()).Single().Id, "human");
+                    // the person's yes in chat is enough for the source grant (Kane, 11 Oct 2026): the assistant's one call grants it
                     view = await McpTools.GrantStartDisclosure(engine, view.Digest);
+                    Assert.False(view.Asked);
                 }
                 else view = await engine.GrantStartDisclosureAsync(view.Digest, "human");
                 await engine.StartDecideSettledForTest();
@@ -334,7 +333,9 @@ namespace Semanticus.Tests
             return final.Ai;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Grade_walk_to_A_and_A_after_the_Pro_build_UI_door() => Assert.Equal("A", await GradeWalkAsync(false));
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact] public async Task Grade_walk_to_A_and_A_after_the_Pro_build_MCP_door() => Assert.Equal("A", await GradeWalkAsync(true));
 
         // ================================================================== attacks on the wiring's claims (W1, W3, W6, W7)
@@ -382,6 +383,7 @@ namespace Semanticus.Tests
         /// <summary>W1, attacked end to end: the person leaves dim_staff out (and one column of an included table) before the grant. Nothing about them may
         /// reach Jev, by table name or by the names of the left-out table's own columns, through the decide rounds, the words rounds, the build, and the
         /// Plan's own Jev run on the built model.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_left_out_table_and_its_columns_never_reach_Jev_by_name_from_start_to_the_plan_after_the_build()
         {
@@ -411,6 +413,7 @@ namespace Semanticus.Tests
 
         /// <summary>W1, the sample: the person gives the model's permission but says Not now to the source grant (which names "counts and patterns from a
         /// sample of rows"). Do facts worked out from the sample reach Jev anyway, after the build, under the model's permission alone?</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_after_not_now_on_the_source_grant_what_the_plan_after_the_build_sends_from_the_sample()
         {
@@ -444,6 +447,7 @@ namespace Semanticus.Tests
 
         /// <summary>W3, attacked: a line the person dropped stays out of the build; two builds pressed at once build once; one undo step; undo, redo, undo and
         /// build again all land the same model; the person's drop is carried into the Plan and Run the plan does not write it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_the_build_honours_a_drop_builds_once_when_pressed_twice_and_rebuilds_after_undo()
         {
@@ -513,6 +517,7 @@ namespace Semanticus.Tests
         /// <summary>W6, attacked as a class: on ONE table the assistant writes words (table, column, measure), the person picks how a column adds up,
         /// pins a value, keeps an unsure line and drops a kept one. The person then leaves a column out, then the whole table, the engine restarts, and
         /// the table comes back, then the column. Every hand-made line, the pick and the pin must be exactly what they were.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_every_hand_made_thing_on_a_table_survives_leaving_it_out_and_a_restart_and_returns_with_it()
         {
@@ -590,6 +595,7 @@ namespace Semanticus.Tests
 
         /// <summary>W7, attacked: the plan waits for a grant when a table is added after it; a second edit that puts the table back out ends the wait with
         /// no new grant; the same after an engine restart in the middle of the wait.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_the_wait_for_a_grant_clears_itself_also_across_a_restart()
         {
@@ -628,6 +634,7 @@ namespace Semanticus.Tests
         /// start plan records the keep (Kept, decided by the person), but the executor's format gate only honours a tick made the Plan's way (KeptByPerson with
         /// the object's digest), which keep_line never sets. So the person's answer is not built, and the line is held with the words "nobody ticked the line",
         /// which is untrue: the person did.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_keeping_a_format_line_Jev_was_unsure_of_builds_it_and_never_says_nobody_ticked_it()
         {

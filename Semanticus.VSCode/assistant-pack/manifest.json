@@ -1,20 +1,20 @@
 {
-  "version": "1.3.0",
+  "version": "1.4.0",
   "skills": [
     {
       "name": "semanticus",
       "path": "plugins/semanticus/skills/semanticus/SKILL.md",
-      "sha256": "4f984b7107d7d13f4f2d30e04f69b1afb295755622b58a8d4af6fbd23f8af188"
+      "sha256": "6f525486116e35224219c903a7535eeeeffae464f4dfb00e45ff158a3fc753e2"
     },
     {
       "name": "semanticus-optimize-dax",
       "path": "plugins/semanticus/skills/semanticus-optimize-dax/SKILL.md",
-      "sha256": "a423b7fe64b0fd904841ae5562d16f15f1118adb76713e39f17352c23166d358"
+      "sha256": "164fbcf56075d306281996ffcadbab151a3665cbcb5c667e0ef4b4ab42c6d7b8"
     },
     {
       "name": "semanticus-ai-ready",
       "path": "plugins/semanticus/skills/semanticus-ai-ready/SKILL.md",
-      "sha256": "48d3cffb210d5d6a669f542b42e72e200af4133c57c3f65e1dad34387a396ae9"
+      "sha256": "2e8814c59fb71cec293309dd7b8218e588fd9539cd61286a12cbe35f5477078b"
     },
     {
       "name": "semanticus-interview-model",
@@ -24,7 +24,7 @@
     {
       "name": "semanticus-model-pr",
       "path": "plugins/semanticus/skills/semanticus-model-pr/SKILL.md",
-      "sha256": "cb090279a12dd0c9f0c8621078cba9ba606786288ae0d46447cfd5244af44efc"
+      "sha256": "bd68d3ae0392a783f03e7e50276f7c1c80d04c74969ff0d2518429680104f783"
     },
     {
       "name": "semanticus-distill-workflow",

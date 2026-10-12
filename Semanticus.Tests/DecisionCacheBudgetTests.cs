@@ -171,6 +171,7 @@ namespace Semanticus.Tests
             Assert.True(cache.TryGet(requests[3].Digest, "jev-1.13.0", out hit));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_second_ask_for_the_same_evidence_does_not_reach_the_service()
         {
@@ -191,6 +192,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Switching_a_point_off_drops_what_was_cached_under_it()
         {

@@ -213,25 +213,23 @@ namespace Semanticus.Tests
 
         // ---- Join notes (1) and (2), ruled on: governance of the assistant itself ---------------------------------------
 
-        /// <summary>JOIN item, pre-existing (not this lane's): set_consent is an assistant tool. Consent is the person's
-        /// agreement that the model's details may leave the machine for Jev (jev-infusion.md: "a workspace consents once,
-        /// explicitly, before any upload, with the field list shown"). An assistant that gives it itself sends the person's
-        /// model details out without the person ever seeing the field list. Under Locked, where every assistant write asks,
-        /// a model that already carries its marker is agreed for with no question at all.</summary>
+        /// <summary>1.4 chatyes (Kane, 10 Oct 2026), reversing the earlier JOIN ruling: the person's yes in chat lets the assistant turn
+        /// Jev on for a model, even under Locked. The grant is recorded as the assistant's, and the person turns it off again.</summary>
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task JOIN_an_assistant_cannot_give_consent_to_send_the_models_details_out_by_itself()
+        public async Task CHATYES_an_assistant_can_turn_Jev_on_on_the_persons_word_and_the_person_can_turn_it_off()
         {
             using var f = new DecisionFixture();
             await f.BuildModelAsync();
-            // The model carries its marker from an earlier yes, then the person withdrew.
             await f.ConsentAsync();
             await f.Engine.WithdrawConsentAsync("human");
             Assert.False((await f.Engine.GetConsentAsync()).Granted);
             AgentPolicyStore.SetPreset("locked", "human");
-            try { await McpTools.SetConsent(f.Engine, Semanticus.Decisions.DecisionRegistry.DeclaredFields.ToArray(), Semanticus.Decisions.DecisionRegistry.ConsentSchemaVersion); }
-            catch (Exception) { }
-            Assert.False((await f.Engine.GetConsentAsync()).Granted, "the assistant gave consent to send the model's details out, and the person was never asked");
+            var done = await McpTools.SetConsent(f.Engine, Semanticus.Decisions.DecisionRegistry.DeclaredFields.ToArray(), Semanticus.Decisions.DecisionRegistry.ConsentSchemaVersion);
+            Assert.True(done.Granted);
+            Assert.Equal("agent", done.GrantedBy);
+            await f.Engine.WithdrawConsentAsync("human");
+            Assert.False((await f.Engine.GetConsentAsync()).Granted);
         }
 
         /// <summary>JOIN item, pre-existing (not one of the three tools round 3 wired): cicd_generate with write=true, as the

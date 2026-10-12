@@ -15,6 +15,7 @@
 //   - free is the whole plan. Every item, every reason, every exact change and the jump to the page where
 //     a person does it by hand. What Pro adds is the product deciding and doing.
 
+import { editWords } from './copy';
 
 // ---- wire shapes, as the engine sends them --------------------------------------------------------
 
@@ -274,7 +275,7 @@ export type PlanDoer = 'semanticus' | 'you' | 'assistant';
 /** The one state word, computed by the engine (contract 1.4). The page never derives it. */
 export type PlanStateWord = 'done' | 'set_aside' | 'checking' | 'on_it' | 'paused' | 'waiting' | 'needs_you' | 'ready';
 export type PlanDoneWhen = 'model_check' | 'has_words' | 'assistant_says' | 'you_mark';
-export interface PlanWaitRef { id: string; title: string }
+export interface PlanWaitRef { id: string; title: string; doer?: PlanDoer | null }
 export interface PlanClaim { claimedBy: string; since?: string | null }
 export interface PlanOriginLink { kind: 'finding' | 'page' | 'run' | 'draft' | 'words'; ref?: string | null }
 
@@ -430,6 +431,8 @@ export interface Plan {
    *  every plan, because "in rule order" and "in value order" are different promises and a person is owed
    *  which one they got. On a free session the engine says so here and sends every confidence as zero. */
   orderedBy?: string;
+  /** Where billing is (ModelPlanView.BillingUrl). Present only when the order line says the Pro plan is not active; the page shows a Billing link beside it. */
+  billingUrl?: string;
   /** True only when a value ranking was actually applied (ModelPlanView.Ranked). False is the ordinary
    *  case and is not a failure: the plan is complete either way, same items, same reasons, same diffs. */
   ranked?: boolean;
@@ -595,7 +598,7 @@ export function confidence(value: number | undefined | null): ConfidenceRead {
     return {
       text: null,
       band: 'unscored',
-      explain: 'Not scored. Below 0.60 the plan does not put a number on an item, so none is shown.',
+      explain: 'Not scored. Below 0.60 the plan does not put a number on a task, so none is shown.',
     };
   }
   if (n >= CONFIDENCE_SURE) {
@@ -1032,7 +1035,7 @@ export const HISTORY_KIND_LABEL: Record<PlanHistoryKind, string> = {
 };
 
 export const HISTORY_ACTOR_LABEL: Record<PlanHistoryActor, string> = {
-  you: 'you', assistant: 'your assistant', plan: 'the plan', engine: 'the engine',
+  you: 'you', assistant: 'your assistant', plan: 'the plan', engine: 'Semanticus',
 };
 
 /** The time down the left of the timeline. The DATE is in the day heading above it, so this is only
@@ -1264,7 +1267,7 @@ export function checkTick(line: PlanChangeLine): string | null {
 // =====================================================================================================
 
 export const SOURCE_LABEL: Record<PlanSource, string> = {
-  found: 'Found', jev: 'Jev', words: 'Your words', you: 'You added', workflow: 'Workflow', repeat: 'Repeat',
+  found: 'Found by Semanticus', jev: 'Semanticus Pro', words: 'Your words', you: 'You added', workflow: 'Workflow', repeat: 'Repeat',
 };
 export const DOER_LABEL: Record<PlanDoer, string> = { semanticus: 'Semanticus', you: 'You', assistant: 'Your assistant' };
 export const DOER_ORDER: PlanDoer[] = ['semanticus', 'you', 'assistant'];
@@ -1379,16 +1382,42 @@ export function sourceLine(item: PlanItem, labelOf?: (tool: string) => string | 
   return SOURCE_LABEL[source];
 }
 
+/** Who acts next on the task a row waits for. No doer on the wire keeps the plain words. */
+export const WAITS_WHO: Record<string, string> = { you: 'Waits for you', assistant: 'Waits for your assistant', semanticus: 'Waits for Semanticus' };
+
 /** The sub line: the engine already writes "Waits for: <title>" there when a row waits (PlanFootprint.cs), so the
  *  page reads the waits off the wire only to bold the title it names. An optional row keeps its word in front: it
  *  nearly always waits, and the waits line replaces the sub line that said "Optional" (verify, 28 Sep, L1). */
-export function subLine(item: PlanItem): { waits: string | null; text: string; optional?: boolean } {
+export function subLine(item: PlanItem, items?: PlanItem[]): { waits: string | null; who: string; text: string; optional?: boolean; aside?: PlanItem; why?: string } {
   const waits = item.waitsFor?.[0];
   if (waits && stateWordOf(item) === 'waiting') {
     const more = (item.waitsFor?.length ?? 0) - 1;
-    return { waits: waits.title + (more > 0 ? ` and ${more} more` : ''), text: '', optional: !!item.optional };
+    // A row it waits for that the person set aside never turns Ready by itself, so say so, and the row offers Put back for it (verifier, 11 Oct).
+    const aside = item.waitsFor!.map((w) => items?.find((i) => i.id === w.id)).find((i) => i && stateWordOf(i) === 'set_aside');
+    if (aside) {
+      return { waits: null, who: 'Waits for', text: `Waits for '${aside.title}', which you set aside` + (more > 0 ? ` and ${more} more` : ''), optional: !!item.optional, aside };
+    }
+    return { waits: item.waitsFor!.map((w) => w.title).join('; '), who: WAITS_WHO[waits.doer ?? ''] ?? 'Waits for', text: '', optional: !!item.optional, why: sharesFields(item, items) ? WAITS_WHY : WAITS_WHY_PLAIN };
   }
-  return { waits: null, text: (item.sub ?? '').replace(/: /u, ' · ') };
+  return { waits: null, who: 'Waits for', text: (item.sub ?? '').replace(/: /u, ' · ') };
+}
+
+/** Why a row waits, in one plain line (hero16b section D). "Same fields" is said only when the row and every row it waits for name a field in common; the wait data carries no reason, so
+ *  anything else gets the plain line, which is always true. */
+export const WAITS_WHY = 'same fields, so it goes second';
+export const WAITS_WHY_PLAIN = "it needs that task's changes first";
+
+function sharesFields(item: PlanItem, items?: PlanItem[]): boolean {
+  const mine = new Set((item.objects ?? []).filter(Boolean));
+  if (!mine.size || !items) return false;
+  return item.waitsFor!.every((w) => (items.find((i) => i.id === w.id)?.objects ?? []).some((o) => mine.has(o)));
+}
+
+/** The fold's words after its count. Some of its rows wait for another task, so say how the number splits and match the strip's words. */
+export function onlyYouWords(rows: PlanItem[]): string {
+  const n = rows.length;
+  const waiting = rows.filter((r) => stateWordOf(r) === 'waiting').length;
+  return `${n === 1 ? 'task needs' : 'tasks need'} your choice` + (waiting > 0 && waiting < n ? ` (${n - waiting} ready, ${waiting} waiting)` : '');
 }
 
 /** The dot beside a state word. Needs you is the one warning; done is good; the rest are plain rings. */
@@ -1829,11 +1858,23 @@ export interface PressReceipt {
   /** The engine says the receipt may offer Save: the model has unsaved changes and is not a live one (ApplyPlanItemsResult.canSave). Absent on an older engine. */
   canSave?: boolean;
 }
-export const ranWords = (rows: number): string => `Ran ${rows} ${rows === 1 ? 'row' : 'rows'}.`;
+/** The line beside "Done just now": the list holds what finished while the page was open, so it says what the other counts on the page
+ *  include that it does not (hero16 N8, H7). A task whose problem went away on its own is listed but was not run; a task finished
+ *  before this visit is counted in the strip and in Refresh plan, but is not listed. */
+export function justDoneNote(justDone: PlanItem[], plan: Plan): string {
+  const parts = ['Open one to see what it changed.'];
+  const closed = justDone.filter(closedByOther).length;
+  if (closed > 0) parts.push(`${closed} ${closed === 1 ? 'was' : 'were'} no longer needed, so ${closed === 1 ? 'it was' : 'they were'} not run.`);
+  const all = (plan.strip?.tracks ?? []).reduce((n, t) => n + Math.max(0, t.done), 0);
+  const earlier = all - justDone.length;
+  if (earlier > 0) parts.push(`${earlier} more ${earlier === 1 ? 'task' : 'tasks'} finished earlier.`);
+  return parts.join(' ');
+}
+export const ranWords = (rows: number): string => `Ran ${rows} ${rows === 1 ? 'task' : 'tasks'}.`;
 export const changesWords = (changes: number): string => `${changes} ${changes === 1 ? 'change' : 'changes'}, one undo step.`;
 
 /** The result of one applyPlanItems call, as far as the loop reads it. */
-export interface WaveResult { performed?: boolean; applied?: number; itemIds?: string[]; sentence?: string; revision?: number; entryId?: string; canSave?: boolean; plan?: Plan }
+export interface WaveResult { performed?: boolean; applied?: number; itemIds?: string[]; sentence?: string; note?: string; revision?: number; entryId?: string; canSave?: boolean; plan?: Plan }
 
 /** The most waves one press makes. Three rows in a chain need three; five is a ceiling, never a goal. */
 export const MAX_WAVES = 5;
@@ -1859,18 +1900,24 @@ export async function runAllWaves(start: Plan, apply: (call: NonNullable<ReturnT
       refusal = failure instanceof Error ? failure.message : String(failure);
       break;
     }
-    if (!result?.performed) { refusal = result?.sentence ?? null; break; }
+    if (!result?.performed) {
+      plan = result?.plan ?? await reread();
+      onPlan?.(plan);
+      refusal = result?.sentence ?? null;
+      break;
+    }
     receipt.rows += result.itemIds?.length ?? 0;
     receipt.changes += result.applied ?? 0;
     receipt.entryId ??= result.entryId ?? null;
     if (typeof result.revision === 'number') receipt.revision = result.revision;
     if (typeof result.canSave === 'boolean') receipt.canSave = result.canSave;
+    if (result.note) receipt.note = result.note;
     plan = result.plan ?? await reread();
     onPlan?.(plan);
     if ((result.itemIds?.length ?? 0) === 0) break;
   }
   if (receipt.rows === 0) return { receipt: null, refusal, plan };
-  receipt.note = laterWaveNote(refusal);
+  receipt.note = laterWaveNote(refusal) ?? receipt.note;
   return { receipt, refusal: null, plan };
 }
 
@@ -1922,8 +1969,11 @@ export function trackCounts(track: PlanStripTrack): { key: string; text: string;
   return [
     { key: 'done', text: `${track.done} done` },
     { key: 'onit', text: `${track.onIt} on it` },
-    needs ? { key: 'open', text: `${open} need you`, warn: true }
-      : { key: 'open', text: `${open} ready`, warn: track.needsYou > 0 },
+    needs ? { key: 'open', text: `${track.needsYou} need you`, warn: true }
+      : { key: 'open', text: `${track.ready} ready${track.doer === 'semanticus' ? ' first' : ''}` },
+    ...(!needs && track.needsYou > 0 ? [{ key: 'needs', text: `${track.needsYou} need you`, warn: true }] : []),
+    // Beside "Run the plan 13", "1 ready first" and "12 follow it" add up to the button: the rows that wait for a row in the same run.
+    ...(track.waiting > 0 ? [{ key: 'waiting', text: track.doer === 'semanticus' ? `${track.waiting} ${track.waiting === 1 ? 'follows' : 'follow'} it` : `${track.waiting} waiting` }] : []),
   ];
 }
 
@@ -1944,7 +1994,7 @@ export function latestLine(strip: PlanStrip | null | undefined): { time: string;
   const l = strip?.latest;
   if (!l?.sentence) return null;
   const at = Date.parse(l.when);
-  return { time: Number.isNaN(at) ? '' : clockOf(at), sentence: l.sentence, entryId: l.entryId };
+  return { time: Number.isNaN(at) ? '' : clockOf(at), sentence: editWords(l.sentence), entryId: l.entryId };
 }
 
 /** Said while the engine reports Jev is still looking at this revision (ModelPlanView.JevPending). */
@@ -1969,7 +2019,7 @@ export function updatedLine(strip: PlanStrip | null | undefined): string | null 
   if (!u?.when) return null;
   const at = Date.parse(u.when);
   if (Number.isNaN(at)) return null;
-  return u.by === 'jev' ? `Jev updated this after your change at ${clockOf(at)}` : `Updated after your last change at ${clockOf(at)}`;
+  return u.by === 'jev' ? `Semanticus Pro updated the Plan at ${clockOf(at)}` : `Updated after your last change at ${clockOf(at)}`;
 }
 
 function clockOf(at: number): string {

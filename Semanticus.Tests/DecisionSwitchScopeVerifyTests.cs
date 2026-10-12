@@ -62,6 +62,7 @@ namespace Semanticus.Tests
                 "Switching the point on for one Sales.pbix switched it back on for the other, whose owner switched it off.");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_two_Desktop_files_with_the_same_title_the_next_yes_sends_what_one_switched_off()
         {

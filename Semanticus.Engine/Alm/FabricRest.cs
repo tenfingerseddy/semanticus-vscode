@@ -52,6 +52,51 @@ namespace Semanticus.Engine
             return models.OrderBy(m => m.DisplayName ?? "", StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
+        // The SQL endpoints of one workspace: each lakehouse's SQL analytics endpoint and each warehouse. The host comes
+        // from the item's own properties; a row whose properties are missing keeps Server null rather than a guess.
+        internal static async Task<WorkspaceSqlEndpoint[]> ListSqlEndpointsAsync(string workspaceId, string token, CancellationToken ct)
+        {
+            if (string.IsNullOrWhiteSpace(workspaceId)) throw new ArgumentException("A workspace id is required: list_workspaces shows your workspaces and their ids.");
+            using var http = NewClient(token);
+            var root = "workspaces/" + Uri.EscapeDataString(workspaceId);
+            var lakes = await GetAllPagesAsync<SqlItem>(http, root + "/lakehouses", ct).ConfigureAwait(false);
+            var whs = await GetAllPagesAsync<SqlItem>(http, root + "/warehouses", ct).ConfigureAwait(false);
+            var rows = new List<WorkspaceSqlEndpoint>();
+            foreach (var l in lakes)
+            {
+                var sql = l.Properties?.SqlEndpointProperties;
+                rows.Add(new WorkspaceSqlEndpoint { WorkspaceId = workspaceId, Kind = "Lakehouse", ItemId = sql?.Id ?? l.Id, Database = l.DisplayName,
+                    Server = Blank(sql?.ConnectionString), Status = sql?.ProvisioningStatus });
+            }
+            foreach (var w in whs)
+                rows.Add(new WorkspaceSqlEndpoint { WorkspaceId = workspaceId, Kind = "Warehouse", ItemId = w.Id, Database = w.DisplayName,
+                    Server = Blank(w.Properties?.ConnectionString), Status = w.Properties?.ProvisioningStatus });
+            return rows.OrderBy(r => r.Database ?? "", StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        private static string Blank(string s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+        internal sealed class SqlItem
+        {
+            public string Id { get; set; }
+            public string DisplayName { get; set; }
+            public SqlItemProperties Properties { get; set; }
+        }
+
+        internal sealed class SqlItemProperties
+        {
+            public string ConnectionString { get; set; }      // warehouse
+            public string ProvisioningStatus { get; set; }
+            public SqlEndpointProps SqlEndpointProperties { get; set; }   // lakehouse
+        }
+
+        internal sealed class SqlEndpointProps
+        {
+            public string Id { get; set; }
+            public string ConnectionString { get; set; }
+            public string ProvisioningStatus { get; set; }
+        }
+
         internal static async Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string token, CancellationToken ct)
         {
             using var http = NewClient(token);

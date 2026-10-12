@@ -11,8 +11,9 @@ model. Reuse its account and endpoint. Without an endpoint, complete useful anal
 candidate as unmeasured. Do not claim a speedup or a passed equivalence check.
 
 Use `benchmark_dax` on a representative query for first-run and warm timings. It does not clear
-the cache. Use `benchmark_dax` with `mode='coldWarm'` when cold runs are needed; clearing a shared server's
-cache needs the tool's confirmation. Keep baseline and candidate conditions comparable.
+the cache. Use `benchmark_cold_warm` (or `benchmark_dax` with `mode='coldWarm'`) when cold runs are needed.
+Clearing a shared server's cache needs the tool's confirmation. Keep baseline and candidate conditions comparable.
+Use `cancel_query` to stop a running query.
 
 Use `profile_dax` to locate a bottleneck when tracing is available. Separate trace setup from query
 time. Missing storage-engine events do not establish formula-engine-only work; report that limit.

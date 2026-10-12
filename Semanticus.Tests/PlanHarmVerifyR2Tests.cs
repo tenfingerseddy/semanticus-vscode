@@ -111,6 +111,7 @@ namespace Semanticus.Tests
 
         // ---- S4b: the starter row and a calculated key -------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task S4b_the_starter_row_never_totals_a_part_of_a_calculated_relationship_key()
         {
@@ -139,126 +140,19 @@ namespace Semanticus.Tests
 
         // ---- S5: a code table with numbers, named without ref, code or lookup ----------------------------------------
 
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false), InlineData(true)]
-        public async Task S5_a_code_table_with_a_number_column_is_never_offered(bool reportRead)
-        {
-            using var f = await ShapeAsync(FileFor("S5", reportRead), async e =>
-            {
-                await e.CreateTableAsync("status", "human");
-                await e.CreateColumnAsync("table:status", "STATUS_CD", "Int64", null, "human");
-                await e.CreateColumnAsync("table:status", "STATUS_DESC", "String", null, "human");
-                await e.CreateColumnAsync("table:status", "SORT_ORD", "Int64", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice", "STATUS_CD", "Int64", null, "human");
-                await e.CreateRelationshipAsync("column:fact_invoice/STATUS_CD", "column:status/STATUS_CD", null, true, "human");
-                await e.CreateTableAsync("lkp_priority", "human");
-                await e.CreateColumnAsync("table:lkp_priority", "PRIORITY_ID", "Int64", null, "human");
-                await e.CreateColumnAsync("table:lkp_priority", "PRIORITY_TXT", "String", null, "human");
-                await e.CreateColumnAsync("table:lkp_priority", "WEIGHT", "Double", null, "human");
-            }, reportRead);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:lkp_priority/PRIORITY_ID", "column:lkp_priority/PRIORITY_TXT", "column:lkp_priority/WEIGHT");
-            AssertNeverOffered(row, targets, "column:status/STATUS_CD", "column:status/STATUS_DESC", "column:status/SORT_ORD", "column:fact_invoice/STATUS_CD");
-        }
-
         // ---- S12: one flat table, no relationships: the commonest raw CSV start ---------------------------------------
-
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false, true), InlineData(true, true), InlineData(false, false)]
-        public async Task S12_a_single_flat_tables_numbers_are_never_offered(bool reportRead, bool pro)
-        {
-            using var f = await ShapeAsync(FileFor("S12", reportRead, pro), async e =>
-            {
-                await e.CreateTableAsync("sales", "human");
-                foreach (var (n, t) in new[] { ("ORDER_ID", "Int64"), ("ORDER_DATE", "DateTime"), ("CUSTOMER_NAME", "String"), ("PRODUCT", "String"),
-                                               ("QTY", "Int64"), ("AMOUNT", "Double"), ("DISCOUNT", "Double"), ("NOTE_TXT", "String") })
-                    await e.CreateColumnAsync("table:sales", n, t, null, "human");
-            }, reportRead, pro, frame: false, reportTable: "sales", reportColumn: "PRODUCT");
-            var (row, targets) = await CleanupAsync(f, "column:sales/NOTE_TXT");
-            AssertNeverOffered(row, targets, "column:sales/ORDER_ID", "column:sales/ORDER_DATE", "column:sales/CUSTOMER_NAME");
-            AssertNeverOffered(row, targets, "column:sales/QTY", "column:sales/AMOUNT", "column:sales/DISCOUNT");
-        }
 
         // ---- S13: a header and line fact ---------------------------------------------------------------------------------
 
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false), InlineData(true)]
-        public async Task S13_a_header_facts_numbers_are_never_offered(bool reportRead)
-        {
-            using var f = await ShapeAsync(FileFor("S13", reportRead), async e =>
-            {
-                await e.CreateColumnAsync("table:fact_invoice", "INV_NO", "String", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice", "TAX_AMT", "Double", null, "human");
-                await e.CreateTableAsync("fact_invoice_line", "human");
-                await e.CreateColumnAsync("table:fact_invoice_line", "INV_NO", "String", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice_line", "LINE_AMT", "Double", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice_line", "QTY", "Int64", null, "human");
-                await e.CreateRelationshipAsync("column:fact_invoice_line/INV_NO", "column:fact_invoice/INV_NO", null, true, "human");
-            }, reportRead);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:fact_invoice_line/LINE_AMT", "column:fact_invoice_line/QTY");
-            AssertNeverOffered(row, targets, "column:fact_invoice/INV_AMT", "column:fact_invoice/TAX_AMT");
-        }
-
         // ---- S14: a month-grain calendar with no date column ----------------------------------------------------------
-
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false), InlineData(true)]
-        public async Task S14_a_month_grain_calendars_columns_are_never_offered(bool reportRead)
-        {
-            using var f = await ShapeAsync(FileFor("S14", reportRead), async e =>
-            {
-                await e.CreateTableAsync("dim_period", "human");
-                foreach (var (n, t) in new[] { ("PERIOD_KEY", "Int64"), ("CAL_YEAR", "Int64"), ("CAL_QTR", "Int64"), ("MONTH_OF_YEAR", "Int64"),
-                                               ("MONTH_NM", "String"), ("FISCAL_YEAR", "Int64") })
-                    await e.CreateColumnAsync("table:dim_period", n, t, null, "human");
-                await e.CreateTableAsync("fact_budget", "human");
-                await e.CreateColumnAsync("table:fact_budget", "PERIOD_KEY", "Int64", null, "human");
-                await e.CreateColumnAsync("table:fact_budget", "BUDGET_AMT", "Double", null, "human");
-                await e.CreateRelationshipAsync("column:fact_budget/PERIOD_KEY", "column:dim_period/PERIOD_KEY", null, true, "human");
-            }, reportRead);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:dim_period/PERIOD_KEY", "column:dim_period/MONTH_NM", "column:fact_budget/BUDGET_AMT");
-            AssertNeverOffered(row, targets, "column:dim_period/CAL_YEAR", "column:dim_period/CAL_QTR", "column:dim_period/MONTH_OF_YEAR", "column:dim_period/FISCAL_YEAR");
-        }
 
         // ---- S15: the assistant door adds a removal of a held-back object --------------------------------------------
 
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task S15_an_assistants_removal_of_a_measure_does_not_become_the_cleanup_rows_own_offer()
-        {
-            using var f = await ShapeAsync(FileFor("S15", false), e => Task.CompletedTask, reportRead: false);
-            await f.Engine.AddPlanItemAsync("measure:fact_invoice/Invoice Count", "delete_if_unused", null, "Remove Invoice Count", null, null, "agent");
-
-            var plan = await f.Engine.GetModelPlanAsync();
-            var row = Assert.Single(plan.Items, i => i.Id == "cleanup/model");
-            var lines = row.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>();
-            // The row says measures are never offered for removal; a line on the row that removes one contradicts it.
-            Assert.Contains(row.Why, w => w.Contains("measures", StringComparison.Ordinal) && w.Contains("never offered", StringComparison.Ordinal));
-            Assert.DoesNotContain(lines, l => string.Equals(l.Target, "measure:fact_invoice/Invoice Count", StringComparison.OrdinalIgnoreCase));
-            Assert.DoesNotContain(row.Diff ?? Array.Empty<string>(), d => d.Contains("Invoice Count", StringComparison.Ordinal));
-        }
-
         // ---- S17: a name column named after its entity -----------------------------------------------------------------
-
-        [Theory(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file."), InlineData(false), InlineData(true)]
-        public async Task S17_a_name_column_named_after_its_entity_is_never_offered(bool reportRead)
-        {
-            using var f = await ShapeAsync(FileFor("S17", reportRead), async e =>
-            {
-                await e.CreateTableAsync("Products", "human");
-                await e.CreateColumnAsync("table:Products", "ProductKey", "Int64", null, "human");
-                await e.CreateColumnAsync("table:Products", "Product", "String", null, "human");
-                await e.CreateTableAsync("Customers", "human");
-                await e.CreateColumnAsync("table:Customers", "CustomerKey", "Int64", null, "human");
-                await e.CreateColumnAsync("table:Customers", "Customer", "String", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice", "ProductKey", "Int64", null, "human");
-                await e.CreateColumnAsync("table:fact_invoice", "CustomerKey", "Int64", null, "human");
-                await e.CreateRelationshipAsync("column:fact_invoice/ProductKey", "column:Products/ProductKey", null, true, "human");
-                await e.CreateRelationshipAsync("column:fact_invoice/CustomerKey", "column:Customers/CustomerKey", null, true, "human");
-            }, reportRead);
-            var (row, targets) = await CleanupAsync(f);
-            AssertNeverOffered(row, targets, "column:Products/Product", "column:Customers/Customer");
-        }
 
         // ---- B2: the cached facts: a report whose use changed, checked again at the same revision ---------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task B2_a_report_checked_again_after_it_changed_is_what_the_row_answers_from_even_at_the_same_revision()
         {
@@ -289,6 +183,7 @@ namespace Semanticus.Tests
                 "the row still offers NOTE_TXT, which the report checked again now shows: " + string.Join("; ", again.Diff) + " / " + again.Sub);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task B2_a_report_checked_again_that_can_no_longer_be_fully_read_takes_the_row_away_even_at_the_same_revision()
         {
@@ -330,7 +225,7 @@ namespace Semanticus.Tests
 
             var plan = await f.Engine.GetModelPlanAsync();
             var row = OpenRows(plan).SingleOrDefault(i => i.Id == "cleanup/model");
-            Assert.True(row == null || !row.Why.Any(w => w.Contains("has been read", StringComparison.Ordinal) || w.Contains("the report that was read", StringComparison.Ordinal)),
+            Assert.True(row == null || !row.Why.Any(w => w.Contains("Semanticus looked at", StringComparison.Ordinal) || w.Contains("the report Semanticus looked at", StringComparison.Ordinal)),
                 "no report was read, and the row says: " + string.Join(" / ", row?.Why ?? Array.Empty<string>()));
         }
 

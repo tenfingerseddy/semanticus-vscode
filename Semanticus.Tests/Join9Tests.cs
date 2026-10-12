@@ -36,6 +36,7 @@ namespace Semanticus.Tests
             Assert.StartsWith("FILTER ( ALL (", args[2]);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_rules_counts_a_person_reads_after_load_and_reset_add_up_with_a_scan()
         {

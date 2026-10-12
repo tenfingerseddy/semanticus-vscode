@@ -285,6 +285,9 @@ namespace Semanticus.Engine
 
         public ModelPlanChangeRefusal[] Refused { get; set; } = Array.Empty<ModelPlanChangeRefusal>();
 
+        /// <summary>Why a line was dropped when this row was rebuilt after a failed apply, in the words the failure used.</summary>
+        public string FailureReason { get; set; }
+
         /// <summary>How many lines are kept. On the wire rather than counted on the page, so the sentence and
         /// the count cannot disagree.</summary>
         public int KeptCount { get; set; }

@@ -1,9 +1,9 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { copyText, focusSelectInProperties, onPlanChange, onPlanRunProgress, rpc, runHostCommand, saveModelFromPage, selectInProperties } from './bridge';
+import { copyText, focusSelectInProperties, onPlanChange, openExternal, onPlanRunProgress, rpc, runHostCommand, saveModelFromPage, selectInProperties } from './bridge';
 import { Caret } from './ui';
 import { planRankingOf, type PlanRankingGrant } from './features';
-import { PENDING_ACCESS, upgradeToPro, useTier } from './pro';
+import { PENDING_ACCESS, refreshEntitlement, upgradeToPro, useTier } from './pro';
 import * as P from './plan-model';
 import { useConsentCard } from './consent';
 import { OptimizeView } from './optimize';
@@ -15,6 +15,7 @@ import { PlanHistory } from './plan-history';
 import { peekRestoreLanding } from './plan-history-model';
 import { PlanGuide } from './plan-guide';
 import { PlanHelpMark } from './help';
+import { RefreshPlanButton } from './plan-refresh';
 import { WorkflowRunDetail } from './workflow-run';
 import type { WorkflowRunView } from './workflow-ui';
 import { ComposerDraft } from './composer-draft';
@@ -73,6 +74,7 @@ interface PlanActionResult {
   action?: string;
   performed?: boolean;
   sentence?: string;
+  note?: string;
   revision?: number;
   plan?: P.Plan;
 }
@@ -143,8 +145,8 @@ export function PlanStarts({ starts, onStart }: { starts: P.PlanStart[]; onStart
 /** The run area (design section 2). It always says what is left, in words: never a grey button with a hidden reason.
  *    Semanticus has rows       Run the plan 3
  *    running                   Running 2 of 3, with a bar (the rows show their own step)
- *    only assistant rows       Your assistant has 3, and Tell your assistant
- *    only your rows            Only you can do the rest
+ *    only assistant rows       Your assistant has 3 tasks, and Copy request
+ *    only your rows            2 tasks need your choice. Open one to see what to choose.
  *    nothing open              Plan done
  *  On free the Pro line stands where the button stands, as before. `unknown` draws neither: a paying customer must not
  *  meet an upsell for one frame while the licence is being read. */
@@ -168,19 +170,24 @@ export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told
   }
   const area = P.runAreaOf(plan.items);
   if (area.kind === 'run') {
+    // The count is the whole press: the ready tasks and the ones that follow them in order. The tip says so, so it matches the strip's counts.
+    const ready = P.runSet(plan.items).length, after = area.count - ready;
     return <button type="button" className="sem-btn sem-btn-sm sem-btn-primary" data-testid="plan-run"
-      title={`Runs ${area.count} as one step you can undo.`}
+      title={`Runs ${area.count} as one step you can undo.${after > 0 ? ` ${ready} ${ready === 1 ? 'is' : 'are'} ready now. The other ${after} run after ${after === 1 ? 'it' : 'them'}.` : ''}`}
       onClick={onRun}>Run the plan <span className="pw-run-n sem-num">{area.count}</span></button>;
   }
   if (area.kind === 'assistant') {
     return <span className="pw-runsay" data-testid="plan-run-assistant">
       <span className="pw-state-mark pw-mark-agent" aria-hidden="true" />
-      <span>Your assistant has <b className="sem-num">{area.count}</b></span>
-      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-tell" onClick={onTell}>Tell your assistant</button>
+      <span>Your assistant has <b className="sem-num">{area.count}</b> {area.count === 1 ? 'task' : 'tasks'}</span>
+      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-tell" title="Copies a request. Paste it into your assistant to start these tasks." onClick={onTell}>Copy request</button>
       {told && <span className="plan-muted" role="status" data-testid="plan-told">Copied. Paste it into your assistant.</span>}
     </span>;
   }
-  if (area.kind === 'you') return <span className="plan-muted" data-testid="plan-run-you">Only you can do the rest</span>;
+  if (area.kind === 'you') {
+    const n = plan.items.filter((i) => P.isOpenRow(i) && P.doerOf(i) === 'you').length;
+    return <span className="plan-muted" data-testid="plan-run-you">{n === 1 ? 'The remaining task needs' : 'The remaining tasks need'} your choice. Open {n === 1 ? 'it' : 'one'} to see what to choose.</span>;
+  }
   if (area.kind === 'done') return <span className="pw-state pw-state-good" data-testid="plan-run-done"><span className="pw-state-mark" aria-hidden="true" /><span className="pw-state-w">Plan done</span></span>;
   return null;
 }
@@ -212,9 +219,20 @@ type View = 'work' | 'hist';
 
 // ---- the page ---------------------------------------------------------------------------------------
 
+/** Draws nothing. When the order line starts or stops saying the Pro plan is not active, the header chip reads the plan again, so the two agree in the same moment. */
+export function ProPlanWatch({ inactive }: { inactive: boolean }) {
+  const last = useRef(inactive);
+  useEffect(() => {
+    if (last.current === inactive) return;
+    last.current = inactive;
+    refreshEntitlement();
+  }, [inactive]);
+  return null;
+}
+
 export function PlanView({ sessionId, revision, changeNonce, modelName, hostSession, compatibilityLevel, focus, focusNonce, onGo,
   onGoObject, track: trackSeed, trackNonce, focusObject, onClearObject, historyEntry = null, historyNonce, openRow = null, openRowNonce,
-  onRunUpdate, fieldTakenNonce, homeNonce, draftStartSql, onDraftStartTaken }: {
+  onRunUpdate, fieldTakenNonce, homeNonce, draftStartSql, onDraftStartTaken, showStart, onShowStartTaken }: {
   sessionId: string;
   revision?: number;
   /** Bumped when this webview is told the model changed; the plan is recomputed from the model. */
@@ -231,6 +249,9 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   /** A route asked for the draft panel ON ITS SQL STEP (route.ts SQL_DRAFT_TARGET): the route's nonce, 0 for none. */
   draftStartSql?: number;
   onDraftStartTaken?: () => void;
+  /** A route asked for the Plan's start view (route.ts PLAN_START_TARGET): the route's nonce, 0 for none. The start plan when there is one, else the start form. */
+  showStart?: number;
+  onShowStartTaken?: () => void;
   focusNonce?: number;
   onGo: (tool: string, target?: string) => void;
   /** The object line's navigation, which can hand the Diagram the tables to add (the Overview's, contract 11.1). */
@@ -444,6 +465,19 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     if (typeof hostSession?.tables === 'number' && hostSession.tables === 0) { setPanel('start'); onDraftStartTaken?.(); }
   }, [draftStartSql]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The Studio's plan/start place (the assistant shows its start plan, or the person presses Show me): leave History for the work view, then put the start
+  // plan on the page, or the start form when none exists yet. It waits for the first read of the start plan, so it does not guess.
+  const [startAsk, setStartAsk] = useState(0);
+  useEffect(() => {
+    if (!showStart) return;
+    setView('work'); setRowEntry(null); setStartAsk(showStart); onShowStartTaken?.();
+  }, [showStart]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!startAsk || !sp.loaded) return;
+    setStartAsk(0);
+    if (sp.view) { setPanel('none'); setShowBuilt(true); } else setPanel('start');
+  }, [startAsk, sp.loaded, sp.view]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   // The plan also moves without the model moving: a task, the switch, a hold, Jev landing. The engine says so with
   // plan/didChange, and the page re-reads quietly. Debounced, because one landing can publish twice.
   useEffect(() => {
@@ -479,6 +513,13 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   /** The same call, answered true only when the engine took it. A null answer can mean a refusal or an empty answer, so it cannot tell; this can (round 3: a form that sent words ends them only on true). */
   const controlOk = useCallback(async (key: string, method: string, ...args: unknown[]) => (await run(key, method, ...args)).ok, [run]);
 
+  /** Refresh plan: the engine scans again, adds what is new and clears the finished rows; its sentence is the answer. The rows
+   *  that finished while the page was open are finished rows too, so they leave the list with the rest. */
+  const refresh = useCallback(async () => {
+    const r = await run('refresh', 'refreshPlan');
+    if (r.ok) setJustDone(new Set());
+  }, [run]);
+
   /** Enter on the field: a row, never a trip somewhere else. It starts with your assistant (Kane, 24 Sep), and
    *  "I'll do it" is one click away in its detail. */
   const addTask = useCallback(async (text: string) => {
@@ -506,7 +547,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     setBusy(`${item.id}:draft`); setActionError(null); setSentence(null);
     try {
       const v = await rpc<DraftView>('composeTask', item.title, null, null, null, item.title, 'human');
-      if (!v?.draftId) throw new Error('The engine made no draft.');
+      if (!v?.draftId) throw new Error('Semanticus made no draft.');
       await rpc('skipModelPlanItem', item.id, 'Drafted as steps.');
       setPlan(normalize(await rpc<P.Plan>('getModelPlan')));
       const row = draftRowId(v.draftId);
@@ -718,13 +759,13 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
 
   if (loading && !plan) {
     return <div className="sem-evidence-page plan-page" data-testid="plan-page">
-      <div className="model-home-state" role="status"><span className="sem-spin" /> <strong>Reading the plan…</strong>
+      <div className="model-home-state" role="status"><span className="sem-spin" /> <strong>Opening the plan…</strong>
         <span>Working out what this model still needs.</span></div>
     </div>;
   }
   if (error && !plan) {
     return <div className="sem-evidence-page plan-page" data-testid="plan-page">
-      <div className="model-home-state model-home-error" role="alert"><strong>The plan could not be read</strong>
+      <div className="model-home-state model-home-error" role="alert"><strong>The plan could not be opened</strong>
         <span>{error}</span>
         <button type="button" className="sem-btn" onClick={() => setRetry((n) => n + 1)}>Try again</button></div>
     </div>;
@@ -851,6 +892,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         {/* Help at the Plan and the tour (lane U4). */}
         <PlanHelpMark />
       </span>
+      <RefreshPlanButton busy={busy} onRefresh={() => void refresh()} />
     </header>
 
     {/* The tour draws over the page; the What changed card draws here, in flow (lane U4). */}
@@ -889,6 +931,8 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
           {hostSession && <span>{(hostSession.hasUnsavedEdits ?? hostSession.hasUnsavedChanges) ? 'Not saved yet' : 'Saved'}</span>}
           {showPlan.repeatsNote && <span data-testid="plan-repeats-note">{showPlan.repeatsNote}</span>}
           {order.map((line, i) => <span key={i} data-testid={i === 0 && showPlan.orderedBy ? 'plan-ordered-by' : 'plan-jev-pending'}>{line}</span>)}
+          {showPlan.billingUrl && <button type="button" className="plan-link" data-testid="plan-billing" onClick={() => openExternal(showPlan.billingUrl!)}>Billing</button>}
+          <ProPlanWatch inactive={!!showPlan.billingUrl} />
           {updated && <span className="pw-facts-r" data-testid="plan-updated">{updated}</span>}
         </div>
         <RaiseLevelAction key={sessionId} level={compatibilityLevel} onRaised={() => setRetry((n) => n + 1)} />
@@ -927,7 +971,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         {items.filter(P.isOpenRow).length === 0 && !(openId && items.some((i) => i.id === openId)) && !receipt && justDone.size === 0
           ? <>
             {!showPlan.starts?.length && <div className="model-empty" data-testid="plan-empty"><strong>Nothing to do on the plan</strong>
-              <span>The plan is drawn from the model. Describe a task above, or open a model with tables in it and the gaps appear here.</span></div>}
+              <span>The plan is drawn from the model. Describe a task above, or open a model with tables in it and its tasks appear here.</span></div>}
             {/* An empty plan still has an object line: picking an object in the tree must always offer its actions. */}
             {!track && focusObject && <section className="pw-list" data-testid="plan-list">
               <div className="pw-grp"><span>Showing <b>{focusObject.label}</b></span>
@@ -946,7 +990,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
                     {track === 'assistant' && <span className="plan-muted"> in the order it takes them</span>}</span>
                   <span className="pw-grp-r">
                     {track === 'assistant' && <span className="plan-muted" data-testid="plan-queue-line">
-                      {queue === 'paused' ? 'Paused by you. Nothing is offered.' : 'Offered on its next call'}</span>}
+                      {queue === 'paused' ? 'Paused by you. Your assistant gets no new tasks.' : 'Your assistant gets these when it next checks the Plan'}</span>}
                     <button type="button" className="plan-link" data-testid="plan-clear-filter"
                       onClick={() => { setTrack(null); onClearObject?.(); }}>Clear filter</button>
                   </span>
@@ -991,7 +1035,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
               {/* Rows that turned done while the page was open stay here until the next press or a reload. */}
               {work.justDone.length > 0 && <div data-testid="plan-just-done">
                 <div className="pw-grp"><span><b>Done just now</b><span className="pw-grp-n sem-num">{work.justDone.length}</span></span>
-                  <span className="pw-grp-r plan-muted">Open one to see what it changed.</span></div>
+                  <span className="pw-grp-r plan-muted" data-testid="plan-just-done-note">{P.justDoneNote(work.justDone, showPlan)}</span></div>
                 {work.justDone.map((r) => renderRow(r, false, true))}
               </div>}
               {work.next.length === 0
@@ -1005,9 +1049,10 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
                 <div className="pw-fold-h">
                   <button type="button" className="pw-fold-btn" aria-expanded={foldShown} data-testid="plan-only-you-toggle" onClick={() => setFoldOpen((o) => !o)}>
                     <Caret open={foldShown} />
-                    <span>Only you can do <b className="sem-num">{work.onlyYou.length}</b></span>
+                    <span><b className="sem-num">{work.onlyYou.length}</b> {P.onlyYouWords(work.onlyYou)}</span>
                     {work.onlyYou.some((r) => P.stateWordOf(r) === 'needs_you') && <span className="pw-fold-warn" data-testid="plan-only-you-warn" role="img" aria-label="One has a question for you" />}
                   </button>
+                  <span className="plan-muted pw-fold-hint">Open {work.onlyYou.length === 1 ? 'it' : 'one'} to see what to choose.</span>
                 </div>
                 {foldShown && work.onlyYou.map((r) => renderRow(r))}
               </div>}
@@ -1022,7 +1067,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
  *  back": the classic date table works below 1701, and the one thing refused is authoring a calendar. A list, so the
  *  next floor that matters is a second row and cannot widen the first sentence. */
 const LEVEL_BLOCKS: { capability: string; floor: number }[] = [
-  { capability: 'Calendars', floor: 1701 },
+  { capability: 'Custom calendars for time calculations', floor: 1701 },
 ];
 /** The first capability this level actually blocks, or null. Unknown is "not known to be blocking". */
 export function blockedCapability(level?: number): { capability: string; floor: number } | null {
@@ -1047,7 +1092,7 @@ export function RaiseLevelAction({ level, onRaised }: { level?: number; onRaised
   };
   return <div className="pw-raise" data-testid="plan-raise">
     {/* Names the ONE thing that is actually refused. Everything else at this level keeps working. */}
-    <span>This model is set to level {level}. {blocked.capability} need level {blocked.floor}.</span>
+    <span>This model uses compatibility level {level} (the Power BI feature level). {blocked.capability} need level {blocked.floor} or higher.</span>
     <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-raise-level" disabled={busy}
       onClick={() => void raise()}>{busy ? 'Raising…' : 'Raise compatibility level'}</button>
     {error && <span className="plan-error" role="alert">The level was not changed. {error}</span>}
@@ -1182,6 +1227,8 @@ export function ChangeList({ set, position, busy, onDecideLine, onDecideAll, mar
             <span aria-hidden="true">{shown.sign === ' ' ? '' : `${shown.sign} `}</span>{shown.text}
           </> : line.line}
         </span>
+        {line.provenance?.kind === 'decision' && !line.suggestion && <span className="plan-muted" data-testid={`plan-jev-chose-${position}-${line.id}`}>
+          {line.kept || word === 'sure' || word === 'likely' ? 'Jev chose this' : 'Jev asks you'}</span>}
         {word && <span data-testid={`plan-jevword-${position}-${line.id}`} title={P.JEV_WORD_TITLE[word]}>
           <Pill tone={word}>{word}</Pill></span>}
         {rule && <span data-testid={`plan-ruleword-${position}-${line.id}`} title={P.ruleWordTitle(line)}>

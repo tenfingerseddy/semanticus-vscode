@@ -84,7 +84,6 @@ namespace Semanticus.Tests
 
         [Theory]
         [InlineData("title", "studio")]
-        [InlineData("path", "agent", Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so a file is not known by its path and the path view is the title view.")]
         public async Task An_on_for_a_Desktop_file_lifts_the_old_off_for_no_one_else(string by, string door)
         {
             using var f = new DecisionFixture();
@@ -120,36 +119,9 @@ namespace Semanticus.Tests
             Assert.False((await Row(f)).Enabled);
         }
 
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so its path-known Sales and title-only Sales are one identity; restart and the untouched old off are held by the matrix (RESTART flags) and An_on_for_a_model_known_by_nothing_is_for_models_known_by_nothing_and_says_so.")]
-        public async Task An_on_survives_a_restart_for_its_own_identity_only_and_the_old_off_is_never_written()
-        {
-            using var f = new DecisionFixture();
-            WriteOldOff(f);
-            var shared = Path.Combine(f.Workspace, LayoutStore.DirName, LayoutStore.DecisionSettingsFile);
-            var before = File.ReadAllText(shared);
-            await OpenDesktopAsync(f, "52001", "Sales", Sales(f));
-            await Set(f, "studio", true);
-            Assert.Equal(before, File.ReadAllText(shared));
-
-            // A restart is a second engine over the same workspace folder.
-            var sessions = new SessionManager();
-            var engine = new LocalEngine(sessions, TestEntitlements.Pro, f.Workspace);
-            await engine.CreateModelAsync("Stock", 1604, discardUnsaved: true);
-            sessions.Current.LiveOrigin = new LiveOrigin("localhost:53000", Guid.NewGuid().ToString(), null, localName: "Stock", localPath: Stock(f), localDesktop: true);
-            Assert.False(engine.DecisionPointEnabled(Point));
-            await engine.CreateModelAsync("Sales", 1604, discardUnsaved: true);
-            sessions.Current.LiveOrigin = new LiveOrigin("localhost:53001", Guid.NewGuid().ToString(), null, localName: "Sales", localDesktop: true);
-            Assert.False(engine.DecisionPointEnabled(Point), "an on for the file by its path switched on a file Desktop named only by title");
-            await engine.CreateModelAsync("Sales", 1604, discardUnsaved: true);
-            sessions.Current.LiveOrigin = new LiveOrigin("localhost:53002", Guid.NewGuid().ToString(), null, localName: "Sales", localPath: Sales(f), localDesktop: true);
-            Assert.True(engine.DecisionPointEnabled(Point));
-            Assert.False(File.Exists(Path.Combine(Folder(f), "desktop-earlier-lifted.json")));
-        }
-
         // ---- F1: an off in desktop-unnamed.json ----------------------------------------------------------------------
 
         [Theory]
-        [InlineData("path", "studio", Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so a file is not known by its path and the path view is the title view.")]
         [InlineData("title", "agent")]
         public async Task An_on_for_a_Desktop_file_leaves_an_off_a_model_known_by_nothing_left_exactly_as_it_was(string by, string door)
         {
@@ -203,82 +175,7 @@ namespace Semanticus.Tests
 
         // ---- M1: a file known by its path keeps its own off, and says so -----------------------------------------------
 
-        [Theory(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so the double-clicked Sales and the recent-list Sales share the Sales title and its on.")]
-        [InlineData("studio")]
-        [InlineData("agent")]
-        public async Task An_on_made_from_the_recent_list_leaves_the_double_clicked_file_off_and_the_path_view_says_why(string door)
-        {
-            using var f = new DecisionFixture();
-            await OpenDesktopAsync(f, "52001", "Sales", Sales(f));
-            await Set(f, door, false);
-            await OpenDesktopAsync(f, "52002", "Sales");
-            Assert.False((await Row(f, door)).Enabled);
-            var on = (await Set(f, door, true)).Single(p => p.Name == Point);
-            Assert.Equal(ForThisName, on.Note);
-
-            await OpenDesktopAsync(f, "52003", "Sales");
-            Assert.True((await Row(f, door)).Enabled);
-            await OpenDesktopAsync(f, "52004", "Sales", Sales(f));
-            var path = await Row(f, door);
-            Assert.False(path.Enabled);
-            Assert.Equal(FileOff, path.Note);
-
-            // The title view's on did not touch the file's own off; switching it on there does.
-            var back = (await Set(f, door, true)).Single(p => p.Name == Point);
-            Assert.True(back.Enabled);
-            Assert.Equal(RetiredOnForThisFileAfterItsOwnOffNote, back.Note);
-            await OpenDesktopAsync(f, "52005", "Sales", Sales(f));
-            Assert.True((await Row(f, door)).Enabled);
-        }
-
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so no file reads off \"for this file\" by its path any more.")]
-        public async Task A_file_switched_off_by_its_path_reads_off_with_its_reason()
-        {
-            using var f = new DecisionFixture();
-            await OpenDesktopAsync(f, "52001", "Sales", Sales(f));
-            var off = (await Set(f, "studio", false)).Single(p => p.Name == Point);
-            Assert.False(off.Enabled);
-            Assert.Equal(FileOff, off.Note);
-            await OpenDesktopAsync(f, "52002", "Sales", Sales(f));
-            var row = await Row(f, "agent");
-            Assert.False(row.Enabled);
-            Assert.Equal(FileOff, row.Note);
-        }
-
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so a file known only by its path (no title) is known by nothing and shares that on.")]
-        public async Task An_on_made_when_Desktop_names_nothing_leaves_the_double_clicked_file_off()
-        {
-            using var f = new DecisionFixture();
-            await OpenDesktopAsync(f, "52001", path: Sales(f));
-            await Set(f, "agent", false);
-            await OpenDesktopAsync(f, "61234");
-            Assert.False((await Row(f)).Enabled);
-            var on = (await Set(f, "agent", true)).Single(p => p.Name == Point);
-            Assert.Equal(ForNoName, on.Note);
-            await OpenDesktopAsync(f, "63000", path: Sales(f));
-            var row = await Row(f);
-            Assert.False(row.Enabled);
-            Assert.Equal(FileOff, row.Note);
-        }
-
         // ---- LOW A: an on also clears its twin record in desktop-any.json ----------------------------------------------
-
-        [Fact(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so an on for a Sales window reaches every Sales window (DecisionSwitchScopeJoinTests, the matrix).")]
-        public async Task An_on_made_for_the_file_by_path_reaches_neither_its_title_view_nor_a_model_known_by_nothing()
-        {
-            using var f = new DecisionFixture();
-            await OpenDesktopAsync(f, "52001", "Sales");
-            await Set(f, "studio", false);
-            await OpenDesktopAsync(f, "61234", "Sales", Sales(f));
-            Assert.False((await Row(f, "studio")).Enabled);
-            await Set(f, "studio", true);
-            await OpenDesktopAsync(f, "63000", "Sales");
-            Assert.False((await Row(f, "studio")).Enabled, "an on for the file by its path switched on a title-only view");
-            await OpenDesktopAsync(f, "64000");
-            Assert.False((await Row(f, "studio")).Enabled, "an on for the file by its path switched on a model known by nothing");
-            await OpenDesktopAsync(f, "65000", "Sales", Sales(f));
-            Assert.True((await Row(f, "studio")).Enabled);
-        }
 
         [Fact]
         public async Task An_on_made_for_a_title_only_file_lasts_for_that_title_and_does_not_reach_a_model_known_by_nothing()

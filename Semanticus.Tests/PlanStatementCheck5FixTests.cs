@@ -159,8 +159,8 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(doc.Manifest.Links, l => l.Guessed);
         }
     }
-    /// <summary>P3: an assistant's start on a source with no keys at all, whose sample the QueryData gate refused. The default preset asks the person before a row is read (an unlabelled target counts as
-    /// production), so an assistant's start meets this on the first call, through the real MCP door logic (McpTools.StartModelFromSql, origin "agent").</summary>
+    /// <summary>P3: an assistant's start on a source with no keys at all, whose sample the QueryData gate refused. A preset that asks or denies data preview on dev (an unlabelled target counts as
+    /// dev since 10 Oct 2026, so Standard reads the sample; Cautious asks, Locked denies), so an assistant's start meets this on the first call, through the real MCP door logic (McpTools.StartModelFromSql, origin "agent").</summary>
     [Collection("restore-root")]
     public sealed class PlanStatementCheck5NoSampleTests : GateFixtureBase
     {
@@ -214,9 +214,9 @@ namespace Semanticus.Tests
 
         private static bool IsFactName(string table) => table.StartsWith("fact_", StringComparison.OrdinalIgnoreCase);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
-        [InlineData("standard")]   // the default: an unlabelled target counts as production, so the person is asked first and the sample is not read
-        [InlineData("client")]     // production is a wall: the sample is refused outright
+        [InlineData("cautious")]   // asks from dev up, and an unlabelled target counts as dev: the person is asked first and the sample is not read
         public async Task An_assistants_start_on_a_keyless_source_with_the_sample_refused_builds_no_role_link_that_nothing_supports(string preset)
         {
             var (engine, sessions, view, source) = await AssistantStartAsync(NoKeys(keepPrimaryKeys: false), preset);
@@ -256,7 +256,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task The_same_start_with_the_primary_keys_declared_is_unchanged_the_facts_link_to_their_dimensions_and_no_dimension_has_a_date_link()
         {
-            var (engine, sessions, view, source) = await AssistantStartAsync(NoKeys(keepPrimaryKeys: true), "standard");
+            var (engine, sessions, view, source) = await AssistantStartAsync(NoKeys(keepPrimaryKeys: true), "cautious");
             Assert.Equal(StartSampleStatus.Refused, view.Sample.State);
             var lines = LinkLines(view);
             Assert.DoesNotContain(lines, l => TableOf(l).StartsWith("dim_") && l.Item.Title.Contains("to dim_date["));
@@ -361,6 +361,7 @@ namespace Semanticus.Tests
             });
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -376,6 +377,7 @@ namespace Semanticus.Tests
         /// <summary>Check 5 fix round 2 (Q1): a guessed link the person dropped, and every link to a table the person left out, are lines in the review but are not built. The page's count and drawing are
         /// the engine's own list of the links the build writes (StartPlanView.Links), so after a drop and a leave-out the shown links, the links on, and which tables they join equal the built model, on both doors
         /// and both key shapes (a keyless source's links are guesses, a keyed source's are declared).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(false, "mcp")]
@@ -397,6 +399,7 @@ namespace Semanticus.Tests
                 r.Shown.Select(l => Humanise(l.From) + ">" + Humanise(l.To) + (l.Active ? "" : " (off)")).OrderBy(x => x, StringComparer.Ordinal).ToList());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -408,6 +411,7 @@ namespace Semanticus.Tests
             Assert.Equal(r.BuiltOn, r.Shown.Count(l => l.Active));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_Pro_build_on_the_keyed_J8_source_carries_the_links_the_source_declares_and_no_guessed_dimension_date_roles()
         {

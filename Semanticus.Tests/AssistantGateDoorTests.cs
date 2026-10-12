@@ -73,7 +73,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task The_person_only_tools_send_the_assistant_to_the_person_and_reads_never_ask_through_the_real_door()
+        public async Task A_plan_control_is_asked_about_and_runs_on_the_persons_yes_and_reads_never_ask_through_the_real_door()
         {
             var (engine, sessions, _) = await OpenAsync("door-person");
             using (engine)
@@ -88,9 +88,15 @@ namespace Semanticus.Tests
                     Assert.NotEqual(true, overview.IsError);
                     Assert.Empty(await engine.ListPendingApprovalsAsync());
 
-                    var target = await client.CallToolAsync("add_plan_target", new Dictionary<string, object> { ["text"] = "give myself work", ["section"] = "Meaning" });
+                    // Kane, 10 Oct 2026: the Plan controls are the assistant's too. Under Locked one is asked about like any write, and the yes runs it.
+                    var aim = new Dictionary<string, object> { ["text"] = "Explain the margin measures", ["section"] = "Meaning" };
+                    var target = await client.CallToolAsync("add_plan_target", aim);
                     Assert.True(target.IsError);
-                    Assert.Contains("person", TextOf(target), StringComparison.OrdinalIgnoreCase);
+                    var asked = Assert.Single(await engine.ListPendingApprovalsAsync(), p => p.GrantedUtc == null);
+                    await engine.ApproveAgentActionAsync(asked.Id, "human");
+                    var added = await client.CallToolAsync("add_plan_target", aim);
+                    Assert.NotEqual(true, added.IsError);
+                    Assert.Contains("Explain the margin measures", TextOf(added), StringComparison.Ordinal);
 
                     var fields = Semanticus.Decisions.DecisionRegistry.DeclaredFields.ToArray();
                     var consent = await client.CallToolAsync("set_consent", new Dictionary<string, object>
@@ -98,8 +104,11 @@ namespace Semanticus.Tests
                         ["fields"] = fields, ["schemaVersion"] = Semanticus.Decisions.DecisionRegistry.ConsentSchemaVersion,
                     });
                     Assert.NotEqual(true, consent.IsError);
-                    Assert.Contains("\"asked\":true", TextOf(consent).Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
-                    Assert.False((await engine.GetConsentAsync()).Granted);
+                    // the person's word in chat is enough (1.4 chatyes): the call grants, and records the assistant as the one who gave it
+                    var text = TextOf(consent).Replace(" ", "");
+                    Assert.Contains("\"granted\":true", text, StringComparison.OrdinalIgnoreCase);
+                    Assert.Contains("\"grantedBy\":\"agent\"", text, StringComparison.OrdinalIgnoreCase);
+                    Assert.True((await engine.GetConsentAsync()).Granted);
                 }
                 finally { await client.DisposeAsync(); await host.StopAsync(); host.Dispose(); }
             }

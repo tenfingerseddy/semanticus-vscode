@@ -117,12 +117,20 @@ namespace Semanticus.Tests
         /// no and with Jev sure of every add.</summary>
         [Theory]
         [MemberData(nameof(SignsInOtherForms))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR13_a_listed_sign_in_a_form_the_presence_check_does_not_read_drafts_no_kept_add(string door, string jev, string words)
         {
             using var f = await ProAsync("VR13", jev);
             var v = await ComposeOnDoor(f.Engine, door, words);
             Assert.True(KeptAdds(v).Length == 0, words + " => kept " + string.Join(", ", KeptAdds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR13_a_listed_sign_in_a_form_the_presence_check_does_not_read_drafts_no_kept_add_SampleRows() => SignsInOtherForms().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR13_a_listed_sign_in_a_form_the_presence_check_does_not_read_drafts_no_kept_add_SampleRows))]
+        public Task VR13_a_listed_sign_in_a_form_the_presence_check_does_not_read_drafts_no_kept_add_sample(string door, string jev, string words) => VR13_a_listed_sign_in_a_form_the_presence_check_does_not_read_drafts_no_kept_add(door, jev, words);
 
         /// <summary>VR13 on the rule alone, with no engine: a clause of each of these words reads as asking to add.</summary>
         [Theory]
@@ -146,6 +154,7 @@ namespace Semanticus.Tests
         /// kind the first sentence adds to that list, and the draft keeps Add a role.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR13_a_later_sentence_with_the_sign_in_another_form_vetoes_the_add(string door, string jev)
         {
             using var f = await ProAsync("VR13k", jev);
@@ -153,10 +162,18 @@ namespace Semanticus.Tests
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR13_a_later_sentence_with_the_sign_in_another_form_vetoes_the_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR13_a_later_sentence_with_the_sign_in_another_form_vetoes_the_add_SampleRows))]
+        public Task VR13_a_later_sentence_with_the_sign_in_another_form_vetoes_the_add_sample(string door, string jev) => VR13_a_later_sentence_with_the_sign_in_another_form_vetoes_the_add(door, jev);
+
         /// <summary>VR13 in the draft's last sentence for Add more words (version 4 k): "The old roles should probably go.",
         /// then "Add the Managers role to them."; the draft keeps Add a role.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR13_the_drafts_last_sentence_with_the_sign_in_another_form_vetoes_the_add(string door, string jev)
         {
             using var f = await ProAsync("VR13m", jev);
@@ -166,10 +183,18 @@ namespace Semanticus.Tests
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR13_the_drafts_last_sentence_with_the_sign_in_another_form_vetoes_the_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR13_the_drafts_last_sentence_with_the_sign_in_another_form_vetoes_the_add_SampleRows))]
+        public Task VR13_the_drafts_last_sentence_with_the_sign_in_another_form_vetoes_the_add_sample(string door, string jev) => VR13_the_drafts_last_sentence_with_the_sign_in_another_form_vetoes_the_add(door, jev);
+
         /// <summary>VR13 in kept words (version 4 j): typed before permission, read again at Add more words with their
         /// sentence, whose sign is in a form the check does not read.</summary>
         [Theory]
         [MemberData(nameof(KeptWordsInOtherForms))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR13_kept_words_with_the_sign_in_another_form_draft_no_kept_add(string door, string jev, string first)
         {
             using var f = await ProAsync("VR13j", jev, consent: false);
@@ -178,6 +203,13 @@ namespace Semanticus.Tests
             v = await AddMoreWordsOnDoor(f.Engine, door, v.DraftId, "and hide the Margin measure");
             Assert.True(KeptAdds(v).Length == 0, first + " => kept " + string.Join(", ", KeptAdds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR13_kept_words_with_the_sign_in_another_form_draft_no_kept_add_SampleRows() => KeptWordsInOtherForms().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR13_kept_words_with_the_sign_in_another_form_draft_no_kept_add_SampleRows))]
+        public Task VR13_kept_words_with_the_sign_in_another_form_draft_no_kept_add_sample(string door, string jev, string first) => VR13_kept_words_with_the_sign_in_another_form_draft_no_kept_add(door, jev, first);
 
         public static IEnumerable<object[]> KeptWordsInOtherForms() => Rows(
             "the old measures should probably go, and set up the same for the old roles",
@@ -198,6 +230,7 @@ namespace Semanticus.Tests
         /// word match's slip that reads "Rebate" as "relate"; every add with Jev sure), while the group it joins is deleted.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR14_a_sign_past_the_twelve_clauses_one_ask_reads_still_vetoes_the_add_in_its_sentence(string door, string jev)
         {
             using var f = await ProAsync("VR14", jev);
@@ -205,9 +238,17 @@ namespace Semanticus.Tests
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR14_a_sign_past_the_twelve_clauses_one_ask_reads_still_vetoes_the_add_in_its_sentence_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR14_a_sign_past_the_twelve_clauses_one_ask_reads_still_vetoes_the_add_in_its_sentence_SampleRows))]
+        public Task VR14_a_sign_past_the_twelve_clauses_one_ask_reads_still_vetoes_the_add_in_its_sentence_sample(string door, string jev) => VR14_a_sign_past_the_twelve_clauses_one_ask_reads_still_vetoes_the_add_in_its_sentence(door, jev);
+
         /// <summary>VR14 over Add more words: new words of thirteen clauses in one sentence; the thirteenth deletes the group.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR14_new_words_past_the_limit_still_veto_the_add_in_their_sentence(string door, string jev)
         {
             using var f = await ProAsync("VR14m", jev);
@@ -217,9 +258,17 @@ namespace Semanticus.Tests
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR14_new_words_past_the_limit_still_veto_the_add_in_their_sentence_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR14_new_words_past_the_limit_still_veto_the_add_in_their_sentence_SampleRows))]
+        public Task VR14_new_words_past_the_limit_still_veto_the_add_in_their_sentence_sample(string door, string jev) => VR14_new_words_past_the_limit_still_veto_the_add_in_their_sentence(door, jev);
+
         /// <summary>VR14 with k: the later sentence that deletes every measure on the review list is the thirteenth clause.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR14_a_later_take_away_past_the_limit_still_vetoes_the_add(string door, string jev)
         {
             using var f = await ProAsync("VR14k", jev);
@@ -227,10 +276,18 @@ namespace Semanticus.Tests
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR14_a_later_take_away_past_the_limit_still_vetoes_the_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR14_a_later_take_away_past_the_limit_still_vetoes_the_add_SampleRows))]
+        public Task VR14_a_later_take_away_past_the_limit_still_vetoes_the_add_sample(string door, string jev) => VR14_a_later_take_away_past_the_limit_still_vetoes_the_add(door, jev);
+
         /// <summary>VR14 with kept words (version 4 j and k): the same words typed before permission; at Add more words the
         /// add is read while the later sentence that takes it away waits past the room one ask has (DraftDoors.cs:401-410).</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR14_a_later_take_away_that_waits_past_the_room_still_vetoes_the_kept_add(string door, string jev)
         {
             using var f = await ProAsync("VR14j", jev, consent: false);
@@ -239,6 +296,13 @@ namespace Semanticus.Tests
             v = await AddMoreWordsOnDoor(f.Engine, door, v.DraftId, "and hide the Margin measure");
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR14_a_later_take_away_that_waits_past_the_room_still_vetoes_the_kept_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR14_a_later_take_away_that_waits_past_the_room_still_vetoes_the_kept_add_SampleRows))]
+        public Task VR14_a_later_take_away_that_waits_past_the_room_still_vetoes_the_kept_add_sample(string door, string jev) => VR14_a_later_take_away_that_waits_past_the_room_still_vetoes_the_kept_add(door, jev);
 
         // ---- VR15: the draft's open sentence for Add more words ends at "e.g." and "i.e." -----------------------------
 
@@ -250,6 +314,7 @@ namespace Semanticus.Tests
         /// role, and the same with "i.e.".</summary>
         [Theory]
         [MemberData(nameof(AbbreviationsInTheOpenSentence))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR15_add_more_words_after_e_g_or_i_e_keep_the_drafts_take_away_sentence(string door, string jev, string first, string more)
         {
             using var f = await ProAsync("VR15", jev);
@@ -258,6 +323,13 @@ namespace Semanticus.Tests
             v = await AddMoreWordsOnDoor(f.Engine, door, v.DraftId, more);
             Assert.True(KeptAdds(v).Length == 0, first + " + " + more + " => kept " + string.Join(", ", KeptAdds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR15_add_more_words_after_e_g_or_i_e_keep_the_drafts_take_away_sentence_SampleRows() => AbbreviationsInTheOpenSentence().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR15_add_more_words_after_e_g_or_i_e_keep_the_drafts_take_away_sentence_SampleRows))]
+        public Task VR15_add_more_words_after_e_g_or_i_e_keep_the_drafts_take_away_sentence_sample(string door, string jev, string first, string more) => VR15_add_more_words_after_e_g_or_i_e_keep_the_drafts_take_away_sentence(door, jev, first, more);
 
         public static IEnumerable<object[]> AbbreviationsInTheOpenSentence() =>
             new[]
@@ -283,6 +355,7 @@ namespace Semanticus.Tests
         /// Rebate measure goes on the list of measures to delete.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR16_the_drafts_last_sentence_vetoes_a_same_kind_add_in_any_new_sentence(string door, string jev)
         {
             using var f = await ProAsync("VR16", jev);
@@ -291,5 +364,12 @@ namespace Semanticus.Tests
             v = await AddMoreWordsOnDoor(f.Engine, door, v.DraftId, "Hide the Margin measure. Add the Rebate measure to that list too.");
             Assert.True(KeptAdds(v).Length == 0, "kept " + string.Join(", ", KeptAdds(v)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR16_the_drafts_last_sentence_vetoes_a_same_kind_add_in_any_new_sentence_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR16_the_drafts_last_sentence_vetoes_a_same_kind_add_in_any_new_sentence_SampleRows))]
+        public Task VR16_the_drafts_last_sentence_vetoes_a_same_kind_add_in_any_new_sentence_sample(string door, string jev) => VR16_the_drafts_last_sentence_vetoes_a_same_kind_add_in_any_new_sentence(door, jev);
     }
 }

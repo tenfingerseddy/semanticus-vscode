@@ -16,6 +16,7 @@ BpaCorpusTests.cs
 BpaFixAllTests.cs
 BpaGradeTests.cs
 BpaGradeVerifyTests.cs
+BpaScopedScanTests.cs
 BpaTokenCheckTests.cs
 BpaUnknownScopeTests.cs
 CalcGroupReadTests.cs
@@ -84,6 +85,7 @@ EditLedgerAlignmentTests.cs
 EngineBrokerTests.cs
 EngineBuildIdentityTests.cs
 EngineLifetimeTests.cs
+UnsavedRecoveryTests.cs
 EngineUpdateGuardTests.cs
 EntitlementContractTests.cs
 EntitlementGateTests.cs
@@ -134,6 +136,7 @@ JevJobContractTests.cs
 KnowledgePoisoningSafetyTests.cs
 KnowledgeStoreTests.cs
 LayoutSidecarTests.cs
+SidecarIgnoreTests.cs
 LicenseEntitlementTests.cs
 LicenseExpiryTests.cs
 LicenseSubscriptionIdTests.cs
@@ -169,6 +172,7 @@ ModelFactsTests.cs
 ModelPlanCacheTests.cs
 ModelPlanChangesTests.cs
 ModelPlanTests.cs
+LearnDemoModelTests.cs
 NoBrowserSignInGuardTests.cs
 OpenMismatchCountersignTests.cs
 OpParameterKindsTests.cs
@@ -231,6 +235,8 @@ ReplacePlanTests.cs
 ReplayCheckTests.cs
 ReportDefinitionReaderTests.cs
 ReportScopeRejectionTests.cs
+ReportMeasureReaderTests.cs
+ReportMeasureUseTests.cs
 ReportScopeTests.cs
 RestorePointTests.cs
 ResultContractTests.cs
@@ -252,6 +258,8 @@ SessionObserverTests.cs
 SessionSwapBroadcastTests.cs
 SignInWaitTests.cs
 SetSynonymsCollisionTests.cs
+SynonymIndexTests.cs
+SynonymWritePerfTests.cs
 SkillDebtSafetyTests.cs
 SkillNamingTests.cs
 SnapshotCleanupTests.cs
@@ -276,6 +284,7 @@ StartPlanDecidePureTests.cs
 StartPlanDecideTests.cs
 StateHomeTests.cs
 StateHomeVerifyTests.cs
+StudioWireTests.cs
 TableMappingListTests.cs
 TableRowCountTests.cs
 TableSourceMappingTests.cs
@@ -292,6 +301,7 @@ TestsRedesignTests.cs
 TestSuiteCascadeTests.cs
 TestSuiteCoverageTests.cs
 TestSuiteStoreTests.cs
+TestSpeedTests.cs
 TimeCalcValidationTests.cs
 TimeIntelligenceVariantsTests.cs
 TomCalendarAvailabilityTests.cs
@@ -356,6 +366,7 @@ UserEditFoldTests.cs
 ModelSqlEndpointTests.cs
 PublishDestinationClearTests.cs
 WorkspaceModelListTests.cs
+WorkspaceSqlEndpointListTests.cs
 ConnectionJobsTests.cs
 PlanTaskTests.cs
 PlanPersonControlsTests.cs
@@ -372,6 +383,8 @@ PlanHeartFoldParityTests.cs
 PlanReadWritesNothingTests.cs
 TaskLinkTests.cs
 PersonQueueTests.cs
+PlanRefreshTests.cs
+VRefreshContosoTests.cs
 PlanRemoveTests.cs
 DescribedStepsTests.cs
 JevDraftBuilderTests.cs
@@ -626,3 +639,11 @@ Join12VarScopeTests.cs
 SolA7NestedVarSiblingTests.cs
 VerifyJ12fxVarScopeTests.cs
 AskDataTests.R1Explain.cs
+LeanToolResultsTests.cs
+ChatYesTests.cs
+VerifyChatYesTests.cs
+RunPlanCompletionTests.cs
+BatchToolsTests.cs
+SchemaUndoFormTests.cs
+VerifierSealOnceTests.cs
+AssistantSignTests.cs

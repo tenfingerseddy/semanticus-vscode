@@ -317,6 +317,11 @@ namespace Semanticus.Engine
         // --- Test seams for the workspace (selective-push) target. Live XMLA is not exercised offline, so tests
         // inject in-memory snapshots (A then B, for the drift check) and a fake push — exercising the merge / validate
         // / drift / gate / audit legs WITHOUT a real endpoint. Null (production) = the real live path. ---
+        // A role Create or Update (a members change among them) cannot be published from here; a role Delete can.
+        internal static bool IsRoleHeld(ModelDiffItem i) => i.ObjectType == "Role" && (i.Action == "Create" || i.Action == "Update");
+        internal static string RoleHeldReason(string roleRef) =>
+            roleRef + " (live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.)";
+
         internal Func<Task<RawTom.Database>> WorkspaceSnapshotHook;
         internal Func<string, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget>, DeployReport> WorkspacePushHook;
         // Whole-model publish path (deploy_live / Save to Live). Tests point this at an in-memory recorded target so a
@@ -376,7 +381,11 @@ namespace Semanticus.Engine
                 // (so they never count toward drift / apply) and reported. Deduped by ref.
                 var republishDeleteRefs = selectedItems.Where(i => i.LikelyRepublished).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
                 string RepublishReason(string r) => r + " (refused as a likely republish: a same-named object exists on the target with a DIFFERENT lineage tag; deleting or replacing it would drop the live object and its data. This usually means the model was republished under you. Re-diff against the current model, or push the update instead.)";
-                var applicableItems = selectedItems.Where(i => !i.LikelyRepublished).ToList();
+                // A role added or changed (members included) is never carried by a metadata push: Power BI takes role
+                // membership in its own service, and SyncSessionToLive has no role path (only an explicit delete). Say so
+                // BEFORE the press and keep it out of the push, so one role row never blocks the other ticked changes.
+                var roleHeldRefs = selectedItems.Where(IsRoleHeld).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
+                var applicableItems = selectedItems.Where(i => !i.LikelyRepublished && !IsRoleHeld(i)).ToList();
                 var applicable = applicableItems.Select(i => i.Ref).ToArray();
                 var deleteRefs = applicableItems.Where(i => i.Action == "Delete").Select(i => i.Ref).ToArray();
                 var pushRefs = applicableItems.Where(i => i.Action != "Delete").Select(i => i.Ref).ToArray();
@@ -389,16 +398,17 @@ namespace Semanticus.Engine
                 if (!commit)
                 {
                     var note = $"Preview: {pushRefs.Length} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + CommitHint(origin, "push");
-                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs, Target = tlabel, Note = note };
+                    if (roleHeldRefs.Length > 0) note += $" {roleHeldRefs.Length} role change(s) cannot go from here: {string.Join(", ", roleHeldRefs)}.";
+                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs.Concat(roleHeldRefs.Select(RoleHeldReason)).ToArray(), Target = tlabel, Note = note };
                 }
 
                 // NOTHING TO PUSH: the selection matched no pending difference the push can carry. If the ONLY selection
                 // was a refused republish, say THAT (not "nothing to push"). Either way, no live write happened.
                 if (applicable.Length == 0)
                 {
-                    if (republishDeleteRefs.Length > 0)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = republishDeleteRefs.Select(RepublishReason).ToArray(), Target = tlabel,
-                            Note = "Nothing was pushed." + RepublishNote() };
+                    if (republishDeleteRefs.Length > 0 || roleHeldRefs.Length > 0)
+                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = republishDeleteRefs.Select(RepublishReason).Concat(roleHeldRefs.Select(RoleHeldReason)).ToArray(), Target = tlabel,
+                            Note = "Nothing was pushed." + RepublishNote() + (roleHeldRefs.Length > 0 ? $" Role changes cannot go from here: {string.Join(", ", roleHeldRefs)}." : "") };
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
                         Note = $"Nothing to push: the selection matched no pending difference between the source and {right.Database} on {right.Endpoint}." };
                 }
@@ -448,7 +458,7 @@ namespace Semanticus.Engine
                 // The A-diff drives the preview count (what the user previewed is what they push);
                 // the B-diff drives what is actually applied.
                 var bdiff = ModelCompare.Diff(ldb.Model, bdb.Model, llabel, tlabel);
-                var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).ToList();
+                var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref)) && !IsRoleHeld(i)).ToList();
                 // REFUSE retag/republish items (same name, different lineage tag ⇒ Match emits a Delete + Create pair
                 // that SHARE a name-based ref). Both halves are excluded from the push: deleting would drop the live
                 // object + its data, and the paired Create can't add a same-named object while the live one exists. The
@@ -480,6 +490,7 @@ namespace Semanticus.Engine
                 var failed = new System.Collections.Generic.List<string>(outcome.Failed.Select(f => f.Ref + " (" + f.Reason + ")"));
                 // Retag/republish items are refused with a clear, actionable reason (routed to FailedRefs). Never pushed.
                 foreach (var r in republishRefsB) failed.Add(RepublishReason(r));
+                foreach (var r in roleHeldRefs) failed.Add(RoleHeldReason(r));
 
                 // BLOCKER 1 (staging-collision coupling): a relationship Delete whose paired replacement Create was SELECTED
                 // but did NOT stage — an in-place re-point keeps the same endpoint pair on one side so the merged Create

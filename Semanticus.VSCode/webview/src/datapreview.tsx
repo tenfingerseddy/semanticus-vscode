@@ -96,7 +96,7 @@ export function DataPreviewView({ target }: { target?: { table: string; nonce: n
           // ARIA + Enter/Space on Reveal bubbling into the row action). The row keeps the mouse onClick.
           const activate = () => { selectInProperties(t.ref); if (conn?.connected && !busy) void preview(t.name); };
           return (
-          <div key={t.ref} onClick={activate} aria-current={selected === t.name ? 'true' : undefined}
+          <div key={t.ref} data-object-ref={t.ref} onClick={activate} aria-current={selected === t.name ? 'true' : undefined}
             className="group sem-list-row xe-pick-row cursor-pointer"
             style={{ color: conn?.connected ? 'var(--sem-fg)' : 'var(--sem-muted)' }}>
             {/* Instrument: a table's kind is a quiet word after its name, not a coloured dot. */}

@@ -153,6 +153,9 @@ namespace Semanticus.Engine
                 _current = nextContext;     // one atomic publication: session + model state + surviving workflow runs
                 Interlocked.Increment(ref _generation);     // the exchange happened: every in-flight job is now stale
             }
+            previous.Session?.DiscardReplacedFileRecovery();
+            next.StartFileRecovery();
+            next.WarmObservers();
             try { previous.DisposeRetired(); }
             catch (Exception ex)
             {
@@ -167,6 +170,9 @@ namespace Semanticus.Engine
             var previous = _current;
             _current = next;
             Interlocked.Increment(ref _generation);         // the same exchange, seen from LocalEngine's side
+            previous.Session?.DiscardReplacedFileRecovery();
+            next.Session?.StartFileRecovery();
+            next.Session?.WarmObservers();
             return previous;
         }
 

@@ -78,30 +78,6 @@ namespace Semanticus.Tests
 
         // ---- 1: the title file ----------------------------------------------------------------------------------------
 
-        [Theory(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so east\\Sales.pbix and west\\Sales.pbix share the Sales title and its on, and the row says so (DecisionSwitchScopeJoinTests).")]
-        [InlineData("studio")]
-        [InlineData("agent")]
-        public async Task Verify_an_on_for_east_Sales_pbix_leaves_west_Sales_pbix_off(string door)
-        {
-            using var f = new DecisionFixture();
-            var east = Path.Combine(f.Home, "east", "Sales.pbix");
-            var west = Path.Combine(f.Home, "west", "Sales.pbix");
-            await OpenDesktopAsync(f, "52001", "Sales");                   // day 1: Sales from Desktop's recent list, switched off
-            await McpTools.SetDecisionPointEnabled(f.Engine, Point, false);
-            await OpenDesktopAsync(f, "52002", "Sales", west);             // day 2: west\Sales.pbix double-clicked reads that off
-            Assert.False((await RowAsync(f, door)).Enabled);
-            await OpenDesktopAsync(f, "52003", "Sales", east);             // day 3: east\Sales.pbix double-clicked, switched on
-            Assert.False((await RowAsync(f, door)).Enabled);
-            var note = (await SetAsync(f, door, true)).Single(p => p.Name == Point).Note;
-
-            await OpenDesktopAsync(f, "52004", "Sales", west);             // day 4: west\Sales.pbix double-clicked again
-            var westOn = (await RowAsync(f, door)).Enabled;
-            var asked = await AskedAfterTheYesAsync(f);
-            Assert.False(westOn, "The on for east\\Sales.pbix switched the point back on for west\\Sales.pbix, a file Semanticus "
-                + "tells apart by its path, and after the yes its measure was " + (asked ? "sent" : "not sent") + ". The row said: " + note);
-            Assert.False(asked);
-        }
-
         // ---- 2: what the row of an on made when Desktop names nothing says about double-clicked files -----------------
 
         [Theory]
@@ -192,49 +168,5 @@ namespace Semanticus.Tests
 
         // ---- round 3's T2 and T3, restated to ruling 2 (these pass) ----------------------------------------------------
 
-        [Theory(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so a file known only by its path (no readable title) is known by nothing and shares that on.")]
-        [InlineData("studio")]
-        [InlineData("agent")]
-        public async Task Restated_T2_an_on_made_when_Desktop_names_nothing_leaves_the_double_clicked_file_off_and_says_why(string door)
-        {
-            // Desktop's title cannot be read: double-clicked, the file is known by its path alone; from the recent list, by nothing.
-            using var f = new DecisionFixture();
-            var sales = Path.Combine(f.Home, "reports", "Sales.pbix");
-            await OpenDesktopAsync(f, "52001", path: sales);
-            await SetAsync(f, door, false);
-            await OpenDesktopAsync(f, "61234");
-            Assert.False((await RowAsync(f, door)).Enabled);
-            var on = (await SetAsync(f, door, true)).Single(p => p.Name == Point);
-            Assert.True(on.Enabled);
-            Assert.NotNull(on.Note);                                       // ruling 1: it clears for everyone and says so
-            await OpenDesktopAsync(f, "63000", path: sales);
-            var back = await RowAsync(f, door);
-            Assert.False(back.Enabled);                                    // ruling 2: the file's own off holds
-            Assert.Equal(FileOff, back.Note);                              // ruling 2: and says why
-            Assert.False(await AskedAfterTheYesAsync(f));
-        }
-
-        [Theory(Skip = "Void under the join's ruling (item 5, the coordinator's brief, 30 Sep): Power BI Desktop's command-line path is never a model's identity, so the double-clicked Sales and the recent-list Sales share the Sales title and its on.")]
-        [InlineData("studio")]
-        [InlineData("agent")]
-        public async Task Restated_T3_an_on_made_from_the_recent_list_leaves_the_double_clicked_file_off_and_says_why(string door)
-        {
-            using var f = new DecisionFixture();
-            var sales = Path.Combine(f.Home, "reports", "Sales.pbix");
-            await OpenDesktopAsync(f, "52001", "Sales", sales);
-            await SetAsync(f, door, false);
-            await OpenDesktopAsync(f, "61234", "Sales");
-            Assert.False((await RowAsync(f, door)).Enabled);
-            var on = (await SetAsync(f, door, true)).Single(p => p.Name == Point);
-            Assert.True(on.Enabled);
-            Assert.NotNull(on.Note);                                       // ruling 2: the row says what the on did (its words are read by eye)
-            await OpenDesktopAsync(f, "63000", "Sales");
-            Assert.True((await RowAsync(f, door)).Enabled);                // the title view's on lasts
-            await OpenDesktopAsync(f, "64000", "Sales", sales);
-            var back = await RowAsync(f, door);
-            Assert.False(back.Enabled);                                    // ruling 2: a title-view on does not clear the file's own off
-            Assert.Equal(FileOff, back.Note);
-            Assert.False(await AskedAfterTheYesAsync(f));
-        }
     }
 }

@@ -61,6 +61,7 @@ namespace Semanticus.Tests
 
         // ---- the rule-derived half -------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_rules_give_one_aim_per_section_and_none_of_them_is_empty()
         {
@@ -111,6 +112,7 @@ namespace Semanticus.Tests
 
         // ---- a typed target is remembered ---------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_target_you_typed_is_still_there_when_the_model_is_opened_again()
         {
@@ -171,6 +173,7 @@ namespace Semanticus.Tests
 
         // ---- a typed target becomes an item ---------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_target_becomes_one_item_at_the_head_of_its_own_section()
         {
@@ -204,6 +207,7 @@ namespace Semanticus.Tests
             Assert.Equal(openBefore + 1, plan.Items.Length);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_item_points_where_the_ask_box_would_send_the_same_words()
         {
@@ -221,6 +225,7 @@ namespace Semanticus.Tests
             Assert.Contains(item.Jump.Label, string.Join(" ", item.Why), StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_target_whose_words_name_no_place_carries_no_link_rather_than_a_guess()
         {
@@ -235,6 +240,7 @@ namespace Semanticus.Tests
             Assert.Contains("do not name a page", string.Join(" ", item.Why), StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Typing_the_same_target_twice_is_one_target()
         {
@@ -250,6 +256,7 @@ namespace Semanticus.Tests
 
         // ---- removing and finishing -------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Removing_the_target_removes_the_item_with_it()
         {
@@ -268,6 +275,7 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanSections.InOrder.Length, after.Targets.Length);   // the aims stay
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Only_a_target_you_typed_can_be_removed()
         {
@@ -306,6 +314,7 @@ namespace Semanticus.Tests
             Assert.Empty(result.Plan.Items.Where(i => i.Status == ModelPlanStatuses.Target));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Marking_something_that_is_not_your_target_done_is_refused_in_words()
         {
@@ -339,6 +348,7 @@ namespace Semanticus.Tests
             Assert.Equal("No grade yet.", PlanTargets.TargetLine(new ModelPlanWorth(), 0));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_worth_on_a_real_plan_carries_the_target_line()
         {
@@ -360,6 +370,7 @@ namespace Semanticus.Tests
 
         // ---- what is refused, and who may do it ---------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_target_must_name_one_of_the_five_goals()
         {
@@ -390,6 +401,7 @@ namespace Semanticus.Tests
             Assert.Contains(PlanTargets.MaxTextChars.ToString(), refused.Message, StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_session_can_say_what_its_model_should_become()
         {
@@ -436,6 +448,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanTargets.IdFor(first), PlanTargets.IdFor(first.ToUpperInvariant()));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Adding_two_long_targets_that_share_sixty_characters_keeps_both()
         {
@@ -525,6 +538,7 @@ namespace Semanticus.Tests
                 Assert.Single(result.Plan.Items.Where(i => i.Id == item.Id)).Status);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_done_verb_is_refused_on_an_item_that_is_not_a_target()
         {
@@ -600,6 +614,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_removal_that_races_a_model_swap_never_removes_the_other_model_s_target()
         {

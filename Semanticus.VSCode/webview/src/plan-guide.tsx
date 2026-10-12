@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { requestGuideFlags, rpc, setGuideFlag, type GuideFlags } from './bridge';
+import { whenFirstRunClosed } from './firstrun-gate';
+import { requestFirstRun, requestGuideFlags, rpc, setGuideFlag, type GuideFlags } from './bridge';
 import { cssZoomFactor } from './toolrow';
 import './plan-guide.css';
 
@@ -37,7 +38,7 @@ export const WHAT_CHANGED: Record<string, { lines: string[] }> = {
     lines: [
       'The Plan is now where you start. The Overview is gone.',
       'Edit History moved into the Plan. Open History at the top.',
-      'Workflow runs show as rows in the Plan.',
+      'Workflow runs show as tasks in the Plan.',
       "One switch pauses your assistant's tasks.",
       'Connections are on one page, with a SQL endpoint for each model.',
       'Workflows is one page. With Pro, a workflow you describe in words becomes steps.',
@@ -63,17 +64,29 @@ export interface TourStep {
 
 export const PLAN_TOUR: TourStep[] = [
   { anchor: ['strip'], clearOf: 'facts', title: 'The work on your model',
-    body: 'One track each for Semanticus, you and your assistant: done, on it and waiting. Click a track to see only its rows.' },
+    body: 'One track each for Semanticus, you and your assistant: done, on it and waiting. Click a track to see only its tasks.' },
   { anchor: ['row'], title: 'Every row answers three questions',
     body: 'Where it came from, who does it, and where it stands. The link on the right opens the page where it gets done.' },
   { anchor: ['doer', 'row'], title: 'How Semanticus works', how: true },
   { anchor: ['field'], title: 'Add your own',
-    body: 'Describe a task or an aim in your own words. It becomes a row. Hand it to your assistant, or do it yourself.' },
+    body: 'Describe a task or an aim in your own words. It becomes a task. Hand it to your assistant, or do it yourself.' },
   { anchor: ['queue-switch'], title: "Your assistant's tasks", align: 'end',
     body: 'Your assistant picks up its tasks the next time it checks in. Pause them here and keep talking to it directly.' },
   { anchor: ['history-row', 'history'], title: 'What changed, and Undo', view: 'history', align: 'end',
     body: 'History lists every change and who made it, newest first. Undo to here takes a change back, with any made after it. Restore brings back a saved version.' },
 ];
+
+/** The step only a person who has not connected an assistant sees: the header button that does it. */
+export const CONNECT_STEP: TourStep = { anchor: ['assistant-chip'], title: 'Connect your assistant',
+  body: 'Open Your assistant in the header and choose Connect your assistant. Then your assistant can do the tasks that need words.' };
+
+/** The tour for this person: the six steps, plus Connect your assistant just before the one about its tasks while
+ *  nothing is connected. Once connected the step is gone, so the tour never tells someone to do what they have done. */
+export function tourSteps(connected: boolean): TourStep[] {
+  if (connected) return PLAN_TOUR;
+  const at = PLAN_TOUR.findIndex((s) => s.anchor[0] === 'queue-switch');
+  return [...PLAN_TOUR.slice(0, at), CONNECT_STEP, ...PLAN_TOUR.slice(at)];
+}
 
 export type GuideMode = 'none' | 'tour' | 'card';
 export type GuideFlagName = 'planTour' | 'whatChanged';
@@ -107,8 +120,8 @@ export function shownFlags(mode: GuideMode): GuideFlagName[] {
  * and the tour's: an existing person has been offered the tour on the card itself, and is not a new person the
  * next time they open a model with no history.
  */
-export function guideStep(state: GuideState, action: GuideAction): { state: GuideState; set: GuideFlagName[] } {
-  const last = PLAN_TOUR.length - 1;
+export function guideStep(state: GuideState, action: GuideAction, count: number = PLAN_TOUR.length): { state: GuideState; set: GuideFlagName[] } {
+  const last = count - 1;
   switch (action.type) {
     case 'next': return { state: { ...state, step: Math.min(last, state.step + 1) }, set: [] };
     case 'back': return { state: { ...state, step: Math.max(0, state.step - 1) }, set: [] };
@@ -126,7 +139,7 @@ const EDGE = 16;
 const ANCHOR_GAP = 18;
 
 /** The Plan view a tour step lives in: every step but the last is on Work. */
-export function tourView(step: number): 'work' | 'history' { return PLAN_TOUR[step]?.view ?? 'work'; }
+export function tourView(step: number, steps: TourStep[] = PLAN_TOUR): 'work' | 'history' { return steps[step]?.view ?? 'work'; }
 
 /** Where the step card sits: under its anchor, or above it when there is no room below; inside the frame.
  *  `clearBottom` is the bottom of a block the card must not cover; the card then starts 12 below it. */
@@ -169,16 +182,16 @@ function Mark({ kind }: { kind: 'semanticus' | 'assistant' | 'you' | 'jev' }) {
 
 export type GuideClick = 'next' | 'back' | 'close' | 'showTour';
 
-export function TourCard({ step, onAct, style, cardRef }: {
-  step: number; onAct: (a: GuideClick) => void; style?: React.CSSProperties; cardRef?: React.Ref<HTMLDivElement>;
+export function TourCard({ step, onAct, style, cardRef, steps = PLAN_TOUR }: {
+  step: number; onAct: (a: GuideClick) => void; style?: React.CSSProperties; cardRef?: React.Ref<HTMLDivElement>; steps?: TourStep[];
 }) {
-  const s = PLAN_TOUR[step];
-  const last = step === PLAN_TOUR.length - 1;
+  const s = steps[step];
+  const last = step === steps.length - 1;
   return <div ref={cardRef} className="plan-tour" role="dialog" aria-label="Plan tour" style={style}
     onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onAct('close'); } }}>
     <div className="plan-tour-head">
-      <span className="plan-tour-pips" aria-hidden="true">{PLAN_TOUR.map((_, i) => <i key={i} className={i <= step ? 'is-on' : undefined} />)}</span>
-      <span className="plan-tour-count">{step + 1} of {PLAN_TOUR.length}</span>
+      <span className="plan-tour-pips" aria-hidden="true">{steps.map((_, i) => <i key={i} className={i <= step ? 'is-on' : undefined} />)}</span>
+      <span className="plan-tour-count">{step + 1} of {steps.length}</span>
       <button type="button" className="plan-tour-close" onClick={() => onAct('close')}>Close</button>
     </div>
     <h4 className="plan-tour-title">{s.title}</h4>
@@ -230,13 +243,13 @@ const samePlace = (a: Placed | null, b: Placed) => !!a && JSON.stringify(a) === 
 const SETTLE_FRAMES = 45;
 
 /** The step card and the ring around its anchor, placed in the zoomed Studio root's own pixels. */
-function TourOverlay({ step, onAct }: { step: number; onAct: (a: GuideClick) => void }) {
+function TourOverlay({ step, onAct, steps }: { step: number; onAct: (a: GuideClick) => void; steps: TourStep[] }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState<Placed | null>(null);
   const anchorRef = useRef<Element | null>(null);
   const [anchorEl, setAnchorEl] = useState<Element | null>(null);
   const measure = useCallback((scroll: boolean) => {
-    const found = findAnchor(PLAN_TOUR[step]);
+    const found = findAnchor(steps[step]);
     const anchor = found?.el ?? null;
     const host = (cardRef.current?.closest('.studio-root') ?? document.querySelector('.studio-root')) as HTMLElement | null;
     const z = cssZoomFactor(host ?? cardRef.current);
@@ -250,11 +263,11 @@ function TourOverlay({ step, onAct }: { step: number; onAct: (a: GuideClick) => 
     const size = c && c.width > 0 ? { width: c.width / z, height: c.height / z } : { width: 400, height: 180 };
     const a = anchor?.getBoundingClientRect();
     const ring = a ? { left: a.left / z, top: a.top / z, right: a.right / z, bottom: a.bottom / z } : null;
-    const clearEl = PLAN_TOUR[step].clearOf ? document.querySelector(`[data-tour="${PLAN_TOUR[step].clearOf}"]`) : null;
+    const clearEl = steps[step].clearOf ? document.querySelector(`[data-tour="${steps[step].clearOf}"]`) : null;
     const clearBottom = clearEl ? clearEl.getBoundingClientRect().bottom / z : undefined;
-    const next: Placed = { card: placeTourCard(ring, size, bounds, PLAN_TOUR[step].align, clearBottom), ring };
+    const next: Placed = { card: placeTourCard(ring, size, bounds, steps[step].align, clearBottom), ring };
     setPlace((old) => (samePlace(old, next) ? old : next));
-  }, [step]);
+  }, [step, steps]);
   // A step's anchor can draw late (step six opens History, whose rows arrive on their own call) and can change
   // size as the page settles (a switch that goes bold when pressed). So a new step keeps measuring for a moment,
   // moving from a fallback to the part it is about as soon as that appears, and then settles; a missing anchor
@@ -284,7 +297,7 @@ function TourOverlay({ step, onAct }: { step: number; onAct: (a: GuideClick) => 
       left: place.ring.left - pad, top: place.ring.top - pad,
       width: place.ring.right - place.ring.left + pad * 2, height: place.ring.bottom - place.ring.top + pad * 2,
     }} />}
-    <TourCard step={step} onAct={onAct} cardRef={cardRef}
+    <TourCard step={step} steps={steps} onAct={onAct} cardRef={cardRef}
       style={place ? { left: place.card.left, top: place.card.top } : { visibility: 'hidden', left: 0, top: 0 }} />
   </>;
 }
@@ -296,10 +309,13 @@ function TourOverlay({ step, onAct }: { step: number; onAct: (a: GuideClick) => 
 export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => void }) {
   const [state, setState] = useState<GuideState>({ mode: 'none', step: 0 });
   const asked = useRef(false);
+  // Whether an assistant is connected, asked when a tour opens. Unknown counts as connected: fewer steps, never a wrong one.
+  const [steps, setSteps] = useState<TourStep[]>(PLAN_TOUR);
+  const askSteps = () => { void requestFirstRun().then((s) => setSteps(tourSteps(s ? s.connected : true))); };
   const write = (set: GuideFlagName[]) => {
     for (const f of new Set(set)) setGuideFlag(f, f === 'whatChanged' ? WHAT_CHANGED_CARD_ID : undefined);
   };
-  const act = (a: GuideAction) => { const r = guideStep(state, a); write(r.set); setState(r.state); };
+  const act = (a: GuideAction) => { const r = guideStep(state, a, steps.length); write(r.set); if (r.state.mode === 'tour' && state.mode !== 'tour') askSteps(); setState(r.state); };
 
   useEffect(() => {
     let alive = true;
@@ -308,6 +324,7 @@ export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => v
       if (!want) return;
       asked.current = true;
       if (want === 'card' && !WHAT_CHANGED[WHAT_CHANGED_CARD_ID]) return;
+      if (want === 'tour') askSteps();
       setState({ mode: want, step: 0 });
     };
     take();
@@ -315,11 +332,13 @@ export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => v
     if (!asked.current) {
       const empty = rpc<{ rows?: unknown[] }>('getPlanHistory', null, null, null, 1)
         .then((v) => (Array.isArray(v?.rows) ? v.rows.length === 0 : null), () => null);
-      void Promise.all([requestGuideFlags(WHAT_CHANGED_CARD_ID), empty]).then(([flags, historyEmpty]) => {
+      // The tour waits for the first-run choice to close: two cards at once fight for the keyboard.
+      void Promise.all([requestGuideFlags(WHAT_CHANGED_CARD_ID), empty, whenFirstRunClosed()]).then(([flags, historyEmpty]) => {
         if (!alive || asked.current) return;
         const mode = decideGuide(flags, historyEmpty, WHAT_CHANGED_CARD_ID);
         if (mode === 'none') return;
         write(shownFlags(mode));
+        if (mode === 'tour') askSteps();
         setState({ mode, step: 0 });
       });
     }
@@ -328,7 +347,7 @@ export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => v
 
   // The last step's anchor lives in History, so the tour opens it there and puts the page back when it leaves.
   const movedView = useRef(false);
-  const wantView = state.mode === 'tour' ? tourView(state.step) : null;
+  const wantView = state.mode === 'tour' ? tourView(state.step, steps) : null;
   useEffect(() => {
     if (!onView) return;
     // A tour opened from History must still start on Work, where its first five steps live (UAT-J9-S10a-006).
@@ -338,6 +357,6 @@ export function PlanGuide({ onView }: { onView?: (view: 'work' | 'history') => v
   }, [wantView, onView]);
 
   if (state.mode === 'card') return <WhatChangedCard cardId={WHAT_CHANGED_CARD_ID} onAct={(a) => act({ type: a === 'showTour' ? 'showTour' : 'close' })} />;
-  if (state.mode === 'tour') return <TourOverlay step={state.step} onAct={(a) => act({ type: a === 'showTour' ? 'showTour' : a })} />;
+  if (state.mode === 'tour') return <TourOverlay step={state.step} steps={steps} onAct={(a) => act({ type: a === 'showTour' ? 'showTour' : a })} />;
   return null;
 }

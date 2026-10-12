@@ -7,7 +7,7 @@
 // The engine decides every fact about undo: `undoable`, `laterCount`, `undone` and `redoable` come from
 // EditLedger (contract 8.5) and are never recomputed here. The page only words them.
 
-import { opLabel, readSafetyCheckOverride, SAFETY_CHECK_COPY } from './copy';
+import { editWords, opLabel, readSafetyCheckOverride, SAFETY_CHECK_COPY } from './copy';
 
 // ---- the wire (Semanticus.Engine/PlanHistory.cs, camelCase over the JSON-RPC door) -----------------------
 
@@ -128,9 +128,9 @@ export function undoSentence(later: number): string {
 export const laterTag = (later: number): string => (later > 0 ? `+${later} later` : '');
 
 export const REDO_SENTENCE = 'Brings this change back.';
-export const SESSION_SEAM = { title: 'Before this session', text: 'Undo is not available for these.' };
-export const RESTORE_SEAM = { title: 'Before the restore', text: 'Undo is not available for these. Restore a saved version instead.' };
-export const BEFORE_SESSION_SENTENCE = 'Before this session. Undo is not available. Restore a saved version instead.';
+export const SESSION_SEAM = { title: 'From an earlier visit', text: 'Undo cannot take these back. Restore a saved version instead.' };
+export const RESTORE_SEAM = { title: 'Before the restore', text: 'Undo cannot take these back. Restore a saved version instead.' };
+export const BEFORE_SESSION_SENTENCE = 'From an earlier visit. Undo cannot take it back. Restore a saved version instead.';
 export const NOT_SAVED_WORD = 'Not saved';
 export const NOT_SAVED_SENTENCE = 'This change was never saved, so the model on disk does not have it. Undo is not available.';
 export const BEFORE_RESTORE_SENTENCE = 'Before the restore. Undo is not available.';
@@ -254,7 +254,7 @@ export function objectName(ref: string): string {
   const rest = colon > 0 ? ref.slice(colon + 1) : ref;
   const slash = rest.indexOf('/');
   if (slash > 0 && (kind === 'column' || kind === 'hierarchy' || kind === 'partition')) {
-    return rest.slice(0, slash) + '[' + rest.slice(slash + 1) + ']';
+    return rest.slice(slash + 1) + ' in ' + rest.slice(0, slash);   // "Margin % in Sales", not the formula spelling Sales[Margin %]
   }
   return slash > 0 ? rest.slice(rest.lastIndexOf('/') + 1) : rest;
 }
@@ -262,7 +262,7 @@ export function objectName(ref: string): string {
 const PROPERTY_WORD: Record<string, string> = {
   IsHidden: 'Hidden', Description: 'Description', FormatString: 'Format', SortByColumn: 'Sort by', SummarizeBy: 'Summarize by',
   Expression: 'Formula', Name: 'Name', DisplayFolder: 'Folder', DataType: 'Data type', DataCategory: 'Data category',
-  AiInstructions: 'AI instructions', Synonyms: 'Synonyms', IsActive: 'Active', CrossFilteringBehavior: 'Filter direction',
+  AiInstructions: 'AI instructions', Synonyms: 'Synonyms', Annotations: 'Notes kept with it', IsActive: 'Active', CrossFilteringBehavior: 'Filter direction',
 };
 
 /** A property name in plain words ("Sort by", not "SortByColumn"). */
@@ -303,7 +303,7 @@ const words = (title: string | null | undefined) => {
   const t = (title ?? '').trim();
   if (!t) return 'An edit';
   // A sentence the engine wrote is kept as it is; an operation id is put into words.
-  return /\s/.test(t) && !/_/.test(t) ? t : opLabel(t);
+  return /\s/.test(t) && !/_/.test(t) ? editWords(t) : opLabel(t);
 };
 
 /** The row's bold line. */
@@ -318,7 +318,7 @@ export function rowTitle(row: HistoryRow, parent?: HistoryRow): string {
     const props = new Set(ds.map((d) => d.props?.[0] ?? ''));
     if (ds.length > 1 && kinds.size === 1 && props.size === 1) {
       const kind = [...kinds][0];
-      const noun = KIND_PLURAL[kind] ?? 'objects';
+      const noun = KIND_PLURAL[kind] ?? 'items';
       return ds.length + ' ' + noun + ' · ' + propertyWord([...props][0]).toLowerCase();
     }
     return words(row.title);
@@ -327,10 +327,10 @@ export function rowTitle(row: HistoryRow, parent?: HistoryRow): string {
   return words(row.title);
 }
 
-const KIND_PLURAL: Record<string, string> = { measure: 'measures', column: 'columns', table: 'tables', relationship: 'relationships',
+const KIND_PLURAL: Record<string, string> = { measure: 'measures', column: 'columns', calcColumn: 'columns', culture: 'languages', level: 'levels', table: 'tables', relationship: 'relationships',
   hierarchy: 'hierarchies', partition: 'partitions', role: 'roles', perspective: 'perspectives' };
 
-const CAUSE_WORD: Record<string, string> = { item: 'Plan item', run: 'Workflow run', draft: 'Change group', task: 'Task for your assistant' };
+const CAUSE_WORD: Record<string, string> = { item: 'Plan task', run: 'Workflow run', draft: 'Change group', task: 'Task for your assistant' };
 const EDIT_WORD: Record<Who, string> = { you: 'Your own edit', assistant: 'Your assistant\'s edit', semanticus: 'Semanticus', workflow: 'A workflow step' };
 
 /** The quiet line under a row's title: what kind of thing it was, and for an edit, the objects it touched. */

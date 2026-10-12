@@ -284,7 +284,7 @@ export function SearchView({ sessionId, navQuery, onNavConsumed, onOpenPlan }: {
                 const key = h.ref + '|' + h.field + '|' + i;
                 const navigable = NAVIGABLE_KINDS.has(h.kind);   // can the bus/Reveal reach this ref? (namedexpr can't)
                 return (
-                  <div key={key} className="xe-rule-row">
+                  <div key={key} data-object-ref={h.ref} className="xe-rule-row">
                     <div className={'group sem-list-row' + (h.field === 'name' ? '' : ' sem-list-row-2')}>
                       {/* Selection bus: clicking a hit shows its object in the Properties view (focus stays here).
                           Only for kinds the grid + tree can resolve — otherwise the row is find-and-replace-only. */}

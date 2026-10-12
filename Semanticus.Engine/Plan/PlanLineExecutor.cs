@@ -255,7 +255,7 @@ namespace Semanticus.Engine
                         && ObjectRefs.Resolve(m, it.ObjectRef) is Measure dyn && !string.IsNullOrWhiteSpace(dyn.FormatStringExpression))
                     {
                         it.Status = "skipped";
-                        it.Note = "This measure's format is now set by a format string expression, and a static format would sit beside it. It was not applied.";
+                        it.Note = "This measure's format now comes from a format string expression, so a fixed format cannot go beside it. It was not applied.";
                         if (isFormat) _formatSkips.Add(it);
                         continue;
                     }
@@ -290,7 +290,7 @@ namespace Semanticus.Engine
                             continue;
                         }
                         LocalEngine.DeleteResolvedObject(m, ObjectRefs.Resolve(m, it.ObjectRef), it.ObjectRef);
-                        it.Status = "applied"; it.Note = "applied (unused verdict re-verified at apply time)"; Applied++;
+                        it.Status = "applied"; it.Note = "applied (checked again first that nothing uses it)"; Applied++;
                         continue;
                     }
                     _engine.ApplyOneItem(m, it, s, _facts);

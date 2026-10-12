@@ -9,6 +9,107 @@ All notable changes to Semanticus are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-13
+
+Claude can now drive the Studio for you, and Pro does bulk edits in one step. This release is about two things: you
+can watch your assistant work, and big changes are fast and take back with one Undo.
+
+### Claude drives the Studio
+
+- A bar at the top of Studio says who has the wheel. On Claude drives, your assistant opens the pages, picks things and
+  shows you what it is doing. On I drive, Studio stays where you put it. Use Studio yourself and the wheel comes back
+  to you.
+- The Plan strip counts use Studio's own font and stay on one line. When Jev cannot put the tasks in order, the Plan says so in
+  one plain sentence. If your Pro plan is not active, the Plan and the header say so and link to billing, and Semanticus
+  stops asking Jev for a few minutes.
+- You can see your assistant press a button. A ring shows on the real button, and the note names it. If the button is on
+  another page, Studio opens that page first, waits for the button to show, then rings it. If you have the wheel, the press
+  is noted and nothing moves.
+- A small tile with your assistant's initials sits beside "Claude Code is working" in the bar. It pulses softly while the
+  assistant works and sits still when it is only connected. The name comes from the assistant itself: Claude Code, Codex,
+  GitHub Copilot or Cursor, and "Your assistant" for any other.
+- Notes sit beside what your assistant is talking about. A note tells you what it did, with Undo and a flash on each
+  changed object, and it suggests the next step as a button you can press.
+- A yes in chat is enough. When your assistant asks to go ahead and you say yes in the chat, it goes ahead. This covers
+  Jev permission and the source for a start plan. An unlabelled target counts as a test target. Only the Permissions page
+  still needs you.
+- Your assistant can do every Plan control for you: add or remove a task or an aim, mark one done, set one aside, pick
+  who does it, move it up, switch the queue, add a note, set repeats, and approve or continue a draft. Only the
+  Permissions page stays with you.
+- The first time you open Studio, a short card asks how you want to work. One press connects your assistant and installs
+  its skill. Show me around starts Learn, a guided tour on a small sample shop model with recorded answers.
+- The header and the command palette run the full Connect. Leave from the tour returns you to the first card and keeps
+  the work on any other model.
+
+### Bulk edits in one step (Pro)
+
+- Waive findings, write words and synonyms, edit objects, and create measures now change many objects in one call. It
+  is one undo step, one note and the real count. An item that cannot be changed is named, and the rest still go in.
+- Ten more bulk forms follow the same rule: unwaive findings, apply fixes, duplicate objects, add Documentation
+  sections, add perspective members, set object permissions, and four Plan edits. Plan edits end in one final plan.
+- Hide or Show on a selection of many items is one change and one Undo.
+- Bulk edits are much faster. Five items on a large model took about 100 seconds one at a time and now take about 20.
+  Twenty items on a model with 3,000 fields took 8 to 12 seconds and now take about 1.1 to 1.4. Each form still gives
+  the same findings and scores as the same edits made one at a time, and Undo restores the model exactly.
+- Free sees what a Pro step would do. Notes count the fixes Pro applied in one step, and a choice Jev made says
+  "Jev chose this".
+
+### The Plan
+
+- Run the plan finishes the plan in one press. It does every ready row, hands the rows your assistant owns over as
+  tasks, keeps a paused queue paused, and names a set-aside row that blocks the rest.
+- Refresh plan scans again, adds any new item, and clears the finished rows off the list. History keeps them, and Undo
+  brings one back. It is on the Plan toolbar, and your assistant has it too.
+- The Plan speaks in plain words. Counts use one unit and add up, property values read the way Power BI names them, and
+  a change names what it changes and what it depends on. A line says "No longer needed" when another change closed it.
+- AI readiness and Model quality leave out a finding that a Plan row already carries, so Give to your assistant no
+  longer adds the same work twice. Model quality says On the plan.
+
+### Your work is kept
+
+- Unsaved changes to a file model keep a recovery copy. When you open it again, Semanticus offers Restore them or
+  Discard. Edits you make while the offer is open are kept beside it and survive a restart.
+
+### Faster
+
+- The best-practice check after each edit is quick. A one-object check took about 45 ms on a large model and now takes
+  about 3 ms.
+- A synonym write no longer reads the whole synonym file once for every field. On a real model, 20 writes took about
+  1.5 seconds each and now take about 0.15. A 900-field test went from about 125 ms rising to 354 ms a write to a flat
+  50 ms.
+- The first edit after you open a large model no longer waits for a full scan. On a model with 3,000 fields it dropped
+  from about 1.1 seconds to about 0.2.
+- Long answers to your assistant are short. Starting a model from SQL, the AI-readiness scan and the start plan each
+  give a summary first, and the detail follows only when it is asked for. One result shrank from about 350,000
+  characters to about 2,400.
+
+### Your assistant
+
+- It can list the SQL endpoints of a workspace (lakehouses and warehouses) with your own sign-in. It never uses the az
+  sign-in by default.
+- It can run four connection and query tools that were missing, and it can set a connection's first label. It can not
+  change or clear a label, because a label decides what it may do there.
+- The assistant skills are updated for 1.4. They cover driving the Studio, asking before a big step, suggesting the next
+  step, treating your own words as your yes, and one bulk call for a whole page of work. A poor format is fixed in the
+  same pass.
+
+### Fixes
+
+- A bulk edit that changed values now applies them. Before, the values were lost on the way to the engine, and the edit
+  did nothing.
+- A task you set aside stays set aside when a rename gives it a new id.
+- A Plan count that includes done work counts only the tasks from this session, and a second Refresh keeps the rows the
+  first one cleared off.
+- Leave from the tour no longer discards another model's unsaved work.
+- A target written with a trailing slash or space still reads as Production, and an unknown label reads Production in
+  Connections.
+- A Jev line Jev was not sure of says "Jev asks you", not "Jev chose this". The Free note button says Unlock Pro.
+- A new-model publish leaves no empty difference, Queries answers stay visible, and Learn copies stay out of
+  Connections.
+- A synonym write counts the fields it changed in the activity words, so a 50-item write says it added synonyms to 50
+  fields.
+- The Marketplace page links to the latest release, and says what is new in 1.4.
+
 ## [1.3.0] - 2026-10-08
 
 The Plan is the heart of Semanticus (Kane's decision of 24 September, built in slices 7 to 11). It is where you

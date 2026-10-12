@@ -154,6 +154,7 @@ namespace Semanticus.Tests
         /// calc group would make <c>ModelHasCalcGroups</c> true, which degrades fidelity on the trusted path and
         /// would silently turn the "proven" and "thin" cases into "degraded" ones.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Fixture_assumptions_hold_year_column_exists_and_there_are_no_calculation_groups()
         {
@@ -178,6 +179,7 @@ namespace Semanticus.Tests
         /// F-004's first check: an EMPTY verify matrix proves only the grand total, so the item is opt-in. It
         /// lands "proposed", and an apply that names it without an approve changes nothing at all.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_empty_matrix_set_dax_is_opt_in_and_an_unapproved_apply_changes_nothing()
         {
@@ -214,6 +216,7 @@ namespace Semanticus.Tests
         /// Nothing to prove against. This is the UNAVAILABLE shape: the rewrite is skipped and labelled
         /// unverified — never applied, and never reported as a failed proof (nothing ran).
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Without_a_live_connection_a_gated_rewrite_is_skipped_as_unverified()
         {
@@ -231,6 +234,7 @@ namespace Semanticus.Tests
             Assert.Empty(g.Queries);                          // classifier ran, but no executor existed to issue evidence queries
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_errored_comparison_is_skipped_as_unverified_by_the_shared_classifier()
         {
@@ -246,6 +250,7 @@ namespace Semanticus.Tests
             Assert.Single(g.Queries);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_comparison_with_zero_requested_grid_rows_is_skipped_as_unverified()
         {
@@ -263,6 +268,7 @@ namespace Semanticus.Tests
             Assert.Equal(2, g.Queries.Count);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_truncated_comparison_is_skipped_as_unverified()
         {
@@ -290,6 +296,7 @@ namespace Semanticus.Tests
         /// F-004's second check: a results-changing rewrite is SKIPPED even when only the grand total was
         /// compared. A divergence under FULL fidelity is a conviction — "failed", not "degraded_mismatch".
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_results_changing_rewrite_is_skipped_and_failed_even_at_the_grand_total()
         {
@@ -312,6 +319,7 @@ namespace Semanticus.Tests
         /// F-004's third check: a grand-total-only match APPLIES (the human opted in) but is labelled honestly.
         /// The over-claim this guards is "verified" — a single grand-total row is not a per-context proof.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_grand_total_only_match_applies_but_is_labelled_unverified_not_verified()
         {
@@ -335,6 +343,7 @@ namespace Semanticus.Tests
         /// NON-EMPTY matching grid applies AND earns VerifyState "verified". Without this, every assertion above
         /// would still pass if the gate refused everything.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_matching_non_empty_grid_applies_and_is_labelled_verified()
         {
@@ -357,6 +366,7 @@ namespace Semanticus.Tests
 
         /// <summary>A non-empty grid whose LEAF rows disagree fails, even though the grand total matches — the
         /// wrong-scope class the multi-shape proof exists to catch. Pins that "verified" above was earned.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_non_empty_grid_that_disagrees_per_context_fails_though_the_grand_total_matches()
         {
@@ -380,6 +390,7 @@ namespace Semanticus.Tests
         /// reduced fidelity — so the item is GATED, not shipped with a label. This is the rung that must never
         /// ride the thin-grid apply-with-label path above.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_attach_mode_match_is_degraded_and_skipped_not_applied()
         {
@@ -400,6 +411,7 @@ namespace Semanticus.Tests
         /// conviction: it blocks exactly like failed but must never be reported as a proven behavior change.
         /// The <c>NotEqual("failed")</c> is the whole point of the rung.
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_attach_mode_mismatch_is_degraded_mismatch_never_failed()
         {
@@ -419,6 +431,7 @@ namespace Semanticus.Tests
         /// The degraded rungs are fidelity-gated, not walls: the audited override still ships one, and the
         /// verdict it ships past stays honest. (The referee's measurement never changes — only what ships.)
         /// </summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_audited_override_ships_a_degraded_rewrite_and_keeps_the_honest_verdict()
         {

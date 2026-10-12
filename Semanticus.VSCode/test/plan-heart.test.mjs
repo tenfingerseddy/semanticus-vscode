@@ -124,7 +124,7 @@ shapeCheck('the page reads the engine state word and never makes one up', () => 
 check('a Send row names the page it came from, and a jump reads area then page', () => {
   const plan = makeHeartPlan();
   assert.equal(P.sourceLine(byId(plan, 'pt-9e2f7a10'), () => 'AI readiness'), 'You added · Review › AI readiness');
-  assert.equal(P.sourceLine(byId(plan, 'jev.measures.table:Sales')), 'Jev');
+  assert.equal(P.sourceLine(byId(plan, 'jev.measures.table:Sales')), 'Semanticus Pro');
   assert.equal(P.pagePlace({ tool: 'bpa', label: 'Model quality (BPA)' }), 'Review › Model quality (BPA)');
   assert.equal(P.pagePlace({ tool: 'workflows', label: 'Workflows' }), 'Workflows');
 });
@@ -373,10 +373,10 @@ check('the strip draws one segment per row up to twelve, then a count', () => {
 
 check('the three counts on a track say need you only when all of the open work does', () => {
   const [sem, you, asst] = P.stripTracks(makeHeartPlan());
-  assert.deepEqual(P.trackCounts(sem).map((c) => c.text), ['5 done', '1 on it', '3 ready']);
+  assert.deepEqual(P.trackCounts(sem).map((c) => c.text), ['5 done', '1 on it', '3 ready first', '1 follows it']);
   assert.deepEqual(P.trackCounts(you).map((c) => c.text), ['2 done', '0 on it', '2 need you']);
   assert.equal(P.trackCounts(you)[2].warn, true);
-  assert.deepEqual(P.trackCounts(asst).map((c) => c.text), ['4 done', '1 on it', '2 ready']);
+  assert.deepEqual(P.trackCounts(asst).map((c) => c.text), ['4 done', '1 on it', '2 ready', '2 waiting']);
   assert.equal(P.assistantChipCount(makeHeartPlan()), 3, 'the chip counts Ready plus On it');
 });
 
@@ -384,7 +384,7 @@ check('the grade, Latest and updated lines, and the honest free line', () => {
   const plan = makeHeartPlan();
   assert.deepEqual(P.gradeLine(plan.strip), { now: 'B', after: 'A' });
   assert.deepEqual(P.latestLine(plan.strip), { time: '10:46', sentence: 'Semanticus hid 3 Promotion key columns', entryId: 'le-2c9d10f4' });
-  assert.equal(P.updatedLine(plan.strip), 'Jev updated this after your change at 10:46');
+  assert.equal(P.updatedLine(plan.strip), 'Semanticus Pro updated the Plan at 10:46');
   assert.equal(P.updatedLine(makeHeartPlan({ free: true }).strip), 'Updated after your last change at 10:46');
 });
 
@@ -517,6 +517,15 @@ check('one press makes every wave: it calls again with the new readyDigest, stop
   const refused = await P.runAllWaves(mk(0), async () => ({ performed: false, sentence: 'The plan moved since you read it. Look again.' }), async () => mk(0));
   assert.equal(refused.receipt, null);
   assert.equal(refused.refusal, 'The plan moved since you read it. Look again.');
+  const fresh = { ...mk(2), items: [] };
+  const shown = [];
+  const refreshed = await P.runAllWaves(mk(0), async () => ({ performed: false, sentence: 'This row needs you.', plan: fresh }),
+    async () => { throw new Error('the refusal already returned the plan'); }, p => shown.push(p));
+  assert.equal(refreshed.plan, fresh, 'a refusal returns its fresh plan to the page');
+  assert.deepEqual(shown, [fresh], 'a refusal updates the visible plan too');
+  const handoff = 'Semanticus finished its tasks. 2 tasks are queued for your assistant. It sees them on its next call.';
+  const handed = await P.runAllWaves(mk(0), async () => ({ performed: true, applied: 3, itemIds: ['r1'], note: handoff, plan: fresh }), async () => fresh);
+  assert.equal(handed.receipt.note, handoff, 'the engine handoff stays beside the run receipt');
   let k = 0;
   const later = await P.runAllWaves(mk(0), async () => (++k === 1
     ? { performed: true, applied: 4, itemIds: ['r1'], revision: 1, entryId: 'e1', plan: mk(1) }
@@ -537,8 +546,8 @@ check('one press makes every wave: it calls again with the new readyDigest, stop
 });
 
 check('the receipt says the real counts, in the words of the mockup, and the run area says what is left in words', () => {
-  assert.equal(P.ranWords(3), 'Ran 3 rows.');
-  assert.equal(P.ranWords(1), 'Ran 1 row.');
+  assert.equal(P.ranWords(3), 'Ran 3 tasks.');
+  assert.equal(P.ranWords(1), 'Ran 1 task.');
   assert.equal(P.changesWords(38), '38 changes, one undo step.');
   assert.equal(P.changesWords(1), '1 change, one undo step.');
   assert.equal(P.TELL_ASSISTANT, 'Work through my Semanticus plan.');
@@ -696,20 +705,33 @@ check('the run area: Running N of M with a bar, Your assistant has N, Only you c
   const items = (doer, n) => Array.from({ length: n }, (_, i) => ({ id: `${doer}${i}`, title: 't', doer, stateWord: 'ready' }));
   const asst = html({ plan: { ...plan, items: items('assistant', 3) }, told: false });
   assert.match(asst, /Your assistant has <b class="sem-num">3<\/b>/u);
-  assert.match(asst, /data-testid="plan-tell"[^>]*>Tell your assistant</u);
+  assert.match(asst, /data-testid="plan-tell"[^>]*>Copy request</u);
   assert.doesNotMatch(asst, /disabled/u);
   assert.match(html({ plan: { ...plan, items: items('assistant', 1) }, told: true }), /data-testid="plan-told"[^>]*>Copied\. Paste it into your assistant\.</u);
-  assert.match(html({ plan: { ...plan, items: items('you', 2) } }), /data-testid="plan-run-you"[^>]*>Only you can do the rest</u);
+  assert.match(html({ plan: { ...plan, items: items('you', 2) } }), /data-testid="plan-run-you"[^>]*>The remaining tasks need your choice\. Open one to see what to choose\.</u);
+  // One task reads as one (hero16 N8: "1 tasks need your choice"), and the line says what the choice is for.
+  assert.match(html({ plan: { ...plan, items: items('you', 1) } }), /data-testid="plan-run-you"[^>]*>The remaining task needs your choice\. Open it to see what to choose\.</u);
+  assert.match(html({ plan: { ...plan, items: items('assistant', 1) } }), /Your assistant has <b class="sem-num">1<\/b> task</u);
   assert.match(html({ plan: { ...plan, items: [] } }), /data-testid="plan-run-done"/u);
   assert.match(html({ plan: { ...plan, items: [] } }), />Plan done</u);
   for (const m of [running, asst]) assert.doesNotMatch(m, /\u2014/u);
 });
 
-check('the receipt: Ran 3 rows. 38 changes, one undo step. with Undo, Save and See in History; Saved once saved; Undo only while the model has not moved on', () => {
+check('Done just now says what its count leaves out: a task that was no longer needed was not run, and earlier done tasks are counted in the strip (hero16 N8, H7)', () => {
+  const done = (id, note) => ({ id, title: id, doer: 'semanticus', stateWord: 'done', status: 'done', stateNote: note });
+  const strip = (n) => ({ tracks: [{ doer: 'semanticus', done: n, onIt: 0, ready: 0, needsYou: 0, waiting: 0 }] });
+  const closed = P.justDoneNote([done('a'), done('b', 'No longer needed')], { items: [], strip: strip(2) });
+  assert.match(closed, /^Open one to see what it changed\. 1 was no longer needed, so it was not run\.$/u);
+  assert.match(P.justDoneNote([done('a')], { items: [], strip: strip(6) }), /5 more tasks finished earlier\.$/u, 'the strip says 6 done and 1 is listed, so the line accounts for the other 5');
+  assert.match(P.justDoneNote([done('a')], { items: [], strip: strip(2) }), /1 more task finished earlier\.$/u);
+  assert.equal(P.justDoneNote([done('a')], { items: [], strip: strip(1) }), 'Open one to see what it changed.');
+});
+
+check('the receipt: Ran 3 tasks. 38 changes, one undo step. with Undo, Save and See in History; Saved once saved; Undo only while the model has not moved on', () => {
   const ran = { kind: 'ran', rows: 3, changes: 38, entryId: 'en-1', revision: 2, note: null, saved: false };
   const html = (props) => renderToStaticMarkup(React.createElement(Page.RunReceipt, { receipt: ran, canUndo: true, canSave: true, busy: false, onUndo: () => {}, onSave: () => {}, onHistory: () => {}, ...props }));
   const full = html({});
-  assert.match(full, />Ran 3 rows\.</u);
+  assert.match(full, />Ran 3 tasks\.</u);
   assert.match(full, />38 changes, one undo step\.</u);
   assert.match(full, /data-testid="plan-run-undo"[^>]*>Undo</u);
   assert.match(full, /data-testid="plan-run-save"[^>]*>Save</u);
@@ -768,15 +790,31 @@ check('a Ready draft is not in Run the plan: with only a draft Ready, the run ar
 });
 
 const Row = load(join(src, 'plan-row.tsx'));
+check('the waiting line names who acts next on the task it waits for', () => {
+  const base = byId(makeHeartPlan(), 'timeintel/measure:Sales/Sales Amount');
+  const at = (doer) => P.subLine({ ...base, waitsFor: [{ ...base.waitsFor[0], ...(doer === undefined ? {} : { doer }) }] });
+  assert.equal(at('you').who, 'Waits for you');
+  assert.equal(at('assistant').who, 'Waits for your assistant');
+  assert.equal(at('semanticus').who, 'Waits for Semanticus');
+  assert.equal(at(undefined).who, 'Waits for');
+  assert.equal(at(null).who, 'Waits for');
+  assert.equal(at('you').waits, 'Mark Date as the date table');
+  const html = renderToStaticMarkup(React.createElement(Row.PlanRow, {
+    item: { ...base, waitsFor: [{ ...base.waitsFor[0], doer: 'you' }] }, items: [], open: false, busy: null,
+    onToggle: () => {}, onAction: () => {}, onDoer: () => {}, onGo: () => {},
+  }));
+  assert.match(html, /Waits for you: <b>Mark Date as the date table<\/b>/u);
+});
+
 check('a row draws source, title, sub or Waits for, doer, state, page link and actions', () => {
   const plan = makeHeartPlan();
   const html = renderToStaticMarkup(React.createElement(Row.PlanRow, {
     item: byId(plan, 'timeintel/measure:Sales/Sales Amount'), items: plan.items, open: false, busy: null,
     onToggle: () => {}, onAction: () => {}, onDoer: () => {}, onGo: () => {},
   }));
-  assert.match(html, /Found/u);
+  assert.match(html, /Found by Semanticus/u);
   assert.match(html, /Add year to date and last year measures/u);
-  assert.match(html, /Waits for: <b>Mark Date as the date table<\/b>/u);
+  assert.match(html, /Waits for: <b>Mark Date as the date table<\/b>/u, 'no doer on the wait keeps the plain words');
   assert.match(html, /Semanticus/u);
   assert.match(html, /Waiting/u);
   assert.match(html, /Edit › Advanced modelling/u);
@@ -784,6 +822,31 @@ check('a row draws source, title, sub or Waits for, doer, state, page link and a
   assert.match(html, /data-testid="plan-row-more"/u, 'and the dots hold the rest');
   assert.doesNotMatch(html, />Pause<|>Resume<|>Choose<|>Answer<|>Up</u, 'no control from the old row');
   assert.doesNotMatch(html, /data-testid="plan-act-/u, 'a Waiting Semanticus row needs nothing from you, so it has no main button');
+});
+
+// Verifier follow-up (v-runplan): a row that waits for a row the person set aside says so plainly, and offers Put back for THAT row.
+check('a row that waits for a set-aside row names it as set aside and offers Put back for the row it waits for', () => {
+  const plan = makeHeartPlan();
+  const blocker = { ...byId(plan, 'datetable/table:Date'), status: 'skipped', stateWord: 'set_aside' };
+  const items = plan.items.map((i) => (i.id === blocker.id ? blocker : i));
+  const item = byId(plan, 'timeintel/measure:Sales/Sales Amount');
+  const sub = P.subLine(item, items);
+  assert.equal(sub.aside?.id, 'datetable/table:Date');
+  const acted = [];
+  const html = renderToStaticMarkup(React.createElement(Row.PlanRow, {
+    item, items, open: false, busy: null,
+    onToggle: () => {}, onAction: (row, action) => acted.push([row.id, action]), onDoer: () => {}, onGo: () => {},
+  }));
+  assert.match(html, /Waits for &#x27;Mark Date as the date table&#x27;, which you set aside/u);
+  assert.doesNotMatch(html, /Waits for: <b>/u, 'the plain waits line is replaced, not added to');
+  assert.match(html, /data-testid="plan-act-putback"[^>]*title="Put back &#x27;Mark Date as the date table&#x27;"[^>]*>Put back</u);
+  // A row that waits for an open row keeps the plain line and no Put back.
+  const plain = renderToStaticMarkup(React.createElement(Row.PlanRow, {
+    item, items: plan.items, open: false, busy: null, onToggle: () => {}, onAction: () => {}, onDoer: () => {}, onGo: () => {},
+  }));
+  assert.match(plain, /Waits for: <b>Mark Date as the date table<\/b>/u);
+  assert.doesNotMatch(plain, /plan-act-putback/u);
+  assert.equal(P.subLine(item, plan.items).aside, undefined);
 });
 
 check('a row shows its step in the state column, a person row is dimmed and last, a finished row sits in Done just now', () => {
@@ -818,7 +881,8 @@ check('the list: Semanticus rows, then the assistant, then a fold; the fold is c
   const page = read(join(src, 'plan.tsx'));
   assert.doesNotMatch(page, /plan-needs|work\.needsYou|pw-needs/u);
   assert.match(page, /data-testid="plan-only-you"/u);
-  assert.match(page, /Only you can do <b className="sem-num">\{work\.onlyYou\.length\}<\/b>/u);
+  assert.match(page, /P\.onlyYouWords\(work\.onlyYou\)/u);
+  assert.equal(P.onlyYouWords([{ stateWord: 'needs_you' }]), 'task needs your choice', 'one task reads "1 task needs your choice"');
   assert.match(page, /const \[foldOpen, setFoldOpen\] = useState\(false\)/u, 'closed by default');
   assert.match(page, /plan-only-you-warn/u);
   assert.match(page, /Done just now/u);
@@ -1038,6 +1102,44 @@ check('the Objects line names what the best-practice and words rows touch, not "
   assert.match(html, /85 objects in Sales \(24 columns, 7 measures\)/u);
 });
 
+check('the strip states waiting tasks and says which tasks can run first', () => {
+  assert.deepEqual(P.trackCounts({ doer: 'semanticus', done: 0, onIt: 0, ready: 1, needsYou: 0, waiting: 13 }).map((c) => c.text),
+    ['0 done', '0 on it', '1 ready first', '13 follow it']);
+  assert.deepEqual(P.trackCounts({ doer: 'semanticus', done: 0, onIt: 0, ready: 2, needsYou: 1, waiting: 3 }).map((c) => c.text),
+    ['0 done', '0 on it', '2 ready first', '1 need you', '3 follow it']);
+});
+check('a Ready assistant task keeps its next-check note visible', () => {
+  const html = renderToStaticMarkup(React.createElement(Row.StateWord, {
+    item: { id: 'words', doer: 'assistant', stateWord: 'ready', stateNote: 'when your assistant next checks the Plan' },
+  }));
+  assert.match(html, /class="pw-state-note">when your assistant checks</u);
+});
+check('a waiting task names every dependency', () => {
+  const item = { id: 'format', stateWord: 'waiting', waitsFor: [{ id: 'a', title: 'Add measures' }, { id: 'b', title: 'Rename columns' }] };
+  assert.equal(P.subLine(item).waits, 'Add measures; Rename columns');
+});
 await Promise.all(pending);
 if (failures) { console.error(`\n${failures} plan-heart check(s) failed`); process.exit(1); }
 console.log('\nplan-heart: all checks passed');
+
+// Kane, 12 Oct: the lane counts used the monospace number font and wrapped inside a phrase ("4 ready first" onto a second line).
+check('the lane counts use the Studio UI font with tabular figures and break only between counts', () => {
+  const css = readFileSync(new URL('../webview/src/styles.css', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../webview/src/plan-strip.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /className="pw-counts sem-num"/, 'the monospace number class is not on the counts');
+  const rule = css.match(/\.pw-counts \{[^}]*\}/)[0];
+  assert.match(rule, /font-family: var\(--sem-font-ui\)/);
+  assert.match(rule, /font-variant-numeric: tabular-nums/);
+  assert.match(rule, /flex-wrap: wrap/);
+  assert.match(css, /\.pw-counts > span \{ white-space: nowrap; \}/, 'each count stays whole');
+  assert.match(css, /\.pw-track \{[^}]*grid-template-columns: 144px minmax\(0, 1fr\) minmax\(max-content, 380px\)/, 'at full width a lane keeps its counts on one line');
+  assert.match(css, /@media \(max-width: 640px\) \{\s*\.pw-track \{ grid-template-columns: minmax\(0, 1fr\)/, 'on a narrow window the lane stacks');
+});
+
+check('the Plan order line carries a Billing link only when the engine sends a billing address, and the header chip re-reads the plan', () => {
+  const plan = readFileSync(new URL('../webview/src/plan.tsx', import.meta.url), 'utf8');
+  assert.match(plan, /showPlan\.billingUrl && <button[^\n]*data-testid="plan-billing"[^\n]*>Billing<\/button>/);
+  assert.match(plan, /<ProPlanWatch inactive=\{!!showPlan\.billingUrl\} \/>/);
+  const model = readFileSync(new URL('../webview/src/plan-model.ts', import.meta.url), 'utf8');
+  assert.match(model, /billingUrl\?: string;/);
+});

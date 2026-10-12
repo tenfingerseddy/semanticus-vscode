@@ -127,7 +127,7 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
   const hold = filterHeldHeight(data.expanded, data.filter, heldH.current);
 
   return (
-    <div ref={cardRef} className="rounded-(--sem-radius-card) border text-(length:--sem-text-label) flex flex-col" style={{
+    <div ref={cardRef} data-object-ref={`table:${t.name}`} className="rounded-(--sem-radius-card) border text-(length:--sem-text-label) flex flex-col" style={{
       width: data.w, minHeight: Math.max(data.h, hold ?? 0), background: 'var(--sem-surface)',
       borderColor: selected ? 'var(--sem-strong-border)' : 'var(--sem-border)',
       boxShadow: [selected && '0 0 0 1px var(--sem-fg)', data.expanded && OPEN_CARD_SHADOW].filter(Boolean).join(', ') || 'var(--sem-elev)',
@@ -192,7 +192,7 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
 // the table by its HEADER; drag a column to relate.
 function ColRow({ c }: { c: ColumnRow }) {
   return (
-    <div className="nodrag relative flex items-center gap-1 sem-colrow" style={{ padding: 'var(--sem-space-1) var(--sem-space-3)', fontSize: 'var(--sem-text-label)', cursor: 'crosshair' }}
+    <div data-object-ref={c.ref} className="nodrag relative flex items-center gap-1 sem-colrow" style={{ padding: 'var(--sem-space-1) var(--sem-space-3)', fontSize: 'var(--sem-text-label)', cursor: 'crosshair' }}
       title="Drag this column onto another table's column to create a relationship">
       <Handle type="source" id={`col:${c.name}:right`} position={Position.Right}
         style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', transform: 'none', borderRadius: 0, background: 'transparent', border: 'none', zIndex: 1 }} />

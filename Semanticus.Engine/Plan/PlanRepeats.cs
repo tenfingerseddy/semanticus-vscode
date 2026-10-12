@@ -25,8 +25,8 @@
 // Entitlement/FeatureMap.cs). On free the saved repeats stop coming due and the Plan says why; open cards stay as
 // ordinary rows, and a person can still delete a repeat.
 //
-// PERSON-ONLY to create, edit, pause and delete (contract 12): the three controls are on HumanGovernanceRpcTarget
-// and on no MCP tool. Both doors READ them: get_model_plan lists every repeat and its next due date.
+// ON BOTH DOORS to create, edit, pause and delete (Kane, 10 Oct 2026): add_plan_repeat, set_plan_repeat and delete_plan_repeat,
+// each through the gate. Both doors READ them too: get_model_plan lists every repeat and its next due date.
 
 using System;
 using System.Collections.Generic;
@@ -197,7 +197,7 @@ namespace Semanticus.Engine
 
         /// <summary>Said on the plan, on free, when saved repeats exist (contract 1.7).</summary>
         public const string ProLine =
-            "Repeats are part of Semanticus Pro. Yours are saved, and they come due again when Pro is back.";
+            "Repeats need Semanticus Pro. Yours are saved, and they start again when Pro is back.";
 
         /// <summary>The note on a workflow card: it waits, and a person starts it.</summary>
         public const string StartItNote = "Press Start on Workflows. Nothing runs by itself.";
@@ -398,10 +398,10 @@ namespace Semanticus.Engine
             {
                 var from = state?.FindTask(r.FromTask);
                 if (from != null && (from.State == PlanTaskStates.SetAside || state.Find(from.Id) != null))
-                    return "Its task is set aside, so it does not come due. Put the task back, or stop repeating.";
+                    return "Its task is set aside, so it does not come back. Put the task back, or stop the repeat.";
             }
             var gone = grounds == null ? Array.Empty<string>() : LocalEngine.GoneOf(r?.Grounds, grounds);
-            return gone.Length == 0 ? null : PlanTaskObjects.GoneSentence(gone).TrimEnd('.') + ", so it does not come due.";
+            return gone.Length == 0 ? null : PlanTaskObjects.GoneSentence(gone).TrimEnd('.') + ", so it does not come back.";
         }
 
         /// <summary>The due check for words and workflow repeats over one model's state. Adds at most one card per
@@ -666,7 +666,7 @@ namespace Semanticus.Engine
             var row = plan.Items.FirstOrDefault(i => string.Equals(i.Id, fixId, StringComparison.Ordinal));
             if (row == null || !PlanRepeats.FixFamilies.Any(p => fixId.StartsWith(p, StringComparison.Ordinal))
                 || row.Doer != PlanDoers.Semanticus || PlanTasks.IsTaskId(fixId))
-                throw new ArgumentException("Only a row Semanticus does itself, and that is on the plan now, can repeat as a "
+                throw new ArgumentException("Only a task that Semanticus does itself, and that is on the plan now, can repeat as a "
                     + "fix. Call get_model_plan for the ids.", nameof(fixId));
             return row;
         }

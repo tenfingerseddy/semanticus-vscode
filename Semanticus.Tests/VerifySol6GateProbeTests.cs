@@ -70,53 +70,42 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Consent_a_table_added_after_the_yes_is_a_new_question_and_the_old_digest_is_stale()
+        public async Task Consent_the_grant_covers_the_plan_shown_and_a_table_added_after_it_makes_the_old_digest_stale()
         {
+            // Kane, 11 Oct 2026: the person's yes in chat is enough for the source grant. The grant is still bound to the plan's digest,
+            // so it covers exactly the tables that were shown, and a plan widened afterwards needs a new call with the new digest.
             using var engine = await StartPlanAsync();
             AgentPolicyStore.SetPreset("open", "human");
             var gate = Gate(engine);
             var narrowed = await engine.EditStartPlanAsync(new StartPlanEdit { Op = "include_table", Target = "Bonus", Value = "false" }, "human");
             var d1 = narrowed.Digest;
-            var asked = await McpTools.GrantStartDisclosure(gate, d1);
-            Assert.True(asked.Asked);
-            var q = Assert.Single(await UnansweredAsync(engine));
-            Assert.Contains("Payroll", q.Summary);
-            Assert.DoesNotContain("Bonus", q.Summary);
-            await ApproveAskedAsync(engine);
-
             var widened = await engine.EditStartPlanAsync(new StartPlanEdit { Op = "include_table", Target = "Bonus", Value = "true" }, "human");
             Assert.NotEqual(d1, widened.Digest);
-            await TryAsync(() => McpTools.GrantStartDisclosure(gate, d1));            // the old digest: stale
+            await TryAsync(() => McpTools.GrantStartDisclosure(gate, d1));            // the old digest: stale, nothing granted
             Assert.Null(engine.StartPlanHost.Current().Disclosure);
-            var again = await McpTools.GrantStartDisclosure(gate, widened.Digest);     // the wider plan: a new question
-            Assert.True(again.Asked);
-            Assert.Null(engine.StartPlanHost.Current().Disclosure);
-            var q2 = Assert.Single(await UnansweredAsync(engine));
-            Assert.Contains("Bonus", q2.Summary);
+            var granted = await McpTools.GrantStartDisclosure(gate, widened.Digest);  // the plan as it stands: granted
+            Assert.False(granted.Asked);
+            Assert.Contains(engine.StartPlanHost.Current().Disclosure.IncludedTables, t => t.EndsWith("Bonus", StringComparison.OrdinalIgnoreCase));
+            Assert.Empty(await UnansweredAsync(engine));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("open")]
         [InlineData("standard")]
         [InlineData("cautious")]
         [InlineData("client")]
         [InlineData(Locked)]
-        public async Task Consent_the_mcp_tool_answers_asked_and_the_persons_own_door_never_asks(string preset)
+        public async Task Consent_the_mcp_tool_grants_after_the_chat_yes_and_the_persons_own_door_still_grants(string preset)
         {
             using var engine = await StartPlanAsync();
             AgentPolicyStore.SetPreset(preset, "human");
-            var gate = Gate(engine);
             var digest = (await engine.GetStartPlanAsync()).Digest;
-            var view = await McpTools.GrantStartDisclosure(gate, digest);
-            Assert.True(view.Asked, "the tool did not say it asked");
-            Assert.Null(engine.StartPlanHost.Current().Disclosure);
-            // the assistant cannot answer its own question
-            var id = Assert.Single(await UnansweredAsync(engine)).Id;
-            await Assert.ThrowsAnyAsync<Exception>(() => gate.ApproveAgentActionAsync(id, "agent"));
-            await TryAsync(() => gate.GrantStartDisclosureAsync(digest, "agent"));
-            Assert.Null(engine.StartPlanHost.Current().Disclosure);
-            foreach (var p in await engine.ListPendingApprovalsAsync()) await engine.DenyAgentActionAsync(p.Id, "human");
-            // the person's own door grants it with no question
+            var view = await McpTools.GrantStartDisclosure(Gate(engine), digest);
+            Assert.False(view.Asked);
+            Assert.NotNull(engine.StartPlanHost.Current().Disclosure);
+            Assert.Empty(await UnansweredAsync(engine));
+            // the person's own door grants it with no question too
             await engine.GrantStartDisclosureAsync(digest, "human");
             Assert.NotNull(engine.StartPlanHost.Current().Disclosure);
             Assert.Empty(await UnansweredAsync(engine));
@@ -256,6 +245,7 @@ namespace Semanticus.Tests
 
         // ---------------------------------------------------------------- below Locked and the person's door
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("open")]
         [InlineData("standard")]

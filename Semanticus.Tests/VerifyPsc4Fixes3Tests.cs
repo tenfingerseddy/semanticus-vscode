@@ -317,6 +317,10 @@ namespace Semanticus.Tests
             return bad;
         }
 
+        [Theory, InlineData(false, false)]
+        public Task The_start_build_has_no_broken_formula_read_strictly_sample(bool pro, bool mcpDoor) => The_start_build_has_no_broken_formula_read_strictly(pro, mcpDoor);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, false)]
         [InlineData(false, true)]

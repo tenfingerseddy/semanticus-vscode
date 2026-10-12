@@ -86,8 +86,61 @@ export function isUnpublishable(row: ChangeRow): boolean {
 /** The rows the page lists: the changes that can go. */
 export function publishableRows<T extends ChangeRow>(rows: readonly T[]): T[] { return rows.filter((r) => !isUnpublishable(r)); }
 
+// ── Role members, in words ────────────────────────────────────────────────────────────────────────
+// A role member is a person or a group in Microsoft Entra. Power BI hands back a guid for each, so the stored name is
+// often "obj:<guid>@<tenant>". That is not something to read: a name is shown when there is one, else the kind of member.
+export interface RoleMember { memberName?: string; identityProvider?: string; memberType?: string }
+
+/** One member as a person reads it: its name when it has one, else "a Microsoft Entra group" (or user). */
+export function memberWords(m: RoleMember): string {
+  const name = (m.memberName ?? '').trim();
+  if (name && !/^obj:/i.test(name)) return name;
+  const type = (m.memberType ?? '').toLowerCase();
+  return type === 'user' ? 'a Microsoft Entra user' : type === 'group' ? 'a Microsoft Entra group' : 'a Microsoft Entra member';
+}
+
+// The same member whether or not one side carries the server's memberId: the key is name, provider and type.
+const memberKey = (m: RoleMember) => [(m.memberName ?? '').toLowerCase(), (m.identityProvider ?? '').toLowerCase(), (m.memberType ?? '').toLowerCase()].join('|');
+
+function membersOf(text?: string | null): RoleMember[] | null {
+  const o = parseObject(text);
+  if (!o) return null;
+  return Array.isArray(o.members) ? o.members.filter((m): m is RoleMember => !!m && typeof m === 'object') : [];
+}
+
+/**
+ * Who is added to the destination and who is removed from it, in words. Your copy is the wanted side, so a member only in
+ * your copy is added and a member only on the destination is removed. Null when neither side lists any members.
+ */
+export function roleMemberLines(leftText?: string | null, rightText?: string | null): { added: string[]; removed: string[] } | null {
+  if (!parseObject(leftText)?.members && !parseObject(rightText)?.members) return null;
+  const l = membersOf(leftText), r = membersOf(rightText);
+  const count = (list: RoleMember[] | null) => { const c = new Map<string, { m: RoleMember; n: number }>(); for (const m of list ?? []) { const k = memberKey(m); const e = c.get(k); if (e) e.n++; else c.set(k, { m, n: 1 }); } return c; };
+  const lc = count(l), rc = count(r);
+  const only = (a: Map<string, { m: RoleMember; n: number }>, b: Map<string, { m: RoleMember; n: number }>) => {
+    const out: string[] = [];
+    for (const [k, e] of a) { const extra = e.n - (b.get(k)?.n ?? 0); if (extra > 0) out.push(extra > 1 ? `${memberWords(e.m)} (${extra})` : memberWords(e.m)); }
+    return out.sort((x, y) => x.localeCompare(y));
+  };
+  return { added: only(lc, rc), removed: only(rc, lc) };
+}
+
+const HELD_ROLE_LINE = 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.';
+
+/** The plain line for a row Power BI takes no part of from here (a role added or changed), known before any press. Else null. */
+export function heldReason(row: ChangeRow): string | null {
+  return row.objectType === 'Role' && (row.action === 'Create' || row.action === 'Update')
+    ? HELD_ROLE_LINE : null;
+}
+
 /** The few words beside a row: what kind of object it is and what happens to it. */
 export function rowNote(row: ChangeRow, destination: string): string {
+  // Power BI takes no role change from here, so the row says where to make it.
+  if (row.objectType === 'Role' && row.action === 'Create') return 'new role, add it in Power BI';
+  if (row.objectType === 'Role' && row.action === 'Update') {
+    const lines = roleMemberLines(row.leftText, row.rightText);
+    return lines && (lines.added.length > 0 || lines.removed.length > 0) ? 'change role members in Power BI' : 'change this role in Power BI';
+  }
   if (row.action === 'Create') return `new ${kindWord(row)}`;
   if (row.action === 'Delete') return `only on ${destination || 'the destination'}. Tick to remove it there`;
   return onlyFormulaChanged(row) ? 'formula changed' : `${kindWord(row)} changed`;
@@ -151,6 +204,7 @@ export function failureReasons(failed: readonly string[] | null | undefined, row
 export function plainFailure(reason: string): string {
   const r = (reason || '').toLowerCase();
   if (!r || r.includes('republish')) return 'Power BI has a different object with this name, so this change cannot replace it.';
+  if (r.includes('role changes yet')) return HELD_ROLE_LINE;
   if (r.includes('did not carry it') || r.includes('object type') || r.includes('did not sync')) return 'Power BI does not take this kind of change from here.';
   if (r.includes('delete refused')) return 'Power BI would not remove it. Compare again and try once more.';
   return reason.trim();

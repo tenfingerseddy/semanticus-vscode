@@ -369,16 +369,16 @@ function endpointText(endpoint?: string | null): string {
   return decodeSegment(endpoint || '');
 }
 
-// Environment reads a fail-closed label. An UNLABELLED cloud model reads "No label (Production settings)", never "Production": a
-// fail-closed governance posture is a different fact from a declared Production label (ratified, sol). Permissions says it
-// the same way, so the one fact has one wording.
+// An UNLABELLED cloud model reads "No label (Development settings)": with no label it counts as test (Kane, 10 Oct 2026), and that is a
+// different fact from a declared Development label. Permissions says it the same way, so the one fact has one wording. A label typed
+// into the saved file by hand that is not one of the four ("Production", "staging") reads Production, because the engine applies prod to it.
 function environment(r: ConnectionRecord): { text: string; tone: 'accent' | 'warn' | 'muted' } {
-  if (r.kind === 'localDesktop' || r.kind === 'file' || r.label === 'local') return { text: 'Local', tone: 'muted' };
-  const l = (r.label || '').toLowerCase();
+  const l = (r.label || '').trim().toLowerCase();   // the engine's own reading (EffectiveLabel): trimmed, any case
+  if (r.kind === 'localDesktop' || r.kind === 'file' || l === 'local') return { text: 'Local', tone: 'muted' };
   if (l === 'dev') return { text: 'Development', tone: 'accent' };
   if (l === 'uat') return { text: 'UAT', tone: 'accent' };
-  if (l === 'prod') return { text: 'Production', tone: 'warn' };
-  return { text: 'No label (Production settings)', tone: 'warn' };
+  if (l) return { text: 'Production', tone: 'warn' };
+  return { text: 'No label (Development settings)', tone: 'muted' };
 }
 // Who the NEXT open of a target signs in as — ONLY a live sign-in record (probe.account); undefined when unknown. The
 // per-target lastAccount is never the prediction, only provenance ("last opened as <x>") (HIGH 3).

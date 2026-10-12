@@ -372,7 +372,7 @@ namespace Semanticus.Tests
             Assert.Equal(empty.OrderBy(x => x), notScored.Select(n => n.GetProperty("category").GetString()).OrderBy(x => x));
             Assert.All(notScored, n => Assert.Contains("not counted", n.GetProperty("reason").GetString(), StringComparison.Ordinal));
 
-            var full = await CallToolAsync(f.Engine, "ai_readiness_scan");
+            var full = await CallToolAsync(f.Engine, "ai_readiness_scan", new { detail = "full" });
             foreach (var c in full.GetProperty("categories").EnumerateArray().Where(c => !c.GetProperty("hasRules").GetBoolean()))
                 Assert.Contains("not counted", c.GetProperty("notScoredReason").GetString(), StringComparison.Ordinal);
         }

@@ -75,6 +75,19 @@ namespace Semanticus.Engine.Lineage
             public HashSet<string> UnresolvedNames { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public int SkippedParts { get; set; }    // parts we couldn't read/parse (malformed JSON / file-read fail) — a real coverage GAP: a field used only there is invisible, so "safe" must not be asserted
             public bool DefinitionFound { get; set; }  // a PBIR definition (report.json) was located + read at the path
+            /// <summary>The report-level measures a reportExtensions part DEFINES, each with the model names its DAX
+            /// points at. A visual that shows one lists it by name only (an extension FieldRef); this is where its
+            /// formula is, so a rename or delete of what the formula reads is seen.</summary>
+            public List<ReportMeasure> ReportMeasures { get; } = new List<ReportMeasure>();
+        }
+
+        /// <summary>One report-level measure: its name, the table it hangs on in the report, its DAX and the names that DAX reads.</summary>
+        public sealed class ReportMeasure
+        {
+            public string Name { get; set; }
+            public string Entity { get; set; }
+            public string Expression { get; set; }
+            public List<ReportMeasureReferences.NameRef> Refs { get; set; } = new List<ReportMeasureReferences.NameRef>();
         }
 
         // Part provenance derived from the PBIR part PATH (page/visual ids) — constant for a whole part, threaded into Emit.
@@ -103,10 +116,49 @@ namespace Semanticus.Engine.Lineage
                 {
                     using var doc = JsonDocument.Parse(content);
                     Walk(doc.RootElement, EmptyAliases, result, PartContext(path, doc.RootElement));
+                    ReadReportMeasures(doc.RootElement, result);
                 }
                 catch (JsonException) { result.SkippedParts++; /* a malformed/oddly-versioned part — skipped, so coverage is now incomplete (not just tolerated) */ }
             }
             return result;
+        }
+
+        // reportExtensions.json: { "entities": [ { "name": "T", "measures": [ { "name", "expression", "references": {...} } ] } ] }.
+        // Found by SHAPE, not by file name, because the cloud door may hand parts over without a usable path. The DAX in
+        // `expression` is the truth; `references` (the names the service already extracted) is read as well, so a name
+        // the tokenizer could not see is still counted.
+        private static void ReadReportMeasures(JsonElement root, ParseResult acc)
+        {
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("entities", out var entities) || entities.ValueKind != JsonValueKind.Array) return;
+            foreach (var ent in entities.EnumerateArray())
+            {
+                if (ent.ValueKind != JsonValueKind.Object || !ent.TryGetProperty("measures", out var measures) || measures.ValueKind != JsonValueKind.Array) continue;
+                var entity = ent.TryGetProperty("name", out var en) && en.ValueKind == JsonValueKind.String ? en.GetString() : null;
+                foreach (var me in measures.EnumerateArray())
+                {
+                    if (me.ValueKind != JsonValueKind.Object) continue;
+                    var name = me.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String ? n.GetString() : null;
+                    if (string.IsNullOrEmpty(name)) continue;
+                    var expr = me.TryGetProperty("expression", out var ex) && ex.ValueKind == JsonValueKind.String ? ex.GetString() : null;
+                    var rm = new ReportMeasure { Name = name, Entity = entity, Expression = expr, Refs = ReportMeasureReferences.Read(expr) };
+                    if (me.TryGetProperty("references", out var refs) && refs.ValueKind == JsonValueKind.Object)
+                        foreach (var group in refs.EnumerateObject())
+                        {
+                            if (group.Value.ValueKind != JsonValueKind.Array) continue;
+                            foreach (var r in group.Value.EnumerateArray())
+                            {
+                                if (r.ValueKind != JsonValueKind.Object || !r.TryGetProperty("name", out var rn) || rn.ValueKind != JsonValueKind.String) continue;
+                                var rname = rn.GetString();
+                                var rent = r.TryGetProperty("entity", out var re) && re.ValueKind == JsonValueKind.String ? re.GetString() : null;
+                                if (string.IsNullOrEmpty(rname)) continue;
+                                if (!rm.Refs.Exists(x => string.Equals(x.Name, rname, StringComparison.OrdinalIgnoreCase)
+                                        && (string.IsNullOrEmpty(rent) || x.Table == null || string.Equals(x.Table, rent, StringComparison.OrdinalIgnoreCase))))
+                                    rm.Refs.Add(new ReportMeasureReferences.NameRef { Table = string.IsNullOrEmpty(rent) ? null : rent, Name = rname });
+                            }
+                        }
+                    acc.ReportMeasures.Add(rm);
+                }
+            }
         }
 
         // page/visual ids + best-effort visual type from a part path like definition/pages/{page}/visuals/{visual}/visual.json.

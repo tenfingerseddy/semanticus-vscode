@@ -253,8 +253,11 @@ assert.match(shortcutsSource, /PANEL_ONLY_CHORDS/, 'the cheat sheet footer must 
 const extensionSource = readFileSync(resolve(extensionRoot, 'src/extension.ts'), 'utf8');
 assert.doesNotMatch(extensionSource, /'AI Assistant connected\./,
   'the Connect toast claims a connection on the strength of a file write');
-assert.match(extensionSource, /Wrote the connection file/, 'the Connect toast must say a file was written');
-assert.match(extensionSource, /Nothing is connected yet/, 'the Connect toast must say nothing is connected yet');
+// Connect from the header now ends in the say card (N2, hero16), not a toast. The card is where the same honesty lives.
+const firstRunCard = readFileSync(resolve(extensionRoot, 'webview/src/firstrun.tsx'), 'utf8');
+assert.match(firstRunCard, /Claude Code reads new tools when it starts/, 'the say card must say the assistant picks the connection up when it starts');
+assert.doesNotMatch(firstRunCard, /aria-label="Your assistant is connected"/, 'the say card may not claim a connection on the strength of a file write');
+assert.doesNotMatch(extensionSource, /Wrote the connection file for your assistant\. Nothing is connected yet/, 'the second-press toast is gone');
 
 // ---- remaining live-sync copy (D-202 / GOV-06) ------------------------------------------------------
 // These four shipped lines describe what the VS Code view receives, but the old wording also implied that
@@ -587,7 +590,12 @@ function checkText(where, text, marketplaceKeyword = false, uiContext = false) {
   if (/\uFE0F/u.test(text) || /[\u{1F300}-\u{1FAFF}]/u.test(text)) failures.push(`${where}: colorful emoji`);
   // An assistant selector must name the actual client whose files will be installed.
   const assistantChoice = text === 'Claude Code' && where.startsWith('Semanticus.VSCode/src/extension.ts:');
-  if (!assistantChoice && /\bclaude\b/i.test(text) && (marketplaceKeyword || /\s/.test(text))) failures.push(`${where}: use AI Assistant, not Claude`);
+  // The Studio's driver bar, note strip and cursor name the product "Claude", the name Kane chose (10 Oct 2026, 1.4 contract
+  // section 0 rule 2 and section 6: "Added. Tell Claude go."). Everywhere else still says AI Assistant.
+  const claudeSurface = where.startsWith('Semanticus.VSCode/webview/src/studio/');
+  // The first-run choice names the product it connects (Connect Claude Code, Open Claude Code in this folder): a nominative reference, as the command title is.
+  const firstRunCard = where.startsWith('Semanticus.VSCode/webview/src/firstrun.tsx:');
+  if (!assistantChoice && !claudeSurface && !firstRunCard && /\bclaude\b/i.test(text) && (marketplaceKeyword || /\s/.test(text))) failures.push(`${where}: use AI Assistant, not Claude`);
   if (/\bAI assistant\b/.test(text)) failures.push(`${where}: capitalize AI Assistant`);
   // Golden rule 2: the UI door is pushed a change live; the agent door is never sent anything. No string a
   // person reads may claim the two are fed the same way (D-202, D-210).

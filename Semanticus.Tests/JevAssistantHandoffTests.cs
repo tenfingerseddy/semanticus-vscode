@@ -372,7 +372,7 @@ namespace Semanticus.Tests
             await f.Engine.SetAssistantQueueAsync("paused");
             var paused = await f.Engine.ClaimAssistantRequestAsync(ready);
             Assert.Equal(HandoffRefusal.QueuePaused, paused.Refusal);
-            Assert.Equal("The person has paused tasks for you. Carry on with what they ask you directly.", paused.Message);
+            Assert.Equal("The person paused your tasks. Do what they ask you directly.", paused.Message);
 
             await f.Engine.SetAssistantQueueAsync("on");
             await f.Engine.HoldPlanItemAsync(ready, true);
@@ -432,7 +432,7 @@ namespace Semanticus.Tests
             var row = PlanQueueKit.Row(await again.GetModelPlanAsync(), id);
             Assert.Null(row.Claim);
             Assert.Equal(PlanStateWords.Ready, row.StateWord);
-            Assert.Equal("Semanticus restarted while your assistant had this. It is offered again.", row.StateNote);
+            Assert.Equal("Semanticus restarted while your assistant had this. It is ready for your assistant again.", row.StateNote);
             Assert.Contains((await again.ListAssistantRequestsAsync()).Requests, r => r.RequestId == id);
 
             // The old token died with the claim.

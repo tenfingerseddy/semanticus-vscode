@@ -35,7 +35,7 @@ namespace Semanticus.Engine
     /// deltas leave through the engine-level <see cref="AgentHealthMailbox"/> (its own lock), stamped with the
     /// producing session + the originating tool call.
     /// </summary>
-    public sealed class HealthDeltaProbe : ISessionObserver
+    public sealed class HealthDeltaProbe : ISessionObserver, IWarmableObserver
     {
         // Properties whose change can alter DOWNSTREAM results/validity — the roots we walk for blast radius.
         // Cosmetic props (Description, DisplayFolder, FormatString, synonyms, …) deliberately excluded: a
@@ -98,6 +98,10 @@ namespace Semanticus.Engine
         // The ISessionObserver seam: thin adapters so the descriptive baseline/commit names (and their doc
         // contracts) stay the probe's real surface.
         public void BeforeCommit(Model model) => EnsureBaseline(model);
+        /// <summary>True once the pre-edit baseline is memoized (by <see cref="Warm"/> at open or by the first commit).</summary>
+        public bool HasBaseline => _before != null;
+        /// <summary>The same scan the first edit would run, taken at open instead (hero16 N3: the first edit after a reopen waited for it).</summary>
+        public void Warm(Model model) { try { EnsureBaseline(model); } catch { /* the first commit retries it, as before */ } }
         public void AfterCommit(SessionCommit commit)
         {
             // Always compute — OnCommit's side effects (snapshot roll-forward, mailbox stash, evidence record)

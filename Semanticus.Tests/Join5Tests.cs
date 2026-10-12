@@ -15,6 +15,7 @@ namespace Semanticus.Tests
     {
         // ---- J1: a new plan keeps the words somebody wrote ---------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("agent")]
         [InlineData("human")]
@@ -65,6 +66,7 @@ namespace Semanticus.Tests
 
         // ---- J4: every path that holds a line says whether the object it names is still there ----------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J4_a_line_held_because_its_point_was_switched_off_says_the_measure_it_names_is_not_there()
         {
@@ -102,6 +104,7 @@ namespace Semanticus.Tests
             return (f, e, row, line);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("agent")]
         [InlineData("human")]
@@ -123,6 +126,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task J1_work_it_out_again_holds_the_words_and_still_offers_its_own_line()
         {

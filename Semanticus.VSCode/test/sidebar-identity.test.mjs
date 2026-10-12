@@ -332,6 +332,7 @@ console.log('Semanticus side bar identity contract passed');
   assert.equal(T.guardWanted({ sessionId: 's1', hasUnsavedEdits: false, hasUnsavedChanges: true }), false, "Jev's permission marker alone is not the person's work");
   assert.equal(T.guardWanted({ sessionId: 's1', hasUnsavedChanges: true }), true, 'an older engine says only hasUnsavedChanges');
   assert.equal(T.guardWanted({ sessionId: 's1', liveBound: true, hasUnsavedEdits: true, hasUnsavedChanges: true }), false, 'a live model keeps its edits in the engine: no tab opens by itself after a run');
+  assert.equal(T.guardWanted({ sessionId: 's1', keepsUnsavedWork: true, hasUnsavedEdits: true }), false, 'a current owner keeps dirty work without opening an editor tab');
   const warn = T.syncVerdict({ sessionId: 's1', modelName: 'M', liveConnected: true, liveBound: true, liveDatabase: 'M', liveDataSource: 'x', hasUnsavedChanges: true, hasUnsavedEdits: false });
   assert.equal(warn.warn, false, 'the marker alone must not say "unsaved edits are not in the model you are querying"');
   const real = T.syncVerdict({ sessionId: 's1', modelName: 'M', liveConnected: true, liveBound: true, liveDatabase: 'M', liveDataSource: 'x', hasUnsavedChanges: true, hasUnsavedEdits: true });

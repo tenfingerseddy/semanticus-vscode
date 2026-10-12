@@ -20,7 +20,7 @@ namespace Semanticus.Tests
     [Collection("restore-root")]
     public sealed class ReconcileGateTests : IDisposable
     {
-        private const string CloudEp = "powerbi://api.powerbi.com/v1.0/myorg/WS";   // never in the registry ⇒ prod
+        private const string CloudEp = "powerbi://api.powerbi.com/v1.0/myorg/WS";   // labelled prod by Run()
         private readonly string _root;
         private readonly string _safeRoot;
 
@@ -73,6 +73,8 @@ namespace Semanticus.Tests
         private async Task<ReconcileRunResult> Run(string preset, string origin)
         {
             AgentPolicyStore.SetPreset(preset, "human");
+            // an unlabelled target counts as test since 1.4, so the production rules below need the label
+            ConnectionRegistry.SetLabel(ConnectionRegistry.Remember("xmla", CloudEp, "DS", "DS", null, "serviceprincipal").Id, "prod", "human");
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             var bim = Bim();
             try

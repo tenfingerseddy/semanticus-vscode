@@ -71,12 +71,12 @@ namespace Semanticus.Tests
                 Assert.Equal("Done", paused.Steps.Single(s => s.Number == 1).Status);
                 Assert.Equal("Waiting", paused.Steps.Single(s => s.Number == 2).Status);
 
-                // The assistant cannot pass a stop that asks the person.
+                // edit_draft does not continue: it points to continue_draft, and the assistant continues with that (Kane, 10 Oct 2026).
                 var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.EditDraft(engine, v.DraftId, "continue", step: "2"));
-                Assert.Contains("Continue is the person's own", refused.Message);
+                Assert.Contains("continue_draft", refused.Message);
                 Assert.False(await HasMeasureAsync(sm, "Revenue"));
 
-                var done = await engine.ContinueDraftAsync(v.DraftId);
+                var done = await McpTools.ContinueDraft(AssistantEngine.ForAssistant(engine), v.DraftId);
                 Assert.Equal(DraftStates.Done, done.State);
                 Assert.True(await HasMeasureAsync(sm, "Revenue"));
                 Assert.Equal(undo + 2, await ComposerFrame.UndoStepsAsync(sm));   // one entry per change group

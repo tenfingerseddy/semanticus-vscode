@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 
 namespace Semanticus.Engine
 {
@@ -186,42 +187,101 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Ignore engine runtime files so a model checkpoint can keep primers and workflows without
-        /// committing the live log.</summary>
-        public static void EnsureRuntimeIgnore(string dir)
-        {
-            if (string.IsNullOrEmpty(dir)) return;
-            Directory.CreateDirectory(dir);
-            var gitignore = Path.Combine(dir, ".gitignore");
-            if (!File.Exists(gitignore))
-            {
-                File.WriteAllText(gitignore, "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n" + HistoryIgnore + QuestionsIgnore);
-                return;
-            }
-            // The edit ledger (Plan-heart E4) and the data question history (ask_data, 26 Sep) came after many sidecars
-            // already had this file, so each one's lines are added to an existing one once. Only these lines: a line the
-            // person removed on purpose is not put back.
-            var text = File.ReadAllText(gitignore);
-            var lines = text.Split('\n').Select(l => l.Trim()).ToList();
-            var add = (lines.Contains(EditLedger.FileName) ? "" : HistoryIgnore)
-                    + (lines.Contains(Query.DataQuestionStore.FileName) ? "" : QuestionsIgnore);
-            if (add.Length == 0) return;
-            File.AppendAllText(gitignore, (text.Length == 0 || text.EndsWith("\n", StringComparison.Ordinal) ? "" : "\n") + add);
-        }
+        /// committing the live log. The one writer of <c>.semanticus/.gitignore</c>: see <see cref="WriteIgnore"/>.</summary>
+        public static void EnsureRuntimeIgnore(string dir) => WriteIgnore(dir, withSwitch: false);
 
         /// <summary>Keeps the What Pro decides files that mean nothing after Power BI Desktop closes out of the model's
         /// commits: one per run of Desktop or live endpoint, and the three shared Desktop files. The per-file and per-title
         /// files are the ones worth keeping. Adds only these two lines, once.</summary>
-        public static void EnsureSwitchIgnore(string dir)
+        public static void EnsureSwitchIgnore(string dir) => WriteIgnore(dir, withSwitch: true);
+
+        /// <summary>Test seam: runs before every try to read or replace the ignore file and may throw, to stand in for the sharing violation
+        /// another writer causes on Windows.</summary>
+        internal static Action<string> IgnoreIoHookForTest;
+
+        /// <summary>Test seam: the waits between tries. Null keeps the real ones.</summary>
+        internal static int[] IgnoreRetryDelaysForTest;
+
+        private static readonly int[] IgnoreRetryDelaysMs = { 20, 50, 100, 200, 400, 600 };
+
+        // Every writer in this process goes through here one at a time. The History, the experience log, the question history, a layout
+        // save and a checkpoint all call in from different threads, and two of them reading, appending and replacing the same small
+        // file at once is what failed a Windows folder save with a sharing violation (and could double a line elsewhere).
+        private static readonly object IgnoreGate = new object();
+
+        /// <summary>The one writer of <c>.semanticus/.gitignore</c>. It writes only when the file is missing or lacks a line, goes through a temp
+        /// file and an atomic replace so no reader sees half a file, and waits out a sharing violation for about 1.4 s. It never throws: a
+        /// missing ignore line must not fail a save, a layout write or a History write, and the next caller adds the line.</summary>
+        private static void WriteIgnore(string dir, bool withSwitch)
         {
             if (string.IsNullOrEmpty(dir)) return;
-            EnsureRuntimeIgnore(dir);
-            var gitignore = Path.Combine(dir, ".gitignore");
-            var text = File.ReadAllText(gitignore);
-            var lines = text.Split('\n').Select(l => l.Trim()).ToList();
-            var add = (lines.Contains(SwitchRunIgnore) ? "" : SwitchRunIgnore + "\n")
-                    + (lines.Contains(SwitchDesktopIgnore) ? "" : SwitchDesktopIgnore + "\n");
-            if (add.Length == 0) return;
-            File.AppendAllText(gitignore, (text.Length == 0 || text.EndsWith("\n", StringComparison.Ordinal) ? "" : "\n") + add);
+            try
+            {
+                lock (IgnoreGate)
+                {
+                    Directory.CreateDirectory(dir);
+                    var gitignore = Path.Combine(dir, ".gitignore");
+                    WithIgnoreRetry(gitignore, () =>
+                    {
+                        var existing = File.Exists(gitignore) ? ReadShared(gitignore) : null;
+                        var wanted = IgnoreTextFor(existing, withSwitch);
+                        if (wanted == null) return;
+                        var tmp = gitignore + ".tmp";
+                        File.WriteAllText(tmp, wanted);
+                        File.Move(tmp, gitignore, overwrite: true);
+                    });
+                }
+            }
+            catch { /* the ignore line is a courtesy */ }
+        }
+
+        private static string ReadShared(string file)
+        {
+            using var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(fs);
+            return reader.ReadToEnd();
+        }
+
+        private static void WithIgnoreRetry(string gitignore, Action act)
+        {
+            var delays = IgnoreRetryDelaysForTest ?? IgnoreRetryDelaysMs;
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    IgnoreIoHookForTest?.Invoke(gitignore);
+                    act();
+                    return;
+                }
+                catch (Exception ex) when (attempt < delays.Length
+                    && (ex is IOException || ex is UnauthorizedAccessException)
+                    && !(ex is DirectoryNotFoundException || ex is FileNotFoundException || ex is PathTooLongException))
+                {
+                    Thread.Sleep(delays[attempt]);
+                }
+            }
+        }
+
+        /// <summary>What the file should say, or null when it already says it. The edit ledger (Plan-heart E4) and the data question history
+        /// (ask_data, 26 Sep) came after many sidecars already had this file, so each one's lines are added to an existing one once. Only
+        /// these lines: a line the person removed on purpose is not put back.</summary>
+        private static string IgnoreTextFor(string existing, bool withSwitch)
+        {
+            if (existing == null)
+                existing = "engine.lock\nengine.json\nexperience.jsonl\nbaselines/vitals.jsonl\n" + HistoryIgnore + QuestionsIgnore
+                         + (withSwitch ? SwitchRunIgnore + "\n" + SwitchDesktopIgnore + "\n" : "");
+            else
+            {
+                var lines = existing.Split('\n').Select(l => l.Trim()).ToList();
+                var add = (lines.Contains(EditLedger.FileName) ? "" : HistoryIgnore)
+                        + (lines.Contains(Query.DataQuestionStore.FileName) ? "" : QuestionsIgnore)
+                        + (withSwitch && !lines.Contains(SwitchRunIgnore) ? SwitchRunIgnore + "\n" : "")
+                        + (withSwitch && !lines.Contains(SwitchDesktopIgnore) ? SwitchDesktopIgnore + "\n" : "");
+                if (add.Length == 0) return null;
+                existing += (existing.Length == 0 || existing.EndsWith("\n", StringComparison.Ordinal) ? "" : "\n") + add;
+                return existing;
+            }
+            return existing;
         }
 
         private const string SwitchRunIgnore = DecisionSettingsFolder + "/live-*.json";

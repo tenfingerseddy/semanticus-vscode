@@ -131,6 +131,7 @@ namespace Semanticus.Tests
         private static List<StartLine> KeptFormats(LocalEngine engine) =>
             engine.StartPlanDocForTest().Lines.Where(l => l.Kept && l.DecidedBy == StartDecidedBy.Person && LocalEngine.IsJevFormatLine(l.Item)).ToList();
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_keep_the_person_made_survives_the_assistants_later_renames_and_builds()
         {
@@ -161,6 +162,7 @@ namespace Semanticus.Tests
             foreach (var k in now) Assert.Equal(k.Item.After, await FormatOfAsync(sessions, StartPlanWords.Forward(after, k.Item.ObjectRef)));   // a line is stored against the name before the plan's renames; the model has the name after
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_keep_that_is_voided_goes_back_into_Needs_you_before_approval_and_a_new_keep_builds()
         {

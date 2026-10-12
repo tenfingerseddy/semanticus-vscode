@@ -386,7 +386,7 @@ namespace Semanticus.Engine
                 var range = ask.StartExpr == null
                     ? "the five years to the end of this year"
                     : "the years the model's own dates cover";
-                var reason = (ask.Candidates.Count == 0 ? "No table in this model can be its date table" : "None of this model's tables reads as its date table")
+                var reason = (ask.Candidates.Count == 0 ? "No table in this model can be its date table" : "None of this model's tables looks like its date table")
                            + (ask.UsesTimeIntelligence ? ", and its formulas use time intelligence, which needs one." : ", so a new one with one row per day is added.");
                 lines.Add(new ChangeItem
                 {
@@ -415,8 +415,8 @@ namespace Semanticus.Engine
                     DecisionConfidence = Math.Round(sure, 4),
                     DecisionWord = word,
                     Reason = reason,
-                    CheckText = "Semanticus builds it with CALENDAR over " + range + ", so it has one row per day and no day is "
-                              + "missing. It is not related to any table yet.",
+                    CheckText = "Semanticus makes it with a formula (CALENDAR) over " + range + ". So it has one row per day and no day is "
+                              + "missing. It is not joined to any table yet.",
                 });
                 return;
             }
@@ -437,7 +437,7 @@ namespace Semanticus.Engine
             var why = (oneRowPerDay
                         ? candidate.TableName + " has one row per day in " + key.Name
                         : candidate.TableName + " is not on the many side of any relationship, and " + key.Name + " is its date column")
-                    + (ask.UsesTimeIntelligence ? ", and the model's time intelligence needs a marked date table." : ", so marking it gives the model one date table to report by.");
+                    + (ask.UsesTimeIntelligence ? ". Date measures such as year to date in this model need a marked date table." : ". Marking it gives the model one date table for reports to use.");
             string check;
             if (key.BuiltByCalendar && oneRowPerDay)
                 check = candidate.TableName + " is built by a calendar formula, so " + key.Name + " has every day once.";
@@ -484,7 +484,7 @@ namespace Semanticus.Engine
 
         /// <summary>The first "why" line of a date table item.</summary>
         internal static string Missing(int n, string table) =>
-            "No table in this model is marked as its date table, so dates are grouped by Power BI's hidden tables and time "
-            + "intelligence has no date table to read.";
+            "No table in this model is marked as the date table. Power BI groups dates with its own hidden tables, "
+            + "and date measures such as year to date have no date table to use.";
     }
 }

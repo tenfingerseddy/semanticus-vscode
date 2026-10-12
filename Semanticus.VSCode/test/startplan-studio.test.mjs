@@ -57,7 +57,7 @@ const asView = (state) => JSON.parse(JSON.stringify(startPlanView(state)));   //
 
   const approved = asView((startPlanApprove(s, v.digest), s));
   assert.equal(M.approvalOf(approved).state, 'current', 'an approval on the current digest is current');
-  assert.match(M.approvalOf(approved).text, /you approved/i, 'and it says the person did it');
+  assert.match(M.approvalOf(approved).text, /plan is approved/i, 'and it says the person did it');
   assert.match(M.approvalOf(approved).text, /you or your assistant can build/i, 'K3, truthfully: after the person approves, either may press Build');
 
   // The assistant writes words on the other door: the digest moves and the approval stops matching.
@@ -125,8 +125,20 @@ const asView = (state) => JSON.parse(JSON.stringify(startPlanView(state)));   //
   assert.equal(v.needsYou.filter((n) => n.kind === 'jev' || n.kind === 'grant').length, 0, 'and no Jev question');
 
   const pro = asView(proState());
-  const proLine = pro.sections.flatMap((s) => s.groups.flatMap((g) => g.lines)).find((l) => l.decidedBy === 'jev');
-  assert.equal(M.lineMark(proLine, { pro: true }).label, 'Jev', 'on Pro the same kind of line says Jev');
+  const proLine = pro.sections.flatMap((s) => s.groups.flatMap((g) => g.lines)).find((l) => l.decidedBy === 'jev' && l.kept);
+  assert.equal(M.lineMark(proLine, { pro: true }).label, 'Jev chose this', 'the recorded decision is visible on the row');
+  assert.equal(M.lineMark(proLine, { pro: false }).label, 'Jev chose this', 'a tier change does not erase a recorded Jev decision');
+}
+
+// Verifier proof: an unsure Jev line waits for the person, so it must not claim a choice.
+{
+  const line = { decidedBy: 'jev', kept: false, item: { id: 'x', title: 'How project budgets total', kind: 'set_summarize_by' } };
+  const state = M.lineState(line, { sections: [] }, { pro: true });
+  const mark = M.lineMark(line, { pro: true });
+  assert.equal(state.text, 'Left out until you answer');
+  assert.doesNotMatch(mark.label, /chose/, 'the row waits on the person, so nothing was chosen');
+  assert.equal(mark.label, 'Jev asks you');
+  assert.equal(M.lineMark({ ...line, kept: true }, { pro: true }).label, 'Jev chose this', 'a kept Jev line still shows the choice');
 }
 
 // ---- the lines: who, what, state ----------------------------------------------------------------------
@@ -331,6 +343,7 @@ const render = (view, pro, extra = {}) => renderToStaticMarkup(React.createEleme
   assert.ok(html.indexOf('data-testid="sp-needs"') > 0 && html.indexOf('data-testid="sp-needs"') < order[0], 'above them');
   assert.match(text, /Should project budgets add up\?/);
   assert.match(text, /Jev leans/, 'the lean is marked on the option Jev leans to');
+  assert.match(html, /data-who="jev"[^>]*>[\s\S]*?Jev chose this/, 'the recorded Jev mark renders on the page');
   assert.match(text, /Approve and build/);
   assert.match(text, /Contoso Consulting/);
   assert.match(text, /ContosoOps/, 'the source is named');
@@ -363,7 +376,7 @@ const render = (view, pro, extra = {}) => renderToStaticMarkup(React.createEleme
   // A standing approval: the button is Build and it says who may press it.
   const s2 = proState(); const v1 = asView(s2); startPlanApprove(s2, v1.digest);
   const t2 = readable(render(asView(s2), true));
-  assert.match(t2, /You approved this plan/i);
+  assert.match(t2, /This plan is approved/i);
   assert.match(t2, /you or your assistant can build it/i);
   assert.match(t2, /(^|\s)Build(\s|$)/, 'the button is now Build');
   assert.doesNotMatch(t2, /Approve and build/, 'and Approve and build is gone');
@@ -477,4 +490,12 @@ const render = (view, pro, extra = {}) => renderToStaticMarkup(React.createEleme
   assert.match(detail({ ...base, derived: true, kept: false }), /data-testid="sp-keep"/, 'a dropped time measure can be kept again');
 }
 
+{
+  const view = { sections: [{ groups: [{ lines: [
+    { kept: true }, { kept: true, held: 'Needs a table' }, { kept: false, held: 'Left out' },
+  ] }] }] };
+  assert.equal(M.buildCountOf(view) + M.heldCountOf(view) + M.linesOf(view).filter((l) => !l.kept).length, 3);
+  assert.equal(M.lineChoice({ item: { kind: 'set_summarize_by', after: 'None' } }), "Don't summarize");
+  assert.equal(M.lineChoice({ item: { kind: 'set_ai_data_schema', after: 'Excluded' } }), 'Hidden from Copilot');
+}
 console.log('startplan-studio: ok');

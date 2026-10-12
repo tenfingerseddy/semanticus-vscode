@@ -66,6 +66,7 @@ let __h; Object.defineProperty(window, '__uishotHarness', { configurable: true,
   get: () => __h,
   set: (v) => {
     __h = v;
+    v.setResponse('sessionInfo', () => ({ sessionId: 'startplan-copy', modelName: 'Contoso Consulting', source: startPlanView(window.__sp).destination?.modelPath, liveBound: false, tables: 0, measures: 0, hasUnsavedEdits: false }));
     v.setResponse('getStartPlan', () => (window.__spNone ? { exists: false } : startPlanView(window.__sp)));
     v.setResponse('startModelFromSql', (p) => { __note('startModelFromSql', p); window.__spNone = false; return startPlanView(window.__sp); });
     v.setResponse('editStartPlan', (p) => { __note('editStartPlan', p); return startPlanEdit(window.__sp, p[0]); });
@@ -266,7 +267,7 @@ for (const width of [1280, 900]) {
     expect: (m) => [
       ...has(JSON.stringify(m.sections.map((s) => s.title)) === JSON.stringify(SECTION_TITLES), `sections ${JSON.stringify(m.sections.map((s) => s.title))}`),
       ...has(m.needs.length === 5 && m.needs.filter((n) => n.kind === 'jev').length === 3, `needs ${JSON.stringify(m.needs.map((n) => n.id))}`),
-      ...has(/Jev left 3 lines for you to decide/.test(m.needsBand), `band "${m.needsBand}"`),
+      ...has(/Jev left 3 changes for you to decide/.test(m.needsBand), `band "${m.needsBand}"`),
       ...has(m.drawing && m.drawingNodes.length === 6 && m.drawingEdges.length === 8, `drawing nodes ${m.drawingNodes} edges ${m.drawingEdges}`),
       ...has(m.drawingEdges.filter((e) => e === 'off').length === 2, 'two links drawn as kept off'),
       ...has(/35/.test(m.grade) && /92/.test(m.grade), `grade "${m.grade}"`),
@@ -275,7 +276,7 @@ for (const width of [1280, 900]) {
       ...has(!/Free plan/.test(m.allText), 'Pro does not read the Free note'),
       ...has(m.rows.some((r) => r.id === 't-sum-budget' && /Left out until you answer/.test(r.state)), 'an unsure Jev line is left out until answered'),
       ...has(m.needMarks.length > 0 && m.needMarks.every((n) => n.marked === n.asks), `a Needs you line that asks shows who asks, and one that asks nothing shows no mark: ${JSON.stringify(m.needMarks)}`),
-      ...has(/2\s*errors and warnings stay open/.test(m.bp ?? '') && /Best practice B/.test(m.bp ?? ''), `best practice after the build: "${m.bp}"`),
+      ...has(/2\s*best practice problems stay open/.test(m.bp ?? '') && /Best practice B/.test(m.bp ?? ''), `best practice after the build: "${m.bp}"`),
       ...has(m.rowMarks.length > 0 && m.rowMarks.every(Boolean), `every row shows who decided it (${m.rowMarks.filter((x) => !x).length} without)`),
       ...has(new Set(m.drawingPaths).size === m.drawingPaths.length, `no two links drawn on one path: ${JSON.stringify(m.drawingPaths)}`),
       ...has(/A/.test(m.grade) && m.gradeProvisional === 'no' && !m.gradeNote, `a settled grade is the letter, not provisional: "${m.grade}"`),

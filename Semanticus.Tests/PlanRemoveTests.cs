@@ -23,6 +23,7 @@ namespace Semanticus.Tests
 {
     public sealed class PlanRemoveTests
     {
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_is_removed_and_Undo_puts_it_back_where_it_stood()
         {
@@ -51,6 +52,7 @@ namespace Semanticus.Tests
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.RestorePlanRowAsync(second));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_claimed_task_is_removed_and_the_assistant_reads_so_on_its_next_call()
         {
@@ -87,7 +89,7 @@ namespace Semanticus.Tests
             var plan = await f.Engine.GetModelPlanAsync();
             var found = plan.Items.First(i => !PlanTasks.IsTaskId(i.Id) && PlanStateWords.IsOpen(i.StateWord));
             var ex = await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.RemovePlanRowAsync(found.Id));
-            Assert.Contains("set it aside", ex.Message);
+            Assert.Contains("Set it aside", ex.Message);
         }
 
         [Fact]
@@ -107,7 +109,7 @@ namespace Semanticus.Tests
 
             // A part goes only with its draft.
             var partRefused = await Assert.ThrowsAsync<InvalidOperationException>(() => f.Engine.RemovePlanRowAsync(part.Id));
-            Assert.Contains("Remove the draft's row", partRefused.Message);
+            Assert.Contains("Remove the draft itself", partRefused.Message);
 
             var removed = await f.Engine.RemovePlanRowAsync(rowId);
             Assert.Equal("draft", removed.Kind);
@@ -121,29 +123,24 @@ namespace Semanticus.Tests
             Assert.Equal(draft.DraftId, (await f.Engine.GetDraftAsync(draft.DraftId)).DraftId);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Remove_and_restore_are_the_persons_only()
+        public async Task Remove_and_restore_work_on_both_doors()
         {
-            using var f = await GappyAsync("RemovePersonOnly.bim");
+            // Kane, 10 Oct 2026: only the Permissions page is person-only, so the assistant removes and restores rows too.
+            using var f = await GappyAsync("RemoveBothDoors.bim");
             await using var pipe = await Pipe.OpenAsync(f);
             var task = await AskAsync(f.Engine, "Describe the Margin measure", Free("Margin"));
 
-            async Task NotFound(Func<Task> call)
-            {
-                var ex = await Assert.ThrowsAnyAsync<Exception>(call);
-                Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
-            }
-            await NotFound(() => pipe.Agent.InvokeAsync<PlanRemoveResult>("removePlanRow", task));
-            await NotFound(() => pipe.Agent.InvokeAsync<ModelPlanView>("restorePlanRow", task));
-            await NotFound(() => pipe.Assistant.RemovePlanRowAsync(task));
-            Assert.True(PlanStateWords.IsOpen(Row(await f.Engine.GetModelPlanAsync(), task).StateWord));
-
-            // No MCP tool reaches either method.
+            // The assistant's door: the pipe method and the MCP tools both exist.
+            var removedByAssistant = await pipe.Assistant.RemovePlanRowAsync(task);
+            Assert.DoesNotContain(removedByAssistant.Plan.Items, i => i.Id == task);
+            var backByAssistant = await pipe.Assistant.RestorePlanRowAsync(task);
+            Assert.Contains(backByAssistant.Items, i => i.Id == task);
             var tools = typeof(McpTools).GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Where(m => m.GetCustomAttributes().Any(a => a.GetType().Name == "McpServerToolAttribute")).ToList();
-            Assert.NotEmpty(tools);
-            Assert.DoesNotContain(tools, m => m.Name.Contains("RemovePlanRow", StringComparison.Ordinal)
-                                              || m.Name.Contains("RestorePlanRow", StringComparison.Ordinal));
+            Assert.Contains(tools, m => m.Name.Contains("RemovePlanRow", StringComparison.Ordinal));
+            Assert.Contains(tools, m => m.Name.Contains("RestorePlanRow", StringComparison.Ordinal));
 
             // The person's door does both.
             var removed = await pipe.Human.InvokeAsync<PlanRemoveResult>("removePlanRow", task);

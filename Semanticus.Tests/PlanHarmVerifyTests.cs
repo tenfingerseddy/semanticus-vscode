@@ -77,46 +77,6 @@ namespace Semanticus.Tests
             return (row, set.Lines.Select(l => l.Target ?? "").ToArray());
         }
 
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task An_unmarked_date_tables_own_columns_are_never_offered_while_no_report_has_been_read()
-        {
-            using var f = await ReopenedAsync("VerifyHarmDate.bim");
-            var (row, targets) = await CleanupAsync(f);
-
-            // dim_date is the table every invoice date points at, with a date column of its own: the date table, marked
-            // or not. The row says "the date table's columns ... are never offered for removal".
-            foreach (var name in new[] { "FY_QTR", "MTH_ABBR" })
-            {
-                Assert.DoesNotContain(targets, t => t == "column:dim_date/" + name);
-                Assert.DoesNotContain(row.Diff, d => d.Contains("dim_date[" + name + "]", StringComparison.Ordinal));
-            }
-        }
-
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task A_date_held_as_a_number_is_never_offered_while_the_row_says_dates_never_are()
-        {
-            using var f = await ReopenedAsync("VerifyHarmDateKey.bim");
-            var (row, targets) = await CleanupAsync(f);
-
-            // ONBRD_DT_KEY is the client's onboarding date as yyyymmdd, the kind StarterMeasureTemplates.NeverSummed
-            // itself reads as a date. The row's own sentence promises dates are never offered.
-            Assert.Contains(row.Why, w => w.Contains("dates", StringComparison.Ordinal) && w.Contains("never offered", StringComparison.Ordinal));
-            Assert.DoesNotContain(targets, t => t == "column:dim_client/ONBRD_DT_KEY");
-        }
-
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task The_cleanup_never_offers_every_column_of_a_table()
-        {
-            using var f = await ReopenedAsync("VerifyHarmTable.bim");
-            var (_, targets) = await CleanupAsync(f);
-
-            // Approving all three leaves ref_codes a table with no columns at all (measured on the J8 raw start,
-            // reopened: the optional row removed CODE, CODE_TYPE and CODE_DESC and left only the partition).
-            var refCodes = new[] { "CODE_TYPE", "CODE", "CODE_DESC" };
-            Assert.False(refCodes.All(c => targets.Contains("column:ref_codes/" + c)),
-                "the cleanup offers every column of ref_codes: " + string.Join(", ", targets.Where(t => t.StartsWith("column:ref_codes/", StringComparison.Ordinal))));
-        }
-
         // ---- once a report has been read (the optional row's own advice: "Analyze the relevant reports ... before
         // deleting") the row stops being optional, and the check's defect 1 comes back whole. Measured on the J8 raw
         // start, reopened, with one report showing two fields read: "Remove 40 unused things" was the first Needs you
@@ -144,20 +104,5 @@ namespace Semanticus.Tests
             Assert.True(waiting.Length == 0, "rows wait for the unchosen cleanup: " + string.Join(", ", waiting));
         }
 
-        [Fact(Skip = "Superseded by PlanHarmVerifyR5Tests (Kane 30 Sep 2026, the cleanup row is a suggestion list): this case asserted the old never-offered rule; its restatement is in that file.")]
-        public async Task With_a_report_read_the_cleanup_never_offers_the_marked_date_tables_date_column()
-        {
-            using var f = await ReopenedWithAReportReadAsync("VerifyHarmReadDate.bim");
-
-            var plan = await f.Engine.GetModelPlanAsync();
-            var row = Assert.Single(plan.Items, i => i.Id == "cleanup/model");
-            var proposed = await f.Engine.ModelPlanActionAsync("cleanup/model", "propose", "human");
-            var targets = proposed.Plan.Items.Single(i => i.Id == "cleanup/model").ChangeSet.Lines.Select(l => l.Target ?? "").ToArray();
-
-            // CAL_DT is the column dim_date is marked on. Removing it leaves a "date table" with no date: no report
-            // reads a key column directly, so a report reading can never be the reason to offer it.
-            Assert.DoesNotContain(targets, t => t == "column:dim_date/CAL_DT");
-            Assert.DoesNotContain(row.Diff, d => d.Contains("dim_date[CAL_DT]", StringComparison.Ordinal));
-        }
     }
 }

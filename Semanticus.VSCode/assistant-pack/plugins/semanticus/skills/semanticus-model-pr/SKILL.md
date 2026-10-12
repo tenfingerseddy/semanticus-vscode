@@ -17,6 +17,9 @@ approved with `set_plan_item`. A change to an item's content can reset its appro
 
 Use `set_plan_item` to fill, approve or reject items within the user's authorization. If the user
 asked to review first, show the diff. Otherwise do the authorised work.
+When the person does not need to review each line first, on Pro use `write_words` or `edit_objects` for many values.
+Each is one call and one undo step. `set_plan_item` fills one item per call.
+Send writes one after another; parallel calls wait for the same writer and do not make writes faster.
 
 `apply_plan` applies the approved items; `approvedIds` narrows the set. Read its applied, skipped and
 failed results. If the model changed since the list was built, read the new state and refresh the

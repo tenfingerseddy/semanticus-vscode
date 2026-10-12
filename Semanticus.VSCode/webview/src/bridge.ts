@@ -43,12 +43,16 @@ export function rejectAll(reason: string): void {
   pending.clear();
 }
 
-export type ChangeDelta = { kind: string; ref: string; props?: string[] };
+export type ChangeDelta = { kind: string; ref: string; props?: string[]; before?: string | null; after?: string | null };
 export type ChangeNotification = {
   sessionId: string;
   revision: number;
   origin: string;
   label?: string;
+  words?: ChangeWords;
+  by?: string | null;
+  cause?: { kind?: string | null; title?: string | null; approvedBy?: string | null } | null;
+  undo?: { canUndo: boolean; steps?: number };
   deltas?: ChangeDelta[];
   /** "undo" or "redo" when the commit walked the timeline (a redo of an add carries no delta for it). */
   replay?: string;
@@ -152,11 +156,72 @@ export function onWorkflowLibraryChange(fn: (v: unknown) => void): () => void {
 export type ActivityEvent = {
   seq: number; kind: string; origin: string; label?: string; query?: string; target?: string;
   ok: boolean; error?: string; approvalId?: string; rowCount?: number; elapsedMs?: number; result?: unknown;
+  words?: ChangeWords;
+  editEpoch?: string;
 };
+export type ChangeWords = { verb: string; noun: string; count: number; targets: string[]; sentence: string };
 const activityListeners = new Set<(e: ActivityEvent) => void>();
 export function onActivity(fn: (e: ActivityEvent) => void): () => void {
   activityListeners.add(fn);
   return () => { activityListeners.delete(fn); };
+}
+
+// ---- Claude drives, the Studio shows (1.4; docs: contract sections 1, 4, 5 and 6) -----------------------------------------
+// The engine broadcasts what the assistant says (studio/show), what it would do next (studio/suggest) and that a tool call
+// began (assistant/call). The host buffers them until the Studio is ready (studioNotes.ts) and posts them as these four
+// messages. Nothing here moves the screen: the driver store decides that, and calls dispatchNavigate itself.
+// The shapes mirror the engine's StudioNote, StudioSuggestion and AgentCallEvent (Protocol.cs).
+export type StudioNotePayload = {
+  id: string;            // "sn-<12 hex>" from the engine; "tour-<chapter>-<n>" from the tour
+  say: string;           // the sentence for the person, 200 characters at most
+  how: string;           // the place's "To do this yourself" sentence
+  place: string;         // a place id (studio/places.json)
+  focus?: string;        // an object ref
+  press?: string;        // a press id
+  at: string;            // ISO time the engine took it
+  by: 'assistant' | 'tour';
+  call?: string;         // the agent call id
+  sessionId?: string;
+  auto?: boolean;        // the engine wrote it from a tool call (follow), not the assistant
+  count?: number;        // an automatic note: how many calls of its kind it covers so far
+  update?: boolean;      // a re-send of a note the Studio has: replace its words, queue nothing
+};
+/** A data answer the assistant asked for (ask_data); the Ask page shows it as the current answer. `answer` is the engine's DataAnswer. */
+export type StudioAnswerPayload = { id: string; sessionId?: string; at: string; question?: string | null; answer: unknown };
+export type StudioSuggestionPayload = {
+  id: string; say: string; steps: { label: string; prompt: string }[]; at: string; sessionId?: string;
+};
+export type AssistantCallPayload = { sessionId?: string; call?: string; tool: string; at: string;
+  /** Who is calling, as the engine mapped the MCP clientInfo (AssistantIdentity.cs); absent when the client sent no name. */
+  assistant?: { key: string; name: string; initials?: string | null; version?: string | null } | null };
+/** Who drives the Studio's screen: the assistant (the default once one is connected), or the person. */
+export type DriveMode = 'claudeDrives' | 'iDrive';
+
+const studioShowListeners = new Set<(n: StudioNotePayload) => void>();
+export function onStudioShow(fn: (n: StudioNotePayload) => void): () => void {
+  studioShowListeners.add(fn);
+  return () => { studioShowListeners.delete(fn); };
+}
+const studioSuggestListeners = new Set<(s: StudioSuggestionPayload) => void>();
+export function onStudioSuggest(fn: (s: StudioSuggestionPayload) => void): () => void {
+  studioSuggestListeners.add(fn);
+  return () => { studioSuggestListeners.delete(fn); };
+}
+const studioAnswerListeners = new Set<(a: StudioAnswerPayload) => void>();
+export function onStudioAnswer(fn: (a: StudioAnswerPayload) => void): () => void {
+  studioAnswerListeners.add(fn);
+  return () => { studioAnswerListeners.delete(fn); };
+}
+const assistantCallListeners = new Set<(c: AssistantCallPayload) => void>();
+export function onAssistantCall(fn: (c: AssistantCallPayload) => void): () => void {
+  assistantCallListeners.add(fn);
+  return () => { assistantCallListeners.delete(fn); };
+}
+// The second argument is the host's check that an assistant is connected to this workspace; the driver bar uses it to show a saved I drive mode.
+const driveModeListeners = new Set<(mode: DriveMode, assistantConnected?: boolean) => void>();
+export function onDriveMode(fn: (mode: DriveMode, assistantConnected?: boolean) => void): () => void {
+  driveModeListeners.add(fn);
+  return () => { driveModeListeners.delete(fn); };
 }
 
 // The host fires 'reconnected' when the engine reconnects OR a new model is opened (incl. a unified open from
@@ -222,7 +287,7 @@ export function postProAction(action: ProAction, extra?: { plan?: string; token?
 
 // Native tree selection is context, not a navigation command. Model home may show actions for it while every
 // mounted tool retains its draft and query state.
-export type TreeSelectionMessage = { ref?: string; sessionId?: string };
+export type TreeSelectionMessage = { ref?: string; sessionId?: string; by?: 'assistant' | 'human' };
 const treeSelectionListeners = new Set<(selection: TreeSelectionMessage) => void>();
 export function onTreeSelection(fn: (selection: TreeSelectionMessage) => void): () => void {
   treeSelectionListeners.add(fn);
@@ -327,6 +392,39 @@ export function setGuideFlag(flag: 'planTour' | 'whatChanged', cardId?: string):
   postToHostStamped({ type: 'setGuideFlag', flag, cardId });
 }
 
+// The first-run choice (src/firstRun.ts): the host says whether to show it and whether this folder is already wired
+// to an assistant. No answer (an older host, a view closing) settles to null, and null shows nothing: a card that
+// cannot remember being closed must not appear.
+export type FirstRunState = { show: boolean; connected: boolean };
+export type FirstRunConnectResult = { ok: boolean; error?: string; note?: string };
+const firstRunPending = new Map<number, (state: FirstRunState | null) => void>();
+const firstRunConnectPending = new Map<number, (result: FirstRunConnectResult) => void>();
+export function requestFirstRun(): Promise<FirstRunState | null> {
+  const id = ++seq;
+  return new Promise((resolve) => {
+    const timer = window.setTimeout(() => { if (firstRunPending.delete(id)) resolve(null); }, GUIDE_FLAGS_WAIT_MS);
+    firstRunPending.set(id, (state) => { window.clearTimeout(timer); resolve(state); });
+    postToHostStamped({ type: 'getFirstRun', id });
+  });
+}
+/** One press: the host writes the connection and installs the skill, then answers. No timeout: the host always answers. */
+export function firstRunConnect(): Promise<FirstRunConnectResult> {
+  const id = ++seq;
+  return new Promise((resolve) => {
+    firstRunConnectPending.set(id, resolve);
+    postToHostStamped({ type: 'firstRunConnect', id });
+  });
+}
+// The header and the palette run the same Connect as the first-run card. The host then asks the page to show the say card.
+const firstRunSayListeners = new Set<(note?: string) => void>();
+export function onFirstRunSay(fn: (note?: string) => void): () => void {
+  firstRunSayListeners.add(fn);
+  return () => { firstRunSayListeners.delete(fn); };
+}
+export function firstRunClose(mode: 'assistant' | 'hand' | 'tour'): void {
+  postToHostStamped({ type: 'firstRunClose', mode });
+}
+
 // Whether the Pro permission card may ask about model `scope` now. The host keeps that memory for the window's run
 // (src/consentAsks.ts), because this page is rebuilt each time Studio is closed and reopened. An answer that never
 // comes settles to no: a card that cannot be remembered as asked must not interrupt anyone.
@@ -396,6 +494,20 @@ window.addEventListener('message', (e: MessageEvent) => {
     if (r) { guideFlagsPending.delete(msg.id); r(msg.unavailable ? null : { planTour: msg.planTour === true, whatChanged: msg.whatChanged === true }); }
     return;
   }
+  if (msg.type === 'firstRun') {
+    const r = firstRunPending.get(msg.id);
+    if (r) { firstRunPending.delete(msg.id); r(msg.unavailable ? null : { show: msg.show === true, connected: msg.connected === true }); }
+    return;
+  }
+  if (msg.type === 'firstRunSay') {
+    firstRunSayListeners.forEach((l) => { try { l(typeof msg.note === 'string' ? msg.note : undefined); } catch { /* isolate a view's handler */ } });
+    return;
+  }
+  if (msg.type === 'firstRunConnected') {
+    const r = firstRunConnectPending.get(msg.id);
+    if (r) { firstRunConnectPending.delete(msg.id); r({ ok: msg.ok === true, error: typeof msg.error === 'string' ? msg.error : undefined, note: typeof msg.note === 'string' ? msg.note : undefined }); }
+    return;
+  }
   if (msg.type === 'consentAsk') {
     const r = consentAskPending.get(msg.id);
     if (r) { consentAskPending.delete(msg.id); r(msg.ask === true); }
@@ -448,6 +560,20 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'activity') {
     const e = msg.payload as ActivityEvent;
     activityListeners.forEach((l) => { try { l(e); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'studioShow') {
+    const n = msg.payload as StudioNotePayload;
+    if (n && typeof n === 'object' && typeof n.say === 'string') studioShowListeners.forEach((l) => { try { l(n); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'studioSuggest') {
+    const v = msg.payload as StudioSuggestionPayload;
+    if (v && typeof v === 'object' && Array.isArray(v.steps)) studioSuggestListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'studioAnswer') {
+    const a = msg.payload as StudioAnswerPayload;
+    if (a && typeof a === 'object' && a.answer && typeof a.answer === 'object') studioAnswerListeners.forEach((l) => { try { l(a); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'assistantCall') {
+    const c = msg.payload as AssistantCallPayload;
+    if (c && typeof c === 'object' && typeof c.at === 'string') assistantCallListeners.forEach((l) => { try { l(c); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'driveMode') {
+    if (msg.mode === 'claudeDrives' || msg.mode === 'iDrive') { const mode: DriveMode = msg.mode; driveModeListeners.forEach((l) => { try { l(mode, typeof msg.assistantConnected === 'boolean' ? msg.assistantConnected : undefined); } catch { /* isolate a view's handler */ } }); }
   } else if (msg.type === 'navigate') {
     const m: NavigateMessage = { tab: msg.tab, target: msg.target, addTables: msg.addTables, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
     navigateListeners.forEach((l) => { try { l(m); } catch { /* isolate a view's handler */ } });
@@ -455,7 +581,7 @@ window.addEventListener('message', (e: MessageEvent) => {
     const state = msg.state as ProPageStateMessage;
     if (state && typeof state === 'object') proStateListeners.forEach((l) => { try { l(state); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'treeSelection') {
-    const selection: TreeSelectionMessage = { ref: typeof msg.ref === 'string' ? msg.ref : undefined, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined };
+    const selection: TreeSelectionMessage = { ref: typeof msg.ref === 'string' ? msg.ref : undefined, sessionId: typeof msg.sessionId === 'string' ? msg.sessionId : undefined, by: msg.by === 'assistant' ? 'assistant' : 'human' };
     treeSelectionListeners.forEach((l) => { try { l(selection); } catch { /* isolate a view */ } });
   } else if (msg.type === 'studioZoom') {
     const level = Number(msg.level);
@@ -499,6 +625,10 @@ window.addEventListener('pagehide', () => {
   savePending.clear();
   for (const [, resolve] of guideFlagsPending) resolve(null);
   guideFlagsPending.clear();
+  for (const [, resolve] of firstRunPending) resolve(null);
+  firstRunPending.clear();
+  for (const [, resolve] of firstRunConnectPending) resolve({ ok: false, error: 'The view closed before the connection finished. Press Connect again.' });
+  firstRunConnectPending.clear();
   for (const [, resolve] of consentAskPending) resolve(false);
   consentAskPending.clear();
 });
@@ -515,9 +645,9 @@ export function saveState(key: string, value: unknown): void {
 }
 
 // Ask the extension host to reveal + select an object in the Model tree (a webview→host command, not an
-// engine RPC). The host resolves the ref and calls treeView.reveal.
-export function revealInTree(ref: string): void {
-  postToHostStamped({ type: 'revealInTree', ref });
+// engine RPC). The host resolves the ref and calls treeView.reveal. `follow` says the assistant's walk-through moved the tree, not the person.
+export function revealInTree(ref: string, follow = false): void {
+  postToHostStamped({ type: 'revealInTree', ref, follow });
 }
 
 // Selection bus, Studio → Properties: tell the host a Studio navigator focused/selected a model object so

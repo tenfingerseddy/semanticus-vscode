@@ -284,6 +284,7 @@ namespace Semanticus.Tests
 
         // ================================================================== the tests
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_loop_converges_on_J8_and_the_replay_reproduces_it_with_no_request_the_recording_did_not_send()
         {
@@ -306,6 +307,7 @@ namespace Semanticus.Tests
                 + string.Join("\n", rig.Doc.Lines.Where(l => rig.Host.NotApplied.Any(n => n.Contains(l.Item.ObjectRef))).Select(l => $"{l.Item.Kind} {l.Item.ObjectRef} {l.Item.Target}={l.Item.After} by {l.DecidedBy} rule {l.Item.RuleId} round {l.Round}")));   // every kept line landed on the scratch it was made for
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task S4_replay_the_column_stops_adding_up_but_its_pick_stays_a_base_measure_and_keeps_its_time_intelligence()
         {
@@ -328,6 +330,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(doc.Manifest.BaseMeasures.Where(b => b.Pick != "sum").Select(b => b.Name), n => spec.TimeIntelligenceBaseMeasures.Contains(n));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_second_decide_sends_nothing_and_changes_nothing()
         {
@@ -348,6 +351,7 @@ namespace Semanticus.Tests
             Assert.True(rig.Engine.JevRunsStartedForTest > runs);   // it did look; it had nothing to ask
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Turning_a_link_off_re_asks_only_the_snapshots_that_changed()
         {
@@ -371,6 +375,7 @@ namespace Semanticus.Tests
             Assert.Equal(StartDecideState.Stable, rig.Doc.Decide.State);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_rename_that_changes_a_pick_gets_the_new_measure_decided_reopens_its_words_and_then_stays_stable()
         {
@@ -470,6 +475,7 @@ namespace Semanticus.Tests
             Assert.Equal(0, rig.Engine.JevRunsStartedForTest);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_model_the_build_makes_asks_nothing_more_and_has_nothing_left_to_plan()
         {
@@ -506,6 +512,7 @@ namespace Semanticus.Tests
 
         /// <summary>The same promise as above, said by which REQUESTS exist: the Plan's own run on the built model sends no request the decide did not
         /// send. Recorded (no cache, so every request of both phases is seen), so a failure names the request that is new.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_request_the_Plan_makes_on_the_built_model_is_one_the_decide_already_sent()
         {
@@ -541,6 +548,7 @@ namespace Semanticus.Tests
             Assert.Empty(report.Items.Where(i => i.Status != "applied"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_oracle_that_stops_part_way_leaves_the_plan_Incomplete_and_says_why()
         {
@@ -556,6 +564,7 @@ namespace Semanticus.Tests
             Assert.True(rig.Doc.Decide.Progress.Any(p => p.Unusable > 0 || p.Remaining > 0));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_decide_that_never_settles_stops_at_the_cap_and_says_so()
         {
@@ -569,6 +578,7 @@ namespace Semanticus.Tests
             Assert.Equal(1, rig.Doc.Decide.Round);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_cancels_the_decide_in_flight_and_a_new_one_settles()
         {
@@ -598,6 +608,7 @@ namespace Semanticus.Tests
             Assert.Equal(StartDecideState.Stable, rig.Doc.Decide.State);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task On_a_source_with_75_measures_and_90_columns_every_one_is_decided_and_the_plan_settles()
         {
@@ -744,6 +755,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_loop_runs_end_to_end_over_the_real_scratch_and_never_touches_the_persons_model()
         {
@@ -773,6 +785,7 @@ namespace Semanticus.Tests
             Assert.Equal(0, await session.ReadAsync(m => m.Tables.Count));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_edit_stops_the_loop_in_flight_applies_and_starts_the_next_one()
         {

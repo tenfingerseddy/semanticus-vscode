@@ -104,6 +104,16 @@ namespace Semanticus.Engine
                     return f.ToString(null, CultureInfo.InvariantCulture);
                 case Enum e:
                     return e.ToString();
+                // The bulk calls (write_words, edit_objects, waive_findings, create_measures) hold a list of items; each reads as the object and what is done to it, never as JSON.
+                case MeasureCreateItem m:
+                    return (string.IsNullOrWhiteSpace(m.Name) ? "a measure" : "[" + Cut(m.Name) + "]") + (string.IsNullOrWhiteSpace(m.TableRef) ? "" : " in " + NameOf(m.TableRef));
+                case ObjectEditItem o:
+                    return NameOf(o.ObjRef) + (o.Set == null || o.Set.Count == 0 ? "" : " (" + string.Join(", ", o.Set.Keys.Take(MostListed)) + ")");
+                case FindingWaiverItem w:
+                    return Cut(w.RuleId ?? "a finding") + " on " + NameOf(w.ObjRef);
+                case WordsWriteItem ww:
+                    return NameOf(ww.ObjRef) + " ("
+                        + string.Join(", ", new[] { ww.Description != null ? "description" : null, ww.Synonyms != null ? "synonyms" : null, ww.DisplayFolder != null ? "folder" : null }.Where(x => x != null).DefaultIfEmpty("words")) + ")";
             }
             if (value is IEnumerable list && value is not IDictionary)
             {
@@ -116,7 +126,37 @@ namespace Semanticus.Engine
                     text += string.Format(CultureInfo.InvariantCulture, ", and {0} more", items.Count - shown.Count);
                 return text;
             }
+            var named = ItemName(value);
+            if (named != null) return named;
             try { return Cut(JsonSerializer.Serialize(value)); } catch { return value.ToString(); }
+        }
+
+        /// <summary>One item of a bulk call as the person reads it, not as JSON: the object it names ("[Total]"), or the new object's name,
+        /// with the rule or the role when it has one ("FMT-SUMMARIZE on [Total]", "[Sales] for Managers"). Null for anything that is not
+        /// such an item, which is then shown as it always was.</summary>
+        private static string ItemName(object item)
+        {
+            if (item == null || item is IDictionary) return null;
+            var type = item.GetType();
+            if (type.IsPrimitive || type.Namespace == null || type.Namespace.StartsWith("System", StringComparison.Ordinal)) return null;
+            string P(string name) => type.GetProperty(name)?.GetValue(item) as string is string v && !string.IsNullOrWhiteSpace(v) ? v : null;
+            var obj = P("ObjRef");
+            var rule = P("RuleId");
+            if (rule != null) return obj == null || obj == "*" ? rule : rule + " on " + NameOf(obj);
+            if (P("Name") is string made && P("TableRef") != null) return "\"" + Cut(made) + "\"";
+            if (obj != null)
+            {
+                var role = P("RoleName");
+                var perspective = P("PerspectiveRef");
+                var section = P("SectionKey");
+                var of = NameOf(obj);
+                return role != null ? of + " for " + role
+                    : perspective != null ? of + " in " + NameOf(perspective)
+                    : section != null ? of + " (" + section + ")"
+                    : of;
+            }
+            if (P("Id") is string id) return id;
+            return null;
         }
 
         public static bool IsRefName(string name)

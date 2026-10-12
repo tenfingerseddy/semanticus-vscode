@@ -891,19 +891,11 @@ namespace Semanticus.Engine
         /// may leave it out, and does. It is evidence the caller can offer, not a new requirement.</summary>
         public async Task<DecisionConsentInfo> SetConsentAsync(string[] fields, int schemaVersion, string origin, string expectedScope = null)
         {
-            // PERMISSION IS THE PERSON'S, IN EVERY PRESET. An assistant that agrees for the person sends the model's details out
-            // without the person ever seeing the list (jev-infusion.md, section 3: "a workspace consents once, explicitly, before
-            // any upload, with the field list shown"). So an assistant's call is not the agreement: it puts the person's own question,
-            // with the fields, in the Waiting for you list and answers that it asked. Only the person's yes there lets the same call
-            // through, and then it is that agreement the engine writes. A person's own call is never asked.
-            AssistantTicket consentTicket = null;
-            if (IsAssistantOrigin(origin) && !GateSeams.Off("consent"))
-            {
-                var (asked, ticket) = await AskPersonForConsentAsync(fields, schemaVersion, expectedScope).ConfigureAwait(false);
-                if (asked != null) return asked;
-                consentTicket = ticket;
-            }
-            using var consentScope = consentTicket == null ? null : GateContext.Enter("SetConsentAsync", consentTicket);
+            // THE PERSON'S WORD IN CHAT IS ENOUGH (Kane, 10 Oct 2026, 1.4 chatyes). Their assistant may turn Jev on for a model after the
+            // person says yes in the conversation: no question in the Waiting for you list, no click in Studio. The grant is written the
+            // way the person's own is and records who gave it (GrantedBy), so the consent card says "Turned on by your assistant", and
+            // the person can turn it off again. The Permissions page (presets, cells, the guard switch, held actions) is still the person's.
+            var grantedBy = IsAssistantOrigin(origin) ? "agent" : "human";
             var scope = await DecisionConsentScopeAsync().ConfigureAwait(false);
 
             // The expected scope is compared BEFORE the marker is minted, because it is what the person
@@ -918,42 +910,10 @@ namespace Semanticus.Engine
 
             // Permission is kept on this machine under the scope read above and never written into the model (K19).
             var stamped = scope;
-            var consent = DecisionConsentStore.Grant(stamped, fields, schemaVersion, DateTimeOffset.UtcNow);
+            var consent = DecisionConsentStore.Grant(stamped, fields, schemaVersion, DateTimeOffset.UtcNow, grantedBy);
             PublishConsentChanged(origin, "permission given");
             TellThePlanConsentMoved();
             return DescribeConsent(consent, stamped);
-        }
-
-        /// <summary>The assistant's call to agree for the person. Returns (answer, null) when the question was put to the person and
-        /// nothing was agreed, or (null, ticket) when the person already said yes to exactly this question: the agreement then goes
-        /// through under a ticket that covers the marker edit it makes. The question names every field, and the person's yes is bound
-        /// to that list, the schema version and the model it is about.</summary>
-        private async Task<(DecisionConsentInfo Asked, AssistantTicket Ticket)> AskPersonForConsentAsync(string[] fields, int schemaVersion, string expectedScope)
-        {
-            var scope = await DecisionConsentScopeAsync().ConfigureAwait(false);
-            var list = (fields ?? Array.Empty<string>()).Where(f => !string.IsNullOrWhiteSpace(f)).Select(f => f.Trim()).Distinct(StringComparer.Ordinal)
-                .OrderBy(f => f, StringComparer.Ordinal).ToArray();
-            var question = GateWords.WithModel("Your assistant asks you to agree that these details of this model may be sent to the Jev service: "
-                + (list.Length == 0 ? "(no details named)" : string.Join(", ", list)) + ". Only you can agree. If you do, the assistant is asked to try again.", GateModelName());
-            var s = _sessions.Current;
-            var intent = ApprovalLedger.IntentHash("consent", scope ?? "", schemaVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                expectedScope ?? "", string.Join("\u001f", list));
-            try
-            {
-                if (ApprovalLedger.TryConsume(AgentCapability.Governance, "local", intent))
-                    return (null, new AssistantTicket
-                    {
-                        Capabilities = new[] { AgentCapability.EditLocal }, Method = "SetConsentAsync", GrantKey = intent,
-                        SessionId = s?.Id ?? "", ExpectedRevision = s?.Revision ?? -1,
-                    });
-            }
-            catch { /* fail closed: the question stands */ }
-            try { ApprovalLedger.Request(AgentCapability.Governance, "local", intent, question, GateModelName() ?? "the open model"); }
-            catch { /* queueing is best-effort; the answer below still says nothing was agreed */ }
-            var info = DescribeConsent(Decisions.ReadConsent(scope), scope);
-            info.Asked = true;
-            info.Question = question;
-            return (info, null);
         }
 
         /// <summary>Permission decides what an open Plan draft says (that Add more words asks Jev, or why it cannot), and the
@@ -1182,6 +1142,7 @@ namespace Semanticus.Engine
                 Fields = consent.ApprovedFields.ToArray(),
                 FieldsInForce = DecisionRegistry.DeclaredFields.ToArray(),
                 GrantedUtc = consent.GrantedUtc,
+                GrantedBy = consent.Granted ? (consent.GrantedBy ?? "human") : null,
                 WithdrawnUtc = consent.WithdrawnUtc,
                 AppliesTo = scope,
                 Reason = current ? null : reason,
@@ -1190,8 +1151,8 @@ namespace Semanticus.Engine
 
         // ---- the start plan's permission (lane sf-consent, design-spec-first-start-v2.md S1 and S2) ------------------------------
         // Two things live here, and neither is a capability only one door has. The DISCLOSURE grant is on both doors, like
-        // set_consent: it says which source and tables Pro may see. The APPROVAL is the person's alone: it is the one thing
-        // that lets a start plan be built, and an assistant that could make it would be approving its own work.
+        // set_consent: it says which source and tables Pro may see. The APPROVAL lets a start plan be built; since 10 Oct 2026
+        // (Kane: the person's word in chat is enough) the assistant may give it too, through approve_start_plan.
 
         /// <summary>The document the consent verbs read and write. The engine sets it to a host over sf-core's store (see
         /// <c>StartPlanHostOverStore</c>); a test may swap it, and null reads as no plan. A seam rather than a field of the plan,
@@ -1209,11 +1170,10 @@ namespace Semanticus.Engine
         /// it for a source, it never replaces it. Pro only (a free session asks nothing, so there is nothing to agree to).</summary>
         public async Task<StartPlanView> GrantStartDisclosureAsync(string digest, string origin)
         {
-            // PERMISSION TO SEND THE SOURCE'S DETAILS OUT IS THE PERSON'S, IN EVERY PRESET (Sol 6.1 on the M11 delta, item 1). The model's own consent
-            // does not cover it: this one names a source and its tables, which the person has to see. An assistant that granted it itself would
-            // send those details to Jev without the person ever deciding. So an assistant's call is not the grant: it puts the person's own
-            // question, with the source, the tables and the sample setting, and answers that it asked. Only the person's yes lets the same call
-            // (the same plan, the same digest) through. A person's own call is never asked.
+            // THE PERSON'S WORD IN CHAT IS ENOUGH (Kane, 10 and 11 Oct 2026, 1.4 chatyes), as for set_consent. The assistant may let Jev see the
+            // plan's source and tables after the person says yes in the conversation: no question in the Waiting for you list, no click in Studio.
+            // The grant is bound to the digest of the plan shown, so it covers exactly that source, those tables and that sample setting, and the
+            // person can take it back by withdrawing the model's permission. The Permissions page stays the person's.
             if (IsAssistantOrigin(origin) && DryRunScope.Current?.FromTool == true) throw new InvalidOperationException(GateRegistry.CannotPreviewSentence);
             var host = StartPlanHost;
             var doc = host?.Current();
@@ -1236,11 +1196,6 @@ namespace Semanticus.Engine
 
             var sample = host.SampleFactsOn(doc);
             var granted = DisclosedScope.Of(doc, sample);
-            if (IsAssistantOrigin(origin) && !GateSeams.Off("start-disclosure"))
-            {
-                var asked = await AskPersonForStartDisclosureAsync(doc, digest, scope, granted, sample).ConfigureAwait(false);
-                if (asked != null) return asked;
-            }
             var now = DateTime.UtcNow;
             StartDisclosureStore.Grant(scope, doc.Id, granted, consent.Generation, now);
             var tables = DisclosedScope.IncludedSourceTables(doc);
@@ -1265,34 +1220,6 @@ namespace Semanticus.Engine
             try { await KickStartDecideOnPlanAsync().ConfigureAwait(false); }   // the loop starts (or says why it cannot), on the held plan
             catch (Exception ex) { try { Console.Error.WriteLine("[start-plan] starting the decide after the grant failed: " + ex.Message); } catch { } }
             return await GetStartPlanAsync().ConfigureAwait(false);
-        }
-
-        /// <summary>The assistant's call to let Jev see a plan's source. Returns the plan with <c>Asked</c> set when the question was put to the person and
-        /// nothing was granted, or null when the person already said yes to exactly this question. The question names the source, every included
-        /// table and whether a sample of rows goes with it, and the person's yes is bound to the plan's digest and that scope, so a plan changed
-        /// after the question (a table added, the sample switched) is a new question.</summary>
-        private async Task<StartPlanView> AskPersonForStartDisclosureAsync(StartPlanDoc doc, string digest, string consentScope, DisclosedScope granted, bool sample)
-        {
-            var tables = DisclosedScope.IncludedSourceTables(doc);
-            var source = DisclosedScope.SourceKeyOf(doc.Source);
-            var question = "Your assistant asks you to let Jev see the source " + source + " and these tables of the start plan: "
-                + (tables.Length == 0 ? "(none)" : string.Join(", ", tables))
-                + (sample
-                    ? (granted.SampleTables.Length == granted.IncludedTables.Length ? ", with facts from a sample of the rows"
-                        : granted.SampleTables.Length == 0 ? ", with no sample of the rows (you refused it for every table)"
-                        : ", with facts from a sample of the rows of " + string.Join(", ", granted.SampleTables) + " (you refused it for the others)")
-                    : ", with no sample of the rows")
-                + ". Only you can agree. If you do, the assistant is asked to try again.";
-            question = GateWords.WithModel(question, doc.Destination?.Name);
-            var intent = ApprovalLedger.IntentHash("start-disclosure", consentScope ?? "", doc.Id ?? "", digest ?? "", granted.Digest);
-            try { if (ApprovalLedger.TryConsume(AgentCapability.Governance, "local", intent)) return null; }
-            catch { /* fail closed: the question stands */ }
-            try { ApprovalLedger.Request(AgentCapability.Governance, "local", intent, question, doc.Destination?.Name ?? "the open model"); }
-            catch { /* queueing is best-effort; the answer below still says nothing was agreed */ }
-            var view = await GetStartPlanAsync().ConfigureAwait(false);
-            view.Asked = true;
-            view.Notice = question;
-            return view;
         }
 
         /// <summary>Take back what a plan's source was allowed to show, when the model's permission is withdrawn.</summary>
@@ -1321,18 +1248,18 @@ namespace Semanticus.Engine
             try { StartDisclosureChanged?.Invoke(); } catch { }
         }
 
-        /// <summary>The person approves ONE exact plan. Person-only: this is reached from HumanGovernanceRpcTarget.approveStartPlan and
-        /// nowhere else (no MCP tool, no agent RPC method), so an assistant cannot approve what it wrote. The approval is the digest of
-        /// the plan the person saw; the build runs only while the plan's digest still equals it, so ANY edit voids it.</summary>
-        public async Task<StartPlanView> ApproveStartPlanAsync(string digest)
+        /// <summary>Approve ONE exact plan: the person in Studio, or an assistant once the person said yes in chat (Kane, 10 Oct 2026). The
+        /// approval is the digest of the plan that was shown; the build runs only while the plan's digest still equals it, so ANY edit voids it.
+        /// It records who approved, so the build's History entry credits the assistant or the person.</summary>
+        public async Task<StartPlanView> ApproveStartPlanAsync(string digest, string origin = "human")
         {
             // The approval is a writer of the plan like an edit or the build, so it waits for the one gate: it cannot land in the middle of a build or a words write.
             await _startPlanGate.WaitAsync().ConfigureAwait(false);
-            try { return await ApproveStartPlanGatedAsync(digest).ConfigureAwait(false); }
+            try { return await ApproveStartPlanGatedAsync(digest, origin).ConfigureAwait(false); }
             finally { await EnsureStartDecideNotOrphanedAsync().ConfigureAwait(false); _startPlanGate.Release(); }
         }
 
-        private async Task<StartPlanView> ApproveStartPlanGatedAsync(string digest)
+        private async Task<StartPlanView> ApproveStartPlanGatedAsync(string digest, string origin)
         {
             var host = StartPlanHost;
             var doc = host?.Current();
@@ -1343,10 +1270,10 @@ namespace Semanticus.Engine
             {
                 // Read again under the document's own lock: an edit that landed since the line above must not be approved unseen.
                 if (!string.Equals(host.DigestOf(d), digest, StringComparison.Ordinal)) throw new InvalidOperationException(StalePlanNote);
-                d.Approval = new StartApproval { Digest = digest, Utc = DateTime.UtcNow };
+                d.Approval = new StartApproval { Digest = digest, Utc = DateTime.UtcNow, By = AgentPolicyGuard.IsHuman(origin) ? "human" : "agent" };
                 return true;
             }).ConfigureAwait(false);
-            NotifyStartPlanChanged(view, "human");   // person-only: the only door that reaches here is the person's
+            NotifyStartPlanChanged(view, AgentPolicyGuard.IsHuman(origin) ? "human" : "agent");
             return view;
         }
 

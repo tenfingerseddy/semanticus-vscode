@@ -40,6 +40,7 @@ namespace Semanticus.Tests
         private static bool Adds(string op, string stepName) =>
             (op ?? "").StartsWith("create_", StringComparison.Ordinal) || (stepName ?? "").StartsWith("Add ", StringComparison.Ordinal);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("Deletion of the unused measures")]
         [InlineData("removal of the old measures")]
@@ -80,6 +81,7 @@ namespace Semanticus.Tests
 
         // Relabelled in round 5 by THE ADDING RULE version 2 (the coordinator, 28 Sep 17:30): a take-away sign anywhere in a
         // clause is a veto, so "counts deleted orders" drafts no step that adds (its case v2-vn-15); a null op here means no add.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("add a measure that counts deleted orders", null)]
         [InlineData("hide the Deleted Date column", "set_column_hidden")]

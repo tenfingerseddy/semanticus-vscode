@@ -164,6 +164,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK consent: a table the person left out is never named to Jev, neither on the first decide nor on one after it was
         /// left out mid-way (the book, the progress memory and the service cache must not carry it back in).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_table_left_out_is_never_named_in_any_request()
         {
@@ -211,6 +212,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK S10 and words: after the assistant writes words and the person pins a value, an unrelated rename sends the loop round
         /// again until it settles, and neither the assistant's words nor the person's pin is overwritten by any later round.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_words_and_a_pin_survive_every_later_round_after_an_unrelated_rename()
         {
@@ -267,6 +269,7 @@ namespace Semanticus.Tests
 
         /// <summary>The same attack through a decide round alone: the table is left out by another writer (the flag set directly), a round runs,
         /// the table comes back, and the assistant's words on it must still be there.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_assistant_words_survive_a_round_run_while_their_table_is_out()
         {
@@ -306,6 +309,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK lost work (re-check): the person renames a table, then leaves it out, a round runs, then brings it back. The assistant's
         /// words on its column are still on the plan, kept. Then the same with a column renamed and that column left out.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_assistant_words_survive_a_rename_then_a_leave_out_and_come_back()
         {
@@ -343,6 +347,7 @@ namespace Semanticus.Tests
         /// out (which takes the measure with it), a round runs, and the person brings the column back, which brings the same measure back. The words must
         /// be held, as they are for a table left out (or a measure dropped by drop_line). DEFECT on m11/sf-decide at 5c48f42e: include_column false
         /// deletes them through RemoveFollowers ("removed" knock-on) and the measure comes back without them. Left failing on purpose.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_assistant_words_on_a_base_measure_whose_column_is_left_out_and_brought_back_are_held_not_lost()
         {
@@ -419,6 +424,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK cancel on edit: an edit lands while Jev is mid-answer. The loop stops, the edit is kept (no round writes over it), the
         /// next loop settles, and a person's pin made after it survives the loop that pin starts.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_an_edit_mid_ask_stops_the_loop_keeps_the_edit_and_a_later_pin_survives()
         {
@@ -462,6 +468,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK S12 after a real round: dropping a base measure drops its followers; the loop then runs over a scratch without that
         /// measure; keeping one follower afterwards must still bring the measure and its pair back (the knock-on promise).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_keeping_a_follower_after_a_round_still_brings_its_measure_back()
         {
@@ -509,6 +516,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK consent, the kick and the unpark: the plan says deciding and carries a grant, but for ANOTHER source. Neither a direct kick nor
         /// the unpark read may send anything.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_kick_or_an_unpark_with_a_grant_for_another_source_sends_nothing()
         {
@@ -543,6 +551,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK consent, a table added by an edit while an ask is in flight: the grant left dim_staff out; the person puts it back mid-ask.
         /// Nothing about dim_staff is ever sent, no ask leaves after the edit, and the plan waits for a new grant.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_table_put_back_mid_ask_stops_every_later_ask_and_is_never_named()
         {
@@ -617,6 +626,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK consent, the sample switched on WHILE the loop runs (no edit, so nothing cancels it): the round in flight may finish its asks
         /// (they carry no sample facts), but no ask is sent from a scratch that carries the sample's facts, and the plan does not end as settled.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_sample_switched_on_mid_loop_sends_nothing_from_a_scratch_with_its_facts()
         {
@@ -651,6 +661,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>ATTACK consent, a withdraw mid-loop (the model's own permission taken back while an ask waits): no ask leaves after it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_permission_withdrawn_mid_loop_stops_every_later_ask()
         {
@@ -683,6 +694,7 @@ namespace Semanticus.Tests
 
         /// <summary>ATTACK lost work, a restart: the assistant's words on a table the person left out are on disk, held; a new engine reads the plan,
         /// the person brings the table back, a round runs on the new engine, and the words are there and kept.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_held_words_survive_an_engine_restart_and_come_back_with_their_table()
         {

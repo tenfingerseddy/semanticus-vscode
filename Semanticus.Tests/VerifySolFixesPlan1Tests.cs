@@ -52,6 +52,7 @@ namespace Semanticus.Tests
 
         // 1.1 sibling: a key the spec DECLARED (the annotation, not TOM's IsKey), and the parts of a declared calculated key with
         // no relationship at all.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task V_1_1_parts_of_a_declared_key_are_never_totalled_sure_or_unsure()
         {
@@ -82,6 +83,7 @@ namespace Semanticus.Tests
         }
 
         // 1.2 sibling, the Free starter path: other spellings of a date held as a number.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task V_1_2_other_date_spellings_are_never_a_starter_total()
         {
@@ -137,6 +139,7 @@ namespace Semanticus.Tests
         }
 
         // 1.3 sibling: the value survives a real model change (the family works its lines out again), not only a cached re-read.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task V_1_3_an_authored_description_survives_a_model_change()
         {

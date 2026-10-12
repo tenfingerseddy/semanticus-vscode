@@ -235,12 +235,18 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onAddCheck, on
   async function loadImpact(ref: string) {
     setRoot(ref); rootRef.current = ref;
     try { setImpact(await rpc<ImpactResult>('impactOf', ref)); setImpactErr(null); }
-    catch (e) { setImpactErr(String((e as Error).message ?? e)); setImpact(null); }
+    catch (e) {
+      const message = String((e as Error).message ?? e);
+      setImpactErr(M.impactErrorLine(message)); setImpact(null);
+      if (M.impactErrorLine(message) === M.GONE_FROM_IMPACT) { setRoot(null); rootRef.current = null; }   // the field is gone: the list is the way back
+    }
   }
 
   useEffect(() => {
     void loadGraph(); void loadUnused();
-    const off = onDidChange(() => {
+    const off = onDidChange((n) => {
+      // A rename of the shown field moves it: follow it to its new ref instead of asking the engine for the old one.
+      if (rootRef.current) { const next = M.followRename(rootRef.current, n.deltas); if (next !== rootRef.current) { rootRef.current = next; setRoot(next); } }
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => { void loadGraph(); void loadUnused(); if (rootRef.current) void loadImpact(rootRef.current); }, 350);
     });
@@ -269,7 +275,7 @@ export function LineageView({ navTarget, onOpenPlan, onOpenTests, onAddCheck, on
   const modeSwitch = (
     <div className="sem-seg" role="group" aria-label="Lineage view">
       <button className="sem-seg-item" aria-pressed={mode === 'graph'} onClick={() => setMode('graph')} title="See the whole model as a web you can walk">Graph</button>
-      <button className="sem-seg-item" aria-pressed={mode === 'tree'} onClick={() => setMode('tree')} title="Follow one field, one step at a time">Tree</button>
+      <button data-testid="lineage-tree" className="sem-seg-item" aria-pressed={mode === 'tree'} onClick={() => setMode('tree')} title="Follow one field, one step at a time">Tree</button>
       <button className="sem-seg-item" aria-pressed={mode === 'impact'} onClick={() => setMode('impact')} title="See what uses a field, and what is safe to clean up">Impact</button>
     </div>
   );

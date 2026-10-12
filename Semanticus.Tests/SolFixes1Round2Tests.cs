@@ -77,6 +77,7 @@ namespace Semanticus.Tests
         /// <summary>The test gap the verifier named (round 3's, still open): Add more words whose own words name more than
         /// twelve steps says the rest were not read, and keeps them for the next one.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Add_more_words_past_the_limit_says_the_rest_were_not_read()
         {
             var (f, jev) = await ProAsync("R2LeftOut.bim", (w, q) => null);
@@ -92,6 +93,7 @@ namespace Semanticus.Tests
         /// <summary>D8, the other side: when the new words leave no room for every word kept from before, the ones that wait
         /// are said, and the next Add more words reads them, oldest first.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Add_more_words_says_the_earlier_words_that_wait_and_reads_them_next()
         {
             var (f, jev) = await ProAsync("R2Waiting.bim", (w, q) => null);
@@ -141,6 +143,7 @@ namespace Semanticus.Tests
         /// <summary>D4 across folders: Save As to another folder copies the Primer to the new model's name there, and the
         /// session's undo takes back the Primer the session now has, leaving the old model's saved Primer as it was.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Save_as_to_another_folder_undoes_the_new_models_Primer_and_leaves_the_old_one()
         {
             var root = Path.Combine(Path.GetTempPath(), "sem-sf1-r2", Guid.NewGuid().ToString("N"));

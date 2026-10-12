@@ -44,7 +44,14 @@ namespace Semanticus.Tests
             public Fake(bool pro) { IsPro = pro; Info = new EntitlementInfo { Tier = pro ? "pro" : "free" }; }
         }
 
-        private string LedgerPath => Path.Combine(_root, "agent-approvals.json");
+        // An unlabelled target counts as test since 1.4, so a test of the production rules labels its target production first.
+        private static void LabelProd(string endpoint, string database)
+        {
+            var r = ConnectionRegistry.Remember("xmla", endpoint, database, database ?? "T", null, "serviceprincipal");
+            ConnectionRegistry.SetLabel(r.Id, "prod", "human");
+        }
+
+        private string LedgerPath =>Path.Combine(_root, "agent-approvals.json");
         private string PolicyPath => Path.Combine(_root, "agent-policy.json");
 
         // Register + approve one intent; returns the intent hash used.
@@ -137,12 +144,12 @@ namespace Semanticus.Tests
         // ---- loopback is HOST-exact: the "localhost"-substring prod bypass is dead -------------------------------
 
         [Theory]
-        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/prod-localhost-mirror", "prod")]   // the sol bypass: scheme ⇒ remote
+        [InlineData("powerbi://api.powerbi.com/v1.0/myorg/prod-localhost-mirror", "dev")]    // the sol bypass: scheme ⇒ remote, so never "local" (unlabelled counts as test)
         [InlineData("localhost:52640", "local")]
         [InlineData("Data Source=localhost:52640", "local")]
         [InlineData("127.0.0.1:2383", "local")]
         [InlineData("[::1]:2383", "local")]
-        [InlineData("myserver.corp:1234", "prod")]                                            // unlabelled ⇒ prod
+        [InlineData("myserver.corp:1234", "dev")]                                             // unlabelled ⇒ test (dev)
         public void Target_labels_resolve_by_host_not_substring(string endpoint, string expected)
         {
             Assert.Equal(expected, LocalEngine.ResolveTargetLabel(endpoint, "DS"));
@@ -213,14 +220,15 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task Agent_refresh_of_an_unlabelled_target_is_refused_before_any_connection()
+        public async Task Agent_refresh_of_a_production_target_is_refused_before_any_connection()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             var bim = Bim();
+            LabelProd(CloudEp, "DS");
             try
             {
                 await engine.OpenAsync(bim);
-                // Explicit CLOUD endpoint (never in the registry ⇒ prod) + commit as the agent. The default policy
+                // Explicit CLOUD endpoint labelled production + commit as the agent. The default policy
                 // asks on prod; with no grant the refusal must come from the POLICY (proving the gate runs before
                 // token acquisition — a token attempt against this fake endpoint would fail with an auth error).
                 var rep = await engine.RefreshPartitionAsync("partition:Sales/Sales", "Full", CloudEp, "DS",
@@ -253,6 +261,7 @@ namespace Semanticus.Tests
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             var bim = Bim();
+            LabelProd(CloudEp, "DS");
             try
             {
                 await engine.OpenAsync(bim);
@@ -276,7 +285,8 @@ namespace Semanticus.Tests
         public async Task Agent_data_agent_writes_are_gated_and_delete_escalates()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
-            // Deny the delete capability on prod outright; leave DeployLive on the default ask.
+            // Deny the delete capability on prod outright; leave DeployLive on the default ask. The workspace is labelled production.
+            LabelProd("ws-guid", null);
             AgentPolicyStore.SetCell("DeployDelete", "prod", "deny", "human");
 
             var create = await engine.CreateDataAgentAsync("ws-guid", "Agent1", "", commit: true, "serviceprincipal", null, "agent");
@@ -305,6 +315,7 @@ namespace Semanticus.Tests
         public void QueryData_grant_is_a_session_not_a_single_shot()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
+            LabelProd(CloudEp, "DS");
             // client preset: QueryData@prod = deny — refusal names the policy, no ask is queued.
             AgentPolicyStore.SetPreset("client", "human");
             var denied = engine.GuardAgent(AgentCapability.QueryData, CloudEp, "DS", "agent", isCommit: true,

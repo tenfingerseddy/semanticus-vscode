@@ -1618,13 +1618,15 @@ namespace Semanticus.McpSmoke
                 // / run_dax. The SQL-target gate runs BEFORE the connection check, so it is exercisable offline. The
                 // unlabelled 'srv'/'db' target resolves to prod; under the default (standard) preset QueryData@prod =
                 // Ask, so an AGENT is refused pending approval — proving the gate is wired through the op offline.
+                // An unlabelled target counts as test since 1.4 (3a4dc874), so the gate only asks on a target the person labelled prod.
+                ConnectionRegistry.SetLabel(ConnectionRegistry.Remember("sql", "srv", "db", "db", null, "interactive").Id, "prod", "human");
                 var priorPreset = (await owner.GetAgentPolicyAsync())?.Preset ?? "standard";
                 await owner.SetAgentPolicyPresetAsync("standard", "human");
                 try
                 {
                     var recGate = await McpTools.ReconcileMeasure(claude, measureRef, "SELECT 1", blankPolicy: "zero",
                         groupBy: new[] { columnRef }, server: "srv", database: "db");
-                    Check("MCP reconcile_measure gates an AGENT on the SQL target (QueryData Ask on unlabelled=prod) BEFORE any connection",
+                    Check("MCP reconcile_measure gates an AGENT on the SQL target (QueryData Ask on a target labelled prod) BEFORE any connection",
                         recGate != null && recGate.Status == ReconcileStatus.InputError && recGate.PolicyRefused
                         && recGate.Error != null && recGate.Error.IndexOf("connect", StringComparison.OrdinalIgnoreCase) < 0);
 
@@ -1718,11 +1720,11 @@ namespace Semanticus.McpSmoke
                 Check("E3/UI: the person takes it and marks it done over the same queue",
                     took.StateWord == PlanStateWords.OnIt && took.StateNote == PlanTasks.YouTookItNote
                     && marked.StateWord == PlanStateWords.Done && marked.Reply == "The person did it.");
-                string aimRefusal = null;
-                try { await McpTools.AddPlanTarget(claude, "An invented aim", ModelPlanSections.Meaning); }
-                catch (Exception ex) { aimRefusal = ex.Message; }
-                Check("E3/MCP: add_plan_target is refused with the person's sentence",
-                    aimRefusal != null && aimRefusal.Contains("Aims and tasks are the person's to add, remove and mark done."));
+                // Kane, 10 Oct 2026 (b584ef98): the person's word in chat is enough, so the assistant adds and removes aims too.
+                var aimView = await McpTools.AddPlanTarget(claude, "An invented aim", ModelPlanSections.Meaning);
+                var aimRow = aimView.Items.FirstOrDefault(i => i.Title == "An invented aim");
+                Check("E3/MCP: add_plan_target adds the aim for the assistant", aimRow != null);
+                if (aimRow != null) await McpTools.RemovePlanTarget(claude, aimRow.Id);
 
                 // ---- lane L4: a draft on both doors. The assistant composes through its tools; the part goes on its own
                 //      queue at once; the UI reads the same view and is pushed draft/didChange; run_draft plus the last
@@ -1770,14 +1772,14 @@ namespace Semanticus.McpSmoke
                     .Where(a => a != null).Select(a => (string)a.GetType().GetProperty("Name")?.GetValue(a)).ToHashSet(StringComparer.Ordinal);
                 Check("sf-doors/MCP: the eight start tools are on the tool list",
                     new[] { "start_model_from_sql", "get_start_plan", "edit_start_plan", "grant_start_disclosure", "get_start_words", "write_start_words", "build_start_plan", "discard_start_plan" }.All(sfTools.Contains));
-                Check("sf-doors/MCP: no tool approves a start plan", !sfTools.Any(n => n.Contains("approve", StringComparison.Ordinal) && n.Contains("start", StringComparison.Ordinal)));
+                Check("sf-doors/MCP: approve_start_plan is a tool (Kane, 10 Oct 2026: the person's word in chat is enough)", sfTools.Contains("approve_start_plan"));
                 var sfMcp = await McpTools.GetStartPlan(claude);
                 var sfUi = await ui.Invoke<Semanticus.Engine.StartPlan.StartPlanView>("getStartPlan");
                 Check("sf-doors/dual-drive: with no start plan both doors read the same view, and it says so",
                     sfMcp != null && !sfMcp.Exists && System.Text.Json.JsonSerializer.Serialize(sfMcp) == System.Text.Json.JsonSerializer.Serialize(sfUi));
                 string sfApprove = null;
                 try { await claude.ApproveStartPlanAsync("not-a-digest"); } catch (Exception ex) { sfApprove = ex.Message; }
-                Check("sf-doors/MCP: an assistant's connection cannot approve a start plan (the method is not there)", sfApprove != null);
+                Check("sf-doors/MCP: approving a digest nobody saw is refused", sfApprove != null);
                 // ---- Plan-heart E4: History through the MCP door. The person edits in Studio, the assistant edits
                 //      through its tools; get_plan_history names both by who made them, and undo_change(toEntry)
                 //      takes both back in one commit the UI hears once. ----

@@ -31,7 +31,7 @@ export type FeatureGrant = 'unknown' | 'granted' | 'denied';
  *  for it. It is deliberately not "Loading": what is unknown is the plan, not the page. */
 export const PENDING_ACCESS = 'Checking your Pro access…';
 
-interface Entitlement { tier: string; features: ProFeature[] }
+interface Entitlement { tier: string; features: ProFeature[]; planInactive?: boolean; manageUrl?: string }
 
 // A tier that is entitled. Grace and dev-Pro both report "pro", so this stays one comparison.
 const isPaid = (tier?: string) => tier === 'pro';
@@ -51,10 +51,11 @@ function publish(next: Entitlement): Entitlement {
 // answers with a tier alone, and a token minted before the claim existed (mint.mjs) carries no features
 // either. Both must keep granting all four to a paid tier: an unused optional claim may not silently
 // become a new, emptier product tier.
-function readEntitlement(value: { tier?: string; features?: string[] } | null | undefined): Entitlement {
+function readEntitlement(value: { tier?: string; features?: string[]; planInactive?: boolean; manageUrl?: string } | null | undefined): Entitlement {
   const tier = value?.tier ?? 'free';
   const listed = Array.isArray(value?.features) ? (value!.features as ProFeature[]) : (isPaid(tier) ? PRO_FEATURES : []);
-  return { tier, features: listed };
+  // The licence is Pro but the Pro service refused it: the header says so (planInactive) and links to billing (manageUrl).
+  return { tier, features: listed, planInactive: isPaid(tier) && value?.planInactive === true, manageUrl: value?.manageUrl };
 }
 // Which fetch is the current one. A reconnect starts a new one, and an answer from the fetch it replaced
 // must be DISCARDED rather than published: the old engine's answer arriving late would otherwise overwrite
@@ -62,7 +63,7 @@ function readEntitlement(value: { tier?: string; features?: string[] } | null | 
 let generation = 0;
 function fetchTier(): Promise<Entitlement> {
   const mine = generation;
-  tierPromise ??= rpc<{ tier?: string; features?: string[] }>('getEntitlement')
+  tierPromise ??= rpc<{ tier?: string; features?: string[]; planInactive?: boolean; manageUrl?: string }>('getEntitlement')
     .then((value) => (mine === generation ? publish(readEntitlement(value)) : entitlement))
     .catch(() => {
       if (mine !== generation) return entitlement;
@@ -109,6 +110,21 @@ function useEntitlement(): Entitlement {
 }
 export function useTier(): string {
   return useEntitlement().tier;
+}
+
+/** The Pro plan as the header shows it: refused by the Pro service (cancelled, refunded, unpaid) while the licence itself is valid. */
+export function useProPlan(): { inactive: boolean; manageUrl?: string } {
+  const e = useEntitlement();
+  return { inactive: e.planInactive === true, manageUrl: e.manageUrl };
+}
+
+/** Read the plan again without blanking the tier first. The Plan calls this when its order line says the plan is not active (or is
+ *  active again), so the header chip changes in the same moment instead of waiting for a reload. */
+export function refreshEntitlement(): void {
+  const mine = generation;
+  void rpc<{ tier?: string; features?: string[]; planInactive?: boolean; manageUrl?: string }>('getEntitlement')
+    .then((value) => { if (mine === generation) publish(readEntitlement(value)); })
+    .catch(() => { /* the next read says it */ });
 }
 
 /** Is this feature granted? `null` means the caller is asking about a free tool, which is always granted,

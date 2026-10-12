@@ -35,6 +35,7 @@ namespace Semanticus.Tests
 
         // ---- item-kind routing ------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Propose_replace_builds_the_right_item_kind_per_match_class()
         {
@@ -80,6 +81,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Propose_replace_never_emits_an_item_for_a_reference_only_expression()
         {
@@ -97,6 +99,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Propose_replace_surfaces_a_name_collision_as_a_skipped_item()
         {
@@ -114,6 +117,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Propose_replace_that_empties_a_field_is_surfaced_as_skipped()
         {
@@ -162,6 +166,7 @@ namespace Semanticus.Tests
 
         // ---- the tier (apply_plan is the same op at every size now) -----------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_tier_applies_a_bulk_replace_and_one_undo_puts_it_back()
         {
@@ -212,6 +217,10 @@ namespace Semanticus.Tests
             }
         }
 
+        [Theory, InlineData("human")]
+        public Task Apply_preserves_a_column_aggregation_changed_after_review_sample(string origin) => Apply_preserves_a_column_aggregation_changed_after_review(origin);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("human")]
         [InlineData("agent")]
@@ -234,6 +243,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Pro_tier_bulk_replace_applies_atomically_and_one_undo_reverts_everything()
         {
@@ -270,6 +280,7 @@ namespace Semanticus.Tests
 
         // ---- Phase 2 preview (rehearse, never mutate) -------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Preview_reports_before_after_and_blast_radius_without_mutating()
         {

@@ -91,7 +91,7 @@ function Item({ icon, iconColor, label, ref_, objRef, onInsert, onDragStart, use
   // keeps the mouse onClick for the large click target (Reveal's own click stops propagation).
   const activate = () => { selectInProperties(objRef); onInsert(ref_); };
   return (
-    <div onClick={activate}
+    <div data-object-ref={objRef} onClick={activate}
       draggable onDragStart={onDragStart} title={ref_ + '  (click to insert · drag to editor)'}
       className="group flex items-center gap-2 pl-4 py-1 cursor-pointer select-none hover:bg-[var(--sem-hover)]">
       <span style={{ color: iconColor, width: 12, textAlign: 'center' }}>{icon}</span>

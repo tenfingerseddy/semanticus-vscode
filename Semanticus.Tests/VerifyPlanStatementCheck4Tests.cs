@@ -109,6 +109,7 @@ namespace Semanticus.Tests
             });
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_Free_start_built_with_the_assistants_names_leaves_every_measure_pointing_at_objects_the_model_has()
         {
@@ -117,6 +118,7 @@ namespace Semanticus.Tests
             Assert.True(broken.Length == 0, broken.Length + " of " + all.Length + " measures in the Free-built model point at names the model does not have:\n" + string.Join("\n", broken.Take(12)));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_same_start_on_Pro_keeps_every_measure_whole()
         {

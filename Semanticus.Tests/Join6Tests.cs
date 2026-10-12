@@ -32,6 +32,7 @@ namespace Semanticus.Tests
 
         // J2a. A person re-spells a header (another case): TOM looks the object up case-blind, so it is the SAME object, not a
         // retarget. An edited block over a moved object is a conflict, an untouched one is left as it is now.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("dax")]
         [InlineData("tmdl")]
@@ -56,6 +57,7 @@ namespace Semanticus.Tests
             Assert.Equal(before.Expression, (await Row(e, "A")).Expression);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("dax")]
         [InlineData("tmdl")]
@@ -78,6 +80,7 @@ namespace Semanticus.Tests
 
         // J2b. Applying the same script twice: the second time every edited block already equals the live object, so it is
         // nothing to do (it was a false conflict: the person's own write looked like a change made after they scripted).
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("dax")]
         [InlineData("tmdl")]
@@ -103,6 +106,7 @@ namespace Semanticus.Tests
         }
 
         // J2d. A block nobody edited over an object nobody moved writes nothing: no rewrite, no empty revision.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("dax")]
         [InlineData("tmdl")]
@@ -151,6 +155,7 @@ namespace Semanticus.Tests
         // Sol join 6, C5. A new semantic-model folder dropped directly beside an existing one in a project made a second *.SemanticModel/definition under that
         // project, so the project no longer had ONE model to open and Old.pbip stopped opening (the opener fell through to a model.bim a TMDL project never has).
         // A new envelope never lands directly under a folder that already holds a model: it goes in a folder of its own beside it, with the plain note.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -201,6 +206,7 @@ namespace Semanticus.Tests
         // Sol join 6, C1. "Apply mine anyway" is a continuation of an apply the person made in ONE model. When the model switched while the
         // conflict note was open, the second apply named the same ref in the other model, treated its own conflict as overridden and wrote
         // there. The session id the first apply was made in travels with the continuation and is checked inside the mutation.
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("dax")]
         [InlineData("tmdl")]

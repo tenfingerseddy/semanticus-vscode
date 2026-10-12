@@ -315,6 +315,9 @@ namespace Semanticus.Analysis
             var scannedByCategory = new Dictionary<string, HashSet<object>>(StringComparer.OrdinalIgnoreCase);
             // The reference check reads the model's names once per scan, however many formulas it is asked about (TokenCheck "missing-objects").
             Func<string, string, string[]> missingObjects = null;
+            // A scoped scan filters each scope's collection to the touched objects once, not once per rule: about 70 rules share
+            // 17 scopes, and the filter walks the whole collection to find a handful of objects.
+            var inScopeByScope = scopeRefs == null ? null : new Dictionary<string, IQueryable>(StringComparer.Ordinal);
 
             // Counting a collection never runs the rule expression, so M stays knowable even when the evaluation of
             // the expression over it did not finish. Defended anyway: this must never be the thing that throws.
@@ -360,7 +363,8 @@ namespace Semanticus.Analysis
                     }
                     if (scopeRefs != null)
                     {
-                        collection = FilterToRefs(collection, scopeRefs);
+                        if (!inScopeByScope.TryGetValue(scope, out var inScope)) inScopeByScope[scope] = inScope = FilterToRefs(collection, scopeRefs);
+                        collection = inScope;
                         if (collection == null) continue;   // nothing touched in this collection — skip the eval entirely
                     }
                     // Partitions are scanned (their findings weigh) but not counted as objects: see ObjectsScanned.
@@ -409,8 +413,11 @@ namespace Semanticus.Analysis
                         }
                         else
                         {
-                            foreach (var obj in collection.Where(rule.Expression).OfType<ITabularNamedObject>())
-                                AddViolation(obj);
+                            // The same lazy walk as collection.Where(rule.Expression).OfType<ITabularNamedObject>(), with the
+                            // predicate compiled once per process instead of parsed and compiled again on every scan.
+                            var matches = CompiledPredicate(collection.ElementType, rule.Expression);
+                            foreach (var o in collection)
+                                if (matches(o) && o is ITabularNamedObject obj) AddViolation(obj);
                         }
                     }
                     catch (Exception ex)
@@ -886,6 +893,29 @@ namespace Semanticus.Analysis
                 case "ModelRole": return model.Roles.AsQueryable();
                 default: return null;
             }
+        }
+
+        // Rule predicates by (element type, expression). Parsing a Dynamic-LINQ expression and compiling it costs far more than
+        // running it over a few objects, and the old Where(string) path paid both on every rule of every scan, so a one-object
+        // scoped scan after an edit cost about as much as the compiles. The parse depends on nothing but the type and the text
+        // (the vendored parser's keywords, types and extension methods are static), so one compiled delegate per pair gives the
+        // same answers. A text that does not parse is not cached: it throws the same ParseException from here on every scan.
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(Type, string), Func<object, bool>> Predicates = new();
+        private const int MaxCachedPredicates = 4096;   // rule texts are few; this only bounds a pathological stream of distinct ones
+        private static int _compiledPredicates;
+        /// <summary>How many rule predicates this process has compiled (tests: a rescan compiles none).</summary>
+        internal static int CompiledPredicates => System.Threading.Volatile.Read(ref _compiledPredicates);
+
+        private static Func<object, bool> CompiledPredicate(Type elementType, string expression)
+        {
+            if (Predicates.TryGetValue((elementType, expression), out var cached)) return cached;
+            var lambda = System.Linq.Dynamic.DynamicExpression.ParseLambda(elementType, typeof(bool), expression);
+            var o = System.Linq.Expressions.Expression.Parameter(typeof(object), "o");
+            var compiled = System.Linq.Expressions.Expression.Lambda<Func<object, bool>>(
+                System.Linq.Expressions.Expression.Invoke(lambda, System.Linq.Expressions.Expression.Convert(o, elementType)), o).Compile();
+            System.Threading.Interlocked.Increment(ref _compiledPredicates);
+            if (Predicates.Count < MaxCachedPredicates) Predicates.TryAdd((elementType, expression), compiled);
+            return compiled;
         }
 
         /// <summary>Pre-filter a scope collection to the given refs while PRESERVING its element type — the

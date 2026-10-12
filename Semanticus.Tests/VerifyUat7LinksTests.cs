@@ -367,6 +367,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "Date", "Product", "Store" }, rels);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui", false)]
         [InlineData("mcp", false)]

@@ -48,7 +48,7 @@ namespace Semanticus.Engine.StartPlan
             var needs = v.NeedsYou?.Count ?? 0;
             string next;
             if (v.CanBuild && approved) next = "The person approved this plan. Build it with build_start_plan, quoting the digest.";
-            else if (v.CanBuild) next = "The plan is ready for the person to approve in Studio. Read it with " + ReadTool + ".";
+            else if (v.CanBuild) next = "The plan is ready to approve. Read it with " + ReadTool + "; when the person says yes, call approve_start_plan with the digest.";
             else if (!string.IsNullOrWhiteSpace(v.BlockedBecause)) next = v.BlockedBecause.Trim() + " Read the plan with " + ReadTool + ".";
             else next = "A new model is being drafted from a SQL source. Read the plan with " + ReadTool + ".";
             return new StartPlanPointer

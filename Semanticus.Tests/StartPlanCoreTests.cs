@@ -290,6 +290,7 @@ namespace Semanticus.Tests
 
         // ---- fails first 5: parking --------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task OpeningAnotherModel_ParksThePlan_AndOpeningItsOwnModelResumesIt()
         {
@@ -398,9 +399,19 @@ namespace Semanticus.Tests
         public async Task AStartWhoseNameIsTakenInTheFolder_PicksAFreeNameAndSaysSo()
         {
             // K24: Gold.SemanticModel is already in the folder from an earlier test start. The new one is Gold 2, in one line, and the old model is untouched.
+            // The first model's History is written by a background task (EditLedger.WriteLoop). A slow disk (Windows CI) lets that write
+            // land after the snapshot below, and the new .semanticus folder looked like the second start touching the old model. The write is
+            // held back here so that case is the one every OS runs; the flush then waits for it, which is what makes the snapshot honest.
+            EditLedger.WriteDelayMsForTest = 700;
+            try { await AStartWhoseNameIsTaken(); } finally { EditLedger.WriteDelayMsForTest = 0; }
+        }
+
+        private async Task AStartWhoseNameIsTaken()
+        {
             var e = NewEngine();
             var folder = Dir("same");
             var first = await e.StartModelFromSqlAsync(Req(folder, "Gold"), "human");
+            await Mgr(e).Ledger.FlushAsync();   // the first model's own History write is done, so it is not mistaken for the second start's
             var before = Snapshot(first.Destination.ModelPath);
 
             var again = await e.StartModelFromSqlAsync(Req(folder, "Gold"), "human");

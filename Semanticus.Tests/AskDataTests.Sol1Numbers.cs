@@ -111,6 +111,7 @@ namespace Semanticus.Tests
         [InlineData("Month (Trading)", "String", "March")]
         [InlineData("Year (Tax)", "Int64", "2025")]
         [InlineData("Quarter - Store Calendar", "String", "Q2")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Sol1_a_period_qualified_after_its_noun_is_said_without_dates(string column, string type, string value)
         {
             using var rig = await BuildAsync();
@@ -124,11 +125,17 @@ namespace Semanticus.Tests
             Assert.False(split.Contains("calendar"), "each row of " + column + " called a calendar period: '" + split + "'");
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Quarter (Retail)", "String", "Q2")]
+        public Task Sol1_a_period_qualified_after_its_noun_is_said_without_dates_sample(string column, string type, string value) => Sol1_a_period_qualified_after_its_noun_is_said_without_dates(column, type, value);
+
         [Theory]
         [Trait("Sol1", "3.5")]
         [InlineData("Quarter Name", "String", "Q2", "Quarter Name is Q2 (1 April to 30 June)")]
         [InlineData("Month Name", "String", "March", "Month Name is March (1 to 31 March)")]
         [InlineData("Year Number", "Int64", "2025", "Year Number is 2025 (1 January to 31 December 2025)")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Sol1_the_plain_calendar_names_keep_their_dates(string column, string type, string value, string expected)
         {
             using var rig = await BuildAsync();
@@ -138,6 +145,11 @@ namespace Semanticus.Tests
             Assert.Equal("This shows Net Sales as one total, where " + expected + ".",
                 StatedReading.From(Spec(cat, new string[0], new[] { "Net Sales" }, ("Date[" + column + "]", QueryOps.Is, new object[] { v })), null, cat).Person);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Quarter Name", "String", "Q2", "Quarter Name is Q2 (1 April to 30 June)")]
+        public Task Sol1_the_plain_calendar_names_keep_their_dates_sample(string column, string type, string value, string expected) => Sol1_the_plain_calendar_names_keep_their_dates(column, type, value, expected);
 
         // ---- 3.7. what the reading says is the formula the connected model runs -----------------------------------------------------
 
@@ -168,6 +180,7 @@ namespace Semanticus.Tests
 
         [Fact]
         [Trait("Sol1", "3.7")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Sol1_a_connected_model_that_will_not_say_its_formulas_is_said()
         {
             using var rig = await BuildAsync(ratio: true);

@@ -1166,7 +1166,7 @@ try {
 
   // Loading, failure, an empty plan, and no-model startup are four distinct states of the start page (the Plan since
   // slice 11; the Overview's graph read was the one these held before).
-  for (const [mode, expected] of [['loading', 'Reading the plan…'], ['error', 'The plan could not be read'], ['empty', 'Nothing to do on the plan'], ['nomodel', 'Open a model to begin']]) {
+  for (const [mode, expected] of [['loading', 'Opening the plan…'], ['error', 'The plan could not be opened'], ['empty', 'Nothing to do on the plan'], ['nomodel', 'Open a model to begin']]) {
     const opened = await openPage(`home=${mode}`);
     await waitText(opened.page, expected);
     assert.deepEqual(opened.errors, []);

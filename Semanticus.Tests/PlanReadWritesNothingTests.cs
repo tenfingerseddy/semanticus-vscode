@@ -55,6 +55,7 @@ namespace Semanticus.Tests
             await f.Engine.GetModelPlanAsync();
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Reading_an_unchanged_plan_leaves_the_file_byte_for_byte_as_it_was()
         {
@@ -76,6 +77,7 @@ namespace Semanticus.Tests
             Assert.Equal(stamp, File.GetLastWriteTimeUtc(file));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Reading_a_file_in_another_tools_format_leaves_it_exactly_as_it_was()
         {
@@ -92,6 +94,7 @@ namespace Semanticus.Tests
             Assert.Equal(Convert.ToBase64String(bytes), Convert.ToBase64String(File.ReadAllBytes(file)));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_real_change_still_writes_and_keeps_the_files_format_so_the_diff_is_only_the_change()
         {

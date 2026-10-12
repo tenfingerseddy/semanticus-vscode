@@ -255,7 +255,7 @@ namespace Semanticus.Engine
             string.Equals(row.Id, "cleanup/model", StringComparison.Ordinal) && row.Fp.Candidate;
 
         /// <summary>The note a row carries when a loop among rows was broken by plan order.</summary>
-        public const string OrderedByPlanNote = "Semanticus ordered these by the plan's order.";
+        public const string OrderedByPlanNote = "These tasks depend on each other, so they go in the order shown.";
 
         /// <summary>WaitsFor for rows given in PLAN ORDER (rank = position). An unknown footprint that names nothing takes
         /// no part; one that names a floor waits, and is waited for, on that floor only.
@@ -504,6 +504,10 @@ namespace Semanticus.Engine
                 return false;
             // A task the person claimed has its own rules (TaskLeads, TaskYields); only the derived rows are covered here.
             if (PlanTasks.IsTaskId(person.Id)) return false;
+            // LOOKING AT THE REPORTS AGAIN COMES LAST (Kane, 11 Oct 2026). Any change makes a report reading out of date, so
+            // reading before the automated rows only means reading again after them. Left to the candidate rule below, every
+            // suggestion row the assistant had not worked out yet waited for "Read 1 report again", a row only the person can do.
+            if (person.Id.StartsWith("recheck/", StringComparison.Ordinal)) return true;
             if (person.Fp.Candidate && person.Fp.Chosen.Count == 0) return true;
             return PersonFeedsAutomationOnlyByPopulation(person.Fp, automated.Fp);
         }
@@ -564,16 +568,26 @@ namespace Semanticus.Engine
                 // sub line names the paused row). The sub line and the page name only the first blocker, and in plan
                 // order a paused row further down held the row without being named. The rest keep plan order.
                 item.WaitsFor = kv.Value.OrderBy(id => byId[id].Held ? 0 : 1)
-                    .Select(id => new PlanWaitRef { Id = id, Title = byId[id].Title }).ToArray();
+                    .Select(id => new PlanWaitRef { Id = id, Title = byId[id].Title, Doer = PlanDoers.Normalise(byId[id].Doer) }).ToArray();
                 // An optional row keeps its word on the collapsed row: it nearly always waits (it conflicts with every
-                // row it could go ahead of), and this line replaces its sub line (verify, 28 Sep, L1).
-                item.Sub = (item.Optional ? "Optional. " : "") + "Waits for: " + item.WaitsFor[0].Title
+                // row it could go ahead of), and this line replaces its sub line (verify, 28 Sep, L1). The line names who
+                // acts next, so a person never reads Waiting beside Your assistant and wonders whose move it is (Kane, 11 Oct).
+                item.Sub = (item.Optional ? "Optional. " : "") + WaitsForWords(item.WaitsFor[0].Doer) + item.WaitsFor[0].Title
                          + (item.WaitsFor.Length > 1 ? " and " + (item.WaitsFor.Length - 1) + " more" : "");
                 // The engine-written qualifier, not a reason: a row's reasons are its family's three sentences.
                 if (reordered.Contains(kv.Key) && string.IsNullOrEmpty(item.StateNote))
                     item.StateNote = OrderedByPlanNote;
             }
         }
+
+        /// <summary>The start of a waiting line, naming who does the task it waits for.</summary>
+        internal static string WaitsForWords(string doer) => doer switch
+        {
+            PlanDoers.You => "Waits for you: ",
+            PlanDoers.Assistant => "Waits for your assistant: ",
+            PlanDoers.Semanticus => "Waits for Semanticus: ",
+            _ => "Waits for: ",
+        };
 
         /// <summary>The lines a row would still write: a set that is waiting to be approved. An applied set is a
         /// receipt and writes nothing more.</summary>
@@ -955,10 +969,14 @@ namespace Semanticus.Engine
             return fp;
         }
 
-        /// <summary>A check is saved beside the model, not in it, and rests on the report reading.</summary>
+        /// <summary>A check is saved beside the model, not in it, and tests one measure's number. It reads only that measure.
+        /// It does NOT read the report reading or the revision: the reading only says why the row is on the plan, and writing
+        /// the check needs neither. Reading them made every check row wait for "Read 1 report again", a row only the person can
+        /// do, after any edit at all (Kane, 11 Oct 2026: eleven rows said Waiting and Your assistant at once). If a fresh
+        /// reading shows a report no longer uses the measure, the row leaves the plan, and a check already written harms nothing.</summary>
         private static Footprint Check(string id, IReadOnlyList<ModelPlanChangeLine> lines, FootprintInputs x)
         {
-            var fp = new Footprint().Read(Revision).Read(Reports);
+            var fp = new Footprint();
             var subject = id.Substring("check/".Length);
             if (subject.Contains(':')) fp.Read(subject);
             return fp;

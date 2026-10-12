@@ -96,7 +96,31 @@ Get the matching installer and checksum from the
 [latest GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest).
 Marketplace publication is separate, so the version offered there can differ.
 
-## What's new in 1.3.0
+## What's new in 1.4
+
+Your assistant can now drive Studio while you watch.
+
+- **Claude drives, or you do.** A switch at the top of Studio says who is at the wheel. On Claude drives, your
+  assistant opens pages, picks things and shows you what it is doing. On I drive, Studio stays where you put it.
+  Take the wheel back any time by using Studio yourself.
+- **Notes.** Your assistant leaves a short note next to what it is talking about. Read it and carry on.
+- **The Claude cursor.** A cursor shows where your assistant is working, so you can follow along.
+- **Suggestions.** Your assistant offers the next step as a button you can press.
+- **First run.** The first time you open Studio, a short card sets up how you want to work.
+- **Learn.** A guided tour on a small sample shop model. Pick **Show me around** on the first run, or open Learn later.
+- **A yes in chat is enough.** When your assistant asks to go ahead and you say yes in the chat, it goes ahead. Only
+  the Permissions page still needs you.
+- **Bulk edits in one step (Pro).** Waive findings, write words and synonyms, edit objects, create measures and ten more
+  forms change many objects in one call, with one Undo and the real count. They are much faster than one at a time.
+- **Run the plan finishes the plan.** One press does every ready row and hands your assistant its rows. Refresh plan looks
+  again for new work and clears the finished rows.
+- **The Plan speaks plain words.** Counts add up, and each change names what it changes.
+- **Your work is kept.** Unsaved changes to a file model keep a recovery copy. Open the model again to Restore them or
+  Discard.
+- **Faster.** The check after each edit and synonym writes are much quicker, and your assistant can list the SQL
+  endpoints of a workspace.
+
+### Since 1.2
 
 Studio is six areas: Plan, Explore, Edit, Review, Publish and Workflows. The Plan is where you start, and History
 lives inside it. Workflows is one page: start from a starter, or on Pro describe a workflow in words and it becomes
@@ -115,7 +139,7 @@ Pending changes, Queries, Record verified edits, every fix, the assistant permis
 Publish, and the advanced publishing tools including source control, Fabric Git, automated delivery and
 the Data Agent.
 
-Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
+Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
 [Compare the current plans](https://semanticus.com.au/pro).
 

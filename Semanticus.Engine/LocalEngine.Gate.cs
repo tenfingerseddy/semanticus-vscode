@@ -945,6 +945,12 @@ namespace Semanticus.Engine
         {
             var entryId = call.Arg<string>("entryId");
             var (_, steps, rows, _) = await ReadWalkAsync(entryId, redo).ConfigureAwait(false);
+            var through = call.Arg<long?>("throughRevision");
+            if (!redo && through.HasValue)
+            {
+                rows = rows.Where(r => r.Revision <= through.Value).ToArray();
+                steps = rows.Sum(r => r.StepIndex - r.StepFirst + 1);
+            }
             return WriteIntent.WalkWords(redo, steps, rows.Select(r => (r.EntryId, r.Label, r.Deltas ?? Array.Empty<ChangeDelta>())).ToList());
         }
 

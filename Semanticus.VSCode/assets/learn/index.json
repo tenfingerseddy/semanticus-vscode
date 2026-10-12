@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "chapters": [
+    { "id": "plan", "title": "The Plan", "minutes": 2, "line": "The list of work worth doing next, and how to run it." },
+    { "id": "ask", "title": "Ask your data", "minutes": 2, "line": "Ask a question about your numbers and read the answer." },
+    { "id": "edit", "title": "Edit your model", "minutes": 2, "line": "Change a measure, find and replace, and undo." },
+    { "id": "review", "title": "Check your model", "minutes": 2, "line": "See what to fix and how ready the model is for AI." },
+    { "id": "publish", "title": "Publish", "minutes": 2, "line": "See what will change before anything goes live." }
+  ]
+}

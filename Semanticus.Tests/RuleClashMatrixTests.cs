@@ -62,6 +62,7 @@ namespace Semanticus.Tests
         private static readonly Dictionary<string, string> Explicit = new(StringComparer.Ordinal)
         {
             ["apply_fix"] = "one finding, named by the caller: an explicit request, like a line added to the plan by hand",
+            ["apply_fixes"] = "the findings the caller named, many at once: the same explicit request as apply_fix, in one call",
             ["apply_dax_script"] = "a script the caller wrote",
             ["apply_tmdl"] = "TMDL the caller wrote",
             ["apply_model_diff"] = "a diff the caller chose",

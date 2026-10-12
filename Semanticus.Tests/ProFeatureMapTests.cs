@@ -92,7 +92,7 @@ namespace Semanticus.Tests
         /// the same day when the free line was reset. A change to any of these is a change to what is sold, so it
         /// fails here before it ships.</summary>
         [Fact]
-        public void The_Pro_surface_is_38_operations_in_three_features()
+        public void The_Pro_surface_is_57_operations_in_four_features()
         {
             // 35 on 24 September: the composer's four draft ops joined Workflows (lane L4; composer contract 5.1 and
             // Plan-heart contract 14, "draft ops stay Pro", ratified by Kane). The person's Approve and run on a held
@@ -100,20 +100,22 @@ namespace Semanticus.Tests
             // 36 on 25 September: describe_workflow_steps joined Workflows (Kane's UAT: describing a workflow on the
             // Workflows page is authoring, and opens Author with the steps). It is part of New workflow, which was
             // already Pro as a whole, so nothing that was free became paid.
-            Assert.Equal(35, FeatureMap.OperationsFor(ProFeature.Workflows).Count);
+            // 39 on 10 Oct 2026 (lane agent-controls): approve_draft, continue_draft, add_plan_repeat and set_plan_repeat became MCP tools, still Pro.
+            Assert.Equal(39, FeatureMap.OperationsFor(ProFeature.Workflows).Count);
             Assert.Equal(1, FeatureMap.OperationsFor(ProFeature.Ask).Count);
             // 38 on 26 September: ask_data and list_data_questions, Ask your data (Kane: "Anything involving Jev is always
             // Pro only"). Both are new operations, so nothing that was free became paid.
             // 39 on 28 September: pick_chart_kind (D6, Jev's chart pick for a Queries result) joined Ask your data. A new
             // operation, so nothing that was free became paid.
             Assert.Equal(new[] { "ask_data", "list_data_questions", "pick_chart_kind" }, FeatureMap.OperationsFor(ProFeature.AskData).ToArray());
-            Assert.Equal(39, FeatureMap.ProOperations.Count);
-            Assert.Equal(39, FeatureMap.ProRpcMethods.Count);
+            Assert.Equal(new[] { "add_plan_items", "apply_fixes", "create_measures", "duplicate_objects", "edit_objects", "edit_start_plans", "plan_rows", "set_doc_sections", "set_object_permissions", "set_perspective_members", "set_plan_items", "unwaive_findings", "waive_findings", "write_words" }, FeatureMap.OperationsFor(ProFeature.Batch).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+            Assert.Equal(57, FeatureMap.ProOperations.Count);
+            Assert.Equal(57, FeatureMap.ProRpcMethods.Count);
             // 40, not 36: four Pro engine methods are person-only, with no MCP operation and no EngineRpcTarget entry.
             // Approve and run on a held draft (lane L4), Continue past a stop in a draft (lane author-gaps, B9) and the
             // repeat cards' add and change (lane RP, contract 1.7, Kane 24 Sep). What is sold on the two doors is 36
             // names; the gate keys on these 40. 42 with Ask your data's two, 43 with pick_chart_kind.
-            Assert.Equal(43, FeatureMap.ProEngineMethods.Count);
+            Assert.Equal(57, FeatureMap.ProEngineMethods.Count);
             Assert.Equal(new[] { "route_ask" }, FeatureMap.OperationsFor(ProFeature.Ask).ToArray());
         }
 
@@ -162,6 +164,8 @@ namespace Semanticus.Tests
         [InlineData("list_reports")] [InlineData("list_pending_approvals")] [InlineData("get_agent_policy")]
         [InlineData("get_model_fingerprint")] [InlineData("list_sql_source_usage")] [InlineData("probe_measure")]
         [InlineData("verify_dax_equivalence")] [InlineData("deploy_gate")]
+        [InlineData("cancel_query")] [InlineData("benchmark_cold_warm")]
+        [InlineData("label_connection")] [InlineData("set_default_account_profile")]
         [InlineData("apply_safe_fixes")] [InlineData("make_model_ai_ready")] [InlineData("apply_plan")]
         [InlineData("set_verified_mode")] [InlineData("export_verified_edits")] [InlineData("add_interview_question")]
         [InlineData("blame_value")] [InlineData("list_value_history")] [InlineData("waive_finding")]
@@ -173,7 +177,7 @@ namespace Semanticus.Tests
                 operation + " must stay free, and the map says it is Pro.");
         }
 
-        /// <summary>The five RPC entries with no MCP twin. None belongs to a Pro feature, and each is listed free by
+        /// <summary>The named plumbing and settings RPC entries. Each remains free with or without an MCP twin, and is listed by
         /// name so the completeness walk over the RPC door can pass honestly rather than by omission.</summary>
         [Theory]
         [InlineData("cancelDax")] [InlineData("clearReferenceBinding")] [InlineData("pullAgentHealth")]

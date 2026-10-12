@@ -137,6 +137,7 @@ const ALLOW = [
   { setter: 'loadSpec', reason: 'replaces the draft with a file the person chose in a dialog; the whole replacement is the request, and no text of the old draft is being edited' },
   { setter: 'saveSpec', reason: 'writes the draft to a path chosen in a save dialog; overwriting that file is the dialog\'s question and the engine holds a path it has not been allowed to write' },
   { setter: 'saveEvidence', reason: 'writes a new evidence file into the project from a finished run; it replaces no text the person edited' },
+  { setter: 'setStudioDriver', reason: 'reports who has the wheel (I drive or Claude drives, and whether the person just touched the screen) to the engine; it is a live status, not a value anyone typed or saved, and the next report replaces it' },
   { setter: 'saveLayout', reason: 'diagram box positions, saved best-effort after a drag; no text, and the next layout read wins' },
   { setter: 'saveWorkflow', site: /'human', true/, reason: 'createOnly is true: the engine refuses to replace a workflow that already exists, so nothing can be written over' },
   { setter: 'saveTest', site: /enabled: !def\.enabled/, reason: 'the enable switch: it writes the definition read a moment before with only the switch changed, and no typed text is held' },
@@ -147,7 +148,7 @@ const ALLOW = [
   { setter: 'setDisplayFolder', site: /'setDisplayFolder', (movable\.map|\[newRef\])/, reason: 'a one-step move command (the person picks or types the folder in an input box); no editor draft is held, and a move names the objects, not a value' },
   { setter: 'setMeasureFormat', site: /'setMeasureFormat', n\.ref, /, reason: 'a quick pick of a format from a list the person chose from in one step; no editor draft is held' },
   { setter: 'setMeasureFormatExpression', site: /pick\.tpl\.formatString/, reason: 'a quick pick of a dynamic-format template from a list, chosen in one step; no editor draft is held' },
-  { setter: 'setObjectProperty', site: /'IsHidden', String\(hidden\)/, reason: 'the Hide / Show command on the selection: a switch pressed in one step, nothing typed' },
+  { setter: 'setObjectProperties', site: /'IsHidden', String\(hidden\)/, reason: 'the Hide / Show command on the selection: a switch pressed in one step, nothing typed' },
   // ---- the Properties grid (drafts-sol): its calls moved out of extension.ts into src/propSet.ts, where this scan reads a method name held in data and cannot read the arguments ----
   ...['setMeasureFormatExpression', 'setColumnDataType', 'setObjectProperty', 'setObjectProperties'].map((setter) => ({ setter, site: new RegExp("method: '" + setter + "'"), reason: GRID })),
   { setter: 'setPlanItem', site: /'setPlanItem', \w+, null,/, reason: 'a tick or a drop passes no new value (the value argument is null), so there is no typed text to write over' },

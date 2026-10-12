@@ -215,6 +215,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("labels.json", 30)]
         [InlineData("heldout-labels.json", 25)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_labels_line_up_with_the_engine(string file, int atLeast)
         {
             using var labels = Labels(file);
@@ -243,6 +244,7 @@ namespace Semanticus.Tests
         /// about now. Before it existed, the README's recipe pointed at a check that printed nothing about which models are asked,
         /// so the 11 could not be reproduced from the repository (plan-waits targeted verify, L4).</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_models_the_product_asks_about_are_the_population_written_beside_the_scorer()
         {
             using var keyDoc = Labels("key.json");

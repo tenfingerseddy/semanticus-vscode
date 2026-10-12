@@ -187,8 +187,39 @@ namespace Semanticus.Tests
             Items().Where(i => i.Label == "must-not-keep")
                 .SelectMany(i => new[] { "no", "sure" }.SelectMany(j => new[] { "studio", "agent" }.Select(d => new object[] { i.Id, d, j })));
 
-        /// <summary>VR17 (the harm; stop rule: 0 in every mode). A take-away that holds an adding verb never leaves a KEPT add.</summary>
+        // Lean suite, lane A. The 60 take-aways went through both doors and both Jev modes (240 engine runs). The default tier now reads
+        // the 50 one-typing items through the rule alone, and runs 4 of the 20 that need the engine (Add more words and kept words, where an
+        // earlier ticked add must be unticked; T38 takes the add away BEFORE it) on the agent door with Jev sure of every add, the hardest mode. The full matrix is the sweep.
+        private static readonly string[] EngineWitnesses = { "T31", "T33", "T38", "T41" };
+
+        public static IEnumerable<object[]> RuleItems() =>
+            Items().Where(i => i.Label == "must-not-keep" && i.Flow == "one").Select(i => new object[] { i.Id });
+
+        public static IEnumerable<object[]> EngineWitnessRows() =>
+            Items().Where(i => EngineWitnesses.Contains(i.Id)).Select(i => new object[] { i.Id, "agent", "sure" });
+
+        /// <summary>VR17 on the rule alone: no clause of a one-typing take-away reads as asking to add something that stays.</summary>
         [Theory]
+        [MemberData(nameof(RuleItems))]
+        public void VR17_rule_reads_no_clause_of_a_held_out_one_typing_take_away_as_a_kept_add(string id)
+        {
+            var item = Items().Single(i => i.Id == id);
+            var clauses = DescribedSteps.ClausesOf(item.Typings[0], out _, out var sentences);
+            var unread = clauses.Select((_, i) => clauses.Count > 12 && i == 11).ToArray();   // the Plan reads twelve clauses of one ask
+            var kept = AddingRule.Read(clauses, sentences, unreadAfter: unread, wholeSigned: AddingRule.WholeSigned(item.Typings)).Where(r => r.AsksToAdd).Count();
+            Assert.True(kept == 0, id + " (" + item.Part + "): \"" + item.Typings[0] + "\" has " + kept + " clause(s) that ask to add");
+        }
+
+        /// <summary>VR17 through the engine for the items the rule alone cannot read, on the hardest row (agent door, Jev sure).</summary>
+        [Theory]
+        [MemberData(nameof(EngineWitnessRows))]
+        public Task VR17_witness_a_held_out_take_away_never_leaves_a_kept_add_through_the_engine(string id, string door, string jev) =>
+            VR17_a_held_out_take_away_never_leaves_a_kept_add(id, door, jev);
+
+        /// <summary>VR17 (the harm; stop rule: 0 in every mode). A take-away that holds an adding verb never leaves a KEPT add.
+        /// The full matrix: 60 items, both doors, both Jev modes.</summary>
+        [Theory]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [MemberData(nameof(TakeAways))]
         public async Task VR17_a_held_out_take_away_never_leaves_a_kept_add(string id, string door, string jev)
         {
@@ -205,6 +236,7 @@ namespace Semanticus.Tests
         /// <summary>VR18 (stop rule: plain adds at least 90% kept, now 75% with nine named, and at least 97% offered, a step kept or unticked). The 40 plain
         /// adds, one door and one Jev mode per row; the message lists every one not kept.</summary>
         [Theory]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [MemberData(nameof(DoorsAndJev))]
         public async Task VR18_held_out_plain_adds_are_kept_and_offered_as_the_stop_rule_asks(string door, string jev)
         {

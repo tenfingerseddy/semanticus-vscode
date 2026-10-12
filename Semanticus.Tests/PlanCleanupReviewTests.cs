@@ -126,6 +126,7 @@ namespace Semanticus.Tests
 
         // ---- the row says what it is, and never says Copilot ---------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(true), InlineData(false)]
         public async Task The_row_says_it_keeps_the_model_lean_is_a_suggestion_the_person_reviews_and_never_mentions_Copilot(bool pro)
         {
@@ -134,13 +135,13 @@ namespace Semanticus.Tests
             Assert.NotNull(row);
 
             Assert.Contains(LocalEngine.CleanupPurposeSentence, row.Why);
-            Assert.Contains("lean", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
-            Assert.Contains("untick any line", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
-            Assert.Contains("set the whole row aside", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
+            Assert.Contains("small", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
+            Assert.Contains("Untick any column", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
+            Assert.Contains("set the whole task aside", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);
             Assert.Contains("later", LocalEngine.CleanupPurposeSentence, StringComparison.Ordinal);   // a report you build later
             Assert.Contains(LocalEngine.CleanupCountSentence(DefaultTicked.Length, AllListed.Length - DefaultTicked.Length), row.Why);
             Assert.True(row.Optional);
-            Assert.Contains(row.Why, w => w.Contains("Nothing else on the plan waits for this", StringComparison.Ordinal));
+            Assert.Contains(row.Why, w => w.Contains("No other task waits for this one", StringComparison.Ordinal));
 
             var everything = string.Join("\n", row.Why.Concat(new[] { row.Title, row.Sub, row.Value, row.Touches }).Concat(row.Diff));
             Assert.DoesNotContain("Copilot", everything, StringComparison.OrdinalIgnoreCase);
@@ -155,6 +156,10 @@ namespace Semanticus.Tests
 
         // ---- (b) every unused column is listed, each with a start and a reason -----------------------------------------
 
+        [Theory, InlineData(true, "human")]
+        public Task Work_it_out_lists_every_unused_column_ticks_the_suggested_ones_gives_each_a_reason_and_writes_nothing_sample(bool pro, string door) => Work_it_out_lists_every_unused_column_ticks_the_suggested_ones_gives_each_a_reason_and_writes_nothing(pro, door);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(true, "human"), InlineData(true, "agent"), InlineData(false, "human"), InlineData(false, "agent")]
         public async Task Work_it_out_lists_every_unused_column_ticks_the_suggested_ones_gives_each_a_reason_and_writes_nothing(bool pro, string door)
         {
@@ -221,6 +226,10 @@ namespace Semanticus.Tests
 
         // ---- (a) Run the plan never deletes a line the person has not looked at ------------------------------------------
 
+        [Theory, InlineData(true, "human")]
+        public Task The_cleanup_row_is_never_Semanticuss_so_Run_the_plan_never_takes_it_on_either_door_on_either_tier_sample(bool pro, string door) => The_cleanup_row_is_never_Semanticuss_so_Run_the_plan_never_takes_it_on_either_door_on_either_tier(pro, door);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(true, "human"), InlineData(true, "agent"), InlineData(false, "human"), InlineData(false, "agent")]
         public async Task The_cleanup_row_is_never_Semanticuss_so_Run_the_plan_never_takes_it_on_either_door_on_either_tier(bool pro, string door)
         {
@@ -242,6 +251,10 @@ namespace Semanticus.Tests
             Assert.Equal(pro ? LocalEngine.NothingReadySentence : LocalEngine.BulkRunIsProSentence, run.Sentence);
         }
 
+        [Theory, InlineData("human", false)]
+        public Task Even_if_the_cleanup_were_in_the_ready_set_Run_the_plan_never_removes_a_line_that_is_ticked_only_because_it_was_suggested_sample(string door, bool workedOutFirst) => Even_if_the_cleanup_were_in_the_ready_set_Run_the_plan_never_removes_a_line_that_is_ticked_only_because_it_was_suggested(door, workedOutFirst);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory,
          InlineData("human", false), InlineData("agent", false),      // no set worked out yet: Run the plan would work it out itself
          InlineData("human", true), InlineData("agent", true)]        // a set is already on the row
@@ -284,6 +297,7 @@ namespace Semanticus.Tests
             Assert.Contains("Nothing was removed", result.Sentence, StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("human"), InlineData("agent")]
         public async Task If_the_cleanup_were_in_the_ready_set_a_person_who_looked_at_every_ticked_line_lets_Run_the_plan_remove_them_as_one_undo(string door)
         {
@@ -333,6 +347,10 @@ namespace Semanticus.Tests
             Assert.True(await HasColumnAsync(f, "fact_invoice", "BILLED_AS"));
         }
 
+        [Theory, InlineData("human")]
+        public Task Approving_the_row_is_the_persons_own_act_and_applies_the_ticked_lines_as_one_undo_sample(string door) => Approving_the_row_is_the_persons_own_act_and_applies_the_ticked_lines_as_one_undo(door);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("human"), InlineData("agent")]
         public async Task Approving_the_row_is_the_persons_own_act_and_applies_the_ticked_lines_as_one_undo(string door)
         {
@@ -353,6 +371,10 @@ namespace Semanticus.Tests
 
         // ---- Free ------------------------------------------------------------------------------------------------------
 
+        [Theory, InlineData("human")]
+        public Task On_Free_Run_the_plan_is_refused_and_Work_it_out_and_the_assistants_apply_plan_remove_nothing_sample(string door) => On_Free_Run_the_plan_is_refused_and_Work_it_out_and_the_assistants_apply_plan_remove_nothing(door);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("human"), InlineData("agent")]
         public async Task On_Free_Run_the_plan_is_refused_and_Work_it_out_and_the_assistants_apply_plan_remove_nothing(string door)
         {
@@ -426,6 +448,7 @@ namespace Semanticus.Tests
             return oracle;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Jev_answering_suggest_to_everything_ticks_exactly_what_the_rule_ticks()
         {
@@ -443,6 +466,7 @@ namespace Semanticus.Tests
             Assert.All(set.Lines.Where(l => l.Kept), l => Assert.Equal("Nothing uses it, and nothing about it looks like a key, a date, a name or a number.", l.Reason));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Jev_leaving_a_column_out_unticks_it_with_its_reason_and_the_rest_stay_ticked()
         {
@@ -464,6 +488,7 @@ namespace Semanticus.Tests
             Assert.Contains(set.Lines, l => l.Target == "column:fact_invoice/BILLED_AS");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Jev_not_sure_a_column_should_go_unticks_it_and_says_so_and_never_the_other_way()
         {
@@ -507,6 +532,7 @@ namespace Semanticus.Tests
             Assert.Equal(2, picks.Count);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Jev_slow_or_not_deciding_or_not_permitted_leaves_the_rules_ticks_and_Free_asks_nothing()
         {
@@ -564,6 +590,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_question_Jev_gets_holds_names_types_and_shapes_and_never_a_value()
         {
@@ -585,6 +612,7 @@ namespace Semanticus.Tests
 
         // ---- (d) the held-out run's two columns, rebuilt small ----------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_dimensions_alternate_key_with_no_key_word_and_a_facts_date_held_as_text_arrive_unticked_when_Jev_answers()
         {

@@ -344,6 +344,29 @@ namespace Semanticus.Engine
     // fields are nullable on purpose: presence depends on the caller's permissions (e.g. workspaceName only if the
     // caller can see the workspace). Open enums (Type / ItemType) are kept as strings — MS adds new values over time.
 
+    /// <summary>One SQL endpoint in a Fabric workspace: a lakehouse's SQL analytics endpoint or a warehouse. Server and
+    /// Database map straight onto start_model_from_sql(server, database) and save_sql_source. Server is null when Fabric
+    /// did not return the item's properties (never invented). Error is set on a workspace row whose listing failed.</summary>
+    public sealed class WorkspaceSqlEndpoint
+    {
+        public string WorkspaceId { get; set; }
+        public string WorkspaceName { get; set; }
+        public string Kind { get; set; }              // Lakehouse | Warehouse
+        public string ItemId { get; set; }
+        public string Database { get; set; }          // the item's display name
+        public string Server { get; set; }            // the SQL connection host
+        public string Status { get; set; }            // provisioning status when Fabric reports one
+        public string Error { get; set; }
+    }
+
+    public sealed class WorkspaceSqlEndpointList
+    {
+        public WorkspaceSqlEndpoint[] Endpoints { get; set; } = System.Array.Empty<WorkspaceSqlEndpoint>();
+        public bool SignInNeeded { get; set; }
+        public string Message { get; set; }
+        public bool Truncated { get; set; }
+    }
+
     public sealed class FabricWorkspace
     {
         public string Id { get; set; }

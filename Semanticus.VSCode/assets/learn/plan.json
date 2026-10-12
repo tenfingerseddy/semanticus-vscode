@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "plan",
+  "title": "The Plan",
+  "minutes": 2,
+  "tryWithClaude": "Ask Claude: what is the best next step in my Plan?",
+  "steps": [
+    { "place": "plan", "focus": null, "press": null,
+      "say": "This is your Plan. It lists the work worth doing next, best first.",
+      "how": null, "wait": "read" },
+    { "place": "plan", "focus": null, "press": null,
+      "say": "Each row says what is wrong and why it matters. This model has a few gaps on purpose.",
+      "how": null, "wait": "read" },
+    { "place": "plan", "focus": null, "press": "run-plan",
+      "say": "Run the plan does every ready row together. This tour only shows you the button.",
+      "how": null, "wait": { "ms": 4000 } },
+    { "place": "plan/history", "focus": null, "press": null,
+      "say": "History keeps every change. Each line can be undone, so nothing is lost.",
+      "how": null, "wait": "read" },
+    { "place": "plan/changes", "focus": null, "press": null,
+      "say": "Pending changes lists what is not saved yet.",
+      "how": null, "wait": "read" }
+  ]
+}

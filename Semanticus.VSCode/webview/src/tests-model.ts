@@ -407,3 +407,43 @@ export function limitedEvidenceNote(groupCount: number): string | null {
 
 export const TABLE_COUNT_FOOTER =
   '"Counts differ" means matching snapshots were not confirmed, so this alone does not prove missing rows.';
+
+// ---------------------------------------------------------------------------------------------------
+// Progress while a run goes: "312 of 691 checks".
+//
+// A full run on a live model takes about a minute and the page said only "Running". The engine now tells the
+// page how far it has got, a few times a second, on its own channel (progress/didChange, opKey run_tests).
+// The page names its own run (runTests' runId), so another run, from the assistant, never moves this count.
+// ---------------------------------------------------------------------------------------------------
+export const RUN_PROGRESS_KEY = 'run_tests';
+
+export interface RunProgressEvent { opKey: string; runId: string; done: number; total: number; note?: string }
+export interface RunProgress { runId: string; done: number; total: number }
+
+/** Fold one engine event into what the page shows. Only this page's own run counts, and the count never goes
+ *  backwards, because events can arrive late. Null means there is nothing to show yet. */
+export function foldRunProgress(
+  current: RunProgress | null,
+  event: RunProgressEvent,
+  ownRunId: string | null,
+): RunProgress | null {
+  if (!ownRunId || event.opKey !== RUN_PROGRESS_KEY || event.runId !== ownRunId) return current;
+  if (!(event.total > 0)) return current;
+  const done = Math.min(Math.max(0, Math.floor(event.done)), event.total);
+  if (current && current.runId === event.runId && done < current.done) return current;
+  return { runId: event.runId, done, total: event.total };
+}
+
+/** The words for the count. Once every check has run the engine is still grading them, and the page says so. */
+export function runProgressText(progress: RunProgress | null): string {
+  if (!progress) return 'Running the checks…';
+  const total = progress.total.toLocaleString();
+  if (progress.done >= progress.total) return `${total} of ${total} ${progress.total === 1 ? 'check' : 'checks'} run, grading them…`;
+  return `${progress.done.toLocaleString()} of ${total} ${progress.total === 1 ? 'check' : 'checks'}`;
+}
+
+/** How full the bar is, from 0 to 100, or null when there is no count to draw. */
+export function runProgressPercent(progress: RunProgress | null): number | null {
+  if (!progress || !(progress.total > 0)) return null;
+  return Math.round((progress.done / progress.total) * 100);
+}

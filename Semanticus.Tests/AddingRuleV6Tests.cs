@@ -236,6 +236,7 @@ namespace Semanticus.Tests
         /// <summary>The truth table on the rule alone: every row reads as the grid says, in both directions. The typings are
         /// read as one text, joined by a line break, as the engine reads them.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public void The_truth_table_holds_on_the_rule_alone()
         {
             var rows = Grid().ToList();
@@ -399,6 +400,7 @@ namespace Semanticus.Tests
         /// the row shows the tier the rule reads.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_truth_table_holds_through_the_door_with_jev_in_each_way(string door, string jev)
         {
             using var f = await ProAsync("V6Grid" + door + jev, JevFor(jev));
@@ -431,6 +433,13 @@ namespace Semanticus.Tests
             _out.WriteLine(door + " / Jev " + jev + ": " + rows.Count + " rows, wrong " + wrong.Count);
             Assert.True(wrong.Count == 0, wrong.Count + " of " + rows.Count + " rows wrong:\n" + string.Join("\n", wrong.Take(30)));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> The_truth_table_holds_through_the_door_with_jev_in_each_way_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(The_truth_table_holds_through_the_door_with_jev_in_each_way_SampleRows))]
+        public Task The_truth_table_holds_through_the_door_with_jev_in_each_way_sample(string door, string jev) => The_truth_table_holds_through_the_door_with_jev_in_each_way(door, jev);
 
         // ---- C: Jev's last question only demotes -------------------------------------------------------------------------
 
@@ -477,6 +486,7 @@ namespace Semanticus.Tests
         // leave the rule's answer ("kept"); no sure yes now means unticked, with its own true line (NotCheckedReason).
         [InlineData("studio", "silent", "unticked")]
         [InlineData("agent", "silent", "unticked")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Jev_can_only_demote_and_says_so_in_the_note(string door, string jev, string tier)
         {
             using var f = await ProAsync("V6Demote" + door + jev, JevFor(jev));
@@ -489,6 +499,11 @@ namespace Semanticus.Tests
                                               && n.Contains(jev == "silent" ? AddingRule.NotCheckedReason : AddingRule.NotSureWantedReason, StringComparison.Ordinal));
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio", "demote", "unticked")]
+        public Task Jev_can_only_demote_and_says_so_in_the_note_sample(string door, string jev, string tier) => Jev_can_only_demote_and_says_so_in_the_note(door, jev, tier);
 
         /// <summary>Jev saying yes to the last question, and sure of every include, lifts nothing: what the rule turns down stays
         /// unticked or not drafted, on both doors.</summary>
@@ -520,6 +535,7 @@ namespace Semanticus.Tests
         [InlineData("agent", "take back the Avg Order Value measure")]
         [InlineData("studio", "Avg Order Value goes on the list of measures to delete")]
         [InlineData("agent", "undo the Avg Order Value measure")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_later_typing_that_takes_a_ticked_add_back_unticks_it(string door, string later)
         {
             using var f = await ProAsync("V6Back" + door, JevFor("no"));
@@ -531,6 +547,11 @@ namespace Semanticus.Tests
             Assert.Contains(v.Notes, n => n.StartsWith("Not ticked", StringComparison.Ordinal) && n.Contains("add a measure Avg Order Value", StringComparison.Ordinal));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio", "actually delete Avg Order Value, don't want it")]
+        public Task A_later_typing_that_takes_a_ticked_add_back_unticks_it_sample(string door, string later) => A_later_typing_that_takes_a_ticked_add_back_unticks_it(door, later);
+
         /// <summary>B: a take-away said BEFORE the add, pointing at it, demotes it; the words say the same as the version 5 held-out
         /// items T38 and T43 did, spelt here as the rule's own factors (a sign of the frozen list anywhere in any typing).</summary>
         [Theory]
@@ -538,6 +559,7 @@ namespace Semanticus.Tests
         [InlineData("agent", "anything in my next message goes on the list to delete", "add a role Temp Access")]
         [InlineData("studio", "please delete the calculation group I'm about to ask for, it's just a test", "add a calculation group called YoY Toolkit")]
         [InlineData("agent", "please delete the calculation group I'm about to ask for, it's just a test", "add a calculation group called YoY Toolkit")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_sign_in_an_earlier_typing_demotes_the_add(string door, string earlier, string add)
         {
             using var f = await ProAsync("V6Before" + door, JevFor("sure"));
@@ -546,6 +568,11 @@ namespace Semanticus.Tests
             Assert.Empty(KeptAdds(v));
             Assert.Contains(AddSteps(v), s => !s.Kept);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio", "anything in my next message goes on the list to delete", "add a role Temp Access")]
+        public Task A_sign_in_an_earlier_typing_demotes_the_add_sample(string door, string earlier, string add) => A_sign_in_an_earlier_typing_demotes_the_add(door, earlier, add);
 
         /// <summary>A step the person ticked by hand stays ticked when they type more: their own choice stands.</summary>
         [Theory]

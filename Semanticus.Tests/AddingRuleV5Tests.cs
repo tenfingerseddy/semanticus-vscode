@@ -216,6 +216,7 @@ namespace Semanticus.Tests
 
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_truth_table_holds_through_the_door_with_jev_saying_no_and_jev_sure_of_every_add(string door, string jev)
         {
             using var f = await ProAsync("V5Grid" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -253,6 +254,7 @@ namespace Semanticus.Tests
         /// no phrasing the rule turns down as a take-away is ever kept. The tables are written to the output.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_labelled_sets_show_through_the_doors_the_tier_the_rule_reads(string door, string jev)
         {
             using var f = await ProAsync("V5Sets" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);

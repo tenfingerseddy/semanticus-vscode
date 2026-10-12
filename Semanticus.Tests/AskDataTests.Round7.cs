@@ -43,6 +43,7 @@ namespace Semanticus.Tests
         [InlineData("Date[YearQuarter]", QueryOps.Is, "2025-Q4", "YearQuarter is 2025-Q4 (1 October to 31 December 2025)")]
         [InlineData("Date[Quarter]", QueryOps.Is, "Q3", "Quarter is Q3 (1 July to 30 September)")]
         [InlineData("Date[MonthName]", QueryOps.Is, "December", "MonthName is December (1 to 31 December)")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Every_period_a_statement_filters_is_named_in_calendar_dates(string column, string op, string values, string expected)
         {
             using var rig = await BuildAsync(calendar: true);
@@ -51,6 +52,11 @@ namespace Semanticus.Tests
             var stated = StatedReading.From(Spec(cat, new string[0], new[] { "Net Sales" }, (column, op, vals)), null, cat);
             Assert.Equal("This shows Net Sales as one total, where " + expected + ".", stated.Person);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("Date[Year]", QueryOps.Is, "2025", "Year is 2025 (1 January to 31 December 2025)")]
+        public Task Every_period_a_statement_filters_is_named_in_calendar_dates_sample(string column, string op, string values, string expected) => Every_period_a_statement_filters_is_named_in_calendar_dates(column, op, values, expected);
 
         [Fact]
         [Trait("Round7", "1")]
@@ -209,6 +215,7 @@ namespace Semanticus.Tests
         [InlineData("what share of our customers returned something")]
         [InlineData("what proportion of orders that shipped were returned")]
         [InlineData("% of orders that had a return by category")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task G5_a_share_of_a_count_answered_by_a_ratio_of_amounts_is_said_beside_the_number(string question)
         {
             using var rig = await BuildAsync(script: Gate("nothing", 0.96, measure: "Return Rate %"));
@@ -221,6 +228,11 @@ namespace Semanticus.Tests
             Assert.Empty(Calls(rig));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("what percentage of orders had a return")]
+        public Task G5_a_share_of_a_count_answered_by_a_ratio_of_amounts_is_said_beside_the_number_sample(string question) => G5_a_share_of_a_count_answered_by_a_ratio_of_amounts_is_said_beside_the_number(question);
+
         [Theory]
         [Trait("Round7", "1")]
         [InlineData("return % by category")]
@@ -230,6 +242,7 @@ namespace Semanticus.Tests
         [InlineData("what is the return rate %")]
         [InlineData("return rate percent by region")]
         [InlineData("what share of gross sales was returned")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task G5_a_percent_the_model_has_as_its_own_ratio_runs(string question)
         {
             using var rig = await BuildAsync(script: Gate("nothing", 0.97, measure: "Return Rate %", splits: question.Contains("by category") ? "1" : "0", parts: (r, q) => V2Split(q, 1, "Product[Category]")));
@@ -239,6 +252,11 @@ namespace Semanticus.Tests
             Assert.True(Answered(a), "friction (G5): " + V4Seen(a, rig));
             Assert.Null(a.Assumption);
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("return % by category")]
+        public Task G5_a_percent_the_model_has_as_its_own_ratio_runs_sample(string question) => G5_a_percent_the_model_has_as_its_own_ratio_runs(question);
 
         // ---- 4. the order Jev picked and the engine dropped -------------------------------------------------------------------
 

@@ -146,6 +146,7 @@ namespace Semanticus.Tests
             Assert.Equal("column:Sales Orders/Quantity", format.ObjectRef);   // the ref was refreshed to where the column is now
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Executor_does_not_write_a_format_onto_a_different_column_that_took_the_old_name()
         {
@@ -259,6 +260,7 @@ namespace Semanticus.Tests
             return f;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Null_facts_are_the_engines_own_so_an_unmeasured_sort_is_refused_as_it_always_was()
         {
@@ -271,6 +273,7 @@ namespace Semanticus.Tests
             Assert.Contains("have not been measured in full", sort.Note, StringComparison.Ordinal);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Injected_facts_reach_the_sort_check()
         {
@@ -283,6 +286,7 @@ namespace Semanticus.Tests
             Assert.Equal("MonthNo", await ReadAsync(f, m => m.Tables["Sales"].Columns["Month"].SortByColumn?.Name));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_engines_own_test_facts_still_answer_when_none_are_injected()
         {

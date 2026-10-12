@@ -1,0 +1,36 @@
+table Product
+
+	column 'Product Key'
+		isKey
+		dataType: int64
+		sourceColumn: ProductKey
+		summarizeBy: none
+
+	/// The name on the shelf label.
+	column 'Product Name'
+		dataType: string
+		sourceColumn: ProductName
+		summarizeBy: none
+
+	column Category
+		dataType: string
+		sourceColumn: Category
+		summarizeBy: none
+
+	column Subcategory
+		dataType: string
+		sourceColumn: Subcategory
+		summarizeBy: none
+
+	column Brand
+		dataType: string
+		sourceColumn: Brand
+		summarizeBy: none
+
+	partition Product = m
+		mode: import
+		source =
+			let
+				Source = #table(type table [ProductKey = Int64.Type, ProductName = text, Category = text, Subcategory = text, Brand = text], {})
+			in
+				Source

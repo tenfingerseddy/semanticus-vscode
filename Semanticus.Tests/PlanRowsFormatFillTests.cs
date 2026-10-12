@@ -114,11 +114,15 @@ namespace Semanticus.Tests
             // Every format left unwritten is a choice in the words queue, handed to the assistant with its tool.
             var queue = await f.Engine.GetWordsQueueAsync();
             foreach (var choice in Choices)
-                Assert.Contains(queue.Items, i => i.Kind == "format" && i.Tool == "set_measure_format" && i.ObjectRef == "measure:Sales/" + choice);
+                Assert.Contains(queue.Items, i => i.Kind == "format" && i.Tool == "edit_objects" && i.ObjectRef == "measure:Sales/" + choice);
             Assert.DoesNotContain(queue.Items, i => i.Kind == "format" && i.ObjectRef == "measure:Sales/Order Count");
             Assert.Equal(Choices.Length, queue.Kinds["format"]);
-            var words = Row(await f.Engine.GetModelPlanAsync(), LocalEngine.WordsItemId);
-            Assert.Contains(words.Diff.Concat(words.Tables.SelectMany(t => t.Diff)), d => d.StartsWith("+ Sales[Share]:") && d.Contains("a format to choose"));
+            // Run the plan hands the words row to the assistant as a task linked to it (002e790f, runplan lane). The task carries the row's detail
+            // in its brief, not in a Diff, so the formats still to choose are read from the queue above and the row from its link.
+            var words = Assert.Single((await f.Engine.GetModelPlanAsync()).Items, i => i.OriginLink?.Ref == LocalEngine.WordsItemId);
+            Assert.Equal(PlanDoers.Assistant, words.Doer);
+            Assert.StartsWith("Write words for Copilot", words.Title);
+            Assert.Contains("choose formats", words.Title);
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]
@@ -192,7 +196,7 @@ namespace Semanticus.Tests
                 "the row's fixes are in after the presses: " + row?.State);
             var start = await f.Engine.ModelPlanActionAsync(LocalEngine.BpaFixItemId, "start", "human");
             Assert.False(start.Performed);
-            Assert.Equal("Its fixes are already in, so nothing was changed.", start.Sentence);
+            Assert.Equal("These fixes are already made, so nothing was changed.", start.Sentence);
             Assert.DoesNotContain(start.Plan.History ?? Array.Empty<ModelPlanHistoryEntry>(),
                 h => h.ItemId == LocalEngine.BpaFixItemId && h.Kind == ModelPlanHistoryKinds.Refused);
         }
@@ -202,7 +206,7 @@ namespace Semanticus.Tests
         {
             using var f = await PlanModelAsync("BpaFreeWords.bim", TestEntitlements.Free);
             var worked = await f.Engine.ModelPlanActionAsync(LocalEngine.BpaFixItemId, "propose", "human");
-            Assert.Contains("Approving them is part of Semanticus Pro.", worked.Sentence);
+            Assert.Contains("Approving them needs Semanticus Pro.", worked.Sentence);
             Assert.DoesNotContain("then approve them", worked.Sentence);
             Assert.DoesNotContain("one at a time", LocalEngine.BulkRunIsProSentence);
         }
@@ -214,7 +218,7 @@ namespace Semanticus.Tests
             // so the row writes the column and is ordered against the date mark and the key status rules.
             using var f = await PlanModelAsync("BpaKeyFootprint.bim");
             var row = Row(await f.Engine.GetModelPlanAsync(), LocalEngine.BpaFixItemId);
-            Assert.Contains(row.Diff.Concat(row.Tables.SelectMany(t => t.Diff)), d => d.Contains("Mark primary keys"));
+            Assert.Contains(row.Diff.Concat(row.Tables.SelectMany(t => t.Diff)), d => d.Contains("mark primary keys"));
             Assert.Contains("column:Customer/CustomerKey", row.Writes);
             var worked = await f.Engine.ModelPlanActionAsync(LocalEngine.BpaFixItemId, "propose", "human");
             Assert.Contains("column:Customer/CustomerKey", Row(worked.Plan, LocalEngine.BpaFixItemId).Writes);

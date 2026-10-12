@@ -15,6 +15,21 @@ const copy = read('webview/src/copy.ts');
 const help = read('webview/src/help.tsx');
 const app = read('webview/src/App.tsx');
 const deploy = read('webview/src/deploy.tsx');
+assert.match(app, /FileRecoveryOffer/, 'reopening a recovered file offers Restore and Discard in Studio');
+const recovery = {};
+new Function('exports', 'require', ts.transpileModule(read('src/fileRecoveryText.ts'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020, jsx: ts.JsxEmit.ReactJSX },
+}).outputText)(recovery, () => ({}));
+assert.equal(recovery.recoveryMessage({ source: 'C:\\models\\Sales.bim', capturedUtc: '2026-10-11T14:32:00' }),
+  'Semanticus kept your unsaved changes to Sales.bim from 14:32.');
+// A model kept as a folder of files ends in "definition", which names no model: the line names the model above it (hero16 N4).
+assert.equal(recovery.recoveryMessage({ source: '/home/kane/Northstar.SemanticModel/definition', capturedUtc: '2026-10-11T23:23:00' }),
+  'Semanticus kept your unsaved changes to Northstar from 23:23.');
+assert.equal(recovery.recoveryMessage({ source: 'C:\\models\\Sales\\definition\\', capturedUtc: '2026-10-11T23:23:00' }),
+  'Semanticus kept your unsaved changes to Sales from 23:23.');
+assert.match(read('webview/src/file-recovery.tsx'), /rpc\('resolveFileRecovery', sessionId, restore\)/, 'each choice names the offered session');
+assert.match(read('src/extension.ts'), /decision === 'discard'[\s\S]{0,250}sendRequest\('resolveFileRecovery', info.sessionId, false\)/,
+  'Restart and Discard removes the recovery copy before stopping the engine');
 assert.match(history, /Save a version/, 'the local version boundary is one plain action on History');
 assert.match(history, /\{supported && <button[^>]*data-testid="ph-save"/, 'Save a version shows only when the model can keep versions');
 assert.doesNotMatch(history + historyModel, /NO_GIT_SENTENCE|ph-nogit|needs the model in a git folder/,

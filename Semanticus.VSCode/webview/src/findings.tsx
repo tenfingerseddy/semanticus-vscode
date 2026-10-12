@@ -3,7 +3,7 @@ import { revealInTree, copyText } from './bridge';
 import { Caret } from './ui';
 import { draftModel, draftStore, heldDraft } from './drafts';
 import { OrphanDrafts } from './orphandrafts';
-import { giveToAssistant, findingBuilder, sentTaskFor } from './sendtask';
+import { giveToAssistant, findingBuilder, sentTaskFor, notOnPlan, usePlanRowsSeen, openPlan } from './sendtask';
 
 // A normalized finding/violation row shared by the AI-Readiness and BPA views.
 export interface FindingRow {
@@ -355,7 +355,9 @@ export function GiveTheRest({ system, items }: {
   const [err, setErr] = useState<string | null>(null);
   const keyOf = (i: { ruleId: string; objectRef: string }) => `${system === 'bpa' ? 'bpa' : 'readiness'}|${i.ruleId}|${i.objectRef}`;
   const [, bump] = useState(0);
-  const left = items.filter((i) => !sentTaskFor(keyOf(i)));
+  usePlanRowsSeen();
+  // A finding a plan row already carries is on the plan: it is not given again (Kane, 11 Oct).
+  const left = notOnPlan(items).filter((i) => !sentTaskFor(keyOf(i)));
   if (items.length === 0) return null;
   const give = async () => {
     const todo = left.slice();
@@ -371,9 +373,9 @@ export function GiveTheRest({ system, items }: {
   };
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <button type="button" className="sem-btn" disabled={!!progress || left.length === 0}
+      <button type="button" className="sem-btn" disabled={!!progress}
         title={left.length === 0 ? 'Every finding this app cannot fix is already on your Plan.' : `Adds the ${left.length} finding${left.length === 1 ? '' : 's'} this app cannot fix to your Plan, one task each. Your assistant sees them on its next call.`}
-        onClick={() => void give()} data-testid="give-the-rest">
+        onClick={() => { if (left.length === 0) openPlan(); else void give(); }} data-testid="give-the-rest">
         {progress ? `Adding ${progress.at} of ${progress.of}...` : left.length === 0 ? 'On the plan' : 'Give the rest to your assistant'}
       </button>
       {err && <span role="alert" className="sem-text-meta flex items-start gap-1"><span className="sem-chip sem-chip-bad shrink-0" aria-hidden="true" />{err}</span>}

@@ -65,6 +65,7 @@ namespace Semanticus.Tests
         /// <summary>Each pair is accepted AFTER the plan, under EITHER rule of the pair, and no line that writes that
         /// property on that object stays ticked, whichever rule seeded it. Nothing is written. FMT-MEASURE (an AI-content
         /// finding) and INTEGER_FORMATTING (a Model quality one) are a pair nobody listed as twins.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio", "bpa", "NUMERIC_COLUMN_SUMMARIZE_BY", "column:Sales/ProductKey", "summarizeBy")]
         [InlineData("mcp", "air", "FMT-SUMMARIZE", "column:Sales/ProductKey", "summarizeBy")]
@@ -98,6 +99,7 @@ namespace Semanticus.Tests
         /// <summary>Before the plan: the line that stands for a change another rule's accepted finding declined is seeded
         /// left out, not ticked, in either direction, for a pair the verifier did not list. It is a line the person can see
         /// and can bring back: unwaiving the finding puts it back as it would have been seeded.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("air", "FMT-MEASURE")]
         [InlineData("bpa", "INTEGER_FORMATTING")]
@@ -184,6 +186,7 @@ namespace Semanticus.Tests
             Assert.True(await Read(f, m => m.Tables["Sales"].Columns["ProductKey"].IsHidden));   // what nobody declined is still fixed
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Bpa_fix_all_leaves_a_key_whose_readiness_finding_was_accepted()
         {
@@ -210,6 +213,7 @@ namespace Semanticus.Tests
         /// <summary>Run the plan's safe-fix row is worked out from the readiness findings. With every foreign key's
         /// Model quality finding accepted, that row has no line left to run, so it is not offered at all (it would
         /// otherwise stay ready and do nothing on every press).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_plans_safe_fix_row_is_not_offered_for_a_change_every_finding_declined()
         {

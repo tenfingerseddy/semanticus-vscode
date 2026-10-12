@@ -44,6 +44,8 @@ namespace Semanticus.Engine
             { "delete_sql_source", ("Open a model and connect", "Connections and targets") },
             { "disconnect", ("Open a model and connect", "Connections and targets") },
             { "forget_connection", ("Open a model and connect", "Connections and targets") },
+            { "label_connection", ("Open a model and connect", "Connections and targets") },
+            { "set_default_account_profile", ("Open a model and connect", "Connections and targets") },
             { "list_account_profiles", ("Open a model and connect", "Connections and targets") },
             { "list_connection_history", ("Open a model and connect", "Connections and targets") },
             { "list_connections", ("Open a model and connect", "Connections and targets") },
@@ -51,9 +53,12 @@ namespace Semanticus.Engine
             { "list_sql_sources", ("Open a model and connect", "Connections and targets") },
             { "list_local_instances", ("Open a model and connect", "Connections and targets") },
             { "list_workspace_models", ("Open a model and connect", "Connections and targets") },
+            { "list_workspace_sql_endpoints", ("Open a model and connect", "Connections and targets") },
             { "open_live", ("Open a model and connect", "Connections and targets") },
             { "open_local", ("Open a model and connect", "Connections and targets") },
             { "open_model", ("Open a model and connect", "Connections and targets") },
+            // Recovery starts when reopening a file model (Kane, 11 Oct 2026, studio-polish fix 2).
+            { "resolve_file_recovery", ("Open a model and connect", "Connections and targets") },
             { "prepare_working_copy", ("Open a model and connect", "Connections and targets") },
             { "probe_auth_prerequisites", ("Open a model and connect", "Connections and targets") },
             { "probe_connection_accounts", ("Open a model and connect", "Connections and targets") },
@@ -71,6 +76,7 @@ namespace Semanticus.Engine
             { "list_functions", ("See what is in the model", "Measures, DAX and queries") },
             { "list_measures", ("See what is in the model", "Measures, DAX and queries") },
             { "pivot_measure", ("See what is in the model", "Measures, DAX and queries") },
+            { "cancel_query", ("See what is in the model", "Measures, DAX and queries") },
             { "run_dax", ("See what is in the model", "Measures, DAX and queries") },
             { "ask_data", ("See what is in the model", "Measures, DAX and queries") },
             { "list_data_questions", ("See what is in the model", "Measures, DAX and queries") },
@@ -87,6 +93,7 @@ namespace Semanticus.Engine
             { "set_report_scope", ("See what is in the model", "Reports and what uses this model") },
             { "unused_objects", ("See what is in the model", "Reports and what uses this model") },
             // See what is in the model > Speed and size (6)
+            { "benchmark_cold_warm", ("See what is in the model", "Speed and size") },
             { "benchmark_dax", ("See what is in the model", "Speed and size") },
             { "capture_query_plan", ("See what is in the model", "Speed and size") },
             { "clear_cache", ("See what is in the model", "Speed and size") },
@@ -123,6 +130,7 @@ namespace Semanticus.Engine
             { "create_field_parameter", ("Change the model", "Measures, DAX and queries") },
             { "create_function", ("Change the model", "Measures, DAX and queries") },
             { "create_measure", ("Change the model", "Measures, DAX and queries") },
+            { "create_measures", ("Change the model", "Measures, DAX and queries") },
             { "daxlib_install", ("Change the model", "Measures, DAX and queries") },
             { "daxlib_list_installed", ("Change the model", "Measures, DAX and queries") },
             { "daxlib_package_info", ("Change the model", "Measures, DAX and queries") },
@@ -186,6 +194,18 @@ namespace Semanticus.Engine
             { "rename_display_folder", ("Change the model", "How the model looks and reads") },
             { "set_column_hidden", ("Change the model", "How the model looks and reads") },
             { "set_description", ("Change the model", "How the model looks and reads") },
+            { "unwaive_findings", ("Make it better", "Findings and fixes") },
+            { "apply_fixes", ("Make it better", "Findings and fixes") },
+            { "duplicate_objects", ("Change the model", "Tables, columns and hierarchies") },
+            { "set_doc_sections", ("Ship it out", "The model write-up") },
+            { "set_perspective_members", ("Change the model", "How the model looks and reads") },
+            { "set_object_permissions", ("Ship it out", "Who can see what") },
+            { "set_plan_items", ("Change the model", "The model as a whole") },
+            { "add_plan_items", ("Change the model", "The model as a whole") },
+            { "edit_start_plans", ("Change the model", "The model spec") },
+            { "write_words", ("Change the model", "How the model looks and reads") },
+            { "plan_rows", ("Make it better", "Findings and fixes") },
+            { "edit_objects", ("Change the model", "How the model looks and reads") },
             { "set_display_folder", ("Change the model", "How the model looks and reads") },
             { "set_measure_format", ("Change the model", "How the model looks and reads") },
             { "set_measure_format_expression", ("Change the model", "How the model looks and reads") },
@@ -209,6 +229,7 @@ namespace Semanticus.Engine
             { "grant_start_disclosure", ("Change the model", "The model spec") },
             { "get_start_words", ("Change the model", "The model spec") },
             { "write_start_words", ("Change the model", "The model spec") },
+            { "approve_start_plan", ("Change the model", "The model spec") },
             { "build_start_plan", ("Change the model", "The model spec") },
             { "discard_start_plan", ("Change the model", "The model spec") },
             // Change the model > Dates and time (8)
@@ -238,6 +259,7 @@ namespace Semanticus.Engine
             { "unwaive_finding", ("Make it better", "Findings and fixes") },
             { "validate_rule", ("Make it better", "Findings and fixes") },
             { "waive_finding", ("Make it better", "Findings and fixes") },
+            { "waive_findings", ("Make it better", "Findings and fixes") },
             // The journey starts at "this measure could be set up better", which is this shelf's question.
             // PLACEMENT NOT YET RATIFIED BY KANE: see the M0a report.
             { "propose_measure_defaults", ("Make it better", "Findings and fixes") },
@@ -258,6 +280,19 @@ namespace Semanticus.Engine
             // KANE, exactly like the five above it.
             { "add_plan_target", ("Make it better", "Findings and fixes") },
             { "remove_plan_target", ("Make it better", "Findings and fixes") },
+            // The Plan page's controls (Kane, 10 Oct 2026): the same shelf as the rest of the plan.
+            { "add_plan_task", ("Make it better", "Findings and fixes") },
+            { "pause_plan_item", ("Make it better", "Findings and fixes") },
+            { "set_plan_doer", ("Make it better", "Findings and fixes") },
+            { "move_plan_task_up", ("Make it better", "Findings and fixes") },
+            { "set_assistant_queue", ("Make it better", "Findings and fixes") },
+            { "set_plan_task_note", ("Make it better", "Findings and fixes") },
+            { "remove_plan_row", ("Make it better", "Findings and fixes") },
+            { "restore_plan_row", ("Make it better", "Findings and fixes") },
+            { "refresh_plan", ("Make it better", "Findings and fixes") },
+            { "add_plan_repeat", ("Make it better", "Findings and fixes") },
+            { "set_plan_repeat", ("Make it better", "Findings and fixes") },
+            { "delete_plan_repeat", ("Make it better", "Findings and fixes") },
             // The queue (Plan at the heart, lane E3). Same shelf: every task is a row of the plan, given to the
             // assistant, and the journey still starts at "what should I do to this model". PLACEMENT NOT YET
             // RATIFIED BY KANE, flagged for him in the slice 7 PR.
@@ -265,6 +300,10 @@ namespace Semanticus.Engine
             { "claim_request", ("Make it better", "Findings and fixes") },
             { "complete_request", ("Make it better", "Findings and fixes") },
             { "decline_request", ("Make it better", "Findings and fixes") },
+            // The Studio wire (1.4, Claude drives). The two tools are the assistant talking to the person about the work it is doing
+            // on the model, so they sit with the Plan's other assistant tools. PLACEMENT NOT YET RATIFIED BY KANE.
+            { "show_in_studio", ("Make it better", "Findings and fixes") },
+            { "suggest_next", ("Make it better", "Findings and fixes") },
             // Prove it is right > Tests, numbers and evidence (24)
             { "add_interview_question", ("Prove it is right", "Tests, numbers and evidence") },
             { "capture_baseline", ("Prove it is right", "Tests, numbers and evidence") },
@@ -423,6 +462,8 @@ namespace Semanticus.Engine
             { "get_draft", ("Set the rules of the work", "Workflows and rules") },
             { "edit_draft", ("Set the rules of the work", "Workflows and rules") },
             { "run_draft", ("Set the rules of the work", "Workflows and rules") },
+            { "approve_draft", ("Set the rules of the work", "Workflows and rules") },
+            { "continue_draft", ("Set the rules of the work", "Workflows and rules") },
             { "submit_workflow_step", ("Set the rules of the work", "Workflows and rules") },
             // Typed decisions (Jev M0a). Filed here because the journey starts at "what are the rules
             // here, and what may leave my machine?", which is what this shelf answers. PLACEMENT NOT YET

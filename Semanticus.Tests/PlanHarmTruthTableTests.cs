@@ -627,6 +627,10 @@ namespace Semanticus.Tests
             Assert.DoesNotContain("Copilot", string.Join(" ", row.Why), StringComparison.OrdinalIgnoreCase);
         }
 
+        [Theory, InlineData(0, true, false)]
+        public Task The_cleanup_offers_exactly_what_the_ruling_says_on_every_cell_sample(int chunk, bool pro, bool reportRead) => The_cleanup_offers_exactly_what_the_ruling_says_on_every_cell(chunk, pro, reportRead);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, MemberData(nameof(Runs))]
         public async Task The_cleanup_offers_exactly_what_the_ruling_says_on_every_cell(int chunk, bool pro, bool reportRead)
         {

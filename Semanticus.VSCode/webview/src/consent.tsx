@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { claimConsentAsk, onDidChange, rpc } from './bridge';
 import { useTier } from './pro';
+import { whenFirstRunClosed } from './firstrun-gate';
+import { useLearn } from './studio/learn-state';
 
 // ===================================================================================================
 // Permission to send this model's details for advice: the card, and the one line under Connections.
@@ -41,6 +43,8 @@ export interface ConsentInfoW {
   fields?: string[];
   fieldsInForce?: string[];
   grantedUtc?: string | null;
+  /** Who turned it on: 'agent' when their assistant did, on their word in chat; 'human' or absent when they did. */
+  grantedBy?: string | null;
   withdrawnUtc?: string | null;
   /** Which model this permission belongs to. Empty means the open model has no identity to keep one under. */
   appliesTo?: string | null;
@@ -302,6 +306,7 @@ export async function raiseConsentCardFor(consent: ConsentInfoW | null | undefin
  */
 export function useConsentCard(missing: boolean | undefined, reask?: () => void): void {
   const tier = useTier();
+  const { runtime: learn } = useLearn();
   // The re-ask is a fresh closure on every render of the calling page. Holding it in a ref keeps it out
   // of the effect's dependencies, so a page that re-renders while its answer is still missing does not
   // ask the engine again on every keystroke.
@@ -318,9 +323,9 @@ export function useConsentCard(missing: boolean | undefined, reask?: () => void)
   useEffect(() => {
     // 'unknown' is a licence still being read. Waiting costs one moment; guessing shows a paying customer
     // no card, or shows a free customer a card for something they cannot use.
-    if (!missing || tier !== 'pro') return;
+    if (!missing || tier !== 'pro' || learn.phase !== 'idle') return;
     let live = true;
-    void rpc<ConsentInfoW>('getConsent').then((consent) => {
+    void whenFirstRunClosed().then(() => live ? rpc<ConsentInfoW>('getConsent') : null).then((consent) => {
       if (!live || !consent) return;
       if (!consent.current && !consent.appliesTo) { unsaved.current = true; return; }   // never saved: asked again after a save
       void raiseConsentCardFor(consent, () => reaskRef.current?.());
@@ -328,7 +333,7 @@ export function useConsentCard(missing: boolean | undefined, reask?: () => void)
       // A failed read is not a reason to interrupt somebody. The page keeps its own quiet line.
     });
     return () => { live = false; };
-  }, [missing, tier, again]);
+  }, [missing, tier, again, learn.phase]);
 }
 
 /**
@@ -385,6 +390,7 @@ function CardShell({ label, testid, onClose, children }: { label: string; testid
  */
 export function ConsentCard() {
   const { open, reask, scope, startPlan } = useCardState();
+  const { runtime: learn } = useLearn();
   const [modelCurrent, setModelCurrent] = useState<boolean | null>(null);
   const [fields, setFields] = useState<string[] | null>(null);
   const [version, setVersion] = useState<number | null>(null);
@@ -457,7 +463,7 @@ export function ConsentCard() {
     return () => window.removeEventListener('keydown', key);
   }, [open, close]);
 
-  if (!open) return null;
+  if (!open || learn.phase !== 'idle') return null;
 
   const agreeStartPlan = () => {
     if (busy || !startPlan || !fields || fields.length === 0 || version == null || modelCurrent == null) return;
@@ -670,6 +676,9 @@ export function ProAdviceLine() {
           </>
         )}
       </div>
+      {!noModel && consent.current && consent.grantedBy === 'agent' && (
+        <p data-testid="consent-by-assistant" className="sem-text-meta m-0 mt-2">Turned on by your assistant. Withdraw turns it off.</p>
+      )}
       {!noModel && <p className="sem-text-meta m-0 mt-2">{FOOTNOTE}</p>}
     </div>
   );

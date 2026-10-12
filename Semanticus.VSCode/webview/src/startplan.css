@@ -115,7 +115,8 @@ body.vscode-high-contrast .sp-filter[aria-pressed="true"]::after, body.vscode-hi
 .sp-grp-src { color: var(--sem-muted); font-family: var(--sem-font-num); }
 .sp-grp-r { margin-left: auto; color: var(--sem-muted); }
 
-.sp-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 184px 96px; gap: var(--sem-space-3); align-items: center; box-sizing: border-box; width: 100%; min-height: var(--sem-row-2); padding: var(--sem-space-1) 0 var(--sem-space-1) var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
+/* The recorded Jev mark and its confidence must fit before the row title. */
+.sp-row { display: grid; grid-template-columns: calc(6 * var(--sem-space-6)) minmax(0, 1fr) 184px 96px; gap: var(--sem-space-3); align-items: center; box-sizing: border-box; width: 100%; min-height: var(--sem-row-2); padding: var(--sem-space-1) 0 var(--sem-space-1) var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
 .sp-row:hover { background: var(--sem-hover); }
 .sp-row-need { box-shadow: inset 2px 0 0 var(--sem-warn); }
 /* A held line is shown and kept, but not built: an amber edge and a quiet title, never struck out (it comes back). */

@@ -47,6 +47,12 @@ namespace Semanticus.Engine
         public string ItemId { get; set; }
         public string Reason { get; set; }
         public DateTimeOffset When { get; set; }
+
+        /// <summary>The object ref the item id ends with ("table:dim_product" in "jev.column-summarize.table:dim_product"), and
+        /// that object's lineage tag, when it had both at the skip. A rename moves the row to a new id, and these let the skip
+        /// move with it (hero15 H13), so a row set aside does not come back because its object got a better name.</summary>
+        public string Ref { get; set; }
+        public string Tag { get; set; }
     }
 
     /// <summary>One item whose gap has gone. Remembered rather than recomputed, and that is NOT a contradiction
@@ -92,6 +98,7 @@ namespace Semanticus.Engine
     {
         public string Session { get; set; }
         public int Saves { get; set; }
+        public string By { get; set; }
     }
 
     /// <summary>What is remembered about ONE item's change set: the header, never the live lines.
@@ -146,6 +153,12 @@ namespace Semanticus.Engine
 
         /// <summary>What the proposal looked at and left out, with the reason.</summary>
         public ModelPlanChangeRefusal[] Refused { get; set; } = Array.Empty<ModelPlanChangeRefusal>();
+
+        /// <summary>The line that could not be made when this set rolled back (its stable line id and value) and why,
+        /// so a Jev row is rebuilt without that one line instead of being worked out again from nothing.</summary>
+        public string FailedLineId { get; set; }
+        public string FailedAfter { get; set; }
+        public string FailureReason { get; set; }
 
         /// <summary>The lines as they were at the proposal. FOR READING ONLY; see the note on this class.</summary>
         public ModelPlanChangeLine[] Lines { get; set; } = Array.Empty<ModelPlanChangeLine>();
@@ -324,6 +337,11 @@ namespace Semanticus.Engine
         /// <summary>Items whose gap has gone, newest last, capped at <see cref="PlanMemory.MaxDone"/>.</summary>
         public List<PlanDone> Done { get; set; } = new List<PlanDone>();
 
+        /// <summary>The finished rows Refresh plan took off the list (Plan/LocalEngine.PlanRefresh.cs), by row id. Their record
+        /// stays in <see cref="Done"/>, the tasks and the history; only the list stops showing them. A row that opens again
+        /// leaves this list, so finishing it a second time shows it again.</summary>
+        public List<string> ClearedDone { get; set; } = new List<string>();
+
         /// <summary>Where "Save the changes you have made" was last on the plan, as the facts were read; null while it
         /// is not. Kept in the file because the read that finds the row gone can be the next engine's.</summary>
         public PlanSaveMark UnsavedSeen { get; set; }
@@ -432,6 +450,8 @@ namespace Semanticus.Engine
                             ItemId = id,
                             Reason = node["reason"]?.GetValue<string>(),
                             When = ReadWhen(node["when"]),
+                            Ref = ReadText(node["ref"]),
+                            Tag = ReadText(node["tag"]),
                         });
                     }
                 }
@@ -527,6 +547,10 @@ namespace Semanticus.Engine
                         });
                     }
                 }
+
+                if (root["clearedDone"] is JsonArray cleared)
+                    foreach (var node in cleared)
+                        if (ReadText(node) is string id && !string.IsNullOrWhiteSpace(id)) state.ClearedDone.Add(id);
 
                 // The asked items, the residue and the switch (contract 2.1). Round-tripped through the types
                 // in the wire shape, like the change headers below, and one unreadable task is dropped on its
@@ -647,6 +671,8 @@ namespace Semanticus.Engine
                     state.History.RemoveRange(0, state.History.Count - MaxHistory);
                 if (state.Done.Count > MaxDone)
                     state.Done.RemoveRange(0, state.Done.Count - MaxDone);
+                if (state.ClearedDone.Count > MaxDone)
+                    state.ClearedDone.RemoveRange(0, state.ClearedDone.Count - MaxDone);
 
                 var entry = EntryNode(state);
                 // Nothing changed, so nothing is written: not the file, not its time stamp. True, because what the
@@ -684,7 +710,7 @@ namespace Semanticus.Engine
         {
             if (node is not JsonObject o) return null;
             var session = ReadText(o["session"]);
-            return session == null ? null : new PlanSaveMark { Session = session, Saves = (int)ReadLong(o["saves"]) };
+            return session == null ? null : new PlanSaveMark { Session = session, Saves = (int)ReadLong(o["saves"]), By = ReadText(o["by"]) };
         }
 
         // A mark is written only while it is set, so a model whose plan never saw an unsaved change keeps its file as it
@@ -694,21 +720,29 @@ namespace Semanticus.Engine
             if (state.UnsavedSeen?.Session != null)
                 entry["unsavedSeen"] = new JsonObject { ["session"] = state.UnsavedSeen.Session, ["saves"] = state.UnsavedSeen.Saves };
             if (state.LastSave?.Session != null)
-                entry["lastSave"] = new JsonObject { ["session"] = state.LastSave.Session, ["saves"] = state.LastSave.Saves };
+                entry["lastSave"] = new JsonObject { ["session"] = state.LastSave.Session, ["saves"] = state.LastSave.Saves, ["by"] = state.LastSave.By };
             return entry;
+        }
+
+        // The ref and tag are written only while a skip has them, so a skip kept before they existed reads and writes as it did.
+        private static JsonObject SkipNode(PlanSkip s)
+        {
+            var node = new JsonObject
+            {
+                ["itemId"] = s.ItemId,
+                ["reason"] = s.Reason,
+                ["when"] = s.When.ToString("o", CultureInfo.InvariantCulture),
+            };
+            if (s.Ref != null && s.Tag != null) { node["ref"] = s.Ref; node["tag"] = s.Tag; }
+            return node;
         }
 
         /// <summary>One model's entry in the one shape this file is written in. Pure: it copies every value, so
         /// the node it returns does not change when the state does afterwards.</summary>
-        private static JsonObject EntryNode(PlanMemoryState state) => WithSaveMarks(
+        private static JsonObject EntryNode(PlanMemoryState state) => WithClearedDone(WithSaveMarks(
                 new JsonObject
                 {
-                    ["skips"] = new JsonArray(state.Skips.Select(s => (JsonNode)new JsonObject
-                    {
-                        ["itemId"] = s.ItemId,
-                        ["reason"] = s.Reason,
-                        ["when"] = s.When.ToString("o", CultureInfo.InvariantCulture),
-                    }).ToArray()),
+                    ["skips"] = new JsonArray(state.Skips.Select(s => (JsonNode)SkipNode(s)).ToArray()),
                     ["history"] = new JsonArray(state.History.Select(h => (JsonNode)new JsonObject
                     {
                         ["when"] = h.When.ToString("o", CultureInfo.InvariantCulture),
@@ -769,7 +803,15 @@ namespace Semanticus.Engine
                     ["assistantQueue"] = state.AssistantQueue == PlanAssistantQueue.Paused
                         ? PlanAssistantQueue.Paused
                         : PlanAssistantQueue.On,
-                }, state);
+                }, state), state);
+
+        /// <summary>The rows Refresh plan cleared, written only while there are some, so a file that never had one keeps its shape.</summary>
+        private static JsonObject WithClearedDone(JsonObject entry, PlanMemoryState state)
+        {
+            var ids = (state.ClearedDone ?? new List<string>()).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).ToArray();
+            if (ids.Length > 0) entry["clearedDone"] = new JsonArray(ids.Select(id => (JsonNode)JsonValue.Create(id)).ToArray());
+            return entry;
+        }
 
         /// <summary>The new entry, built from the file's own nodes wherever a part did not change.
         ///
@@ -979,8 +1021,8 @@ namespace Semanticus.Engine
                                          IReadOnlyCollection<string> aside = null, IReadOnlyCollection<string> completed = null)
         {
             if (before == null || before.Count == 0)
-                return "The plan was drawn from the model for the first time: "
-                     + Plural(now == null ? 0 : now.Count, "item", "items") + ".";
+                return "Semanticus made the plan from the model for the first time: "
+                     + Plural(now == null ? 0 : now.Count, "task", "tasks") + ".";
 
             var previous = new HashSet<string>(before, StringComparer.Ordinal);
             var current = new HashSet<string>(now ?? Array.Empty<string>(), StringComparer.Ordinal);
@@ -993,9 +1035,9 @@ namespace Semanticus.Engine
             var off = left.Count - done - swapped;
 
             var parts = new List<string>();
-            if (done > 0) parts.Add(Plural(done, "item done", "items done"));
-            if (swapped > 0) parts.Add(Plural(swapped, "item replaced by a suggestion", "items replaced by a suggestion"));
-            if (off > 0) parts.Add(Plural(off, "item off the plan", "items off the plan"));
+            if (done > 0) parts.Add(Plural(done, "task done", "tasks done"));
+            if (swapped > 0) parts.Add(Plural(swapped, "task replaced by a suggestion", "tasks replaced by a suggestion"));
+            if (off > 0) parts.Add(Plural(off, "task off the plan", "tasks off the plan"));
             if (added > 0) parts.Add(Plural(added, "new", "new"));
 
             return parts.Count == 0

@@ -22,9 +22,12 @@ using Xunit;
 namespace Semanticus.Tests
 {
     [Collection("restore-root")]   // the same collection as AskDataTests, for the same scratch roots
-    public sealed class AskDataVerifyTests
+    public sealed class AskDataVerifyTests : IClassFixture<ModelTemplates>
     {
-        public AskDataVerifyTests(RestoreRootFixture fixture) { _ = fixture; }
+        // The same Contoso model as AskDataTests, built once and opened as a copy per rig (lean suite, lane A).
+        private static ModelTemplates _templates;
+
+        public AskDataVerifyTests(RestoreRootFixture fixture, ModelTemplates templates) { _ = fixture; _templates = templates; }
 
         // ---- the data behind the fake connection --------------------------------------------------------------
 
@@ -141,28 +144,8 @@ namespace Semanticus.Tests
         {
             var rig = new Rig { F = new DecisionFixture(tier ?? TestEntitlements.Pro) };
             var e = rig.Engine;
-            await e.CreateModelAsync("Contoso Retail", 1604);
-            async Task Table(string name, params (string col, string type)[] cols)
-            {
-                await e.CreateTableAsync(name, "human");
-                foreach (var (col, type) in cols) await e.CreateColumnAsync("table:" + name, col, type, col, "human");
-            }
-            await Table("Sales", ("Amount", "Double"), ("Qty", "Int64"), ("StoreKey", "Int64"), ("ProductKey", "Int64"), ("DateKey", "Int64"), ("CustomerKey", "Int64"));
-            await Table("Store", ("StoreKey", "Int64"), ("Region", "String"), ("City", "String"));
-            await Table("Product", ("ProductKey", "Int64"), ("Category", "String"), ("ProductName", "String"));
-            await Table("Date", ("DateKey", "Int64"), ("Year", "Int64"), ("MonthName", "String"));
-            await Table("Customer", ("CustomerKey", "Int64"), ("Segment", "String"));
-            await Table("Budget", ("DateKey", "Int64"), ("BudgetAmount", "Double"));
-            await e.CreateRelationshipAsync("column:Sales/StoreKey", "column:Store/StoreKey", null, true, "human");
-            await e.CreateRelationshipAsync("column:Sales/ProductKey", "column:Product/ProductKey", bothWays ? "BothDirections" : null, true, "human");
-            await e.CreateRelationshipAsync("column:Sales/DateKey", "column:Date/DateKey", null, true, "human");
-            await e.CreateRelationshipAsync("column:Sales/CustomerKey", "column:Customer/CustomerKey", null, false, "human");
-            await e.CreateRelationshipAsync("column:Budget/DateKey", "column:Date/DateKey", null, true, "human");
-            await e.CreateMeasureAsync("table:Sales", "Net Sales", "SUM ( Sales[Amount] )", "human");
-            await e.CreateMeasureAsync("table:Sales", "Units", "SUM ( Sales[Qty] )", "human");
-            await e.CreateMeasureAsync("table:Budget", "Budget Amount", "SUM ( Budget[BudgetAmount] )", "human");
-            await e.CreateMeasureAsync("table:Product", "Product Count", "COUNTROWS ( Product )", "human");
-            await rig.F.SaveAsAsync("ContosoRetail.bim");
+            await _templates.OpenCopyAsync(rig.F, bothWays ? "contoso-both" : "contoso",
+                g => AskDataTests.BuildContosoModelAsync(g.Engine, bothWays), "ContosoRetail.bim");
             await rig.F.ConsentAsync();
             if (connect) e.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso Retail", "Contoso Retail", rig.Data.Execute));
             e.JevReadsDataForTest = barMet;
@@ -237,6 +220,7 @@ namespace Semanticus.Tests
         /// many. Live on Northstar, a filter on Sales[OrderNumber] said "The values of OrderNumber could not be read",
         /// which is not what happened. The refusal must say why in words that are true.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify_a_column_with_too_many_values_to_match_is_not_called_unreadable()
         {
             using var rig = await BuildAsync();
@@ -443,12 +427,16 @@ namespace Semanticus.Tests
         public async Task Verify_the_assistants_question_held_for_approval_keeps_what_was_asked()
         {
             var before = (Semanticus.Engine.AgentPolicyStore.RootOverride, Semanticus.Engine.ApprovalLedger.RootOverride);
+            var connectionsBefore = Semanticus.Engine.ConnectionRegistry.RootOverride;
             var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sem-verify-askdata-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Semanticus.Engine.AgentPolicyStore.RootOverride = root;
             Semanticus.Engine.ApprovalLedger.RootOverride = root;
+            Semanticus.Engine.ConnectionRegistry.RootOverride = root;
             try
             {
                 using var rig = await BuildAsync();
+                // An unlabelled target counts as test since 1.4 (3a4dc874), so the question only waits for approval on a target labelled production.
+                Semanticus.Engine.ConnectionRegistry.SetLabel(Semanticus.Engine.ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso Retail", "Contoso Retail", "Contoso Retail", null, "azcli").Id, "prod", "human");
                 var a = await McpTools.AskData(rig.Engine, measures: new[] { "Units" }, group_by: new[] { "Product[Category]" }, top: 3);
                 Assert.Equal(DataAnswer.Refused, a.Outcome);
                 Assert.NotNull(a.ApprovalId);
@@ -461,6 +449,7 @@ namespace Semanticus.Tests
             {
                 Semanticus.Engine.AgentPolicyStore.RootOverride = before.Item1;
                 Semanticus.Engine.ApprovalLedger.RootOverride = before.Item2;
+                Semanticus.Engine.ConnectionRegistry.RootOverride = connectionsBefore;
                 try { System.IO.Directory.Delete(root, true); } catch { }
             }
         }

@@ -115,7 +115,7 @@ namespace Semanticus.Tests
 
         private static bool StoppedOnStale(ApplyPlanItemsResult ran) =>
             new[] { ran.Sentence }.Concat((ran.Skipped ?? Array.Empty<ApplyPlanSkip>()).Select(k => k.Reason))
-                .Any(t => (t ?? "").Contains("before the model last changed", StringComparison.Ordinal) || (t ?? "").Contains("Jev is looking again", StringComparison.Ordinal));
+                .Any(t => (t ?? "").Contains("changed after these changes were worked out", StringComparison.Ordinal) || (t ?? "").Contains("Jev is looking again", StringComparison.Ordinal));
 
         [JevReplayFact]
         public async Task A_first_Plan_read_of_a_15_table_model_before_and_after_batching()
@@ -139,6 +139,7 @@ namespace Semanticus.Tests
         /// <summary>E2 (M11 join part 4): on a real 15-table model with no Jev, press Run the plan until it is quiet; whenever a press stops
         /// on a row "worked out before the model last changed", work that row out again the way a person does. A row worked out again
         /// must read current, and the next press must take it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_Semanticus_row_worked_out_again_after_a_press_is_current_and_the_next_press_takes_it()
         {

@@ -55,6 +55,7 @@ namespace Semanticus.Tests
         private static async Task<ChangeItem> LineAsync(DecisionFixture f, string ruleId, string objRef) =>
             (await f.Engine.GetPlanAsync()).Items.Single(i => i.RuleId == ruleId && i.ObjectRef == objRef);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("mcp")]
@@ -87,6 +88,7 @@ namespace Semanticus.Tests
 
         /// <summary>The Studio is pushed the plan, so the waiver's own call tells it the line is no longer ticked; it does
         /// not wait for the page to read the plan again.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_studio_is_pushed_the_left_out_line_when_the_assistant_waives()
         {
@@ -125,6 +127,7 @@ namespace Semanticus.Tests
         /// <summary>The apply-time check on its own: the line is ticked again after the waiver, so the plan says
         /// approved, and apply still leaves it out, reports it as skipped with the plain note, and changes nothing
         /// the waiver covers. Free and Pro.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio", true)]
         [InlineData("mcp", true)]
@@ -151,6 +154,7 @@ namespace Semanticus.Tests
 
         /// <summary>add_plan_item is an explicit request, so a waiver on the same rule and object does not hold it
         /// back.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("studio")]
         [InlineData("mcp")]

@@ -716,8 +716,8 @@ namespace Semanticus.Engine
                     continue;
                 }
                 p.Active = false;
-                p.InactiveWhy = "Another path of active relationships already joins " + p.Key.Table + " to " + p.Ask.TableName
-                              + ", and a second one would make filters ambiguous.";
+                p.InactiveWhy = "Other relationships already link " + p.Key.Table + " to " + p.Ask.TableName
+                              + ". A second link would make it unclear which way a filter goes.";
             }
             return all.Where(p => p.Key != null).ToList();
         }

@@ -80,6 +80,7 @@ namespace Semanticus.Tests
         /// every copy was born out of date. Use now writes the copy in the current format, through the same reviewed
         /// upgrade a person would apply, so the copy means exactly what the starter means and nothing asks to upgrade.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Every_starter_copy_is_written_in_the_current_format_with_the_same_meaning()
         {
             var stock = (await _engine.ListWorkflowsAsync()).Where(w => w.Starter && w.Source == "stock" && w.Error == null).Select(w => w.Name).ToArray();
@@ -104,6 +105,7 @@ namespace Semanticus.Tests
         /// so the run says which of the current step's questions the assistant fills, and the Studio does not ask the
         /// person for them. The questions a person can answer in words stay theirs.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_run_names_the_questions_its_assistant_fills()
         {
             // Lane l9-finish: verified-measure drafts, and its gated steps run in the draft's guided run, which says the same.

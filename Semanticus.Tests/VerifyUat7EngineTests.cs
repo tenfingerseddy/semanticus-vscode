@@ -34,6 +34,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(true, "add")]
         [InlineData(false, "take out")]

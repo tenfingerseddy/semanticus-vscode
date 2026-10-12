@@ -76,6 +76,9 @@ namespace Semanticus.Engine
         public DateTimeOffset? GrantedUtc { get; set; }
         public DateTimeOffset? WithdrawnUtc { get; set; }
 
+        /// <summary>Who turned it on: "human" (the person) or "agent" (their assistant, on their word in chat). Null when nothing is granted or an older build wrote the record.</summary>
+        public string GrantedBy { get; set; }
+
         /// <summary>Which model this permission belongs to, as the short stable name the engine keeps it under.
         /// Permission is given for ONE model at a time, so agreeing on one never speaks for another. Null when
         /// the open model has no stable name yet, which is when nothing can be agreed at all.</summary>

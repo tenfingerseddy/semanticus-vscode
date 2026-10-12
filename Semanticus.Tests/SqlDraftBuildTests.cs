@@ -280,6 +280,7 @@ namespace Semanticus.Tests
         /// <summary>The property the ruling protects, over five shapes: no fact is ever left unable to be filtered by a
         /// table it names, and it builds with 0 errors. Failed first at 4255fb78 on "j8" (fact_invoice to dim_client off),
         /// "j8-onboarding-date" (every fact date link off), "diamond" (fact_sales to dim_customer off) and "galaxy".</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(Shapes))]
         public async Task Each_fact_keeps_an_active_link_to_every_table_it_names_and_the_draft_builds(string shape)
@@ -484,6 +485,7 @@ namespace Semanticus.Tests
             Assert.Contains("OrderDate", spec.DateTable.Note);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_J8_draft_builds_with_no_errors_and_no_date_table_findings()
         {
@@ -839,6 +841,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>L2: a clear request for the wizard, with words between "model from" and "sql", found no place in the ask box.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_ask_box_answers_a_model_from_the_tables_in_my_sql_database_with_the_model_spec()
         {

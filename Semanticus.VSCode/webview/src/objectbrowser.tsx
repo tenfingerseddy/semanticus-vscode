@@ -223,7 +223,7 @@ export function ObjectBrowser({ kinds = ['measure', 'column'], multiSelect = fal
               // buttons is both wrong ARIA and an activation hazard (Enter/Space on the nested control bubbling to
               // the row). The row keeps the mouse onClick for the large click target; nested buttons stopPropagation.
               return (
-                <div key={vr.key} style={{ ...common, opacity: picked ? 0.4 : 1 }}
+                <div key={vr.key} data-object-ref={n.ref} style={{ ...common, opacity: picked ? 0.4 : 1 }}
                   draggable={dragEnabled && daxRefOf(n) !== null} onDragStart={dragEnabled ? drag(n) : undefined}
                   onClick={() => { selectInProperties(n.ref); if (!picked) onPick?.(n); }}
                   title={daxRefOf(n) ?? n.ref}

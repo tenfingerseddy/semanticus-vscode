@@ -28,8 +28,6 @@ namespace Semanticus.Engine
             "That is the person's to do. It decides what the assistant may do or work on, so the assistant cannot change it. Ask the person to do it in Semanticus.";
         public const string CannotPreviewSentence =
             "This cannot be previewed: it saves outside the model. Run it for real to be asked.";
-        public const string PlanPersonOnlySentence =
-            "Aims and tasks are the person's to add, remove and mark done. Ask them to do it in Semanticus.";
 
         // ---- row makers ------------------------------------------------------------------------------------------
 
@@ -93,7 +91,7 @@ namespace Semanticus.Engine
             // The assistant's own lookups of other systems: read-only calls out, nothing written here.
             Pass("A read of another system (its schema, its list, its status): nothing is written here.",
                 "GetSourceSchemaAsync", "DiffSchemaAsync", "DaxLibSearchAsync", "DaxLibVersionsAsync", "DaxLibPackageInfoAsync",
-                "DaxLibListInstalledAsync", "ListWorkspacesAsync", "ListWorkspaceModelsAsync", "ListDeploymentPipelinesAsync",
+                "DaxLibListInstalledAsync", "ListWorkspacesAsync", "ListWorkspaceModelsAsync", "ListWorkspaceSqlEndpointsAsync", "ListDeploymentPipelinesAsync",
                 "GetPipelineStagesAsync", "GetStageItemsAsync", "PreviewDeployAsync", "DeploymentHistoryAsync", "FabricGitConnectionAsync",
                 "FabricGitStatusAsync", "ListDataAgentsAsync", "GetDataAgentAsync", "GenerateDataAgentConfigFromModelAsync",
                 "ListReportsAsync", "AnalyzeReportsAsync", "AnalyzeCloudReportsAsync", "CheckReportsAsync", "ListLocalInstancesAsync",
@@ -103,7 +101,7 @@ namespace Semanticus.Engine
                 "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ExplainValueAsync", "ListValueHistoryAsync",
                 "CompareBaselineAsync", "RunDmvAsync", "TryTestAsync");
             NoPreview("Changes nothing in the model or its files, but it clears or stops something the engine keeps, which a rehearsal's rollback does not bring back.",
-                "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync");
+                "CancelDaxAsync", "ClearCacheAsync", "ClearReferenceBindingAsync", "SetPlanItemAsync", "SetPlanItemsAsync");
             NoPreview("A check that runs rehearsals of its own, so it cannot run inside one.", "ReplayCheckWorkflowAsync");
             Pass("A read of the sanctioned assistant queue.", "ListAssistantRequestsAsync");
             NoPreview("The engine's own signal or the sanctioned assistant queue (the Plan contract, section 12): the person made the task, and claiming, answering or declining it is the assistant's part of it. It moves a cursor or a queue, which a rehearsal cannot undo.",
@@ -114,13 +112,24 @@ namespace Semanticus.Engine
             NoPreview("A rehearsal: it runs the op through the gate and rolls the model's changes back. It cannot start another.",
                 "DryRunOpAsync");
             NoPreview("An analysis proposal that lives in the session's memory until someone applies it; applying is held (ApplyPlanAsync). A rehearsal would leave it behind. A proposal that would drop lines the person decided on, and clearing the plan, are held (see below).",
-                "AddPlanItemAsync");
-            NoPreview("Opens or closes a connection for reading. What it unlocks (live writes, rows) is gated at its own op, and the target's label is the person's. It changes the session, which a rehearsal cannot undo.",
+                "AddPlanItemAsync", "AddPlanItemsAsync");
+            NoPreview("Opens or closes a connection for reading. What it unlocks (live writes, rows) is gated at its own op, and changing the target label is a local write. It changes the session, which a rehearsal cannot undo.",
                 "ConnectXmlaAsync", "ConnectLocalAsync", "DisconnectAsync");
             Pass("A probe of a saved SQL source: its own op asks for the data it reads (QueryData) and it writes nothing.", "TestSqlSourceAsync");
-            NoPreview("Labelling a target is the person's: the policy reads the label, so the engine refuses it for an assistant.", "LabelConnectionAsync");
+            var labelConnection = SettingWitnessed("LabelConnectionAsync", "label the connection {id:raw} as {label:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it changes");
+            Add(new GateEntry
+            {
+                Method = "LabelConnectionAsync", Kind = GateKind.Hold, Capability = AgentCapability.DeployFile,
+                Choose = c =>
+                {
+                    // An existing label is person-only, even when Locked would otherwise ask for approval.
+                    ConnectionRegistry.GuardAgentLabelChange(ConnectionRegistry.Find(c.Arg<string>("id")));
+                    return Task.FromResult(labelConnection);
+                },
+            });
             // A setting of how the engine reaches things (accounts, SQL sources, publish destination, working folder) is written to the
             // engine's home, and engine settings are held: asked about under Locked, the Allow of every other preset unchanged.
+            Settings("SetDefaultAccountProfileAsync", "make the saved account {profileId:raw} the default for its tenant");
             Add(SettingWitnessed("RememberXmlaConnectionAsync", "remember the connection to {database:raw} at {endpoint:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connections it updates"));
             Add(SettingWitnessed("ForgetConnectionAsync", "forget the connection {id:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it removes"));
             Add(SettingWitnessed("SetConnectionWorkingFolderAsync", "put the working copy of the connection {id:raw} in {folder:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it changes"));
@@ -149,20 +158,35 @@ namespace Semanticus.Engine
             // ======================================= PERSON: controls over the assistant ================================
             Person("The policy is the person's: an assistant that could change it could free itself.",
                 "SetAgentPolicyPresetAsync", "SetAgentPolicyCellAsync", "SetAgentPolicyEnabledAsync", "ApproveAgentActionAsync", "DenyAgentActionAsync");
-            Person("Aims, tasks, repeats, the queue switch, Pause and Resume, Up, the doer switch and a task's note are the person's (Plan contract, section 12).",
-                "AddPlanTargetAsync", "RemovePlanTargetAsync", "MarkPlanTargetDoneAsync", "AddPlanTaskAsync", "HoldPlanItemAsync",
-                "SetPlanItemDoerAsync", "MovePlanTaskUpAsync", "SetAssistantQueueAsync", "SetPlanTaskNoteAsync", "AddPlanRepeatAsync",
-                "SetPlanRepeatAsync", "DeletePlanRepeatAsync", "ClaimPlanTaskAsync", "CompletePlanTaskAsync", "DeclinePlanTaskAsync",
-                "RemovePlanRowAsync", "RestorePlanRowAsync");
-            Person("Approving a held draft and pressing Continue are the person's own stops (Plan contract, section 12).",
-                "ApproveHeldDraftAsync", "ContinueDraftAsync");
-            Person("It repoints every remembered model of a tenant at another account, so only the person does it.", "SetDefaultAccountProfileAsync");
+            // Kane, 10 Oct 2026: the person's word in chat is enough. Everything on the Plan page is the assistant's to change and run;
+            // only the Permissions page above stays the person's. A person's own claim, Mark done and Could not are the person's hand on the
+            // queue (the assistant claims, answers and declines with the four queue ops, and marks done with model_plan_action).
+            Person("A person's own claim, Mark done and Could not on a task. The assistant uses set_plan_doer, claim_request, complete_request and decline_request instead.",
+                "ClaimPlanTaskAsync", "CompletePlanTaskAsync", "DeclinePlanTaskAsync");
+            EditNoPreview("AddPlanTargetAsync", "add the aim {text} to {section:raw}");
+            EditNoPreview("RemovePlanTargetAsync", "remove the aim {id:raw}");
+            EditNoPreview("MarkPlanTargetDoneAsync", "mark the plan row {id:raw} done");
+            EditNoPreview("AddPlanTaskAsync", "add the task to the plan", c =>
+                Task.FromResult("add the task \"" + (c.Arg<PlanTaskRequest>("request")?.Words ?? "") + "\" to the plan"));
+            EditNoPreview("HoldPlanItemAsync", "pause or resume the plan row {id:raw}");
+            EditNoPreview("SetPlanItemDoerAsync", "give the plan row {id:raw} to {doer:raw}");
+            EditNoPreview("MovePlanTaskUpAsync", "move the task {id:raw} up the assistant's order");
+            EditNoPreview("SetAssistantQueueAsync", "switch the assistant's tasks to {state:raw}");
+            EditNoPreview("SetPlanTaskNoteAsync", "set the note on the plan row {id:raw}");
+            EditNoPreview("RemovePlanRowAsync", "remove the plan row {id:raw}");
+            EditNoPreview("RestorePlanRowAsync", "put the plan row {id:raw} back");
+            EditNoPreview("RefreshPlanAsync", "refresh the plan");
+            EditNoPreview("AddPlanRepeatAsync", "add a repeat to the plan");
+            EditNoPreview("SetPlanRepeatAsync", "change the repeat {id:raw}");
+            EditNoPreview("DeletePlanRepeatAsync", "delete the repeat {id:raw}");
+            Add(HeldOnMemory("ApproveHeldDraftAsync", c => c.Engine.GateDescribeDraftAsync(c), c => c.Engine.GateBasisDraftAsync(c), "the draft in the draft store"));
+            Add(HeldOnMemory("ContinueDraftAsync", c => Task.FromResult("continue the draft " + c.Arg<string>("draftId")), c => c.Engine.GateBasisDraftAsync(c), "the draft in the draft store"));
 
             // ======================================= CONSENT and the RATCHET ============================================
             Add(new GateEntry
             {
                 Method = "SetConsentAsync", Kind = GateKind.Consent, Capability = AgentCapability.Governance,
-                Why = "Agreeing that the model's details may be sent out is the person's, with the field list in front of them, in every preset.",
+                Why = "The person's yes in chat lets the assistant turn Jev on for a model (Kane, 10 Oct 2026). The grant records the assistant as the one who gave it, and the person can turn it off. The Permissions page stays the person's.",
             });
             Add(new GateEntry
             {
@@ -221,6 +245,9 @@ namespace Semanticus.Engine
             // --- scripts and bulk work: the words show what is written
             EditNoPreview("ApplyDaxScriptAsync", "apply this DAX script", c => c.Engine.GateDescribeDaxScript(c.Arg<string>("script")));
             EditNoPreview("ApplyTmdlScriptAsync", "apply this TMDL script", c => c.Engine.GateDescribeTmdlScript(c.Arg<string>("script")));
+            EditNoPreview("ResolveFileRecoveryAsync", "resolve the kept unsaved changes for the file model", c => Task.FromResult(c.Arg<bool>("restore")
+                ? "restore the kept unsaved changes to the file model as one undo step"
+                : "delete the recovery copy for the file model. Undo does not restore the deleted copy"));
             EditNoPreview("ApplySafeFixesAsync", "apply every fix the AI-readiness check calls safe", c => c.Engine.GateDescribeSafeFixes());
             Edit("BpaFixAllAsync", "apply every Best Practice fix that can be made safely", c => c.Engine.GateDescribeBpaFixAll());
             EditNoPreview("MakeAiReadyAsync", "make the model AI ready: write the safe fixes and queue the descriptions that need words");
@@ -314,6 +341,17 @@ namespace Semanticus.Engine
             Edit("SetRoleMemberAsync", "{add?add|remove} {memberName:raw} {add?to|from} the role {roleName:raw}");
             Edit("SetTableObjectPermissionAsync", "set the permission of the role {roleName:raw} on {tableRef} to {permission:raw}");
             Edit("SetColumnObjectPermissionAsync", "set the permission of the role {roleName:raw} on {columnRef} to {permission:raw}");
+            EditNoPreview("WaiveFindingsAsync", "waive these findings: {items}");
+            EditNoPreview("UnwaiveFindingsAsync", "remove many air or bpa waivers: {items}");
+            Edit("ApplyFixesAsync", "apply selected deterministic air or bpa fixes: {items}");
+            Edit("DuplicateObjectsAsync", "duplicate many objects: {items}");
+            Edit("SetDocSectionsAsync", "write many documentation sections: {items}");
+            Edit("SetPerspectiveMembersAsync", "set many perspective cells: {items}");
+            Edit("SetObjectPermissionsAsync", "set many table or column ols cells: {items}");
+            Edit("WriteWordsAsync", "write these words: {items}");
+            EditNoPreview("PlanRowsAsync", "change these plan rows: {items}");
+            Edit("EditObjectsAsync", "make these changes: {items}");
+            Edit("CreateMeasuresAsync", "create these measures: {items}");
             EditNoPreview("WaiveFindingAsync", "waive the finding {ruleId:raw} on {objRef}: {reason}");
             EditNoPreview("UnwaiveFindingAsync", "stop waiving the finding {ruleId:raw} on {objRef}");
 
@@ -322,8 +360,8 @@ namespace Semanticus.Engine
             // it, or builds the model from it. Under Locked each is asked about like any other assistant write. Reads pass, approving is the person's.
             NoPreview("A read of the start plan or its open words: it changes nothing in the model or its files (it may start the plan's own background work, which a rehearsal cannot undo).",
                 "GetStartPlanAsync", "GetStartWordsAsync");
-            Person("Approving the start plan is the person's own act: the build step checks the approval, so an assistant that could approve could build whatever it liked (Plan contract, section 12).",
-                "ApproveStartPlanAsync");
+            // Kane, 10 Oct 2026: the person's word in chat approves. The approval is still void the moment the plan changes (it is bound to the digest).
+            Add(StartEdits("ApproveStartPlanAsync", c => "approve the start plan for " + (c.Engine.GateStartPlanModelName() ?? "the new model") + ", which keeps " + c.Engine.GateStartPlanKept(), AgentCapability.EditLocal));
             Add(new GateEntry
             {
                 Method = "StartModelFromSqlAsync", Kind = GateKind.Hold, Capability = AgentCapability.EditLocal, Also = new[] { AgentCapability.DeployFile },
@@ -337,17 +375,18 @@ namespace Semanticus.Engine
                         + ", and save it in the folder " + (r?.Folder ?? ""));
                 },
             });
+            Add(StartEdits("EditStartPlansAsync", c => "change these start-plan choices: " + System.Text.Json.JsonSerializer.Serialize(c.Arg<Semanticus.Engine.StartPlan.StartPlanEdit[]>("items"))));
             Add(StartEdits("EditStartPlanAsync", c =>
             {
                 var e = c.Arg<Semanticus.Engine.StartPlan.StartPlanEdit>("edit");
                 return "change the start plan: " + (e?.Op ?? "an edit").Replace('_', ' ') + (string.IsNullOrWhiteSpace(e?.Target) ? "" : " " + GateWords.NameOf(e.Target)) + (string.IsNullOrWhiteSpace(e?.Value) ? "" : " to " + e.Value);
             }));
-            // Letting Jev see the source and its tables is the person's own question in every preset, like set_consent: the assistant's call puts it, with the
-            // source, the tables and the sample setting, and answers that it asked. The question is bound to the plan's digest (Sol 6.1, join 6 item 1).
+            // Letting Jev see the source and its tables follows set_consent: the person's yes in chat lets the assistant's call grant it (Kane, 11 Oct 2026).
+            // The grant is bound to the plan's digest, so it covers exactly the source, the tables and the sample setting that were shown.
             Add(new GateEntry
             {
                 Method = "GrantStartDisclosureAsync", Kind = GateKind.Consent, Capability = AgentCapability.Governance,
-                Why = "Agreeing that a source's tables may be sent out is the person's, with the source and the tables in front of them, in every preset.",
+                Why = "The person's yes in chat lets the assistant let Jev see the plan's source and tables (Kane, 11 Oct 2026), bound to the plan's digest. The person can take it back. The Permissions page stays the person's.",
             });
             Add(StartEdits("WriteStartWordsAsync", c =>
             {
@@ -563,6 +602,15 @@ namespace Semanticus.Engine
                     ? Edits("ModelPlanActionAsync", "carry out the plan action {action:raw} on the row {id:raw}", c.Engine.GateDescribeModelPlanActionAsync, preview: false)
                     : Passing("ModelPlanActionAsync", "Propose and cancel write nothing; a done on an aim is refused inside the op (Plan contract, section 12). Its memory is kept beside the model, so a rehearsal does not run it.", preview: false));
             });
+
+            // ======================================= the Studio (1.4, Claude drives; show-tool lane) ==============================
+            // The assistant says what it is doing and what it would do next; the Studio decides what moves. Nothing here changes the model, its
+            // files or the settings, and none of it can be taken back by a rehearsal, so a dry run does not run it.
+            Add(Passing("ShowInStudioAsync", "It moves the Studio's screen and writes a note; it changes nothing in the model, its files or the settings.", preview: false));
+            Add(Passing("SuggestNextAsync", "It offers the person next steps as buttons; it changes nothing in the model, its files or the settings.", preview: false));
+            Add(Passing("NoteAgentCallAsync", "It tells the Studio an assistant call began; it changes nothing and is never written to History.", preview: false));
+            Add(Passing("GetStudioNotesAsync", "A read of the notes the assistant has shown this session."));
+            Person("The Studio reports its own screen; the assistant reads it in show_in_studio's result.", "SetStudioDriverAsync");
 
             return d;
         }

@@ -133,14 +133,14 @@ assert.equal(words.batch, null, 'a neutral record carries no word: it was not ch
   assert.deepEqual(M.rowAction(top), { kind: 'undo', later: 0 }, 'Undo to here on the top row replaces Undo last');
   const describe = rows.find((r) => r.title === 'Describe 4 Customer columns');
   assert.equal(describe.children.length, 4, 'edits are nested under their item');
-  assert.equal(M.metaLine(describe), 'Plan item · you approved · 4 changes');
-  assert.equal(M.rowTitle(describe.children[0], describe), 'Customer[Tier] · description');
+  assert.equal(M.metaLine(describe), 'Plan task · you approved · 4 changes');
+  assert.equal(M.rowTitle(describe.children[0], describe), 'Tier in Customer · description');
   const run = rows.find((r) => r.kind === 'run');
   assert.equal(M.rowTitle(run.children[1], run), '4 measures · format', 'a batch of one kind of change is named by its count');
   assert.equal(M.metaLine(run), 'Workflow run · 7 steps · 3 changes');
   const quantity = rows.find((r) => r.id === 'ed-0000000a');
   assert.equal(M.rowTitle(quantity), 'Set summarize by', 'an operation id is put in words');
-  assert.equal(M.metaLine(quantity), 'Your own edit · Sales[Quantity]', 'the objects each edit touched stay on the row');
+  assert.equal(M.metaLine(quantity), 'Your own edit · Quantity in Sales', 'the objects each edit touched stay on the row');
   const rename = rows.find((r) => r.id === 'ed-00000005');
   assert.equal(M.rowTitle(rename), 'Renamed Total Sales to Sales Amount', 'a sentence the engine wrote is kept as written');
   const saved = rows.find((r) => r.kind === 'saved' && !r.beforeThisSession);
@@ -156,7 +156,7 @@ assert.equal(words.batch, null, 'a neutral record carries no word: it was not ch
   assert.equal(table[1].change, 'Formula');
   assert.deepEqual(M.changeRows(describe.children[0])[0].before, '(empty)');
   const hidden = M.changeRows(rows[0])[0];
-  assert.deepEqual([hidden.object, hidden.change, hidden.before, hidden.after], ['Promotion[PromotionKey]', 'Hidden', 'No', 'Yes']);
+  assert.deepEqual([hidden.object, hidden.change, hidden.before, hidden.after], ['PromotionKey in Promotion', 'Hidden', 'No', 'Yes']);
 
   // Undo to here on the fourth row: the stub walks there in one call, and the four rows strike through together.
   engine.undo('human', describe.id);
@@ -261,7 +261,7 @@ const H = load(join(webview, 'src', 'plan-history.tsx'));
   assert.equal(struck.length, 3, 'three undone edits: the top row and two of the run\'s edits are struck through');
   assert.match(readable(html), /Redo to here/);
   assert.match(readable(html), /Undo to here \+1 later/, 'a live row says how many later changes go with it');
-  assert.match(readable(html), /Before this session Undo is not available for these\./);
+  assert.match(readable(html), /From an earlier visit Undo cannot take these back\./);
   assert.match(readable(html), /Saved version: Before AI prep/);
   assert.equal((html.match(/data-testid="ph-restore-confirm"/g) || []).length, 0, 'no question until Restore is pressed');
 
@@ -286,9 +286,9 @@ const H = load(join(webview, 'src', 'plan-history.tsx'));
   }));
   const text = readable(html);
   assert.match(text, /Your assistant 10:41/);
-  assert.match(text, /Customer\[Tier\] · description/);
-  assert.match(text, /Part of: Describe 4 Customer columns · Plan item · you approved · 4 changes/);
-  assert.match(text, /Object Change Before After Customer\[Tier\] Description \(empty\) Loyalty tier: Bronze, Silver or Gold\./);
+  assert.match(text, /Tier in Customer · description/);
+  assert.match(text, /Part of: Describe 4 Customer columns · Plan task · you approved · 4 changes/);
+  assert.match(text, /Object Change Before After Tier in Customer Description \(empty\) Loyalty tier: Bronze, Silver or Gold\./);
   assert.match(text, /Verified\. The check passed: all 4 columns now have a description\. Evidence/);
   assert.match(text, /Undo to here Takes back this and 5 later changes\./);
   assert.match(text, /Session change 53 · verified record 40 · record intact/);
@@ -296,7 +296,7 @@ const H = load(join(webview, 'src', 'plan-history.tsx'));
   const old = rows.find((r) => r.beforeThisSession && r.kind === 'item');
   const oldHtml = readable(renderToStaticMarkup(React.createElement(H.HistoryDetail, {
     row: old, chain, now, busy: false, sessionId: SESSION_NOW, onClose() {}, onAction() {}, onObject() {}, onJump() {} })));
-  assert.match(oldHtml, /Before this session\. Undo is not available\. Restore a saved version instead\./);
+  assert.match(oldHtml, /From an earlier visit\. Undo cannot take it back\. Restore a saved version instead\./);
   assert.doesNotMatch(oldHtml, /Undo to here/);
 
   // "Open in <page>": a row caused by a plan item links to the page that does that item's work. The Plan

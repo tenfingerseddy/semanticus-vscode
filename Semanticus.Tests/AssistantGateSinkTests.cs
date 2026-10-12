@@ -24,7 +24,7 @@ namespace Semanticus.Tests
         public static IEnumerable<object[]> Sinks() => new[]
         {
             new object[] { "commit" }, new object[] { "model-files" }, new object[] { "path" }, new object[] { "discard" },
-            new object[] { "consent" }, new object[] { "workflow-binding" }, new object[] { "cicd" },
+            new object[] { "workflow-binding" }, new object[] { "cicd" },
         };
 
         /// <summary>One case per sink: the write an assistant would make through it, made directly on the engine as origin "agent", and
@@ -37,8 +37,7 @@ namespace Semanticus.Tests
             {
                 var dir = Path.GetDirectoryName(path)!;
                 await engine.SetDescriptionAsync("measure:Sales/Margin", "a person's unsaved words", "human");
-                // consent is the person's in EVERY preset, so its case is judged under the standard one, where a marker edit is not asked about
-                AgentPolicyStore.SetPreset(sink == "consent" ? "standard" : AssistantGateKit.Locked, "human");
+                AgentPolicyStore.SetPreset(AssistantGateKit.Locked, "human");
                 Exception refused = null;
                 bool landed;
                 switch (sink)
@@ -66,15 +65,6 @@ namespace Semanticus.Tests
                         // by the assistant's tool, directly on the engine
                         try { await McpTools.OpenModel(engine, path, discardUnsaved: true); } catch (Exception ex) { refused = ex; }
                         landed = string.IsNullOrEmpty(await sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures["Margin"].Description));
-                        break;
-                    }
-                    case "consent":
-                    {
-                        try { await engine.SetConsentAsync(Semanticus.Decisions.DecisionRegistry.DeclaredFields.ToArray(), Semanticus.Decisions.DecisionRegistry.ConsentSchemaVersion, "agent"); }
-                        catch (Exception ex) { refused = ex; }
-                        landed = (await engine.GetConsentAsync()).Granted;
-                        // the sink answers "asked" rather than throwing: that is a refusal to agree
-                        if (!landed && refused == null) refused = new InvalidOperationException("asked");
                         break;
                     }
                     case "cicd":
@@ -151,13 +141,13 @@ namespace Semanticus.Tests
             }
         }
 
-        // ---- Q4: consent is the person's, in every preset ---------------------------------------------------------------------
+        // ---- Q4: the person's word in chat is enough for consent, in every preset (Kane, 10 Oct 2026, 1.4 chatyes) ----------------
 
         [Theory]
         [InlineData("open")]
         [InlineData("standard")]
         [InlineData("locked")]
-        public async Task The_assistant_never_gives_consent_it_puts_the_persons_own_question_and_answers_asked(string preset)
+        public async Task The_assistant_gives_consent_on_the_persons_word_in_chat_and_it_is_recorded_as_the_assistants(string preset)
         {
             var (engine, sessions, _) = await OpenAsync("consent-" + preset);
             using (engine)
@@ -166,22 +156,13 @@ namespace Semanticus.Tests
                 var gate = Gate(engine);
                 var fields = Semanticus.Decisions.DecisionRegistry.DeclaredFields.ToArray();
                 var version = Semanticus.Decisions.DecisionRegistry.ConsentSchemaVersion;
-                var answer = await gate.SetConsentAsync(fields, version, "agent");
-                Assert.True(answer.Asked);
-                Assert.False(answer.Granted);
-                Assert.Contains(fields[0], answer.Question);
-                var asked = await OnlyPendingAsync(engine);
-                Assert.Contains(fields[0], asked.Summary);
-                Assert.False((await engine.GetConsentAsync()).Granted);
-                // only the person's yes lets the same call through, and then it is that agreement
-                await ApproveAsync(engine);
                 var done = await gate.SetConsentAsync(fields, version, "agent");
                 Assert.False(done.Asked);
                 Assert.True(done.Granted);
-                // the yes was for that list: another list is another question
+                Assert.Equal("agent", done.GrantedBy);
+                Assert.Empty(await engine.ListPendingApprovalsAsync());
+                Assert.True((await engine.GetConsentAsync()).Current);
                 await engine.WithdrawConsentAsync("human");
-                var other = await gate.SetConsentAsync(fields.Take(1).ToArray(), version, "agent");
-                Assert.True(other.Asked);
                 Assert.False((await engine.GetConsentAsync()).Granted);
             }
         }

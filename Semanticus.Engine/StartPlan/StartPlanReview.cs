@@ -269,7 +269,7 @@ namespace Semanticus.Engine.StartPlan
                 foreach (var culture in cultures)
                 {
                     string terms;
-                    try { terms = TabularEditor.TOMWrapper.Linguistics.SynonymHelper.GetSynonyms(obj, culture); } catch { continue; }
+                    try { terms = Semanticus.Analysis.SynonymIndex.Terms(obj, culture); } catch { continue; }   // one parse per schema, not one per object
                     foreach (var term in StartPlanWords.Terms(terms))
                     {
                         if (IsOwnNameSynonym(obj.Name, term)) continue;

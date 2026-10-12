@@ -292,6 +292,12 @@ assert.match(readable(chip('pro')), /Pro/);
 assert.doesNotMatch(readable(chip('pro')), /Get Pro/);
 assert.match(chip('pro'), /pro-chip-is/);
 assert.equal(chip('unknown'), '', 'no chip on a guess');
+// The licence is Pro but the Pro service refused it: the chip says so and carries a Billing link, so the screen never says Pro and refuses Pro at once.
+const off = renderToStaticMarkup(React.createElement(P.ProChipView, { tier: 'pro', here: false, onOpen: noop, planInactive: true, billingUrl: 'https://semanticus.com.au/pro' }));
+assert.match(readable(off), /Pro, plan not active/);
+assert.match(off, /data-testid="pro-chip-billing"[^>]*>Billing</);
+assert.doesNotMatch(readable(chip('pro')), /Billing|not active/, 'an active plan shows neither');
+assert.doesNotMatch(readable(renderToStaticMarkup(React.createElement(P.ProChipView, { tier: 'free', here: false, onOpen: noop, planInactive: true }))), /not active/, 'a free session never shows the Pro plan as inactive');
 
 // ===================================================================================================
 // 3. The wiring.

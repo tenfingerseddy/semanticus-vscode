@@ -247,7 +247,7 @@ namespace Semanticus.Engine
                     {
                         lines.Add(Line(ask, itemId, "set_display_folder", "displayFolder", "Put in the " + folder + " folder",
                             ask.CurrentFolder, folder, answer.Confidence, bar,
-                            reason: folder + " already holds " + JevFamily.Count(uses, "item", "items")
+                            reason: folder + " already holds " + JevFamily.Count(uses, "thing", "things")
                                   + " in this model, and this measure belongs with them.",
                             check: folder + " is a folder this model already uses."
                                  + (ask.FoldersNotOffered > 0
@@ -273,13 +273,13 @@ namespace Semanticus.Engine
                         refused.Add(new ModelPlanChangeRefusal
                         {
                             Target = ask.Ref,
-                            Reason = "It reads as money, but this model has no money format yet, so no currency was "
+                            Reason = "It looks like money, but this model has no money format yet, so no currency was "
                                    + "picked for it. Choose one by hand.",
                         });
                         return;
                     }
                     format = ask.MoneyFormat;
-                    reason = "It reads as an amount of money, and " + format + " is the money format this model already uses.";
+                    reason = "It looks like an amount of money, and " + format + " is the money format this model already uses.";
                     check = format + " is already used by " + JevFamily.Count(ask.MoneyFormatUses, "measure", "measures")
                           + " in this model.";
                 }
@@ -315,7 +315,7 @@ namespace Semanticus.Engine
             switch (family)
             {
                 case "percent":
-                    return "It reads as a share or a rate" + (ask.Divides ? ", and its formula divides one number by another" : "")
+                    return "It looks like a share or a rate" + (ask.Divides ? ", and its formula divides one number by another" : "")
                          + ", so it shows out of 100.";
                 case "whole_number":
                     return "It counts whole things" + (ask.CountsRows ? ", and its formula counts rows" : "")
@@ -325,7 +325,7 @@ namespace Semanticus.Engine
                 case "date_or_time":
                     return "It returns a date or a time, so it shows as a date.";
                 default:
-                    return "It reads as a number of this kind, so it uses the matching format.";
+                    return "It looks like a number of this kind, so it uses the matching format.";
             }
         }
 

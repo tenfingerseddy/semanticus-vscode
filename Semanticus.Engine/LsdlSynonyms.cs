@@ -74,16 +74,123 @@ namespace Semanticus.Engine
             catch (Exception ex) when (ex is InvalidOperationException || ex is JsonException) { refusal = ex.Message; return null; }
         }
 
-        private static (JObject Lsdl, SetOutcome Outcome, JObject Entity) Compose(TabularNamedObject obj, Culture culture, string synonyms, IEnumerable<string> removed)
+        /// <summary>One object's words for <see cref="SetSynonymsMany"/>: the list <see cref="SetSynonyms(TabularNamedObject, Culture, string, IEnumerable{string})"/>
+        /// takes, and the words the caller took out of a list it had read (null for none).</summary>
+        public sealed class SynonymWrite
+        {
+            public TabularNamedObject Object;
+            public string Synonyms;
+            public IEnumerable<string> Removed;
+        }
+
+        /// <summary>What <see cref="SetSynonymsMany"/> did: how many items were written, the reason for each item it did
+        /// not write (by the item's index), and the prune count and advisory a single write reports.</summary>
+        public sealed class SetManyOutcome
+        {
+            public int Written;
+            public int PrunedEntities;
+            public string Warning;   // null on the clean path
+            public Dictionary<int, string> Refused = new Dictionary<int, string>();
+            /// <summary>The items whose entity ended up different from how it began (a new entity counts). When the call pruned dead
+            /// entities and no item changed, the first written item stands for the prune.</summary>
+            public HashSet<int> Changed = new HashSet<int>();
+        }
+
+        /// <summary>
+        /// Write many objects' synonyms into one culture with ONE parse and ONE serialise of the linguistic schema. This is
+        /// the call for a bulk writer (write_words, any "many objects in one commit" path). WHY: each
+        /// <see cref="SetSynonyms(TabularNamedObject, Culture, string)"/> parses, prunes and rewrites the whole schema and
+        /// sets Culture.Content once, so looping it over 40 objects in one commit cost 40 parses, 40 serialises and 40
+        /// full copies of the schema on the undo stack. Here the schema is read once, every item is applied to the same
+        /// document in order, and Culture.Content is set once: one undo action, one copy of the schema, one rescan.
+        ///
+        /// Each item is written exactly as a single write would write it (same entity lookup, same new-entity shape, same
+        /// term rules). Two things are read once for the whole call rather than per item: the prune of dead entities (an
+        /// item cannot make a new dead one) and the schema's style (key case, binding shape, stamps), which a single write
+        /// reads before its own entity is made, so here no entity made by this call votes on the style of the next one.
+        /// An item a single write would refuse (a hidden object, or one that cannot own terms) is not written, and its
+        /// reason is in <see cref="SetManyOutcome.Refused"/>; the other items still are. Nothing is written when no item
+        /// is. Must run inside the caller's MutateAsync, like every writer here: the one Content change joins its undo
+        /// batch. Throws, writing nothing, when the culture has no JSON schema or the schema cannot be read; a refusal by
+        /// the validator at the one write throws the same actionable error a single write does.
+        /// </summary>
+        public static SetManyOutcome SetSynonymsMany(Culture culture, IReadOnlyList<SynonymWrite> items)
+        {
+            var result = new SetManyOutcome();
+            if (items == null || items.Count == 0) return result;
+            RequireSchema(culture);
+            var draft = Open(culture.Model, culture);
+            draft.Owned = OwnedEntities(culture.Model, draft.Entities);
+            result.PrunedEntities = draft.Outcome.PrunedEntities;
+            result.Warning = draft.Outcome.Warning;
+            for (var i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                if (item?.Object == null) { result.Refused[i] = "set_synonyms: the item names no object."; continue; }
+                try
+                {
+                    draft.Owned.TryGetValue(item.Object, out var existing);
+                    var before = existing?.DeepClone();
+                    var entity = Apply(draft, item.Object, item.Synonyms, item.Removed);
+                    result.Written++;
+                    if (before == null || !JToken.DeepEquals(before, entity)) result.Changed.Add(i);
+                }
+                catch (InvalidOperationException ex) { result.Refused[i] = ex.Message; }
+            }
+            if (result.Written > 0 && result.Changed.Count == 0 && result.PrunedEntities > 0)
+                result.Changed.Add(Enumerable.Range(0, items.Count).First(i => !result.Refused.ContainsKey(i)));
+            if (result.Written > 0) Commit(culture, draft.Lsdl);
+            return result;
+        }
+
+        /// <summary>A parsed schema being edited: the document, its Entities, the style new terms and entities follow,
+        /// and (for many writes) which entity each object owns, found once rather than by a walk per item.</summary>
+        private sealed class Draft
+        {
+            public JObject Lsdl, Entities;
+            public SetOutcome Outcome;
+            public EntityStyle Style;
+            public Dictionary<TabularNamedObject, JObject> Owned;
+        }
+
+        private static void RequireSchema(Culture culture)
         {
             if (culture == null || culture.ContentType != ContentType.Json || string.IsNullOrEmpty(culture.Content))
                 throw new InvalidOperationException($"Can't set synonyms: culture '{culture?.Name}' has no linguistic schema. Run create_linguistic_schema first.");
+        }
 
+        /// <summary>The refusal a single write would give for this object, before anything is written: hidden, or not a
+        /// table, column, measure, hierarchy or level. A bulk writer calls it per item so a refused item is rolled back
+        /// whole, then writes the others with <see cref="SetSynonymsMany"/>. Throws InvalidOperationException.</summary>
+        public static void RefuseIfUnwritable(TabularNamedObject obj)
+        {
+            RefuseHidden(obj);
+            if (!(obj is Table || obj is Measure || obj is Column || obj is Hierarchy || obj is Level))
+                throw new InvalidOperationException(NoTermsMessage(obj));
+        }
+
+        private static string NoTermsMessage(TabularNamedObject obj) =>
+            $"set_synonyms: {Describe(obj)} is not a table/column/measure/hierarchy/level, so it can't own linguistic terms.";
+
+        private static void RefuseHidden(TabularNamedObject obj)
+        {
             if (IsEffectivelyHidden(obj))
                 throw new InvalidOperationException(
                     $"set_synonyms: {Describe(obj)} is hidden. Copilot ignores hidden objects, so synonyms on it are dead weight and a collision risk in the linguistic schema. Unhide the object, or target the visible duplicate instead.");
+        }
 
-            var model = obj.Model;
+        private static (JObject Lsdl, SetOutcome Outcome, JObject Entity) Compose(TabularNamedObject obj, Culture culture, string synonyms, IEnumerable<string> removed)
+        {
+            RequireSchema(culture);
+            RefuseHidden(obj);
+            var draft = Open(obj.Model, culture);
+            var jEntity = Apply(draft, obj, synonyms, removed);
+            return (draft.Lsdl, draft.Outcome, jEntity);
+        }
+
+        /// <summary>Parse the culture's schema once, prune its dead entities, and read the style new words follow.</summary>
+        private static Draft Open(Model model, Culture culture)
+        {
             var lsdl = ParseLsdl(culture.Content);
             if (!(lsdl["Entities"] is JObject jEntities)) lsdl["Entities"] = jEntities = new JObject();
 
@@ -99,12 +206,28 @@ namespace Semanticus.Engine
             // stamp), even when the only stamps left sit on words since deleted; unstamped where it does not.
             if (desktopStamps) style.AuthoredTerm["LastModified"] = null;   // placeholder: stamped per write
             else style.AuthoredTerm.Remove("LastModified");
-            var jEntity = FindEntity(obj, jEntities) ?? CreateEntity(obj, jEntities, style);
+            return new Draft { Lsdl = lsdl, Entities = jEntities, Outcome = outcome, Style = style };
+        }
+
+        /// <summary>Write one object's terms into the draft: its entity (made in the schema's style when it has none) and
+        /// the terms <see cref="SetTerms"/> leaves. Throws InvalidOperationException, touching nothing, for an object a
+        /// write refuses.</summary>
+        private static JObject Apply(Draft draft, TabularNamedObject obj, string synonyms, IEnumerable<string> removed)
+        {
+            RefuseHidden(obj);
+            JObject jEntity;
+            if (draft.Owned == null) jEntity = FindEntity(obj, draft.Entities);
+            else draft.Owned.TryGetValue(obj, out jEntity);
             if (jEntity == null)
-                throw new InvalidOperationException($"set_synonyms: {Describe(obj)} is not a table/column/measure/hierarchy/level, so it can't own linguistic terms.");
-            SetTerms(jEntity, obj, synonyms ?? "", style,
+            {
+                jEntity = CreateEntity(obj, draft.Entities, draft.Style);
+                if (jEntity == null)
+                    throw new InvalidOperationException(NoTermsMessage(obj));
+                draft.Owned?.Add(obj, jEntity);
+            }
+            SetTerms(jEntity, obj, synonyms ?? "", draft.Style,
                 removed == null ? null : new HashSet<string>(removed, StringComparer.OrdinalIgnoreCase));
-            return (lsdl, outcome, jEntity);
+            return jEntity;
         }
 
         /// <summary>create_linguistic_schema's self-heal: prune dead entities from an EXISTING schema, reassigning Content only
@@ -491,6 +614,17 @@ namespace Semanticus.Engine
         };
 
         // ---- entity find/create + terms (donor port) --------------------------------------------------------
+
+        /// <summary>The entity each object owns, as <see cref="FindEntity"/> finds it (the first in the document whose
+        /// binding resolves to the object), for every object at once.</summary>
+        private static Dictionary<TabularNamedObject, JObject> OwnedEntities(Model m, JObject jEntities)
+        {
+            var owned = new Dictionary<TabularNamedObject, JObject>(ReferenceEqualityComparer.Instance);
+            foreach (var e in jEntities.Properties())
+                if (e.Value is JObject jEntity && TryResolve(m, jEntity, out var bound) && bound != null)
+                    owned.TryAdd(bound, jEntity);
+            return owned;
+        }
 
         private static JObject FindEntity(TabularNamedObject obj, JObject jEntities)
         {

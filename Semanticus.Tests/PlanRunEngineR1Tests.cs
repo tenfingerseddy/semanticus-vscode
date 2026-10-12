@@ -336,8 +336,8 @@ namespace Semanticus.Tests
             var words = Row(plan, "words/model");
             Assert.NotNull(words);
             Assert.Equal(PlanDoers.Assistant, words.Doer);
-            Assert.StartsWith("Write ", words.Title, StringComparison.Ordinal);
-            Assert.Contains("description", words.Title, StringComparison.Ordinal);
+            Assert.StartsWith("Write words for Copilot", words.Title, StringComparison.Ordinal);   // the title names the task, the sub line the kinds (6343ed4b, hero15 words)
+            Assert.Contains(words.Diff.Concat(words.Tables.SelectMany(t => t.Diff)), d => d.Contains("a description", StringComparison.Ordinal));
             Assert.Contains(words.Rules, r => r.StartsWith("DESC-", StringComparison.Ordinal));
             Assert.Equal(PlanGoals.Ai, words.Goal);
             Assert.DoesNotContain("—", words.Title);

@@ -52,7 +52,9 @@ namespace Semanticus.Engine
         /// <summary>One of <see cref="PlanDoers"/> except semanticus. Null means Your assistant (Kane, 24 Sep).</summary>
         public string Doer { get; set; }
 
-        /// <summary>The page a Send came from, as a tool id. Present makes the source "you"; absent, "words".</summary>
+        /// <summary>The page a Send came from, as a tool id. Present makes the source "you"; absent, "words". The one word
+        /// that is not a page is <see cref="PlanTasks.SuggestSourcePage"/>: a button of the Studio's suggested next steps
+        /// (1.4). It keeps the source "words", links back to no page and offers no jump.</summary>
         public string SourcePage { get; set; }
 
         /// <summary>The page the Plan's field SHOWED for these words when Enter was pressed, as a tool id, or null when
@@ -93,20 +95,24 @@ namespace Semanticus.Engine
         public const int MaxNoteChars = 1000;
         public const int MaxSendKeyChars = 400;
 
+        /// <summary>The source page of a task added from a button of the Studio's suggested next steps (suggest_next, 1.4).
+        /// It is a word for where the task came from, not a page of the Studio.</summary>
+        public const string SuggestSourcePage = "suggest";
+
         /// <summary>Said on every row of a model that has nowhere to keep its tasks (contract 2.3).</summary>
-        public const string NotKeptSentence = "Not kept: save the model to keep your tasks.";
+        public const string NotKeptSentence = "Not kept yet. Save the model to keep your tasks.";
 
         // The state notes of contract 1.4, word for word.
-        public const string OnNextCallNote = "on its next call";
-        public const string PausedByYouNote = "Paused by you. Nothing is offered.";
+        public const string OnNextCallNote = "when your assistant next checks the Plan";
+        public const string PausedByYouNote = "You paused your assistant's tasks. It gets this one when you turn them back on.";
         public const string SinceLastCallNote = "since its last call";
         public const string YouTookItNote = "you took it";
 
         /// <summary>The note on a task History reopened (UAT S01-j2-007).</summary>
-        public const string TakenBackNote = "Its change was undone in History, so it is open again.";
+        public const string TakenBackNote = "Its change was undone, so the task is open again.";
 
         /// <summary>Said when a task's words were longer than a title: nothing was cut.</summary>
-        public const string KeptWholeSentence = "Its title is the start of your text, and the whole text is kept with the task.";
+        public const string KeptWholeSentence = "The title is the start of your text. The task keeps all of your text.";
 
         /// <summary>A title for text longer than a title holds: its start, cut at the last whole word that fits,
         /// with "..." to say there is more. The whole text is kept beside it, so the cut loses nothing.</summary>
@@ -272,7 +278,7 @@ namespace Semanticus.Engine
                 case PlanDoneWhen.YouMark:
                     return "You mark it done.";
                 default:
-                    return "Semanticus checks the model.";
+                    return "Semanticus marks it done once the problem is gone.";
             }
         }
 
@@ -343,14 +349,16 @@ namespace Semanticus.Engine
 
             item.StateWord = StateWordOf(facts);
             if (allDropped && item.StateWord == PlanStateWords.SetAside && item.Status != ModelPlanStatuses.Skipped) item.StateNote = AllAcceptedNote;
-            else if (allDropped && item.StateWord == PlanStateWords.NeedsYou && item.Doer != PlanDoers.You) item.StateNote = AllUntickedNote;
+            else if (allDropped && item.StateWord == PlanStateWords.NeedsYou && item.Doer != PlanDoers.You)
+                item.StateNote = string.IsNullOrWhiteSpace(item.ChangeSet?.FailureReason) ? AllUntickedNote
+                    : item.ChangeSet.FailureReason + " " + LocalEngine.OpenRowOnPlanSentence;
             else item.StateNote = gone != null && item.StateWord == PlanStateWords.NeedsYou
                 ? PlanTaskObjects.GoneSentence(gone)
                 : NoteFor(item, task, queue);
         }
 
-        internal const string AllAcceptedNote = "You accepted every change on this row, so there is nothing for Semanticus to do. Take the acceptance off to bring it back.";
-        internal const string AllUntickedNote = "Every change on this row is unticked, so Run the plan leaves it alone. Tick the ones you want, or set the row aside.";
+        internal const string AllAcceptedNote = "You accepted every change on this task, so Semanticus has nothing to do. Take the acceptance off to bring it back.";
+        internal const string AllUntickedNote = "Every change on this task is unticked, so Run the plan skips it. Tick the ones you want, or set the task aside.";
 
         /// <summary>The row has a worked-out set with lines, and not one of them is ticked. <paramref name="acceptedAll"/> is true when each of
         /// those lines was left out because the person accepted its finding (the notes the plan puts on such a line), not merely unticked.</summary>
@@ -407,17 +415,17 @@ namespace Semanticus.Engine
                     ? "You sent this from " + (jump?.Label ?? "a page") + " on " + Day(task.CreatedUtc) + "."
                     : task.Source == PlanSources.Repeat
                         ? "A repeat you set up brought this back on " + Day(task.CreatedUtc) + "."
-                        : aim ? "You added this to the target on " + Day(task.CreatedUtc) + "."
+                        : aim ? "You added this aim on " + Day(task.CreatedUtc) + "."
                         : "You added this on " + Day(task.CreatedUtc) + ".",
             };
             // What an aim always said: the engine cannot read the change out of the words, and where it is done
             // by hand, or that the words name no place (a guessed page would be worse than none).
             if (aim)
                 why.Add(jump == null
-                    ? "Nothing in the model matches it yet, so the plan cannot work out the change, and the "
-                      + "words do not name a page to do it on."
-                    : "Nothing in the model matches it yet, so the plan cannot work out the change. It is done "
-                      + "by hand on " + jump.Label + ".");
+                    ? "Nothing in the model matches it yet, so Semanticus cannot work out the change. "
+                      + "The words also do not name a page to do it on."
+                    : "Nothing in the model matches it yet, so Semanticus cannot work out the change. "
+                      + "Do it yourself on " + jump.Label + ".");
             if (task.DoneUtc.HasValue && task.State == PlanTaskStates.Done)
                 why.Add((task.DoneBy == PlanDoers.You ? "You marked it done on " : "It was marked done on ")
                         + Day(task.DoneUtc.Value) + ".");
@@ -501,8 +509,8 @@ namespace Semanticus.Engine
             }
             return IsAim(task)
                 ? (task.State == PlanTaskStates.Done
-                    ? "You added this to the target. You marked it done."
-                    : "You added this to the target. Nothing exists yet.")
+                    ? "You added this aim. You marked it done."
+                    : "You added this aim. Nothing in the model does it yet.")
                 : task.Source == PlanSources.You ? "You added this." : "Your words.";
         }
 
@@ -564,6 +572,7 @@ namespace Semanticus.Engine
         {
             var page = string.IsNullOrWhiteSpace(task.SourcePage) ? null : AskRouteCatalog.Find(task.SourcePage);
             if (page != null) return new ModelPlanJump { Tool = page.Id, Label = page.Label };
+            if (string.Equals(task.SourcePage, PlanTasks.SuggestSourcePage, StringComparison.Ordinal)) return null;
             var field = string.IsNullOrWhiteSpace(task.FieldPage) ? null : AskRouteCatalog.Find(task.FieldPage);
             if (field != null && !string.Equals(field.Id, AskRouteCatalog.DataTool, StringComparison.Ordinal))
                 return new ModelPlanJump { Tool = field.Id, Label = field.Label };
@@ -602,11 +611,10 @@ namespace Semanticus.Engine
 
     // ---- the person's controls (contract sections 3.3, 4 and 12) ---------------------------------------------
     //
-    // PERSON-ONLY, AND THAT IS A GOVERNANCE EXCEPTION, NOT A MISSING DOOR. Adding a task, the queue switch,
-    // Pause and Resume, Up, the doer switch and the note are reachable only through HumanGovernanceRpcTarget,
-    // which an agent connection never registers, and through no MCP tool. An assistant must not be able to
-    // invent work for itself or another assistant, or steer the person's controls over it. The assistant READS
-    // every one of these settings on get_model_plan, on its next call.
+    // ON BOTH DOORS (Kane, 10 Oct 2026: the person's word in chat is enough). Adding a task, the queue switch,
+    // Pause and Resume, Up, the doer switch and the note are on EngineRpcTarget and on the MCP door (add_plan_task,
+    // set_assistant_queue, pause_plan_item, move_plan_task_up, set_plan_doer, set_plan_task_note), each through the
+    // gate. The assistant READS every one of these settings on get_model_plan, on its next call.
 
     public sealed partial class LocalEngine
     {
@@ -637,6 +645,7 @@ namespace Semanticus.Engine
                         }), StringComparer.Ordinal);
                     state.AssistantQueue = held.AssistantQueue;
                     state.Repeats = JsonSerializer.Deserialize<List<PlanRepeat>>(JsonSerializer.Serialize(held.Repeats, TaskCopy), TaskCopy);
+                    state.ClearedDone = new List<string>(held.ClearedDone);
                 }
                 return state;
             }
@@ -717,7 +726,7 @@ namespace Semanticus.Engine
             if (bound.Nowhere)
             {
                 var held = _sessionPlanTasks.GetOrCreateValue(bound.Context);
-                lock (held) { change(held); PlanTasks.Trim(held); }
+                lock (held) { CountPlanRowChanges(change)(held); PlanTasks.Trim(held); }
                 return;
             }
             WritePlanMemory(bound, change);
@@ -727,6 +736,7 @@ namespace Semanticus.Engine
         /// re-reads. The agent door learns on its next call (golden rule 2's stated cost).</summary>
         private void TellThePlanMoved(PlanMemoryBinding bound)
         {
+            if (_planRowBatch.Value != null) return;
             try
             {
                 if (ReferenceEquals(_sessions.CurrentContext, bound.Context))
@@ -785,7 +795,7 @@ namespace Semanticus.Engine
             if (doneWhen == PlanDoneWhen.ModelCheck && !itemLink
                 && (origin?.Kind != PlanOriginKinds.Finding || PlanTasks.SplitFindingRef(origin.Ref).Rule == null))
                 throw new ArgumentException("Semanticus can check the model for this only when the task is linked to a "
-                    + "finding. Link the finding, or let the doer say when it is done.", nameof(request));
+                    + "finding. Link the finding, or let whoever does it say when it is done.", nameof(request));
             var slot = string.IsNullOrWhiteSpace(request.Slot) ? null : request.Slot.Trim();
             if (slot != null && !PlanTasks.IsSlot(slot))
                 throw new ArgumentException("A slot is \"doc:<section>|<object>\" or \"change:<item id>\".", nameof(request));
@@ -793,6 +803,9 @@ namespace Semanticus.Engine
                 throw new ArgumentException("Name the objects that should have words, so Semanticus can check them.", nameof(request));
 
             var page = string.IsNullOrWhiteSpace(request.SourcePage) ? null : request.SourcePage.Trim();
+            // A suggested next step is the person's own words that Claude drafted for them to press: not a page, so no
+            // "you" source mark, no link back and no jump (contract section 6). The word is kept for the record.
+            var suggested = string.Equals(page, PlanTasks.SuggestSourcePage, StringComparison.Ordinal);
             var sendKey = string.IsNullOrWhiteSpace(request.SendKey) ? null : request.SendKey.Trim();
             if (sendKey != null && sendKey.Length > PlanTasks.MaxSendKeyChars)
                 throw new ArgumentException("The send key is longer than " + PlanTasks.MaxSendKeyChars + " characters.", nameof(request));
@@ -803,6 +816,7 @@ namespace Semanticus.Engine
             // again or read back from a cache: an answer on screen outlives any cache, and a second ask could come back
             // different. A Send names its own page, and a linked task is not typed words.
             var fieldPage = page == null && origin == null ? PlanTasks.FieldPageOf(request.FieldPage) : null;
+            if (suggested && origin == null) origin = new PlanOriginLink { Kind = PlanOriginKinds.Words };
             var bound = BindPlanMemory();
             string id = null;
             var existing = false;
@@ -825,7 +839,7 @@ namespace Semanticus.Engine
                     Id = id,
                     Words = words,
                     FullText = fullText,
-                    Source = page == null ? PlanSources.Words : PlanSources.You,
+                    Source = page == null || suggested ? PlanSources.Words : PlanSources.You,
                     SourcePage = page,
                     FieldPage = fieldPage,
                     Brief = brief,
@@ -858,7 +872,7 @@ namespace Semanticus.Engine
                 Sentence = existing
                     ? "This is already on the plan. Nothing was added."
                     : (doer == PlanDoers.Assistant
-                        ? "Added to the plan for your assistant. It is offered on its next call."
+                        ? "Added to the plan for your assistant. Your assistant sees it the next time it checks the plan."
                         : "Added to the plan for you.")
                     + (!existing && fullText != null ? " " + PlanTasks.KeptWholeSentence : string.Empty)
                     + (bound.Nowhere ? " " + PlanTasks.NotKeptSentence : string.Empty),
@@ -885,7 +899,7 @@ namespace Semanticus.Engine
         /// <summary>Switch who does a row: "Give to your assistant", "I'll do it", and "Let it run" only on a row
         /// the engine can apply with no words. On a task the done-when follows the doer where it was the doer's
         /// own default, and the task joins or leaves the end of the assistant's order.</summary>
-        public async Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer)
+        public async Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer, string origin = "human")
         {
             var to = PlanDoers.Normalise(doer)
                 ?? throw new ArgumentException("The doer is one of: " + string.Join(", ", PlanDoers.All) + ".", nameof(doer));
@@ -933,7 +947,8 @@ namespace Semanticus.Engine
             var revision = _sessions.Current?.Revision ?? 0;
             TryWritePlanMemory(bound, state => state.History.Add(new ModelPlanHistoryEntry
             {
-                When = DateTimeOffset.UtcNow, Kind = ModelPlanHistoryKinds.Given, Actor = ModelPlanActors.You,
+                When = DateTimeOffset.UtcNow, Kind = ModelPlanHistoryKinds.Given,
+                Actor = string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase) ? ModelPlanActors.Assistant : ModelPlanActors.You,
                 ItemId = given.Id, Title = given.Words, Revision = revision,
                 Sentence = "Gave \"" + given.Words + "\" to your assistant again.", Text = "Gave \"" + given.Words + "\" to your assistant again.",
             }));
@@ -959,13 +974,13 @@ namespace Semanticus.Engine
                 if (open != null)
                     return new ModelPlanActionResult { ItemId = open.Id, Action = "add", Performed = false, Revision = plan.Revision, Plan = plan,
                         Sentence = "This is already on the plan. Nothing was added." };
-                throw new ArgumentException("Nothing on the plan has that id. It may have been finished or set aside since the plan was "
-                    + "last read.", "id");
+                throw new ArgumentException("No task on the plan has that id. It may be done or set aside now. "
+                    + "Get the plan again.", "id");
             }
             if (Composer.DraftRows.IsDraftRow(row.Id) || IsRunRow(row.Id))
-                throw new ArgumentException("A draft or a workflow run is handed over from inside it, not from its row.", "id");
+                throw new ArgumentException("Hand over a draft or a workflow run from inside it, not from its task.", "id");
             if (!PlanStateWords.IsOpen(row.StateWord))
-                throw new ArgumentException("That row is finished or set aside, so there is nothing to give.", "id");
+                throw new ArgumentException("That task is done or set aside, so there is nothing to hand over.", "id");
 
             var objects = (row.Writes ?? Array.Empty<string>())
                 .Where(w => !string.IsNullOrWhiteSpace(w) && w.Contains(':') && !w.StartsWith("model:", StringComparison.OrdinalIgnoreCase))
@@ -1040,7 +1055,7 @@ namespace Semanticus.Engine
             string id, Action<PlanTask> onTask, Action<PlanRowResidue, string> onResidue, bool reorder)
         {
             if (string.IsNullOrWhiteSpace(id))
-                throw new ArgumentException("Name the row. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task. Call get_model_plan for the ids.", nameof(id));
             return await UnderReadyGateAsync(() => ChangeRowUnderGateAsync(id.Trim(), onTask, onResidue, reorder)).ConfigureAwait(false);
         }
 
@@ -1066,8 +1081,8 @@ namespace Semanticus.Engine
                 var before = await ComposeAsync(null, bound).ConfigureAwait(false);
                 var row = before.Items.FirstOrDefault(i => string.Equals(i.Id, key, StringComparison.Ordinal))
                     ?? throw new ArgumentException(
-                        "Nothing on the plan has that id. It may have been finished or set aside since the plan was "
-                        + "last read.", "id");
+                        "No task on the plan has that id. It may be done or set aside now. "
+                        + "Get the plan again.", "id");
                 var natural = PlanTasks.DoerOf(row.Who);
                 WritePlanTasks(bound, memory =>
                 {

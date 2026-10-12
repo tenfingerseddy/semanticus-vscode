@@ -1,0 +1,15 @@
+relationship 6d1f0a52-3b7e-4c1a-9f10-0a1b2c3d4e01
+	fromColumn: Sales.'Order Date'
+	toColumn: 'Date'.Date
+
+relationship 6d1f0a52-3b7e-4c1a-9f10-0a1b2c3d4e02
+	fromColumn: Sales.'Product Key'
+	toColumn: Product.'Product Key'
+
+relationship 6d1f0a52-3b7e-4c1a-9f10-0a1b2c3d4e03
+	fromColumn: Sales.'Customer Key'
+	toColumn: Customer.'Customer Key'
+
+relationship 6d1f0a52-3b7e-4c1a-9f10-0a1b2c3d4e04
+	fromColumn: Sales.'Store Key'
+	toColumn: Store.'Store Key'

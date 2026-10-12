@@ -35,6 +35,7 @@ namespace Semanticus.Tests
 
         // ---- B1 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Giving_describe_model_to_the_assistant_puts_a_linked_task_in_its_queue()
         {
@@ -79,6 +80,7 @@ namespace Semanticus.Tests
 
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Giving_a_found_row_twice_is_one_task()
         {
@@ -90,6 +92,7 @@ namespace Semanticus.Tests
 
         // ---- Give again after Could not (coordinator follow-up) ---------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Giving_a_declined_task_back_offers_it_again_as_a_new_claim_and_records_the_give()
         {
@@ -117,6 +120,7 @@ namespace Semanticus.Tests
                 && r.Detail.StartsWith(ModelPlanHistoryKinds.Given, StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Giving_a_declined_task_whose_doer_is_still_the_assistant_offers_it_again()
         {
@@ -150,6 +154,7 @@ namespace Semanticus.Tests
             Assert.True(landed.Performed, landed.Sentence);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_found_row_the_person_gives_away_closes_when_its_gap_is_gone()
         {
@@ -178,6 +183,7 @@ namespace Semanticus.Tests
 
         // ---- B2 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_done_row_lists_the_history_entries_it_made()
         {
@@ -201,6 +207,7 @@ namespace Semanticus.Tests
 
         // ---- B3 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Edits_an_assistant_makes_while_its_run_is_on_a_step_are_filed_under_the_run()
         {
@@ -331,6 +338,7 @@ namespace Semanticus.Tests
 
         // ---- C1 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_history_walk_says_so_on_the_wire_and_an_edit_does_not()
         {
@@ -350,6 +358,7 @@ namespace Semanticus.Tests
 
         // ---- C2 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_plan_view_carries_the_line_the_assistant_reads_and_the_offer_numbers()
         {
@@ -371,6 +380,7 @@ namespace Semanticus.Tests
 
         // ---- C3 ------------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_quality_task_closes_when_the_scan_no_longer_finds_it()
         {
@@ -389,6 +399,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Done, Row(await f.Engine.GetModelPlanAsync(), id).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_docs_task_closes_when_the_section_has_words()
         {
@@ -407,6 +418,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Done, Row(await f.Engine.GetModelPlanAsync(), id).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_docs_task_closes_when_the_model_section_has_words()
         {
@@ -423,6 +435,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Done, Row(await f.Engine.GetModelPlanAsync(), id).StateWord);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_change_slot_task_closes_when_the_slot_has_a_value()
         {

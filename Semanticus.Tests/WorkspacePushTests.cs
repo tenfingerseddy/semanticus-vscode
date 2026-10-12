@@ -125,6 +125,66 @@ namespace Semanticus.Tests
             finally { File.Delete(src); }
         }
 
+        // ---- Power BI takes no role change over this path: the preview says so, and the other changes still go ----
+        private static TOM.Database WithRole(TOM.Database db, params string[] members)
+        {
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            foreach (var name in members) role.Members.Add(new TOM.ExternalModelRoleMember { MemberName = name, IdentityProvider = "AzureAD", MemberType = TOM.RoleMemberType.User });
+            db.Model.Roles.Add(role);
+            return db;
+        }
+
+        [Fact]
+        public async Task A_role_members_change_is_named_before_the_press_and_the_other_ticked_changes_still_publish()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var src = WriteBim(WithRole(Db(m => Measure(m, "Total", "2", "tag-total")), "a@contoso.com", "b@contoso.com"));
+            try
+            {
+                var refs = new[] { "measure:Sales/Total", "role:Readers" };
+                TOM.Database Live() => WithRole(Db(m => Measure(m, "Total", "1", "tag-total")), "a@contoso.com");
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(Live());
+                var pushedBim = (string)null;
+                engine.WorkspacePushHook = (bim, _) => { pushedBim = File.ReadAllText(bim); return OkReport(1, synced: new[] { "measure:Sales/Total" }); };
+
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: false, "human");
+                Assert.Equal(new[] { "measure:Sales/Total" }, preview.AppliedRefs);
+                var named = Assert.Single(preview.FailedRefs);
+                Assert.StartsWith("role:Readers (", named);
+                Assert.Contains("cannot publish role changes yet", named);
+                Assert.Null(pushedBim);
+
+                var sent = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: true, "human");
+                Assert.True(sent.Applied, sent.Error);
+                Assert.Equal(new[] { "measure:Sales/Total" }, sent.AppliedRefs);
+                Assert.Contains("cannot publish role changes yet", Assert.Single(sent.FailedRefs));
+                // The pushed model keeps the live role as it was: the role change was never merged into it.
+                var pushed = TOM.JsonSerializer.DeserializeDatabase(pushedBim, null, AS.CompatibilityMode.PowerBI).Model;
+                Assert.Single(pushed.Roles["Readers"].Members);
+            }
+            finally { File.Delete(src); }
+        }
+
+        [Fact]
+        public async Task A_publish_of_only_a_role_members_change_writes_nothing_and_says_why()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var src = WriteBim(WithRole(Db(), "a@contoso.com", "b@contoso.com"));
+            try
+            {
+                var pushed = false;
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(WithRole(Db(), "a@contoso.com"));
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(0); };
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), new[] { "role:Readers" }, commit: true, "human");
+
+                Assert.False(r.Applied);
+                Assert.False(pushed);
+                Assert.Contains("cannot publish role changes yet", Assert.Single(r.FailedRefs));
+            }
+            finally { File.Delete(src); }
+        }
+
         // Deletes go the SAME way as any object: two Delete refs commit on free too.
         [Fact]
         public async Task Multi_delete_commit_is_free()
@@ -990,8 +1050,8 @@ namespace Semanticus.Tests
                 var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src },
                     Ws(), new[] { "role:Reader" }, commit: true, "human");
 
-                Assert.True(pushed);                                        // it was attempted
-                Assert.False(r.Applied);                                    // but nothing reached live
+                Assert.False(pushed);                                       // a role is named as not going before any live work, never attempted
+                Assert.False(r.Applied);                                    // and nothing reached live
                 Assert.Equal(0, r.Count);
                 Assert.DoesNotContain("role:Reader", r.AppliedRefs ?? Array.Empty<string>());
                 Assert.Contains(r.FailedRefs, f => f.Contains("role:Reader"));

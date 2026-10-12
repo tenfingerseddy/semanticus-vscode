@@ -72,10 +72,18 @@ namespace Semanticus.Tests
             finally { File.Delete(src); }
         }
 
-        // ---- an UNLABELLED target is prod; the default policy asks; an agent is refused and NOTHING is pushed ----
-        [Fact]
-        public async Task Agent_push_to_an_unlabelled_target_is_refused_and_pushes_nothing()
+        // An unlabelled target counts as test since 1.4 (Kane, 10 Oct 2026); these tests of the ask loop label their target production first.
+        private static void LabelProd()
         {
+            var r = ConnectionRegistry.Remember("xmla", Endpoint, "DS", "DS", null, "serviceprincipal");
+            ConnectionRegistry.SetLabel(r.Id, "prod", "human");
+        }
+
+        // ---- a PRODUCTION target: the default policy asks; an agent is refused and NOTHING is pushed ----
+        [Fact]
+        public async Task Agent_push_to_a_production_target_is_refused_and_pushes_nothing()
+        {
+            LabelProd();
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
             var (r, pushed) = await Push(engine, "agent");
 
@@ -99,6 +107,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task After_a_human_approves_the_agents_retry_pushes()
         {
+            LabelProd();
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: true));
 
             var (r1, pushed1) = await Push(engine, "agent");

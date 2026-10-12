@@ -467,6 +467,43 @@ test('J3 a change that differs only by an annotation the publish never carries i
   assert.deepEqual(copy.publishCounts(copy.publishableRows(rows), new Set(rows.map((r) => r.ref))), { changes: 0, removals: 0 });
 });
 
+test('role-diff: a role member is shown in words, and a role change that cannot go is named before the press', () => {
+  const guid = '22222222-2222-2222-2222-222222222222';
+  const group = { memberName: `obj:${guid}@contoso`, identityProvider: 'AzureAD', memberType: 'group' };
+  const person = { memberName: 'ana@contoso.com', identityProvider: 'AzureAD', memberType: 'user' };
+  const role = (members, extra = {}) => JSON.stringify({ name: 'Readers', modelPermission: 'read', members, ...extra });
+  const row = (action, l, r) => ({ ref: 'role:Readers', objectType: 'Role', name: 'Readers', table: null, action, leftText: l, rightText: r });
+
+  // Members in words: a name when there is one, else the kind of Microsoft Entra object. Never a guid, never raw JSON.
+  assert.equal(copy.memberWords(group), 'a Microsoft Entra group');
+  assert.equal(copy.memberWords(person), 'ana@contoso.com');
+  assert.equal(copy.memberWords({ ...group, memberType: 'user' }), 'a Microsoft Entra user');
+  const lines = copy.roleMemberLines(role([person, group]), role([group]));
+  assert.deepEqual(lines, { added: ['ana@contoso.com'], removed: [] });
+  assert.deepEqual(copy.roleMemberLines(role([group]), role([group, person])), { added: [], removed: ['ana@contoso.com'] });
+  assert.deepEqual(copy.roleMemberLines(role([group, group]), role([group])), { added: ['a Microsoft Entra group'], removed: [] }, 'a second unnamed group still counts');
+  assert.deepEqual(copy.roleMemberLines(role([{ ...group, memberId: guid }]), role([group])), { added: [], removed: [] }, 'the server memberId is never a change');
+  assert.equal(copy.roleMemberLines('{"name":"x"}', '{"name":"x"}'), null, 'a row that is not a role has no member lines');
+  assert.deepEqual(copy.roleMemberLines(role([person]), null), { added: ['ana@contoso.com'], removed: [] }, 'a new role adds all its members');
+  assert.deepEqual(copy.roleMemberLines(null, role([person])), { added: [], removed: ['ana@contoso.com'] }, 'a role only on the destination removes all of them');
+  for (const text of [...lines.added, ...lines.removed]) assert.doesNotMatch(text, /[{}\[\]"]|obj:|[0-9a-f]{8}-[0-9a-f]{4}/, 'words only');
+
+  // The row says what it is, and the engine's reason reads as a plain line. Neither mentions JSON.
+  assert.equal(copy.rowNote(row('Update', role([person, group]), role([group])), 'Contoso Sales'), 'change role members in Power BI');
+  assert.equal(copy.rowNote(row('Update', role([group], { modelPermission: 'none' }), role([group])), 'Contoso Sales'), 'change this role in Power BI');
+  assert.equal(copy.rowNote(row('Create', role([group]), null), 'Contoso Sales'), 'new role, add it in Power BI');
+  assert.equal(copy.rowNote(row('Delete', null, role([group])), 'Contoso Sales'), 'only on Contoso Sales. Tick to remove it there', 'a role removal still goes');
+  const reason = 'role:Readers (live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.)';
+  assert.equal(copy.plainFailure('live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.'), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.');
+  const failed = copy.failureReasons([reason], [row('Update', role([person]), role([group]))]);
+  assert.equal(failed.get('role:Readers'), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.');
+  assert.doesNotMatch(copy.plainFailure('x role changes yet y'), /\u2014/);
+  assert.equal(copy.heldReason(row('Update', role([person]), role([group]))), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.', 'known before any press');
+  assert.equal(copy.heldReason(row('Create', role([group]), null)), copy.heldReason(row('Update', role([person]), role([group]))));
+  assert.equal(copy.heldReason(row('Delete', null, role([group]))), null, 'a role removal can go');
+  assert.equal(copy.heldReason({ ...row('Update', '{}', '{}'), objectType: 'Measure' }), null);
+});
+
 test('newmodel: with no destination, the Publish page publishes the model as a new model in a workspace', () => {
   assert.deepEqual(copy.newModelSignIn([null, { authMode: '' }, { authMode: 'serviceprincipal', tenantId: 't1' }]), { authMode: 'serviceprincipal', tenantId: 't1' });
   assert.deepEqual(copy.newModelSignIn([]), { authMode: 'interactive', tenantId: null }, 'a person with no saved sign-in signs in in a browser');

@@ -216,13 +216,13 @@ namespace Semanticus.Engine
             var why = new List<string>
             {
                 target.When.HasValue
-                    ? "You added this to the target on " + Day(target.When.Value) + "."
-                    : "You added this to the target.",
+                    ? "You added this aim on " + Day(target.When.Value) + "."
+                    : "You added this aim.",
                 jump == null
-                    ? "Nothing in the model matches it yet, so the plan cannot work out the change, and the "
-                      + "words do not name a page to do it on."
-                    : "Nothing in the model matches it yet, so the plan cannot work out the change. It is done "
-                      + "by hand on " + jump.Label + ".",
+                    ? "Nothing in the model matches it yet, so Semanticus cannot work out the change. "
+                      + "The words also do not name a page to do it on."
+                    : "Nothing in the model matches it yet, so Semanticus cannot work out the change. "
+                      + "Do it yourself on " + jump.Label + ".",
             };
             if (done) why.Add("You marked it done on " + Day(target.DoneUtc.Value) + ".");
 
@@ -232,8 +232,8 @@ namespace Semanticus.Engine
                 Section = target.Section,
                 Title = target.Text,
                 Sub = done
-                    ? "You added this to the target. You marked it done."
-                    : "You added this to the target. Nothing exists yet.",
+                    ? "You added this aim. You marked it done."
+                    : "You added this aim. Nothing in the model does it yet.",
                 Value = string.Empty,
                 Who = ModelPlanOwners.You,
                 Status = done ? ModelPlanStatuses.Done : ModelPlanStatuses.Target,
@@ -331,22 +331,6 @@ namespace Semanticus.Engine
 
     public sealed partial class LocalEngine
     {
-        /// <summary>Said when an assistant reaches for an aim tool (contract 12, Sol 24 Sep).</summary>
-        internal const string AimsArePersonsSentence =
-            "Aims and tasks are the person's to add, remove and mark done. Ask them to do it in Semanticus.";
-
-        /// <summary>NO LEGACY BYPASS (contract 12, lane E3). Aims became tasks, so the older aim tools cannot stay an
-        /// agent's route around the rule that adding a task, removing it and marking it done are the person's.
-        /// "agent" is the origin both agent routes carry: the MCP tool passes it, and EngineRpcTarget stamps it on an
-        /// agent pipe connection (which is how an attached assistant arrives). The tools stay listed so an older
-        /// assistant is told this sentence rather than meeting an unknown tool. An assistant finishes a task it was
-        /// given with complete_request instead.</summary>
-        private static void RefuseAgentAim(string origin)
-        {
-            if (string.Equals(origin, "agent", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException(AimsArePersonsSentence);
-        }
-
         /// <summary>Add one line to "what this model should become". Free on every tier: a target is the
         /// person's own intent, not work the product did for them.
         ///
@@ -355,7 +339,6 @@ namespace Semanticus.Engine
         /// which is what somebody re-adding a target they had ticked off actually means.</summary>
         public async Task<ModelPlanView> AddPlanTargetAsync(string text, string section, string origin)
         {
-            RefuseAgentAim(origin);
             if (string.IsNullOrWhiteSpace(text))
                 throw new ArgumentException(
                     "Say what this model should become, in your own words. For example: every measure has a "
@@ -364,13 +347,13 @@ namespace Semanticus.Engine
             var trimmed = text.Trim();
             if (trimmed.Length > PlanTargets.MaxTextChars)
                 throw new ArgumentException(
-                    "That target is longer than " + PlanTargets.MaxTextChars + " characters. Shorten it to one "
-                    + "line, or add it as two targets.", nameof(text));
+                    "That aim is longer than " + PlanTargets.MaxTextChars + " characters. Shorten it to one "
+                    + "line, or add it as two aims.", nameof(text));
 
             var filed = PlanTargets.NormaliseSection(section);
             if (filed == null)
                 throw new ArgumentException(
-                    "Say which goal this target serves, so the plan can file it with the work that gets it "
+                    "Say which goal this aim is for, so the plan can put it with the work that gets it "
                     + "there. One of: " + PlanTargets.SectionList() + ".", nameof(section));
 
             // Bound to the model the person is looking at, BEFORE the compose awaits anything. Without
@@ -416,10 +399,9 @@ namespace Semanticus.Engine
         /// both and neither should be a trap.</summary>
         public async Task<ModelPlanView> RemovePlanTargetAsync(string id, string origin)
         {
-            RefuseAgentAim(origin);
             if (string.IsNullOrWhiteSpace(id))
                 throw new ArgumentException(
-                    "Name the target to remove. Call get_model_plan and read the ids off 'targets'.", nameof(id));
+                    "Name the aim to remove. Call get_model_plan and read the ids off 'targets'.", nameof(id));
 
             // One binding for the whole operation: the question "does this model have that target" and the
             // removal that follows must be about the same model, or a removal meant for one lands on another.
@@ -427,8 +409,8 @@ namespace Semanticus.Engine
             var key = id.Trim();
             if (!HasTypedTarget(bound, key))
                 throw new ArgumentException(
-                    "Nothing on the target has that id. The lines that come from the rules cannot be removed; "
-                    + "only the ones you added can. Call get_model_plan and read the ids off 'targets'.", nameof(id));
+                    "No aim has that id. You can remove only the aims you added, "
+                    + "not the tasks Semanticus found. Call get_model_plan and read the ids off 'targets'.", nameof(id));
 
             return await ComposeAsync(memory =>
             {
@@ -445,9 +427,8 @@ namespace Semanticus.Engine
         /// nobody made, which is the same lie "started" was invented to avoid on a run that fixed nothing.</summary>
         public async Task<ModelPlanActionResult> MarkPlanTargetDoneAsync(string id, string origin)
         {
-            RefuseAgentAim(origin);
             if (string.IsNullOrWhiteSpace(id))
-                throw new ArgumentException("Name the item to mark done. Call get_model_plan for the ids.", nameof(id));
+                throw new ArgumentException("Name the task to mark done. Call get_model_plan for the ids.", nameof(id));
 
             var bound = BindPlanMemory();
             var key = id.Trim();
@@ -464,7 +445,7 @@ namespace Semanticus.Engine
                     Performed = false,
                     Revision = s.Revision,
                     Plan = await ComposeAsync(null, bound).ConfigureAwait(false),
-                    Sentence = "Nothing you added to the target has that id. Only a target you typed can be "
+                    Sentence = "No aim you added has that id. Only an aim you typed can be "
                              + "marked done here.",
                 };
 
@@ -488,11 +469,11 @@ namespace Semanticus.Engine
                 Revision = plan.Revision,
                 Plan = plan,
                 Sentence = PlanTasks.IsAim(found)
-                    ? "Marked done on the plan. Nothing in the model changed, because this is your own "
-                      + "note that the work is finished. Remove the target to take it off the plan."
+                    ? "Marked done. Nothing in the model changed. This only notes that you finished the aim. "
+                      + "Remove the aim to take it off the plan."
                     : found.DoneWhen == PlanDoneWhen.ModelCheck || found.DoneWhen == PlanDoneWhen.HasWords
-                        ? "Marked done. Nothing in the model changed here. Semanticus checks the model, and the "
-                          + "task shows as done once the check passes."
+                        ? "Marked done. Nothing in the model changed. The task shows as done once "
+                          + "Semanticus finds the model really has it."
                         : "Marked done on the plan. Nothing in the model changed.",
             };
         }

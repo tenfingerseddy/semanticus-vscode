@@ -93,6 +93,7 @@ namespace Semanticus.Tests
         /// <summary>Kane's hero journey on Pro: start, read the plan, give the model permission, allow the tables, approve, build. Jev is off (unavailable) or answers
         /// nothing, so no round moves the plan and no edit is made. The build must land. The builder's join suspicion 1: the preview was made on the model before the
         /// permission marker went into it, the digest never moves, so no new preview is made and the build says "not the one you were shown".</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(true, "ui")]
@@ -122,6 +123,7 @@ namespace Semanticus.Tests
 
         // ================================================================== S2: a dropped base measure
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("drop_line", "measure:Sales/Total Amount", null)]
         [InlineData("set_pick", "Sales/Amount", "none")]
@@ -144,6 +146,7 @@ namespace Semanticus.Tests
         // ================================================================== A1: the review is the build
 
         /// <summary>A rename of the base measure moves its six time measures; the review and the build still list the same objects with the same formulas.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("ui")]
         [InlineData("mcp")]
@@ -242,6 +245,7 @@ namespace Semanticus.Tests
 
         /// <summary>Payroll comes back under ANOTHER name (Wages) over the same physical table, after the person's own facts view filled the cache with the whole
         /// sample. The Plan's Jev requests carry none of Payroll's numbers.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A2_a_table_put_back_under_another_name_over_the_same_source_sends_no_sample_fact_even_after_the_person_read_the_facts()
         {
@@ -263,6 +267,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The decide path: Payroll is put back into the plan after the grant (before the build). Any round asks nothing about it with its numbers.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A2_a_table_put_back_into_the_plan_after_the_grant_sends_no_sample_fact_from_the_decide()
         {

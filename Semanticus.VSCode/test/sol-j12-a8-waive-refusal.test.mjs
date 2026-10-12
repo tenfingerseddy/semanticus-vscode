@@ -18,7 +18,7 @@ test('A8: a refused Accept write preserves the reason through a redraw', async (
     objectRef: 'column:Sales/Code', objectName: 'Code', message: 'A finding.', canAutoFix: false };
   let refuse;
   const pg = makePage({
-    './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => undefined,
+    './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => undefined, onAssistantCall: () => () => undefined,
       revealInTree() {},
       rpc: (method, ...args) => {
         calls.push([method, ...args]);

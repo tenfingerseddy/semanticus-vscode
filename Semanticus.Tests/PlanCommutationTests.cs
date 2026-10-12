@@ -150,8 +150,13 @@ namespace Semanticus.Tests
             using var f = await fx.Copy("Fp-" + fx.Name);
             var plan = await CommutationRows.SettledPlanAsync(f);
             var open = plan.Items.Where(i => i.Status is ModelPlanStatuses.Ready or ModelPlanStatuses.Proposed).ToArray();
-            var rows = open.Where(i => CommutationRows.HasExecutor(i.Id)).Select(i => i.Id).ToArray();
-            foreach (var id in rows) await CommutationRows.WorkOutAsync(f, id);
+            var candidates = open.Where(i => CommutationRows.HasExecutor(i.Id)).Select(i => i.Id).ToArray();
+            // A row that works out to no lines has nothing to approve, so there is no change to order. The words row is
+            // on the plan of a fully described model (it also waits on business names, synonyms and instructions, which
+            // only the assistant writes), and the person has nothing to approve there until the assistant adds lines.
+            var worked = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var id in candidates) worked[id] = (await CommutationRows.WorkOutAsync(f, id)).Lines.Length;
+            var rows = candidates.Where(id => worked[id] > 0).ToArray();
             foreach (var id in rows)
             {
                 fps[id] = await CommutationRows.EngineFootprintAsync(f, id);
@@ -161,6 +166,7 @@ namespace Semanticus.Tests
             }
             log.AppendLine(fx.Name + " rows without an executor: "
                 + string.Join(", ", open.Where(i => !CommutationRows.HasExecutor(i.Id)).Select(i => i.Id)));
+            log.AppendLine(fx.Name + " rows with no lines to work out: " + string.Join(", ", candidates.Where(id => worked[id] == 0)));
             return (rows, fps);
         }
 
@@ -217,6 +223,7 @@ namespace Semanticus.Tests
                     .Select(Line).ToArray();
 
         /// <summary>On every build: the Wide fixture, one independent pair for each pair of families it has.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Independent_rows_commute_on_the_wide_fixture()
         {
@@ -245,6 +252,7 @@ namespace Semanticus.Tests
         /// nothing on the Date table) was called dependent on "Mark the date table" and waited for it. The pair commutes:
         /// the same model both ways and the same lines, so the wait was spurious. The footprint now calls it
         /// independent, and the gate proves that is safe.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_date_mark_and_a_measure_without_time_intelligence_commute()
         {
@@ -269,6 +277,7 @@ namespace Semanticus.Tests
         /// never sees this footprint. Here the rule's row is done the way Run the plan does it: the engine works its line
         /// out (PlanDateMark) at that moment, then it is approved. Filing Margin % first must leave that line, and the
         /// model, exactly as marking first does.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Before_its_line_is_worked_out_the_rule_date_mark_and_a_measure_without_dates_commute()
         {
@@ -352,6 +361,7 @@ namespace Semanticus.Tests
         /// pair dependent, and doing the pair both ways shows the order matters (a different model or different lines,
         /// or one order refused), so the old "independent" was a real error, not a cautious one. The guard (check 3)
         /// still fires both ways.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("asst/create_column", "words/model")]
         [InlineData("asst/create_import_table", "words/model")]
@@ -388,6 +398,7 @@ namespace Semanticus.Tests
         /// relationship round is a proven conflict with a starter row:
         /// PlanNamesAndKeysTests.cs, A_cardinality_change_that_moves_the_many_side_is_ordered_against_the_starter_row.
         /// The guard still fires both ways.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_cardinality_change_is_ordered_against_what_reads_relationships()
         {

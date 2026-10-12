@@ -75,7 +75,6 @@ namespace Semanticus.Engine
         public async Task<SetResult> SetMeasureFormatExpressionAsync(string objRef, string formatExpression, string origin, string expectedFormatExpression = null, string expectedIdentity = null)
         {
             var s = _sessions.Require();
-            var expr = string.IsNullOrWhiteSpace(formatExpression) ? null : formatExpression.Trim();
             var changed = false;
             long rev;
             try
@@ -83,25 +82,7 @@ namespace Semanticus.Engine
                 rev = await s.MutateAsync(origin, "set measure format expression", m =>
                 {
                     FenceModelIdentity(s, expectedIdentity);
-                    if (!(ObjectRefs.Resolve(m, objRef) is Measure me))
-                        throw new InvalidOperationException($"{objRef} is not a measure: pass a 'measure:Table/Name' ref; run list_measures to see the model's measures. (This sets a DYNAMIC format string; for a static literal use set_measure_format.)");
-                    // A measure dynamic format string (FormatStringDefinition) needs CL 1601+ (verified vs the MS TMDL docs:
-                    // "1550 is below the required level of 1601 for the FormatStringDefinition property"). Clearing is always
-                    // safe (below 1601 the property can't exist, so it's a no-op).
-                    if (expr != null && (m.Database?.CompatibilityLevel ?? 0) < 1601)
-                        throw new InvalidOperationException($"A measure dynamic format string requires compatibility level 1601 or higher (this model is {m.Database?.CompatibilityLevel ?? 0}). Raise Compatibility level in Properties, or set a static format.");
-                    if (expr != null)
-                    {
-                        var v = DaxValidator.Validate(m, expr);
-                        RefuseDaxForWrite(v, expr, "this format expression");
-                    }
-                    var before = me.FormatStringExpression;
-                    GuardExpectedValue("format expression", expectedFormatExpression, before, expr);   // the grid's starting point against what is live NOW, in this turn
-                    if (!string.Equals(before ?? string.Empty, expr ?? string.Empty, StringComparison.Ordinal))
-                    {
-                        me.FormatStringExpression = expr;   // wrapper auto-clears the static FormatString when non-blank
-                        changed = true;
-                    }
+                    changed = ApplyMeasureFormatExpression(m, objRef, formatExpression, expectedFormatExpression);
                     if (!changed) throw new NoopMutationException();
                 });
             }

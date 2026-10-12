@@ -64,6 +64,38 @@ namespace Semanticus.Tests
             Assert.NotNull(right.Tables.Find("A/B").Measures.Find("C"));   // the unselected delete did NOT fire
         }
 
+        // ---- A role member is the same member whether or not one side carries the server's memberId. ----
+        private static TOM.Model RoleModel(params (string name, string id, TOM.RoleMemberType type)[] members)
+        {
+            var m = new TOM.Model();
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            foreach (var (name, id, type) in members)
+                role.Members.Add(new TOM.ExternalModelRoleMember { MemberName = name, IdentityProvider = "AzureAD", MemberType = type, MemberID = id });
+            m.Roles.Add(role);
+            return m;
+        }
+
+        [Fact]
+        public void A_role_member_that_differs_only_by_the_servers_memberId_is_not_a_change()
+        {
+            var working = RoleModel(("obj:11111111-1111-1111-1111-111111111111@contoso", null, TOM.RoleMemberType.Group));
+            var live = RoleModel(("obj:11111111-1111-1111-1111-111111111111@contoso", "11111111-1111-1111-1111-111111111111", TOM.RoleMemberType.Group));
+
+            Assert.DoesNotContain(ModelCompare.Diff(working, live, "copy", "live").Items, i => i.ObjectType == "Role");
+            Assert.DoesNotContain(ModelCompare.Diff(live, working, "live", "copy").Items, i => i.ObjectType == "Role");
+        }
+
+        [Fact]
+        public void A_role_with_a_different_member_or_member_type_is_still_a_change()
+        {
+            var live = RoleModel(("a@contoso.com", "id-1", TOM.RoleMemberType.User));
+            var added = RoleModel(("a@contoso.com", null, TOM.RoleMemberType.User), ("b@contoso.com", null, TOM.RoleMemberType.User));
+            var retyped = RoleModel(("a@contoso.com", null, TOM.RoleMemberType.Group));
+
+            Assert.Contains(ModelCompare.Diff(added, live, "copy", "live").Items, i => i.ObjectType == "Role" && i.Action == "Update");
+            Assert.Contains(ModelCompare.Diff(retyped, live, "copy", "live").Items, i => i.ObjectType == "Role" && i.Action == "Update");
+        }
+
         // ---- Load path: a TMDL folder must come back in PowerBI compatibility MODE + a restored level. ----
         // Regression for the Compare "-2" bug: DeserializeDatabaseFromFolder leaves CompatibilityMode = Unknown, so
         // serializing a Power-BI-only property (a calendar RelatedColumnDetails column, CL 1701+) validated it in

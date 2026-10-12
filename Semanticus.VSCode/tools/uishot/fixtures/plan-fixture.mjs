@@ -1345,7 +1345,7 @@ const ASK_ANSWERS = [
       // No size scan has been taken on this session, and SizeSentence says exactly that rather than
       // printing a zero. The Overview's own band says the same thing two cards down.
       sentence: 'Contoso (mock) has 11 tables and 12 measures. Its size in memory has not been measured '
-        + 'yet, so Size will read it.',
+        + 'yet. Open the Size page to measure it.',
     },
   },
   {

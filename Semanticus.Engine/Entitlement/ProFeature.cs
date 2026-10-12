@@ -37,6 +37,9 @@ namespace Semanticus.Engine.Entitlement
         /// and the question history. It is a PAGE under Explore since Kane chose to build the page on 26 September,
         /// so it is a tab feature with a wire id the page locks its tab on.</summary>
         AskData,
+
+        /// <summary>Many assistant-authored edits or plan controls in one call. Model edits share one undo step. No tab of its own.</summary>
+        Batch,
     }
 
     /// <summary>The names and copy that go with each feature. The refusal sentence is assembled from ONE template in
@@ -44,7 +47,7 @@ namespace Semanticus.Engine.Entitlement
     public static class ProFeatures
     {
         /// <summary>Every feature a Pro licence grants.</summary>
-        public static readonly ProFeature[] All = { ProFeature.Workflows, ProFeature.Ask, ProFeature.AskData };
+        public static readonly ProFeature[] All = { ProFeature.Workflows, ProFeature.Ask, ProFeature.AskData, ProFeature.Batch };
 
         /// <summary>The features that are a TAB, so a page can lock the tab and show a preview. These and only
         /// these are reported in <c>get_entitlement.features</c>.</summary>
@@ -57,6 +60,7 @@ namespace Semanticus.Engine.Entitlement
             ProFeature.Workflows => "workflows",
             ProFeature.Ask => null,
             ProFeature.AskData => "askData",
+            ProFeature.Batch => null,
             _ => throw new ArgumentOutOfRangeException(nameof(f)),
         };
 
@@ -79,6 +83,7 @@ namespace Semanticus.Engine.Entitlement
             ProFeature.Workflows => "Workflows",
             ProFeature.Ask => "Ask about this model",
             ProFeature.AskData => "Ask your data",
+            ProFeature.Batch => "Writing many objects in one call",
             _ => throw new ArgumentOutOfRangeException(nameof(f)),
         };
 
@@ -92,6 +97,8 @@ namespace Semanticus.Engine.Entitlement
                 "Every page is still one click away on the area strip, and your own assistant can still open any of them.",
             ProFeature.AskData =>
                 "Queries still runs any DAX you write, and your own assistant can still write and run DAX for you.",
+            ProFeature.Batch =>
+                "Use the matching single-item tool on Free.",
             _ => throw new ArgumentOutOfRangeException(nameof(f)),
         };
     }

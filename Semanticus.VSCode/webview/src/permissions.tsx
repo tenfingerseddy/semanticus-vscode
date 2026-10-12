@@ -338,7 +338,7 @@ function MatrixPanel({ policy, inflight, onCell }: {
           <div className="px-3 py-2 text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>Capability</div>
           {LABELS.map((l) => (
             <div key={l} className="px-2 py-2 text-center text-(length:--sem-text-label) font-semibold" style={{ color: 'var(--sem-muted)' }}>
-              {LABEL_WORD[l]}{l === 'prod' && <span title="A model with no label uses the Production settings." style={{ color: 'var(--sem-warn)' }}> *</span>}
+              {LABEL_WORD[l]}{l === 'dev' && <span title="A model with no label uses the Development settings." style={{ color: 'var(--sem-muted)' }}> *</span>}
             </div>
           ))}
         </div>
@@ -560,7 +560,7 @@ function ApprovalsPanel({ focusApproval, onFocusConsumed, onApprovalChanged }: {
 }
 
 // ---- Labels: one line, because each model's label is set in Connections -------------------------
-/** How many published models have no label, so the guardrail treats them as production. A model on this computer reads
+/** How many published models have no label, so the guardrail treats them as test (Development). A model on this computer reads
  *  Local in the Connections list, so it is not counted. Null while the list is unread. */
 export function unlabelledCount(conns: ConnectionRecord[] | null): number | null {
   if (!conns) return null;
@@ -570,7 +570,7 @@ export function unlabelledCount(conns: ConnectionRecord[] | null): number | null
 export function labelsLine(unlabelled: number | null): string {
   const base = 'Labels are set on each model in Connections.';
   if (!unlabelled) return base;
-  return `${base} ${unlabelled === 1 ? '1 model has no label, so it gets' : `${unlabelled} models have no label, so they get`} the Production settings.`;
+  return `${base} ${unlabelled === 1 ? '1 model has no label, so it gets' : `${unlabelled} models have no label, so they get`} the Development settings.`;
 }
 
 function LabelsLine() {

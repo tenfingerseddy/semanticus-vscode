@@ -158,6 +158,7 @@ namespace Semanticus.Tests
         /// orders; Units counts items). HARMFUL: Coast's units as the number of orders. MEDIUM: the measure shown is
         /// named Units.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify3_C08_a_table_synonym_does_not_make_units_a_count_of_orders()
         {
             using var rig = await BuildAsync(script: (r, q) => V3(r, q, measure: "Units"), synonyms: new[] { ("table:Sales", new[] { "orders" }) });
@@ -202,6 +203,7 @@ namespace Semanticus.Tests
         /// filter the calendar's days), or needs-you naming 'to date'. HARMFUL: the whole of 2024 standing in for last
         /// year to date.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Verify3_C11_last_year_to_date_is_not_the_whole_of_last_year()
         {
             using var rig = await BuildAsync(script: (r, q) => V3(r, q), calendar: true);

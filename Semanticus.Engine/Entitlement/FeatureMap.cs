@@ -39,6 +39,35 @@ namespace Semanticus.Engine.Entitlement
 
         private static readonly Group[] Groups =
         {
+            new Group(ProFeature.Batch, "Changing many plan rows in one call",
+                new[] { "plan_rows" }, new[] { "planRows" }, new[] { "PlanRowsAsync" }),
+            new Group(ProFeature.Batch, "Unwaiving many findings in one call",
+                new[] { "unwaive_findings" }, new[] { "unwaiveFindings" }, new[] { "UnwaiveFindingsAsync" }),
+            new Group(ProFeature.Batch, "Fixing many findings in one call",
+                new[] { "apply_fixes" }, new[] { "applyFixes" }, new[] { "ApplyFixesAsync" }),
+            new Group(ProFeature.Batch, "Duplicating many objects in one call",
+                new[] { "duplicate_objects" }, new[] { "duplicateObjects" }, new[] { "DuplicateObjectsAsync" }),
+            new Group(ProFeature.Batch, "Writing many doc sections in one call",
+                new[] { "set_doc_sections" }, new[] { "setDocSections" }, new[] { "SetDocSectionsAsync" }),
+            new Group(ProFeature.Batch, "Changing many perspective cells in one call",
+                new[] { "set_perspective_members" }, new[] { "setPerspectiveMembers" }, new[] { "SetPerspectiveMembersAsync" }),
+            new Group(ProFeature.Batch, "Changing many permission cells in one call",
+                new[] { "set_object_permissions" }, new[] { "setObjectPermissions" }, new[] { "SetObjectPermissionsAsync" }),
+            new Group(ProFeature.Batch, "Changing many plan items in one call",
+                new[] { "set_plan_items" }, new[] { "setPlanItems" }, new[] { "SetPlanItemsAsync" }),
+            new Group(ProFeature.Batch, "Changing many plan items in one call",
+                new[] { "add_plan_items" }, new[] { "addPlanItems" }, new[] { "AddPlanItemsAsync" }),
+            new Group(ProFeature.Batch, "Changing many plan items in one call",
+                new[] { "edit_start_plans" }, new[] { "editStartPlans" }, new[] { "EditStartPlansAsync" }),
+            new Group(ProFeature.Batch, "Creating many measures in one call",
+                new[] { "create_measures" }, new[] { "createMeasures" }, new[] { "CreateMeasuresAsync" }),
+            new Group(ProFeature.Batch, "Editing many objects in one call",
+                new[] { "edit_objects" }, new[] { "editObjects" }, new[] { "EditObjectsAsync" }),
+            // Kane, 11 Oct: Pro writes many waivers or words in one call; the single tools stay free.
+            new Group(ProFeature.Batch, "Waiving many findings in one call",
+                new[] { "waive_findings" }, new[] { "waiveFindings" }, new[] { "WaiveFindingsAsync" }),
+            new Group(ProFeature.Batch, "Writing words for many objects in one call",
+                new[] { "write_words" }, new[] { "writeWords" }, new[] { "WriteWordsAsync" }),
             // Kane, 22 Sep: ask is Jev, so it is Pro. One operation and one group of its own, because the box
             // is not a tab: it sits on the Overview, which is free, and only the box inside it is not. The tab
             // name is therefore what the box is CALLED on that page, so the refusal reads "Ask about this
@@ -58,6 +87,8 @@ namespace Semanticus.Engine.Entitlement
                 new[]   // 35 operations: 30, the composer's four draft ops (lane L4, Kane 24 Sep: draft ops stay Pro), and describe_workflow_steps (Kane's UAT, 25 Sep)
                 {
                     "compose_task", "get_draft", "edit_draft", "run_draft", "describe_workflow_steps",
+                    // Held drafts and repeats (Kane, 10 Oct 2026: the assistant may do what the person does, except the Permissions page).
+                    "approve_draft", "continue_draft", "add_plan_repeat", "set_plan_repeat",
                     "abort_workflow", "activate_workflow_profile", "check_workflow", "delete_workflow",
                     "delete_workflow_template", "edit_workflow_document", "export_workflow_evidence", "get_workflow",
                     "get_workflow_document", "get_workflow_enforcement", "get_workflow_layout", "get_workflow_policy",
@@ -70,6 +101,7 @@ namespace Semanticus.Engine.Entitlement
                 new[]   // the same 35 through their RPC names
                 {
                     "composeTask", "getDraft", "editDraft", "runDraft", "describeWorkflowSteps",
+                    "approveDraft", "continueDraft", "addPlanRepeat", "setPlanRepeat",
                     "abortWorkflow", "activateWorkflowProfile", "checkWorkflow", "deleteWorkflow",
                     "deleteWorkflowTemplate", "editWorkflowDocument", "exportWorkflowEvidence", "getWorkflow",
                     "getWorkflowDocument", "getWorkflowEnforcement", "getWorkflowLayout", "getWorkflowPolicy",
@@ -106,7 +138,7 @@ namespace Semanticus.Engine.Entitlement
             "accept_primer_suggestion", "add_interview_question", "add_plan_item", "ai_readiness_scan",
             "analyze_cloud_reports", "analyze_reports", "apply_dax_script", "apply_fix",
             "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_tmdl",
-            "benchmark_dax", "blame_value", "bpa_scan", "capture_query_plan", "check_reports",
+            "benchmark_cold_warm", "benchmark_dax", "blame_value", "bpa_scan", "cancel_query", "capture_query_plan", "check_reports",
             "cherry_pick", "clear_cache", "clear_plan", "connect_local",
             "connect_xmla", "connection_context", "connection_status", "create_calculated_column",
             "create_calculated_table", "create_column", "create_directlake_table", "create_hierarchy",
@@ -129,27 +161,33 @@ namespace Semanticus.Engine.Entitlement
             "get_model_plan", "get_words_queue", "skip_model_plan_item", "unskip_model_plan_item", "model_plan_action",
             // History inside the Plan (Plan-heart contract 13): free, like undo itself.
             "get_plan_history",
+            "resolve_file_recovery",
             // Bulk apply is free in the map for the same reason model_plan_action is: the Pro line is drawn inside
             // the operation, where it can answer with the plan and record the refusal. It refuses every free
             // session, because applying several items at once is running the plan (F-238).
             "apply_plan_items",
             "get_next_actions",
+            // The Studio wire (1.4, Claude drives): the assistant says what it is doing and what it would do next. Free on every tier.
+            "show_in_studio", "suggest_next",
             // The target (the Fix milestone). Free for a further reason of its own: a target is a sentence
             // the person wrote about their own model, so charging for it would be charging them to write
             // down what they want.
             "add_plan_target", "remove_plan_target",
+            // The Plan page's controls (Kane, 10 Oct 2026): free, like asking for a task.
+            "add_plan_task", "pause_plan_item", "set_plan_doer", "move_plan_task_up", "set_assistant_queue", "set_plan_task_note",
+            "remove_plan_row", "restore_plan_row", "refresh_plan", "delete_plan_repeat", "approve_start_plan",
             // The queue (Plan at the heart, lane E3, contract 3.3 and 13): free on every tier, because asking for a
             // task runs no Jev. The composer's draft ops stay in the Workflows Pro group.
             "list_assistant_requests", "claim_request", "complete_request", "decline_request",
             "get_plan", "get_properties", "get_reference_tree", "get_stage_items",
             "get_verified_mode", "get_workflow_run", "git_status", "harness_report",
-            "impact_assessment", "lint_dax",
+            "impact_assessment", "label_connection", "lint_dax",
             "list_account_profiles", "list_columns", "list_connection_history", "list_connections",
             "list_deployment_pipelines", "list_format_templates", "list_functions", "list_history_checkpoints",
             "list_interview_questions", "list_interview_seeds", "list_local_instances", "list_measures",
             "list_objects", "list_pending_approvals", "list_primer_suggestions", "list_refresh_types",
             "list_model_sql_endpoints", "list_report_scope", "list_reports", "list_restore_points", "list_sql_source_usage", "list_sql_sources",
-            "list_value_history", "list_verified_edits", "list_waivers", "list_workspace_models", "list_workspaces",
+            "list_value_history", "list_verified_edits", "list_waivers", "list_workspace_models", "list_workspace_sql_endpoints", "list_workspaces",
             "load_rules", "make_model_ai_ready", "model_diff",
             "model_overview", "open_live", "open_local",
             "open_model", "optimize_measure", "pivot_measure", "prepare_working_copy",
@@ -161,7 +199,7 @@ namespace Semanticus.Engine.Entitlement
             "rollback_push", "run_dax", "run_dmv", "run_interview",
             "save_layout", "save_model", "save_sql_source", "script_objects",
             "search_model", "set_ai_data_schema", "set_ai_instructions", "set_column_data_type",
-            "set_column_hidden", "set_compatibility_level", "set_data_category", "set_description",
+            "set_column_hidden", "set_compatibility_level", "set_data_category", "set_default_account_profile", "set_description",
             "set_display_folder", "set_measure_format", "set_measure_format_expression", "set_plan_item",
             "set_model_sql_endpoint", "publish_new_model", "set_properties", "set_property", "set_publish_destination", "set_relationship_active",
             "set_relationship_cardinality", "set_relationship_crossfilter", "set_report_scope", "set_sort_by_column",
@@ -227,6 +265,7 @@ namespace Semanticus.Engine.Entitlement
         /// setDefaultAccountProfile).</summary>
         public static readonly IReadOnlyCollection<string> FreeRpcMethods = new HashSet<string>(StringComparer.Ordinal)
         {
+            "resolveFileRecovery",
             "acceptPrimerSuggestion", "addInterviewQuestion", "addPlanItem", "aiReadinessScan",
             "aiReadinessScanLive", "analyzeCloudReports", "analyzeReports", "applyDaxScript",
             "applyDiff", "applyFix", "applyPlan", "applySafeFixes",
@@ -251,8 +290,13 @@ namespace Semanticus.Engine.Entitlement
             "proposeMeasureDefaults", "setConsent", "setDecisionPointEnabled", "withdrawConsent",
             "getModelPlan", "getWordsQueue", "skipModelPlanItem", "unskipModelPlanItem", "modelPlanAction", "applyPlanItems",
             "addPlanTarget", "removePlanTarget", "markPlanTargetDone",
+            // The Plan page's controls (Kane, 10 Oct 2026): free, like asking for a task. Both doors reach them.
+            "addPlanTask", "holdPlanItem", "setPlanItemDoer", "movePlanTaskUp", "setAssistantQueue", "setPlanTaskNote",
+            "removePlanRow", "restorePlanRow", "refreshPlan", "deletePlanRepeat", "approveStartPlan",
             "listAssistantRequests", "claimRequest", "completeRequest", "declineRequest", "pullPlanOffer",
             "getNextActions",
+            // The Studio wire (1.4). The driver report, setStudioDriver, is on HumanGovernanceRpcTarget and so not on this list.
+            "showInStudio", "suggestNext", "getStudioNotes", "noteAgentCall",
             "getStageItems", "getVerifiedMode", "getWorkflowRun", "gitStatus",
             "harnessReport", "impactAssessment", "impactOf", "labelConnection",
             "lintDax", "listAccountProfiles", "listColumns", "listConnectionHistory",
@@ -261,7 +305,7 @@ namespace Semanticus.Engine.Entitlement
             "listMeasures", "listPendingApprovals", "listPrimerSuggestions", "listReferenceTree",
             "listRefreshTypes", "listReportScope", "listReports", "listRestorePoints",
             "listModelSqlEndpoints", "listSqlSourceUsage", "listSqlSources", "listTree", "listValueHistory", "listVerifiedEdits",
-            "listWaivers", "listWorkspaceModels", "listWorkspaces", "loadBpaRules", "loadReadinessRules",
+            "listWaivers", "listWorkspaceModels", "listWorkspaceSqlEndpoints", "listWorkspaces", "loadBpaRules", "loadReadinessRules",
             "makeAiReady", "open", "openLive", "openLocal",
             "optimizeMeasure", "pivotMeasure", "prepareWorkingCopy", "previewDeploy",
             "previewTable", "probeAuthPrerequisites", "probeConnectionAccounts", "probeMeasure",
@@ -356,21 +400,22 @@ namespace Semanticus.Engine.Entitlement
             "ProposeMeasureDefaultsAsync", "SetConsentAsync", "SetDecisionPointEnabledAsync", "WithdrawConsentAsync",
             "GetModelPlanAsync", "GetWordsQueueAsync", "SkipModelPlanItemAsync", "UnskipModelPlanItemAsync", "ModelPlanActionAsync", "ApplyPlanItemsAsync",
             "AddPlanTargetAsync", "RemovePlanTargetAsync", "MarkPlanTargetDoneAsync",
-            // The person's Plan controls (Plan at the heart, contract 3.3 and 13): free on every tier, because asking
-            // for a task runs no Jev. Person-only, so they are on HumanGovernanceRpcTarget and on no MCP tool, which is
-            // why they appear on this list and not on FreeRpcMethods (that list holds EngineRpcTarget's entries only).
+            // The Plan controls (Plan at the heart, contract 3.3 and 13): free on every tier, because asking for a task
+            // runs no Jev. On both doors since Kane's decision of 10 Oct 2026.
             "AddPlanTaskAsync", "HoldPlanItemAsync", "SetPlanItemDoerAsync", "MovePlanTaskUpAsync",
             "SetAssistantQueueAsync", "SetPlanTaskNoteAsync",
-            // The queue (lane E3): the four agent ops and the fold's pull, and the person's side of the same queue,
-            // which lives on HumanGovernanceRpcTarget for the reason given above.
+            // The queue (lane E3): the four agent ops and the fold's pull, and the person's side of the same queue
+            // (their own claim, Mark done and Could not), which lives on HumanGovernanceRpcTarget.
             "ListAssistantRequestsAsync", "ClaimAssistantRequestAsync", "CompleteAssistantRequestAsync",
             "DeclineAssistantRequestAsync", "PullPlanOfferAsync",
             "ClaimPlanTaskAsync", "CompletePlanTaskAsync", "DeclinePlanTaskAsync",
-            // Deleting a repeat is free (lane RP), so a person who lost Pro can still clear one away. Person-only.
+            // Deleting a repeat is free (lane RP), so a person who lost Pro can still clear one away.
             "DeletePlanRepeatAsync",
-            // Remove a task or draft row, and its Undo (Kane's UAT, 25 Sep): free, like adding one. Person-only.
-            "RemovePlanRowAsync", "RestorePlanRowAsync",
+            // Remove a task or draft row, and its Undo (Kane's UAT, 25 Sep): free, like adding one.
+            "RemovePlanRowAsync", "RestorePlanRowAsync", "RefreshPlanAsync",
             "GetNextActionsAsync",
+            // The Studio wire (1.4): free on every tier. SetStudioDriverAsync is the Studio's own report, person-only like the Plan controls above.
+            "ShowInStudioAsync", "SuggestNextAsync", "GetStudioNotesAsync", "NoteAgentCallAsync", "SetStudioDriverAsync",
             "GetCustomRulesAsync", "GetDaxAsync", "GetDependenciesAsync", "GetDependentsAsync",
             "GetEntitlementAsync", "GetFixPromptAsync", "GetGroundingAsync", "GetLayoutAsync",
             "GetLineageAsync", "GetModelFactsAsync", "GetModelFingerprintAsync", "GetModelGraphAsync", "GetModelObjectsAsync",
@@ -383,7 +428,7 @@ namespace Semanticus.Engine.Entitlement
             "ListInterviewSeedsAsync", "ListLocalInstancesAsync", "ListMeasuresAsync", "ListPendingApprovalsAsync",
             "ListPrimerSuggestionsAsync", "ListReferenceTreeAsync", "ListRefreshTypesAsync", "ListReportScopeAsync",
             "ListModelSqlEndpointsAsync", "ListReportsAsync", "ListRestorePointsAsync", "ListSqlSourceUsageAsync", "ListSqlSourcesAsync", "ListTreeAsync",
-            "ListValueHistoryAsync", "ListVerifiedEditsAsync", "ListWaiversAsync", "ListWorkspaceModelsAsync", "ListWorkspacesAsync",
+            "ListValueHistoryAsync", "ListVerifiedEditsAsync", "ListWaiversAsync", "ListWorkspaceModelsAsync", "ListWorkspaceSqlEndpointsAsync", "ListWorkspacesAsync",
             "LoadBpaRulesAsync", "LoadReadinessRulesAsync", "MakeAiReadyAsync", "OpenAsync",
             "OpenLiveAsync", "OpenLocalAsync", "OptimizeMeasureAsync", "PivotMeasureAsync",
             "PrepareWorkingCopyAsync", "PreviewDeployAsync", "PreviewTableAsync", "ProbeAuthPrerequisitesAsync",
@@ -402,6 +447,7 @@ namespace Semanticus.Engine.Entitlement
             "SetRelationshipAsync", "SetRelationshipCardinalityAsync", "SetReportScopeAsync", "SetSynonymsAsync",
             "SetVerifiedModeAsync", "TestSqlSourceAsync", "UndoAsync", "UnusedObjectsAsync",
             "GetPlanHistoryAsync", "UndoToEntryAsync", "RedoToEntryAsync",   // Plan-heart E4: free, like undo
+            "ResolveFileRecoveryAsync",
             "UnwaiveFindingAsync", "ValidateDaxAsync", "ValidateRuleAsync", "VerifyEquivalenceAsync",
             "VertiPaqScanAsync", "WaiveFindingAsync",
             // FREE SINCE 22 SEPTEMBER 2026. Kane: "free is the tool, Pro is the tool that works for you."
@@ -411,9 +457,8 @@ namespace Semanticus.Engine.Entitlement
             // Model Spec
             "AutogenerateSpecFromFabricAsync", "AutogenerateSpecFromModelAsync", "BuildModelFromSpecAsync", "ClearSpecAsync",
             "GetSpecAsync", "LoadSpecAsync", "SaveSpecAsync", "SetSpecAsync",
-            // The spec-first start (M11), as IEngine methods, the gate key. Nine, not eight: ApproveStartPlanAsync is the
-            // person's own, on HumanGovernanceRpcTarget with no MCP operation and no EngineRpcTarget entry, which is why
-            // it is on this list and on neither of the two above.
+            // The spec-first start (M11), as IEngine methods, the gate key. Nine: ApproveStartPlanAsync joined the other eight
+            // on both doors on 10 Oct 2026 (approve_start_plan).
             "StartModelFromSqlAsync", "GetStartPlanAsync", "EditStartPlanAsync", "GrantStartDisclosureAsync",
             "ApproveStartPlanAsync", "GetStartWordsAsync", "WriteStartWordsAsync", "BuildStartPlanAsync", "DiscardStartPlanAsync",
             // Advanced Modelling

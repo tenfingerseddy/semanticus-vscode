@@ -245,7 +245,7 @@ test('F8: a draft whose row is gone (the assistant renamed it) is named in the b
   const held = ds.held(MODEL);
   const labels = new Map([['col:orphan-ref', 'Old in Sales']]);
   assert.deepEqual(m.unsavedRowNames(view, held, labels), ['Old in Sales'], 'the orphan is listed, by the name it had');
-  assert.deepEqual(m.unsavedRowNames(view, held), ['A line the plan no longer shows'], 'with no name kept it still asks');
+  assert.deepEqual(m.unsavedRowNames(view, held), ['A change the plan no longer shows'], 'with no name kept it still asks');
 });
 
 // ---- F14: "Build without them" keeps the held words -------------------------------------------------------------------------------------------------

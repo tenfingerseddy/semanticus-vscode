@@ -80,26 +80,35 @@ namespace TabularEditor.TOMWrapper.Utils
             if ((redo ? RedoStackField : UndoStackField)?.GetValue(undo) is not Stack<IUndoAction> stack) return null;
             var planned = new Dictionary<(string Path, string Part), string>();   // what the walk will have put back so far
             using var walk = stack.GetEnumerator();   // a Stack enumerates in pop order
-            string Check(IUndoAction item)
+            string Check(IUndoAction item, bool forward)
             {
+                if (item is IInverseUndoAction inverse)
+                {
+                    foreach (var inner in inverse.ActionsFor(forward))
+                    {
+                        var why = Check(inner, !forward);
+                        if (why != null) return why;
+                    }
+                    return null;
+                }
                 if (item is not SidecarUndoAction s || s.Files == null) return null;
                 foreach (var f in s.Files)
                 {
                     if (f.Path == null) continue;   // let go at a Save As: nothing of this session's to check or overwrite
                     var now = planned.TryGetValue((f.Path, f.Part), out var p) ? p : f.Now();
-                    if (!string.Equals(now, redo ? f.Before : f.After, StringComparison.Ordinal))
+                    if (!string.Equals(now, forward ? f.Before : f.After, StringComparison.Ordinal))
                         return (redo ? "Nothing was redone. " : "Nothing was undone. ") + f.What + " changed on disk after "
                                + (redo ? "it was undone" : "this change") + ", and " + (redo ? "redoing" : "undoing")
                                + " it would overwrite that newer edit.";
                 }
-                foreach (var f in s.Files) if (f.Path != null) planned[(f.Path, f.Part)] = redo ? f.After : f.Before;
+                foreach (var f in s.Files) if (f.Path != null) planned[(f.Path, f.Part)] = forward ? f.After : f.Before;
                 return null;
             }
             for (var i = 0; i < steps; i++)
             {
                 if (!walk.MoveNext()) return null;
                 var item = walk.Current;
-                var why = Check(item);
+                var why = Check(item, redo);
                 if (why != null) return why;
                 if (item is not UndoBatchAction batch) continue;
                 IUndoAction next;
@@ -107,7 +116,7 @@ namespace TabularEditor.TOMWrapper.Utils
                 {
                     if (!walk.MoveNext()) return null;
                     next = walk.Current;
-                    why = Check(next);
+                    why = Check(next, redo);
                     if (why != null) return why;
                 }
                 while (next is not UndoBatchAction inner || inner.Depth > batch.Depth);
@@ -125,15 +134,20 @@ namespace TabularEditor.TOMWrapper.Utils
         public static void Rebase(UndoManager undo, Func<string, string> follow)
         {
             if (undo == null || follow == null) return;
+            var visited = new HashSet<IUndoAction>();
+            void Visit(IUndoAction item)
+            {
+                if (!visited.Add(item)) return;
+                if (item is IInverseUndoAction inverse)
+                    foreach (var inner in inverse.ActionsFor(true)) Visit(inner);
+                if (item is not SidecarUndoAction s || s.Files == null) return;
+                foreach (var f in s.Files)
+                    if (f.Path != null) f.Path = follow(f.Path);
+            }
             foreach (var field in new[] { UndoStackField, RedoStackField })
             {
                 if (field?.GetValue(undo) is not Stack<IUndoAction> stack) continue;
-                foreach (var item in stack)
-                {
-                    if (item is not SidecarUndoAction s || s.Files == null) continue;
-                    foreach (var f in s.Files)
-                        if (f.Path != null) f.Path = follow(f.Path);
-                }
+                foreach (var item in stack) Visit(item);
             }
         }
     }

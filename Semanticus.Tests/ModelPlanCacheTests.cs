@@ -58,6 +58,7 @@ namespace Semanticus.Tests
 
         // ---- a: the second read of an unchanged model costs nothing -------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Two_plans_for_an_unchanged_model_gather_once_and_answer_the_same()
         {
@@ -95,6 +96,7 @@ namespace Semanticus.Tests
 
         // ---- c: a model that moved is never answered from what was remembered ---------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_change_makes_the_next_plan_gather_again_at_the_new_revision()
         {
@@ -113,6 +115,7 @@ namespace Semanticus.Tests
 
         // ---- d: a decision shows at once, and costs nothing ---------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Setting_aside_and_putting_back_show_at_once_without_gathering_again()
         {
@@ -146,6 +149,7 @@ namespace Semanticus.Tests
 
         // ---- the ranking is not re-bought for evidence that did not change ------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Two_plans_for_the_same_evidence_ask_the_ranking_service_once()
         {
@@ -220,6 +224,7 @@ namespace Semanticus.Tests
             return await task;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_plan_returns_before_the_ranking_answers_and_the_next_read_after_it_lands_is_in_value_order()
         {
@@ -257,7 +262,7 @@ namespace Semanticus.Tests
             Assert.False(first.Ranked);
             Assert.True(first.JevPending);
             Assert.Equal(open.Select(i => i.Id), first.Items.Where(i => i.Status is ModelPlanStatuses.Ready or ModelPlanStatuses.Proposed).Select(i => i.Id));
-            Assert.Contains("rules", first.OrderedBy, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("order Semanticus found", first.OrderedBy, StringComparison.Ordinal);
 
             // A second read while the ask is out does not ask again.
             for (var i = 0; i < 400 && gated.Waiting == 0; i++) await Task.Delay(25);
@@ -275,6 +280,7 @@ namespace Semanticus.Tests
             Assert.Single(recorded.AskedDigests);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_free_plan_starts_no_ranking_run_and_says_the_order_is_Pro()
         {
@@ -312,6 +318,7 @@ namespace Semanticus.Tests
 
         // ---- the first look does not wait for the second scan -------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_first_look_does_not_wait_for_the_rehearsed_grade_and_says_so()
         {
@@ -343,6 +350,7 @@ namespace Semanticus.Tests
         /// nothing ("doing this would change nothing anyone would notice") jumps above every item it could not score and
         /// leads the plan, under "In value order where it was sure enough". The reply is the vendor's own shape
         /// (a fractional score counted from zero, legend and probabilities keyed by position).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_an_item_Jev_is_sure_is_worth_nothing_never_leads_the_items_it_could_not_score()
         {
@@ -395,6 +403,7 @@ namespace Semanticus.Tests
         /// <summary>The value order and the rule order agree about an item Jev could not score: it stays where the rules
         /// put it, and an item Jev is sure is worth nothing ("none") sinks below those. Sure scores above "none" still
         /// lead. (The rungs are counted from zero, as the vendor's legend counts them.)</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Unscored_items_keep_rule_order_and_a_sure_none_sinks_below_them()
         {
@@ -447,6 +456,7 @@ namespace Semanticus.Tests
 
         /// <summary>A ranking the reader refused leaves the rule order, and the Plan says so in plain words. It never
         /// shows the reader's own sentence (question names, "legend", "rung") to the person.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_refused_ranking_says_so_in_plain_words()
         {
@@ -481,7 +491,7 @@ namespace Semanticus.Tests
             var plan = await f.Engine.GetModelPlanAsync();
 
             Assert.False(plan.Ranked);
-            Assert.Contains("rules", plan.OrderedBy, StringComparison.Ordinal);
+            Assert.Contains("order Semanticus found", plan.OrderedBy, StringComparison.Ordinal);
             foreach (var jargon in new[] { "legend", "rung", "value:", "rejected", "'" })
                 Assert.DoesNotContain(jargon, plan.OrderedBy, StringComparison.Ordinal);
         }
@@ -489,13 +499,20 @@ namespace Semanticus.Tests
         /// <summary>A ranking the service would not give says why in its own words: whole sentences are kept as they are, with
         /// one full stop, and Jev keeps its capital. The line used to put a second full stop after the relay's sentence, and
         /// wrote "jev was asked but did not answer" for the development route's reason (ai.schema final verify, low item 6).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("Cloud advice is paused right now. Nothing else has changed.",
-                    "In the order the rules found them, because cloud advice is paused right now. Nothing else has changed.")]
+                    "Jev did not put the tasks in order this time because cloud advice is paused right now, so they are in the order Semanticus found them.")]
         [InlineData(Semanticus.Engine.Decisions.JevDecisionOracle.AskedThenStoppedReason,
-                    "In the order the rules found them, because Jev was asked but did not answer, and this session has used its suggestion budget, so it was not asked again.")]
+                    "Jev did not answer this time and this session has used its suggestion budget, so the tasks are in the order Semanticus found them.")]
         [InlineData("the advice service did not answer in time",
-                    "In the order the rules found them, because the advice service did not answer in time.")]
+                    "Jev did not put the tasks in order this time because the advice service did not answer in time, so they are in the order Semanticus found them.")]
+        [InlineData("This licence has used its cloud advice for the month. It resets on 2026-10-01.",
+                    "Jev did not put the tasks in order this time because this licence has used its cloud advice for the month, so they are in the order Semanticus found them.")]
+        [InlineData(Semanticus.Engine.Decisions.JevDecisionOracle.SubscriptionInactiveReason,
+                    "Jev did not put these in order because your Pro plan is not active. Open billing to fix it.")]
+        [InlineData(Semanticus.Engine.Decisions.JevDecisionOracle.NotAvailableReason,
+                    "Jev could not be reached this time, so the tasks are in the order Semanticus found them.")]
         public async Task A_ranking_the_service_would_not_give_says_why_in_one_sentence_with_one_full_stop(string reason, string expected)
         {
             using var f = await GappyModelAsync("PlanRankNotDecided.bim");
@@ -513,6 +530,49 @@ namespace Semanticus.Tests
 
             Assert.False(plan.Ranked);
             Assert.Equal(expected, plan.OrderedBy);
+            // One sentence: the only full stop is the last character (the old line joined the relay's two sentences with "because").
+            var billing = reason == Semanticus.Engine.Decisions.JevDecisionOracle.SubscriptionInactiveReason;
+            Assert.Equal(billing ? 2 : 1, plan.OrderedBy.Count(c => c == '.'));
+            Assert.Equal(billing ? Semanticus.Engine.Entitlement.LicenseEntitlement.ManageUrl : null, plan.BillingUrl);
+        }
+
+        /// <summary>The relay says the subscription is not active: the header's entitlement says so too, with the billing address, so the
+        /// screen never shows Pro and refuses Pro at once. A session that was never refused says nothing.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task An_inactive_subscription_reaches_the_entitlement_for_the_header()
+        {
+            using var f = await GappyModelAsync("PlanRankInactive.bim");
+            await f.ConsentAsync();
+            await f.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.MeasureFolderAndFormat, false, "human");
+            await f.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.ColumnFormat, false, "human");
+            await f.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.AiSchema, false, "human");
+            await f.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.ColumnCategory, false, "human");
+            await f.Engine.SetDecisionPointEnabledAsync(DecisionRegistry.ColumnSummarize, false, "human");
+            Assert.False((await f.Engine.GetEntitlementAsync()).PlanInactive);
+
+            using var relay = new AlwaysRefuses();
+            using var oracle = JevDecisionOracle.ForRelay("licence-token", "https://relay.example", new DecisionBudget(capInputTokens: 100000), relay);
+            f.Engine.UseDecisionsForTest(new DecisionService(oracle, new DecisionBudget()));
+            await f.Engine.GetModelPlanAsync();
+            await f.Engine.PlanRankSettledForTest();
+            var plan = await f.Engine.GetModelPlanAsync();
+
+            Assert.Equal("Jev did not put these in order because your Pro plan is not active. Open billing to fix it.", plan.OrderedBy);
+            var entitlement = await f.Engine.GetEntitlementAsync();
+            Assert.True(entitlement.PlanInactive);
+            Assert.Equal("pro", entitlement.Tier);
+            Assert.Equal(Semanticus.Engine.Entitlement.LicenseEntitlement.ManageUrl, entitlement.ManageUrl);
+        }
+
+        private sealed class AlwaysRefuses : System.Net.Http.HttpMessageHandler
+        {
+            protected override Task<System.Net.Http.HttpResponseMessage> SendAsync(System.Net.Http.HttpRequestMessage request, System.Threading.CancellationToken ct) =>
+                Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+                {
+                    Content = new System.Net.Http.StringContent(
+                        "{\"error\":\"subscription_inactive\",\"reason\":\"This subscription is not active. Check your billing details to use cloud advice again.\"}", Encoding.UTF8, "application/json"),
+                });
         }
 
         /// <summary>A service that is asked and gives the same reason every time instead of an answer.</summary>
@@ -555,6 +615,7 @@ namespace Semanticus.Tests
         /// used to note the row with the save count of the moment it finished. The next redraw then found no save
         /// since the row was seen, and filed "Save the changes you have made" off the plan instead of done. The save
         /// count is read with the facts, so the row is noted at the count the model was dirty at.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_save_that_lands_while_a_redraw_is_reading_is_still_done()
         {
@@ -655,6 +716,7 @@ namespace Semanticus.Tests
         /// The same symptom as D14 (seen live in UAT lane o), by another order: edit, read, save, restart. An assistant
         /// that saves and a person who then restarts the engine, or reopens the model, before the Plan redraws, is told
         /// the save did not count.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_real_save_then_a_restart_before_the_next_read_is_still_done()
         {
@@ -723,6 +785,7 @@ namespace Semanticus.Tests
         /// session's save the Plan never saw overwrote the mark of the save that did answer the row, and a real save then
         /// read "off the plan" two restarts on (the verifier's X07: edit, read, save, restart, edit, save, restart, read).
         /// The same gate keeps such a save from touching the memory file at all.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_save_the_plan_never_saw_unsaved_leaves_the_earlier_saves_mark_and_the_file_alone()
         {
@@ -755,6 +818,7 @@ namespace Semanticus.Tests
 
         /// <summary>The row's mark (where the unsaved row was last seen) is cleared once the row is off the plan, so the file
         /// carries it only while the row is there to be answered, and a read after that writes nothing new.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_unsaved_rows_mark_leaves_the_plan_memory_with_the_row()
         {
@@ -828,6 +892,7 @@ namespace Semanticus.Tests
         /// When the families landed, the page's next read ranked a different list and cancelled the first ask, which was
         /// charged and logged "outcome=failed". While the families are still working the plan out, no ranking is asked;
         /// the read after they land asks it once.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_ranking_is_not_asked_while_the_families_are_still_working_out_the_plan()
         {

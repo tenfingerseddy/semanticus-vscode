@@ -97,7 +97,7 @@ const ENGINE_GATED = {
   routeAsk: ['RequireProFeature (LocalEngine.Plan)', ['AskRouteTests.cs', 'A_free_session_is_refused_before_any_word_is_matched'],
     ['askbox.tsx']],
   getModelPlan: ['plan.rank is Pro only', ['ModelPlanCacheTests.cs', 'A_free_plan_starts_no_ranking_run_and_says_the_order_is_Pro'],
-    ['App.tsx', 'plan.tsx', 'sendtask.tsx', 'workflowdesign.tsx']],
+    ['App.tsx', 'plan.tsx', 'sendtask.tsx', 'studio/suggest.tsx', 'workflowdesign.tsx']],
 };
 const GATED = Object.keys(ENGINE_GATED);
 
@@ -592,8 +592,13 @@ function carrierOf(b) {
 // Held is worked out only for a use that would reach, because it walks every condition above the use.
 const isHeld = (ev) => (ev.held ??= held(ev.mod, ev.node, ev.boundary));
 function firstReach(evs) { for (const ev of evs) { const t = evalEvent(ev); if (t && !isHeld(ev)) return t; } return null; }
+const tracing = new Set();
 function valueTrace(b) {
-  if (!b) return null;
+  if (!b || tracing.has(b)) return null;
+  tracing.add(b);
+  try { return traceValue(b); } finally { tracing.delete(b); }
+}
+function traceValue(b) {
   switch (b.kind) {
     case 'method': return { at: `${b.mod.rel}:${line(b.mod, b.nameNode)}`, what: `${b.name} is '${b.method}'` };
     case 'fn': case 'class': return own.get(b) ?? anyMember(b);

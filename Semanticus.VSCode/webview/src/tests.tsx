@@ -1,5 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import { rpc, onActivity, onDidChange } from './bridge';
+import { rpc, onActivity, onAssistantCall, onDidChange, onProgress } from './bridge';
+import { useClaudeReflection } from './activity';
+import { NO_ASSISTANT_RUN, personRan, runFinished, runLine, runStale, runStarted, type AssistantRun } from './studio/checks-run';
 import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResultW } from './artifactdialog';
 import { useConnection } from './connection';
 import { openSqlSources, listSqlSources, type SqlSourceRecord } from './connectionshub';
@@ -14,8 +16,8 @@ import {
   TABLE_COUNT_FOOTER, comparisonSummary, differenceSentence, familyRan, foldFamilyResult, foldRunResults,
   partRunSummary, relationshipChip, relationshipSummary, relationshipTally, resultChip, runOnlyLabel,
   relationshipMenuCount, runScopeGroups, sectionsForGroup, skippedFamilyNote,
-  tickedRunRefusal, toleranceSentence, unknownCellText,
-  type RelationshipTally, type ResultChip, type RetainedFamily, type RunGroup, type StoredResult,
+  tickedRunRefusal, toleranceSentence, unknownCellText, foldRunProgress, runProgressPercent, runProgressText,
+  type RunProgress, type RelationshipTally, type ResultChip, type RetainedFamily, type RunGroup, type StoredResult,
 } from './tests-model';
 
 // ===================================================================================================
@@ -218,10 +220,15 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
   const [mappings, setMappings] = useState<TableMappingListW | null>(null);
   const [history, setHistory] = useState<TestHistoryW | null>(null);
   const [busy, setBusy] = useState(false);
+  // How far the run this page started has got. The page names its run, so only its own progress moves the count.
+  const [progress, setProgress] = useState<RunProgress | null>(null);
+  const ownRunId = useRef<string | null>(null);
   const [loadingSuite, setLoadingSuite] = useState(true);
   const [reportOpen, setReportOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [staleReason, setStaleReason] = useState<'model' | 'suite' | null>(null);
+  // The assistant's own run of checks (show-checks, 12 Oct): its call shows as running, its result becomes the run on screen.
+  const [assistantRun, setAssistantRun] = useState<AssistantRun>(NO_ASSISTANT_RUN);
   const [recordNote, setRecordNote] = useState<string | null>(null);
   const evidenceRevision = useRef(0);
   const [author, setAuthor] = useState<AuthorShape | null>(null);
@@ -254,6 +261,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
     onNavConsumed?.(navTarget.nonce);
   }, [navTarget?.nonce]);
   useEffect(() => onDidChange(() => { evidenceRevision.current++; setStaleReason('model'); }), []);
+  useEffect(() => onProgress((event) => setProgress((current) => foldRunProgress(current, event, ownRunId.current))), []);
 
   const loadSuite = useCallback(() => rpc<TestSuiteInfoW>('listTests')
     .then(setSuite).catch(() => undefined).finally(() => setLoadingSuite(false)), []);
@@ -287,33 +295,53 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
   // ticked ids into the origin string, so Run this one failed (UAT-F-S06b-2-012); rpc-argument-parity.test.mjs holds the shape.
   // ONE run path. `only` is null for everything; a named subset is the ticked ids, which the page has
   // already refused if empty. `sections` only ever carries a family the engine recognises, never a tab name.
+  // What a finished run does to the page, whoever ran it: the person's Run button or the assistant's run_tests.
+  const adoptRun = (next: TestRunW, startedAt: number, persisted: boolean) => {
+    setRun(next);
+    if (next.reconciles?.length) {
+      setLatest((current) => foldRunResults(current, next.reconciles ?? [], next.when ?? new Date().toISOString()));
+    }
+    const modelKey = next.modelName || next.environment || 'this model';
+    setRelationships((current) => foldFamilyResult(current, {
+      ran: familyRan(next.scope, 'relationships'),
+      value: next.relationships,
+      whenIso: next.when ?? new Date().toISOString(),
+      modelKey,
+    }));
+    setStaleReason((reason) => evidenceRevision.current === startedAt ? null : reason);
+    if (next.error) setErr(next.error);
+    // A run re-reads the counts, and a recorded one changes the history it just wrote to. Astra found
+    // History still showing July after a September recorded run because nothing invalidated it.
+    void loadMappings();
+    if (persisted) void loadHistory();
+  };
+  // The assistant's run. Its call opens the page on "running", its result is the run on screen (the same fold as the person's own),
+  // and a run that did not happen says why. A person pressing Run takes the page back.
+  useEffect(() => onAssistantCall((call) => setAssistantRun((view) => runStarted(view, call, Date.now()))), []);
+  useEffect(() => {
+    if (assistantRun.phase !== 'running') return;
+    const timer = window.setInterval(() => setAssistantRun((view) => runStale(view, Date.now())), 15_000);
+    return () => window.clearInterval(timer);
+  }, [assistantRun.phase]);
+  useClaudeReflection('run_tests', (event) => {
+    const next = runFinished(assistantRun, event);
+    setAssistantRun(next);
+    if (next.phase === 'done' && next.run) { setErr(null); setRecordNote(null); adoptRun(next.run as TestRunW, evidenceRevision.current, !!next.run.persisted); }
+  });
+
   const runSuite = (options: { only?: string[] | null; sections?: string[] | null; persist?: boolean }) => {
     const startedAt = evidenceRevision.current;
+    const runId = `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    ownRunId.current = runId;
+    setProgress(null);
     setBusy(true);
     setErr(null);
     setRecordNote(null);
-    rpc<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null)
-      .then((next) => {
-        setRun(next);
-        if (next.reconciles?.length) {
-          setLatest((current) => foldRunResults(current, next.reconciles ?? [], next.when ?? new Date().toISOString()));
-        }
-        const modelKey = next.modelName || next.environment || 'this model';
-        setRelationships((current) => foldFamilyResult(current, {
-          ran: familyRan(next.scope, 'relationships'),
-          value: next.relationships,
-          whenIso: next.when ?? new Date().toISOString(),
-          modelKey,
-        }));
-        setStaleReason((reason) => evidenceRevision.current === startedAt ? null : reason);
-        if (next.error) setErr(next.error);
-        // A run re-reads the counts, and a recorded one changes the history it just wrote to. Astra found
-        // History still showing July after a September recorded run because nothing invalidated it.
-        void loadMappings();
-        if (options.persist) void loadHistory();
-      })
+    setAssistantRun(personRan);
+    rpc<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null, runId)
+      .then((next) => adoptRun(next, startedAt, !!options.persist))
       .catch((error: unknown) => setErr(error instanceof Error ? error.message : String(error)))
-      .finally(() => setBusy(false));
+      .finally(() => { ownRunId.current = null; setProgress(null); setBusy(false); });
   };
   const runEverything = (persist = false) => runSuite({ persist });
   const runTicked = () => {
@@ -381,6 +409,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
           <ReportButton disabled={!run} onClick={() => setReportOpen(true)} />
         </div>
 
+        {runLine(assistantRun) && <div data-assistant-run={assistantRun.phase}><Banner color={assistantRun.phase === 'failed' ? 'var(--sem-warn)' : 'var(--sem-ok)'}>{runLine(assistantRun)}</Banner></div>}
         {err && <div><Banner color="var(--sem-bad)">{err}</Banner></div>}
         {recordNote && <div><Banner color="var(--sem-warn)">{recordNote}</Banner></div>}
         {refused && <div><Banner color="var(--sem-warn)">{run?.note ?? 'That run asked for nothing, so nothing ran.'}</Banner></div>}
@@ -390,7 +419,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
           : 'The model changed. These results may be out of date. Run again to check your latest changes.'}</Banner></div>}
 
         {/* 2. One status line: grade, counts, coverage, when, and whether it was kept. */}
-        <StatusLine run={run} busy={busy} partRun={partRun} onRecord={recordThisRun} />
+        <StatusLine run={run} busy={busy || assistantRun.phase === 'running'} progress={progress} partRun={partRun} onRecord={recordThisRun} />
 
         <SavedChecks
             definitions={definitions} latest={latest} loading={loadingSuite} liveModel={!!testModelLabel}
@@ -471,17 +500,34 @@ function ReportButton({ disabled, onClick }: { disabled: boolean; onClick: () =>
 // ---------------------------------------------------------------------------------------------------
 // 2. One status line.
 // ---------------------------------------------------------------------------------------------------
-function StatusLine({ run, busy, partRun, onRecord }: {
-  run: TestRunW | null; busy: boolean; partRun: boolean; onRecord: () => void;
+/** While a run goes: the count in words and a thin bar. Before the first count arrives it is just the words. */
+function RunProgressLine({ progress }: { progress: RunProgress | null }) {
+  const percent = runProgressPercent(progress);
+  return (
+    <div className="sem-tests-progress basis-full" role="status" aria-live="polite">
+      <span className="sem-num">{runProgressText(progress)}</span>
+      {percent !== null && (
+        <div role="progressbar" aria-label="Checks run" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}
+          style={{ marginTop: 'var(--sem-space-2)', height: 'var(--sem-space-1)', borderRadius: 'var(--sem-radius-chip)', background: 'var(--sem-border)', overflow: 'hidden' }}>
+          <div style={{ width: `${percent}%`, height: '100%', background: 'var(--sem-accent)', transition: 'width 200ms ease-out' }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusLine({ run, busy, progress, partRun, onRecord }: {
+  run: TestRunW | null; busy: boolean; progress: RunProgress | null; partRun: boolean; onRecord: () => void;
 }) {
   if (!run) {
     return <div className="sem-tests-status flex flex-wrap items-center gap-3 sem-text-meta">
-      <span>{busy ? 'Running the checks…' : 'No run yet.'}</span>
+      {busy ? <RunProgressLine progress={progress} /> : <span>No run yet.</span>}
     </div>;
   }
   const health = run.health;
   return (
     <div className="sem-tests-status flex flex-wrap items-center gap-x-4 gap-y-1 text-(length:--sem-text-meta)">
+      {busy && <RunProgressLine progress={progress} />}
       {/* H2. A part run's letter is REAL, and it is the grade of what ran. It is shown, and what it covers
           is said beside it, so it can never be read as the model's overall grade. */}
       {!health

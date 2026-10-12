@@ -39,6 +39,7 @@ namespace Semanticus.Engine
         Task<SetResult> SetDaxAsync(string objRef, string expression, string origin, string expectedSession = null, long? expectedRevision = null, string expectedExpression = null);
         Task<SaveResult> SaveAsync(string path, string format, bool overwrite, string origin, bool pickedInDialog = false);
         Task<SessionInfo> SessionInfoAsync();
+        Task<bool> ResolveFileRecoveryAsync(string expectedSession, bool restore, string origin);
         Task<ConnectionContext> ConnectionContextAsync();
         // Pro entitlement (offline-verified license) — read-only, both doors. The free tier is fully usable; Pro
         // unlocks the one-click BULK apply (apply_change_plan >1 item, apply_safe_fixes for either system). See Entitlement/.
@@ -66,7 +67,7 @@ namespace Semanticus.Engine
         Task<UndoState> UndoAsync(string origin);
         Task<UndoState> RedoAsync(string origin);
         // Plan-heart contract 8.6 and 8.8: undo or redo to a History entry in one commit, and the merged History.
-        Task<UndoState> UndoToEntryAsync(string entryId, string origin);
+        Task<UndoState> UndoToEntryAsync(string entryId, string origin, long? throughRevision = null);
         Task<UndoState> RedoToEntryAsync(string entryId, string origin);
         Task<PlanHistoryView> GetPlanHistoryAsync(string by = null, string objectRef = null, string before = null, int limit = 50);
 
@@ -93,6 +94,20 @@ namespace Semanticus.Engine
         Task<GroundingBundle> GetGroundingAsync(string objRef);
 
         // --- Finding waivers (accepted findings) — both BPA and AI-readiness, persisted on the model ---
+        Task<BatchEditResult> UnwaiveFindingsAsync(FindingFixItem[] items, string origin);
+        Task<BatchEditResult> ApplyFixesAsync(FindingFixItem[] items, string origin);
+        Task<BatchEditResult> DuplicateObjectsAsync(ObjectDuplicateItem[] items, string origin);
+        Task<BatchEditResult> SetDocSectionsAsync(DocSectionItem[] items, string origin);
+        Task<BatchEditResult> SetPerspectiveMembersAsync(PerspectiveMemberItem[] items, string origin);
+        Task<BatchEditResult> SetObjectPermissionsAsync(ObjectPermissionItem[] items, string origin);
+        Task<BatchPlanResult> SetPlanItemsAsync(PlanItemEdit[] items, string origin);
+        Task<BatchPlanResult> AddPlanItemsAsync(PlanItemAdd[] items, string origin);
+        Task<BatchStartPlanResult> EditStartPlansAsync(StartPlan.StartPlanEdit[] items, string origin);
+        Task<BatchEditResult> WaiveFindingsAsync(FindingWaiverItem[] items, string origin);
+        Task<BatchPlanRowsResult> PlanRowsAsync(PlanRowEdit[] items, string origin);
+        Task<BatchEditResult> WriteWordsAsync(WordsWriteItem[] items, string origin);
+        Task<BatchEditResult> EditObjectsAsync(ObjectEditItem[] items, string origin);
+        Task<BatchEditResult> CreateMeasuresAsync(MeasureCreateItem[] items, string origin);
         Task<SetResult> WaiveFindingAsync(string system, string ruleId, string objRef, string reason, string origin);   // objRef null/'*' = rule-level; free either way
         Task<SetResult> UnwaiveFindingAsync(string system, string ruleId, string objRef, string origin);
         Task<WaiverRecord[]> ListWaiversAsync();
@@ -280,7 +295,9 @@ namespace Semanticus.Engine
         //     table row counts + saved reconciles, every verdict + evidence shown); persisted suite / run
         //     history = Pro. Role-filter checks and the Model interview replay left this run in 1.2.0.
         //     Read-only w.r.t. the model — a run never mutates, so no undo/broadcast rides these. ---
-        Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null);
+        /// <summary>Run the suite. <paramref name="runId"/> names the run in its progress events (<c>progress/didChange</c>, OpKey "run_tests"),
+        /// so the page that started it can show "312 of 691 checks" for its own run and no other. Omitted, the run names itself.</summary>
+        Task<TestSuiteRunResult> RunTestSuiteAsync(bool persist, string origin, string[] only = null, string[] sections = null, string runId = null);
         Task<ReconcileOutcome> TryTestAsync(TestDefinition def, string origin);
         Task<TestSuiteInfo> ListTestDefinitionsAsync();
         Task<TestDefinition> SaveTestDefinitionAsync(TestDefinition def, string origin, string expectedJson = null);
@@ -464,8 +481,7 @@ namespace Semanticus.Engine
         // never an interactive prompt or a network sign-in (local reads + a local `az account show` at most).
         Task<AuthPrerequisites> ProbeAuthPrerequisitesAsync(string mode, string tenantId = null);
         // Multi-account profiles (Phase 2, T160): the saved Microsoft identities on this device (credential-free, both
-        // doors). SetDefault is the make-default affordance (human-only) — it repoints the tenant default, so an agent
-        // is refused, mirroring label_connection.
+        // doors). SetDefault changes the tenant default through either door under the local-write policy.
         Task<AccountProfile[]> ListAccountProfilesAsync();
         Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human");
         Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent");
@@ -479,6 +495,7 @@ namespace Semanticus.Engine
         Task<ModelSqlEndpointResult> SetModelSqlEndpointAsync(string sqlSourceId, string connectionId = null, string origin = "agent");
         /// <summary>Every model's SQL endpoint, and the saved sources no model uses as its endpoint.</summary>
         Task<ModelSqlEndpointList> ListModelSqlEndpointsAsync();
+        /// <summary>Set the first environment label through either door. Only the person can change or clear an existing label.</summary>
         Task<ModelConnectionRecord> LabelConnectionAsync(string id, string label, string origin = "agent");
         Task<ModelConnectionRecord> SetConnectionWorkingFolderAsync(string id, string folder);
         Task<bool> ForgetConnectionAsync(string id, string origin = "agent");
@@ -501,6 +518,7 @@ namespace Semanticus.Engine
         // --- Fabric REST (the cloud ALM lane — read-only discovery) ---
         Task<FabricWorkspace[]> ListWorkspacesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<FabricSemanticModel[]> ListWorkspaceModelsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
+        Task<WorkspaceSqlEndpointList> ListWorkspaceSqlEndpointsAsync(string workspaceId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<DeploymentPipeline[]> ListDeploymentPipelinesAsync(string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<PipelineStage[]> GetPipelineStagesAsync(string pipelineId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
         Task<StageItem[]> GetStageItemsAsync(string pipelineId, string stageId, string authMode, string tenantId, string origin = "human", CancellationToken cancellationToken = default);
@@ -574,19 +592,17 @@ namespace Semanticus.Engine
         Task<ModelPlanView> RemovePlanTargetAsync(string id, string origin);
         Task<ModelPlanActionResult> MarkPlanTargetDoneAsync(string id, string origin);
 
-        // ---- Plan at the heart: the person's controls (contract sections 3.3, 4 and 12). PERSON-ONLY. The UI door
-        // reaches them on HumanGovernanceRpcTarget, which an agent connection never registers, and no MCP tool
-        // calls them. On RemoteEngine (an attached assistant) each is refused by the owner with method-not-found,
-        // the approveAgentAction precedent. The assistant reads every one of these settings on get_model_plan.
+        // ---- Plan at the heart: the Plan page's controls (contract sections 3.3, 4 and 12). Kane, 10 Oct 2026: the person's word
+        // in chat is enough, so both doors reach them (EngineRpcTarget and the MCP tools); only the Permissions page stays the person's.
         Task<ModelPlanActionResult> AddPlanTaskAsync(PlanTaskRequest request);
         Task<ModelPlanView> HoldPlanItemAsync(string id, bool held);
-        Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer);
+        Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer, string origin = "human");
         Task<ModelPlanView> MovePlanTaskUpAsync(string id);
         Task<ModelPlanView> SetAssistantQueueAsync(string state);
         Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text);
 
-        // ---- Plan at the heart: repeat cards (lane RP, contract 1.7). PERSON-ONLY, like the controls above: create,
-        // change (edit, pause, resume) and delete are on HumanGovernanceRpcTarget and on no MCP tool. Add and change
+        // ---- Plan at the heart: repeat cards (lane RP, contract 1.7). Both doors, like the controls above: create,
+        // change (edit, pause, resume) and delete. Add and change
         // are Pro (Workflows); delete is free, so a person who lost Pro can still clear a repeat away. Both doors read
         // the repeats and their next due dates on get_model_plan.
         Task<ModelPlanActionResult> AddPlanRepeatAsync(PlanRepeatRequest request);
@@ -612,9 +628,9 @@ namespace Semanticus.Engine
         Task<Composer.DraftView> GetDraftAsync(string draftId);
         Task<Composer.DraftView> EditDraftAsync(string draftId, string action, string step, string blank, string question, string text, string origin);
         Task<Composer.DraftView> RunDraftAsync(string draftId, string origin);
-        Task<Composer.DraftView> ApproveHeldDraftAsync(string draftId);
+        Task<Composer.DraftView> ApproveHeldDraftAsync(string draftId, string origin = "human");
         /// <summary>Continue a draft's run past the step it waits at (a person's stop, or an assistant's step the person
-        /// passes without its changes). PERSON-ONLY: HumanGovernanceRpcTarget, no MCP op (lane author-gaps, B9).</summary>
+        /// passes without its changes). Kane, 10 Oct 2026: the assistant may continue too (continue_draft); the person's word in chat is enough.</summary>
         Task<Composer.DraftView> ContinueDraftAsync(string draftId);
         /// <summary>The Plan fold line for this reader, or null when its offer has not changed (contract 6.1). The
         /// MCP success filter's data path, like PullForeignChangesAsync, and not an MCP tool.</summary>
@@ -623,10 +639,11 @@ namespace Semanticus.Engine
         Task<ModelPlanView> ClaimPlanTaskAsync(string id);
         Task<ModelPlanView> CompletePlanTaskAsync(string id, string reply);
         Task<ModelPlanView> DeclinePlanTaskAsync(string id, string reason);
-        // Remove a task or draft row, and put it back (Kane's UAT, 25 Sep). PERSON-ONLY: HumanGovernanceRpcTarget, no
-        // MCP tool, for the reason adding a task is: an assistant must not take the person's work off the Plan.
+        // Remove a task or draft row, and put it back (Kane's UAT, 25 Sep). Both doors since 10 Oct 2026; Undo is the safety net.
         Task<PlanRemoveResult> RemovePlanRowAsync(string id);
         Task<ModelPlanView> RestorePlanRowAsync(string id);
+        // Refresh plan (Kane, 11 Oct 2026): scan again now, add what is new, take the finished rows off the list. Both doors.
+        Task<PlanRefreshResult> RefreshPlanAsync();
         /// <summary>describe_workflow_steps: a description cut into steps for Author, each matched to the step Semanticus
         /// knows or left as a named placeholder. Stores nothing and puts nothing on the Plan. Pro (Workflows).</summary>
         Task<Composer.DescribedWorkflow> DescribeWorkflowStepsAsync(string words);
@@ -655,15 +672,30 @@ namespace Semanticus.Engine
         // list the members it inherits, so FeatureMap's completeness walk and the gate would never have seen them.
         // StartPlanEngineSurfaceTests holds the two lists equal. Every verb is FREE in FeatureMap; the Pro line (Jev
         // deciding) is drawn inside the engine, so a free session still gets the draft, its own assistant's words and
-        // one build. ApproveStartPlanAsync is PERSON-ONLY: HumanGovernanceRpcTarget, no MCP tool.
+        // one build. ApproveStartPlanAsync is on both doors (Kane, 10 Oct 2026); the approval is void the moment the plan changes.
         Task<StartPlanView> StartModelFromSqlAsync(StartModelRequest request, string origin);
         Task<StartPlanView> GetStartPlanAsync();
         Task<StartPlanView> EditStartPlanAsync(StartPlanEdit edit, string origin);
         Task<StartPlanView> GrantStartDisclosureAsync(string digest, string origin);
-        Task<StartPlanView> ApproveStartPlanAsync(string digest);
+        Task<StartPlanView> ApproveStartPlanAsync(string digest, string origin = "human");
         Task<StartWordsPage> GetStartWordsAsync(int max, int offset);
         Task<StartWordsResult> WriteStartWordsAsync(StartWord[] words, string origin);
         Task<StartPlanBuildResult> BuildStartPlanAsync(string digest, string origin);
         Task<StartPlanView> DiscardStartPlanAsync(string origin);
+
+        // ---- the Studio wire (1.4, Claude drives; contract sections 1, 4, 5 and 6). None of it changes the model, its files or the
+        // settings. SetStudioDriverAsync is PERSON-ONLY: HumanGovernanceRpcTarget, no MCP tool.
+        /// <summary>show_in_studio: say something to the person and name the place (and object, and control) it is about. The Studio
+        /// decides whether its screen moves. Refused with a sentence for an unknown place or press, or an empty or long say.</summary>
+        Task<StudioShowResult> ShowInStudioAsync(StudioShowRequest request);
+        /// <summary>suggest_next: 2 or 3 next steps the Studio shows as buttons. A new one replaces the last.</summary>
+        Task<StudioSuggestResult> SuggestNextAsync(StudioSuggestRequest request);
+        /// <summary>The session's notes (100 at most, newest last) and current suggestion. The Studio reads it on mount.</summary>
+        Task<StudioNotesView> GetStudioNotesAsync(string sessionId);
+        /// <summary>The Studio reports its own screen: the mode (claudeDrives or iDrive) and the state (idle, claudeDriving or personHasWheel).</summary>
+        Task SetStudioDriverAsync(string mode, string state);
+        /// <summary>An assistant tool call began. The MCP success filter calls it first thing, for every tool, owner or attached.</summary>
+        /// <summary>When the tool writes or shows something the Studio has a place for, the engine also narrates it (follow). <paramref name="focus"/> is the object ref in the call's arguments, if any.</summary>
+        Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null);
     }
 }

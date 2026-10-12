@@ -434,9 +434,9 @@ namespace Semanticus.Engine
 
         /// <summary>The first "why" line of a starter item, Jev's or the rule's: the same gap, said once.</summary>
         internal static string Missing(int n, string table) =>
-            table + " has number columns that no measure uses yet, so a report that shows one adds it up however "
-            + "the column happens to default to. " + JevFamily.Count(n, "starter measure", "starter measures")
-            + " would give each one a single written answer.";
+            table + " has number columns that no measure uses yet. A report adds each one up in whatever way "
+            + "the column is set to. " + JevFamily.Count(n, "simple measure", "simple measures")
+            + " would give each one a formula you can see.";
 
         private static string Base(Ask ask) =>
             ask.ColumnName + " is a number column in " + ask.TableName + " that no measure uses yet.";

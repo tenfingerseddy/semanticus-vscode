@@ -15,8 +15,13 @@ When the person presses Give the rest to your assistant, or a words row is on th
 as tasks (see `list_assistant_requests`). Either way, `get_words_queue` lists every open words
 finding, best lift first, with the tool to use and the grounding (DAX, table and sibling names).
 
-Author each word from the real business meaning, then write it with the tool the queue names
-(`set_description`, `rename_object`, `set_synonyms`, `set_ai_instructions`, `set_measure_format`).
+Author each word from the real business meaning.
+On Pro, send a page's descriptions and synonyms in one `write_words` call, then names and formats in one `edit_objects` call.
+Each item's `tool` names the bulk tool on Pro and the single tool on Free.
+Use `set_ai_instructions` once for model instructions; use `create_linguistic_schema` when the queue asks for it.
+Send writes one after another. Parallel calls wait for the same writer and do not make writes faster.
+Read all pages before writing, or read again from offset 0 after a write; writes change the queue.
+On Free, use the single tools the queue names, one call after another.
 Do not invent definitions to raise a grade. For a scoped set of changes, `propose_plan` with
 `set_plan_item` and `apply_plan` works too; read the applied, skipped and failed items.
 

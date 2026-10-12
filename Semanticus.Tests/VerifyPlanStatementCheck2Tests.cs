@@ -59,6 +59,7 @@ namespace Semanticus.Tests
         /// <summary>The assistant renames tables (dim_project to Project) as the words row asks. Acceptances on tables and columns
         /// follow the rename; an acceptance on a RELATIONSHIP keeps the old table names, so the finding opens again, the Plan's
         /// "Sort out N relationships" row comes back, and the scan does not count the stale record as orphaned either.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_acceptance_on_a_relationship_follows_a_rename_of_a_table_it_joins()
         {

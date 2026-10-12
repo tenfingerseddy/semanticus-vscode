@@ -117,6 +117,7 @@ namespace Semanticus.Tests
         /// so this test, which said "kept or dropped", now counts kept adds only: rewritten, rule line version 5 item 2.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task No_phrasing_that_takes_away_drafts_an_add(string door, string jev)
         {
             using var f = await ProAsync("R5Take" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -129,10 +130,18 @@ namespace Semanticus.Tests
             Assert.True(wrong.Count == 0, string.Join("\n", wrong));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> No_phrasing_that_takes_away_drafts_an_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(No_phrasing_that_takes_away_drafts_an_add_SampleRows))]
+        public Task No_phrasing_that_takes_away_drafts_an_add_sample(string door, string jev) => No_phrasing_that_takes_away_drafts_an_add(door, jev);
+
         /// <summary>Polite and leading adds keep their add, kept, on both doors: the verifier's VR6 and its round 4 polite adds,
         /// and the completeness verifier's v2-21 to v2-27.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Polite_and_leading_adds_keep_their_add(string door, string jev)
         {
             using var f = await ProAsync("R5Polite" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -158,12 +167,20 @@ namespace Semanticus.Tests
             Assert.Contains("Add a measure (dropped)", Adds(removed));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> Polite_and_leading_adds_keep_their_add_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(Polite_and_leading_adds_keep_their_add_SampleRows))]
+        public Task Polite_and_leading_adds_keep_their_add_sample(string door, string jev) => Polite_and_leading_adds_keep_their_add(door, jev);
+
         /// <summary>Add more words after a take-away (version 5): the rule reads the new words as they are typed, and no longer
         /// carries the draft's open sentence into them (version 3 b is retired). A NEW add of a named kind is kept after the
         /// take-away, the add of "the new measures" with no verb is not drafted, and an add that names something that already
         /// exists ("to them") is unticked. Rewritten from "the take-away it carries on vetoes the add", rule line version 5 item 4.</summary>
         [Theory]
         [MemberData(nameof(DoorsAndJev))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Add_more_words_reads_the_new_words_with_the_sentence_they_carry_on(string door, string jev)
         {
             using var f = await ProAsync("R5More" + door + jev, jev == "sure" ? SureOfEveryAdd : SaysNo);
@@ -185,12 +202,20 @@ namespace Semanticus.Tests
             Assert.Contains("Add a role (dropped)", Adds(v));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> Add_more_words_reads_the_new_words_with_the_sentence_they_carry_on_SampleRows() => DoorsAndJev().Take(1);
+
+        [Theory]
+        [MemberData(nameof(Add_more_words_reads_the_new_words_with_the_sentence_they_carry_on_SampleRows))]
+        public Task Add_more_words_reads_the_new_words_with_the_sentence_they_carry_on_sample(string door, string jev) => Add_more_words_reads_the_new_words_with_the_sentence_they_carry_on(door, jev);
+
         /// <summary>An add the words after it hold back (version 5, K4) is offered unticked with the person's words and the one
         /// true line on why, and the take-away is kept with its own reason. Rewritten from "kept with the sentence's reason":
         /// version 5 retired the sentence-wide veto and its SentenceTakesAwayReason.</summary>
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_vetoed_add_is_kept_with_the_sentences_reason(string door)
         {
             using var f = await ProAsync("R5Veto" + door, SaysNo);
@@ -201,11 +226,17 @@ namespace Semanticus.Tests
             Assert.Contains(v.Notes, n => n.Contains("\"the old role should be removed\"", StringComparison.Ordinal) && n.Contains(AddingRule.TakeAwayReason, StringComparison.Ordinal));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio")]
+        public Task A_vetoed_add_is_kept_with_the_sentences_reason_sample(string door) => A_vetoed_add_is_kept_with_the_sentences_reason(door);
+
         /// <summary>L1: under words that ask to take something away the menu does not put the opposite add first: a step
         /// that adds is named only by clauses that ask to add. With Jev off the draft is the menu.</summary>
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_menu_does_not_offer_an_add_first_for_words_that_take_away(string door)
         {
             using var f = await ProAsync("R5Menu" + door, SaysNo, consent: false);
@@ -220,11 +251,17 @@ namespace Semanticus.Tests
             Assert.Equal("role", (await ComposeOnDoor(f.Engine, door, "add a role for managers")).Menu[0].Id);
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio")]
+        public Task The_menu_does_not_offer_an_add_first_for_words_that_take_away_sample(string door) => The_menu_does_not_offer_an_add_first_for_words_that_take_away(door);
+
         /// <summary>L2: a clause that asks to take something away keeps its note when Jev only leaned to steps for it that do
         /// not add (they stand dropped, beside the note). Before, any such step took the note away.</summary>
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_take_away_keeps_its_note_beside_steps_jev_only_leaned_to(string door)
         {
             using var f = await ProAsync("R5Lean" + door, new Jev(0.02, 0.6));
@@ -233,6 +270,11 @@ namespace Semanticus.Tests
             Assert.Contains(v.Notes, n => n.StartsWith("No step for", StringComparison.Ordinal)
                 && n.Contains("\"Average Price should be removed\"", StringComparison.Ordinal) && n.Contains(AddingRule.TakeAwayReason, StringComparison.Ordinal));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio")]
+        public Task A_take_away_keeps_its_note_beside_steps_jev_only_leaned_to_sample(string door) => A_take_away_keeps_its_note_beside_steps_jev_only_leaned_to(door);
 
         /// <summary>L6: a step's text sent over set_field with a Windows line break saves, with the break the file writes
         /// (an agent's edit; a browser text box never sends one). Before, it was refused as unpreservable.</summary>

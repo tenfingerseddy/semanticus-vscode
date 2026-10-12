@@ -122,6 +122,7 @@ namespace Semanticus.Tests
             return engine.StartPlanDocForTest().Lines.Single(l => string.Equals(StartPlanDecide.LineKey(l), key, StringComparison.OrdinalIgnoreCase));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -141,6 +142,7 @@ namespace Semanticus.Tests
             Assert.Equal(line.Item.After, await FormatOfAsync(sessions, line.Item.ObjectRef));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_assistants_keep_of_an_unsure_format_is_not_built_and_the_plan_never_says_you_kept_it()
         {

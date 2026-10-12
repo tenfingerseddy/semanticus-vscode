@@ -311,6 +311,7 @@ namespace Semanticus.Tests
         [InlineData("fresh-labels.json", 75, 85)]
         [InlineData("fresh2-labels.json", 160, 160)]
         [InlineData("fresh3-labels.json", 160, 200)]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_labels_line_up_with_the_Contoso_model(string file, int least, int most)
         {
             using var labels = JsonDocument.Parse(File.ReadAllText(Path.Combine(Repo(), "tools", "jev-replay", "query", file)));
@@ -337,6 +338,11 @@ namespace Semanticus.Tests
                     }
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("labels.json", 55, 70)]
+        public Task The_labels_line_up_with_the_Contoso_model_sample(string file, int least, int most) => The_labels_line_up_with_the_Contoso_model(file, least, most);
 
         // ---- the live replay ----------------------------------------------------------------------------------
 
@@ -623,6 +629,7 @@ namespace Semanticus.Tests
         /// <summary>Not live: the AI-ready arm really is prepared, and the plain Contoso arm the older sets were scored on
         /// really is bare. It opens both Contoso models and proves nothing about Northstar; that is the fact above.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_AI_ready_replay_model_carries_descriptions_and_synonyms()
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);

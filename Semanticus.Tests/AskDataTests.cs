@@ -25,15 +25,20 @@ using Xunit;
 namespace Semanticus.Tests
 {
     [Collection("restore-root")]   // the agent door's data gate writes the approval ledger: keep it in the scratch root
-    public sealed partial class AskDataTests : IDisposable
+    public sealed partial class AskDataTests : IDisposable, IClassFixture<ModelTemplates>
     {
         // A policy and a ledger of this class's own. The collection's shared root is not enough: another class in it
         // may leave a preset or a grant behind (the full suite found one), and the agent door's refusal is asserted here.
         private readonly string _safeRoot;
         private readonly string _root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "sem-askdata-" + Guid.NewGuid().ToString("N").Substring(0, 8));
 
-        public AskDataTests(RestoreRootFixture fixture)
+        // The Contoso model is built once per shape and each rig opens a copy (lean suite, lane A). Tests in a class run one after
+        // another, so one static handle, set by the constructor, is enough for the static BuildAsync.
+        private static ModelTemplates _templates;
+
+        public AskDataTests(RestoreRootFixture fixture, ModelTemplates templates)
         {
+            _templates = templates;
             _safeRoot = fixture.Root;
             Semanticus.Engine.AgentPolicyStore.RootOverride = _root;
             Semanticus.Engine.ApprovalLedger.RootOverride = _root;
@@ -241,6 +246,12 @@ namespace Semanticus.Tests
             public void Dispose() => F.Dispose();
         }
 
+        private static void LabelProdForTest(string endpoint, string database)
+        {
+            var r = ConnectionRegistry.Remember("xmla", endpoint, database, database, null, "azcli");
+            ConnectionRegistry.SetLabel(r.Id, "prod", "human");
+        }
+
         private static async Task<Rig> BuildAsync(IEntitlement tier = null, bool connect = true, bool bothWays = false,
             Func<DecisionRequest, DecisionQuestion, (string, double)?> script = null, bool? barMet = true,
             bool twins = false, bool calendar = false, (string Ref, string[] Terms)[] synonyms = null, bool orderDate = false, bool ratio = false, bool metric = false, Func<LocalEngine, FakeData, Task> shape = null,
@@ -248,11 +259,20 @@ namespace Semanticus.Tests
         {
             var rig = new Rig { F = new DecisionFixture(tier ?? TestEntitlements.Pro) };
             var e = rig.Engine;
-            await BuildContosoModelAsync(e, bothWays, twins, calendar, synonyms, orderDate, ratio, metric);
-            if (shape != null) await shape(e, rig.Data);
-            await rig.F.SaveAsAsync("ContosoRetail.bim");
+            var key = string.Join("|", "contoso", bothWays, twins, calendar, orderDate, ratio, metric,
+                string.Join(";", (synonyms ?? Array.Empty<(string Ref, string[] Terms)>()).Select(x => x.Ref + "=" + string.Join(",", x.Terms))));
+            await _templates.OpenCopyAsync(rig.F, key, g => BuildContosoModelAsync(g.Engine, bothWays, twins, calendar, synonyms, orderDate, ratio, metric), "ContosoRetail.bim");
+            if (shape != null)
+            {
+                await shape(e, rig.Data);
+                await rig.F.SaveAsAsync("ContosoRetail.bim");   // the file on disk is the shaped model, as the old build saved it
+            }
             await rig.F.ConsentAsync();
-            if (connect) e.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso Retail", "Contoso Retail", rig.Data.Execute));
+            if (connect)
+            {
+                e.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Contoso Retail", "Contoso Retail", rig.Data.Execute));
+                LabelProdForTest("powerbi://api.powerbi.com/v1.0/myorg/Contoso Retail", "Contoso Retail");   // an unlabelled target counts as test since 1.4; these tests are about the production rule
+            }
             e.JevReadsDataForTest = barMet;
             // The connected copy holds what was built, so an edit a test makes to the open copy afterwards is unpublished.
             rig.Data.Connected = (await CatalogAsync(rig)).Measures.ToDictionary(m => m.Name, m => (m.Expression, m.FormatString));
@@ -478,6 +498,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_relationship_that_filters_both_ways_lets_the_column_reach()
         {
             using (var one = await BuildAsync())
@@ -1029,6 +1050,7 @@ namespace Semanticus.Tests
         /// relative, so it does not depend on how fast the machine is: a whole catalog read must cost less than ten
         /// single lookups (five failed a correct read at 5.9 on the Windows hosted runner; the defect costs about 29).</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_catalog_reads_the_language_schema_once_per_culture_not_once_for_every_object()
         {
             using var rig = await BuildAsync();
@@ -1263,6 +1285,7 @@ namespace Semanticus.Tests
             using var rig = await BuildAsync(script: CoastScript, barMet: null);
             // Its own target, so the agent-door grant below cannot leak into another test's "an unlabelled target asks a person".
             rig.Engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", "powerbi://api.powerbi.com/v1.0/myorg/Query Switch", "Query Switch", rig.Data.Execute));
+            LabelProdForTest("powerbi://api.powerbi.com/v1.0/myorg/Query Switch", "Query Switch");
             await McpTools.SetDecisionPointEnabled(rig.Engine, DecisionRegistry.QuerySummarize, false);
             var gate = await McpTools.AskData(rig.Engine, question: CoastQuestion);
             Assert.Equal(DataAnswer.Refused, gate.Outcome);   // the agent door's QueryData rule asks a person first
@@ -1520,6 +1543,7 @@ namespace Semanticus.Tests
         /// <summary>K16. A word that names the chosen measure beats the same word as a column's value: even a sure "is" from
         /// Jev does not narrow Metric Category by 'sales' when 'sales' is the number asked for. It is offered, one press away.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task K16_a_measure_name_word_beats_the_same_word_as_a_value()
         {
             using var rig = await BuildAsync(script: K16("1", "Product[Category]", QueryOps.Is, 0.96), metric: true);

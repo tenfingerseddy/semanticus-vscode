@@ -101,6 +101,7 @@ namespace Semanticus.Tests
         /// fallback) and with real Jev on.</summary>
         [Theory]
         [MemberData(nameof(TakeAways))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR8_words_that_ask_to_take_something_away_draft_no_add(string door, string words)
         {
             using var f = await ProAsync(File("VR8"));
@@ -108,12 +109,20 @@ namespace Semanticus.Tests
             Assert.Empty(Adds(v));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR8_words_that_ask_to_take_something_away_draft_no_add_SampleRows() => TakeAways().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR8_words_that_ask_to_take_something_away_draft_no_add_SampleRows))]
+        public Task VR8_words_that_ask_to_take_something_away_draft_no_add_sample(string door, string words) => VR8_words_that_ask_to_take_something_away_draft_no_add(door, words);
+
         /// <summary>VR8b (medium, the harmful kind). Add more words reads its new words on their own, so a clause that only
         /// names a thing and continues the draft's own take-away ("delete the old measures", then "and the new role too")
         /// is a first clause with no action, read as an ask to add. The rule: "a clause with no action of its own inherits
         /// the action of the clause before it", which here is "delete the old measures". Kept Add a role, both doors.</summary>
         [Theory]
         [MemberData(nameof(Doors))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR8b_add_more_words_that_carry_on_a_take_away_draft_no_add(string door)
         {
             using var f = await ProAsync(File("VR8b"));
@@ -125,17 +134,32 @@ namespace Semanticus.Tests
             Assert.Empty(Adds(v));
         }
 
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR8b_add_more_words_that_carry_on_a_take_away_draft_no_add_SampleRows() => Doors().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR8b_add_more_words_that_carry_on_a_take_away_draft_no_add_SampleRows))]
+        public Task VR8b_add_more_words_that_carry_on_a_take_away_draft_no_add_sample(string door) => VR8b_add_more_words_that_carry_on_a_take_away_draft_no_add(door);
+
         /// <summary>VR8c (low, an add nobody asked for; not a take-away). The same reading: "count of orders and count of
         /// returns should be hidden" asks to hide two things, and the draft keeps Add a measure for "count of orders". The
         /// lane's own AddingRuleTests expects "count of orders should be hidden" to draft no add; cut in two, it does.</summary>
         [Theory]
         [MemberData(nameof(Doors))]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task VR8c_words_that_ask_to_hide_two_things_draft_no_add(string door)
         {
             using var f = await ProAsync(File("VR8c"));
             var v = await ComposeOnDoor(f.Engine, door, "count of orders and count of returns should be hidden");
             Assert.Empty(Adds(v));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        public static IEnumerable<object[]> VR8c_words_that_ask_to_hide_two_things_draft_no_add_SampleRows() => Doors().Take(1);
+
+        [Theory]
+        [MemberData(nameof(VR8c_words_that_ask_to_hide_two_things_draft_no_add_SampleRows))]
+        public Task VR8c_words_that_ask_to_hide_two_things_draft_no_add_sample(string door) => VR8c_words_that_ask_to_hide_two_things_draft_no_add(door);
 
         /// <summary>The root cause on its own, with no engine: rule version 2 reads each of VR8's clauses as NOT asking to
         /// add. It reads the first clause of each as asking to add.</summary>

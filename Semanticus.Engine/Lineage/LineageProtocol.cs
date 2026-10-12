@@ -137,6 +137,16 @@ namespace Semanticus.Engine
         public string[] UsedRefs { get; set; } = Array.Empty<string>();   // resolved model object refs this visual uses
     }
 
+    /// <summary>One report-level measure and the model objects its DAX reads. The report owns the formula, so a rename or
+    /// delete in the model can break it; this is how the rename warning, impact and the unused sweep name it.</summary>
+    public sealed class ReportMeasureUsage
+    {
+        public string Name { get; set; }
+        public string[] UsedRefs { get; set; } = Array.Empty<string>();   // resolved model object refs its DAX reads
+        public int ReferencesChecked { get; set; }                         // names found in its DAX
+        public int Unresolved { get; set; }                                // names that matched nothing in this model
+    }
+
     /// <summary>What one published/local report uses from the open model (parsed from its PBIR definition).</summary>
     public sealed class ReportUsage
     {
@@ -153,6 +163,7 @@ namespace Semanticus.Engine
         public string[] UsedRefs { get; set; } = Array.Empty<string>(); // resolved model object refs this report uses
         public string[] ExtensionMeasures { get; set; } = Array.Empty<string>();  // report-level measures (not model objects)
         public ReportVisualUsage[] Visuals { get; set; } = Array.Empty<ReportVisualUsage>();   // page+visual-level drill-down
+        public ReportMeasureUsage[] ReportMeasures { get; set; } = Array.Empty<ReportMeasureUsage>();   // report-level measures this report defines, with what their DAX reads
         public string Error { get; set; }                              // scrubbed reason this report couldn't be read (RDL/paginated, getDefinition blocked by a sensitivity label, fetch failure) — fail-loud, not silent
     }
 
@@ -181,5 +192,7 @@ namespace Semanticus.Engine
         public string[] ModelFieldsUsed { get; set; } = Array.Empty<string>();   // union of resolved refs across all reports
         public UnusedResult Unused { get; set; }                                 // report-aware safe-to-remove
         public string Caveat { get; set; }
+        public int ReportMeasuresRead { get; set; }                              // report-level measures whose DAX was read
+        public int ReportMeasureReferencesChecked { get; set; }                  // model names found in that DAX
     }
 }

@@ -25,6 +25,7 @@ namespace Semanticus.Tests
         /// because nothing claimed them any more, so the plan grew "asst/set_column_hidden" with no change set:
         /// a row that says the assistant proposed work that had in fact already run. A phantom row also feeds the
         /// footprint rule a row with writes nobody will ever make.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Applied_safe_fix_lines_do_not_open_an_assistant_row()
         {
@@ -698,14 +699,70 @@ namespace Semanticus.Tests
             paused.Held = true;
             PlanFootprint.Stamp(new[] { mark, first, paused }, x, Open);
             Assert.Equal(new[] { "pt-2", "pt-1" }, mark.WaitsFor.Select(w => w.Id).ToArray());
-            Assert.Equal("Waits for: Check Sales 2024 and 1 more", mark.Sub);
+            Assert.Equal("Waits for your assistant: Check Sales 2024 and 1 more", mark.Sub);
 
             // Resumed: the plan's order again.
             mark = DateRow("datetable/model");
             paused.Held = false;
             PlanFootprint.Stamp(new[] { mark, first, paused }, x, Open);
             Assert.Equal(new[] { "pt-1", "pt-2" }, mark.WaitsFor.Select(w => w.Id).ToArray());
-            Assert.Equal("Waits for: Check Sales YTD and 1 more", mark.Sub);
+            Assert.Equal("Waits for your assistant: Check Sales YTD and 1 more", mark.Sub);
+        }
+
+        /// <summary>Kane, 11 Oct 2026, on 1.3.0: eleven "Add a check" rows said Waiting and Your assistant at once, and the
+        /// assistant said they waited for his "Read 1 report again" row. A check is saved beside the model and tests the
+        /// measure's number; it does not need the report looked at again to be written, so it never waits for that row. It
+        /// still waits for a row that rewrites its measure, and the waiting line says who acts next.</summary>
+        [Fact]
+        public void A_check_row_never_waits_for_the_report_row_but_waits_for_a_rewrite_of_its_measure()
+        {
+            var x = new FootprintInputs { ReportsChosen = true };
+            var recheck = new ModelPlanItem
+            {
+                Id = "recheck/reports", Title = "Look at 1 report again", Sub = "before", Doer = PlanDoers.You,
+                Status = ModelPlanStatuses.Ready, State = ModelPlanItemStates.Gap,
+            };
+            var check = new ModelPlanItem
+            {
+                Id = "check/measure:Key Measures/# New Customers", Title = "Add a check for # New Customers", Sub = "before",
+                Doer = PlanDoers.Assistant, Status = ModelPlanStatuses.Ready, State = ModelPlanItemStates.Gap,
+            };
+            PlanFootprint.Stamp(new[] { recheck, check }, x, Open);
+            Assert.Empty(check.WaitsFor);
+            Assert.Equal("before", check.Sub);
+
+            var rewrite = AsstRow("set_dax", "measure:Key Measures/# New Customers", "Rewrite # New Customers", "1");
+            rewrite.Doer = PlanDoers.Assistant;
+            recheck.Doer = PlanDoers.You;
+            PlanFootprint.Stamp(new[] { recheck, rewrite, check }, x, Open);
+            Assert.Equal(rewrite.Id, Assert.Single(check.WaitsFor).Id);
+            Assert.Equal("Waits for your assistant: Rewrite # New Customers", check.Sub);
+        }
+
+        /// <summary>The same plan on 1.3.0 also held five of the assistant's suggestion rows behind "Read 1 report again": a
+        /// row nobody has chosen changes for waits for one that is not, so the person's report row led. Looking at a report
+        /// again goes stale on any change, so it comes after the automated rows, never before them.</summary>
+        [Fact]
+        public void The_report_row_never_holds_up_an_automated_row()
+        {
+            var recheck = Fp(new[] { "model:revision", "model:reports" }, new[] { "model:reports" });
+            var proposal = Fp(new[] { "model:objects", "measure:Sales/Total" }, new[] { "measure:Sales/Total", "model:objects", "model:revision" });
+            proposal.Candidate = true;
+            var doers = new Dictionary<string, string>
+            {
+                ["recheck/reports"] = PlanDoers.You,
+                ["proposal/collisions"] = PlanDoers.Assistant,
+            };
+            foreach (var rows in new[]
+            {
+                new[] { ("recheck/reports", recheck), ("proposal/collisions", proposal) },
+                new[] { ("proposal/collisions", proposal), ("recheck/reports", recheck) },
+            })
+            {
+                var w = PlanFootprint.Waits(rows, doers).Waits;
+                Assert.False(w.ContainsKey("proposal/collisions"), "the assistant's row waits for the report row");
+                Assert.Equal(new[] { "proposal/collisions" }, w["recheck/reports"]);
+            }
         }
 
         // ---- completeness --------------------------------------------------------------------------------------
@@ -746,6 +803,7 @@ namespace Semanticus.Tests
 
         /// <summary>On real composed plans, every row but an aim carries a known footprint that says what it
         /// writes, and every waiting row names rows that are on the same plan.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_composed_row_carries_its_footprint_on_the_wire()
         {
@@ -774,6 +832,7 @@ namespace Semanticus.Tests
         /// <summary>On a model with no marked date table, a time intelligence change waits for "Mark the date
         /// table"; after the table is marked, the very next read shows it with nothing to wait for, and no other
         /// call was made in between.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_time_intelligence_row_waits_for_the_date_table_and_turns_ready_once_it_is_marked()
         {
@@ -789,7 +848,7 @@ namespace Semanticus.Tests
             var ti = Assert.Single(plan.Items, i => i.Id == "asst/set_dax");
             Assert.Contains("model:date-table", ti.Reads);
             Assert.Contains(ti.WaitsFor, w => w.Id == "datetable/model" && w.Title == mark.Title);
-            Assert.True(ti.Sub.StartsWith("Waits for: ", StringComparison.Ordinal) && ti.Sub.Contains(ti.WaitsFor[0].Title),
+            Assert.True(ti.Sub.StartsWith(PlanFootprint.WaitsForWords(ti.WaitsFor[0].Doer), StringComparison.Ordinal) && ti.Sub.Contains(ti.WaitsFor[0].Title),
                 ti.Sub + " | waits for: " + string.Join(", ", ti.WaitsFor.Select(w => w.Id)));
             Assert.True(ti.WaitsFor.Length == 1 && ti.WaitsFor[0].Id == "datetable/model",
                 "the date table should be its only blocker: " + string.Join(", ", ti.WaitsFor.Select(w => w.Id + " (" + w.Title + ")")));

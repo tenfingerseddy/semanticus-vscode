@@ -101,6 +101,7 @@ namespace Semanticus.Tests
 
         /// <summary>The Pro journey with no edit: permission before or after the one preview, Jev off or answering nothing, either door. Each lands, and the model
         /// built is the one the review listed.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("before_preview", false, "ui")]
         [InlineData("before_preview", true, "ui")]
@@ -124,6 +125,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>Permission given after the person approved (a second consent is not needed, but the marker can still land later): the build stands.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task S1_a_marker_written_after_the_approval_does_not_move_the_build()
         {
@@ -137,6 +139,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>The other engine bookkeeping annotations (the waivers, with a value that runs over several lines) written after the preview never move the build either.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task S1_the_waivers_written_after_the_preview_do_not_move_the_build()
         {
@@ -150,6 +153,7 @@ namespace Semanticus.Tests
         }
 
         /// <summary>A difference that is the person's own is still a real one: the build stops and writes nothing.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task S1_an_annotation_the_person_wrote_after_the_preview_still_stops_the_build()
         {
@@ -227,6 +231,7 @@ namespace Semanticus.Tests
 
         // ================================================================== S2: a dropped base measure
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui", "drop_line")]
         [InlineData(false, "mcp", "drop_line")]
@@ -257,6 +262,7 @@ namespace Semanticus.Tests
 
         private static string TimeKey(string kind) => "create_measure|measure:Sales/Total Amount " + kind + "|expression";
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui", "key")]
         [InlineData(false, "mcp", "key")]
@@ -285,6 +291,7 @@ namespace Semanticus.Tests
             Assert.Contains("measure:Sales/Total Amount YTD", model);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task T_keeping_a_dropped_time_measure_puts_the_plan_back_exactly()
         {
@@ -300,6 +307,7 @@ namespace Semanticus.Tests
             Assert.True(LinesOf(after).Single(l => l.Item.ObjectRef == "measure:Sales/Total Amount PY").Kept);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task T_a_dropped_time_measure_stays_dropped_through_a_rename_and_goes_with_its_base()
         {
@@ -319,6 +327,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(await ModelMeasures(sm), x => x.Contains("Revenue") || x.Contains("Total Amount"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task T_every_time_measure_can_be_dropped_and_the_base_still_builds()
         {

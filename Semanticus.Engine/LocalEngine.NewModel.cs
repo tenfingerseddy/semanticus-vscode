@@ -50,7 +50,12 @@ namespace Semanticus.Engine
             }
             foreach (var e in m.Expressions.Where(e => used.Contains(e.Name)))
                 e.Expression = NewModelPublish.DirectLakeExpression(server, endpoint);
-            foreach (var ds in m.DataSources.OfType<StructuredDataSource>().ToList())
+            RemoveUnusedPublishSources(m);
+        }
+
+        private static void RemoveUnusedPublishSources(Model m)
+        {
+            foreach (var ds in m.DataSources.ToList())
                 if (!m.AllPartitions.Any(p => ReferenceEquals(p.DataSource, ds))) ds.Delete();
         }
 
@@ -105,13 +110,15 @@ namespace Semanticus.Engine
             // Power BI gave it.
             var directLake = outcome.DirectLakeEndpoint != null;
             var noCulture = await s.ReadAsync(m => string.IsNullOrWhiteSpace(m.Culture));
-            if (directLake || noCulture)
+            var unusedSources = await s.ReadAsync(m => m.DataSources.Any(ds => !m.AllPartitions.Any(p => ReferenceEquals(p.DataSource, ds))));
+            if (directLake || noCulture || unusedSources)
                 try
                 {
                     await s.MutateAsync(origin, directLake ? "publish as Direct Lake" : "publish as a new model", m =>
                     {
                         if (string.IsNullOrWhiteSpace(m.Culture)) m.Culture = NewModelPublish.DefaultCulture;
                         if (directLake) SessionToDirectLake(m, outcome.Server, outcome.DirectLakeEndpoint);
+                        else RemoveUnusedPublishSources(m);
                     });
                 }
                 catch { /* the published model is right; the local copy keeps what it had */ }

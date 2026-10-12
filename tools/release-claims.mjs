@@ -93,7 +93,7 @@ export const CLAIMS = [
   { id: 'runs-as-rows', re: /Workflow runs show as rows|workflow run is a row|Workflow runs are rows/i,
     needs: [need("a Plan row can come from a run (PlanOriginLink kind 'run')", () => /kind: [^;]*'run'/.test(web('plan-model.ts')))] },
   { id: 'one-switch', re: /One switch pauses/i,
-    needs: [need('setAssistantQueue on the person-only door', () => /setAssistantQueue\(/.test(read('Semanticus.Engine/HumanGovernanceRpcTarget.cs')))] },
+    needs: [need('setAssistantQueue on the shared door (the assistant has set_assistant_queue too, since 10 Oct)', () => /setAssistantQueue\(/.test(read('Semanticus.Engine/EngineRpcTarget.cs')) && tool('set_assistant_queue'))] },
   { id: 'connections', re: /Connections (?:are|is) on one page|SQL endpoint for each model/i,
     needs: [need('the Connections page names a SQL endpoint', () => /SQL endpoint/.test(web('connectionshub.tsx') + web('connectionshub-model.ts')))] },
   { id: 'describe-workflow', re: /describe a workflow in words|workflow you describe|describe_workflow_steps|Turn words into workflow steps/i,

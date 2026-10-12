@@ -112,6 +112,7 @@ namespace Semanticus.Tests
         private static bool CarriesLeftOut(string request) =>
             request.Contains(LeftOutRows) || request.Contains(LeftOutDistinct) || request.Contains(LeftOutBlank);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_table_added_back_after_the_grant_is_served_to_the_person_but_reaches_no_Jev_request_on_the_Plan_and_family_paths()
         {
@@ -143,6 +144,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(all, CarriesLeftOut);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_table_put_back_into_the_start_plan_after_the_grant_reaches_no_Jev_decide_request()
         {

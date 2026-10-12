@@ -330,7 +330,7 @@ namespace Semanticus.Engine
         /// <summary>The first "why" line of a category item.</summary>
         internal static string Missing(int n, string table) =>
             JevFamily.Count(n, "column", "columns") + " in " + table + (n == 1 ? " holds" : " hold")
-            + " places, links or codes with no data category yet, so maps and links cannot use "
-            + (n == 1 ? "it." : "them.");
+            + " places, links or codes, but Power BI is not told so yet. Maps and links cannot use "
+            + (n == 1 ? "it" : "them") + " until " + (n == 1 ? "it is" : "they are") + " marked.";
     }
 }

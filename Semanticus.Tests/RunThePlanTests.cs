@@ -20,14 +20,25 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
-    public sealed class RunThePlanTests
+    public sealed class RunThePlanTests : IClassFixture<ModelTemplates>
     {
+        // Lean suite (10 Oct): the gappy model is built once per class (ModelTemplates) and each test opens its own copy.
+        private readonly ModelTemplates _templates;
+        public RunThePlanTests(ModelTemplates templates) => _templates = templates;
+
         // ---- fixtures ------------------------------------------------------------------------------------------
 
         /// <summary>ModelPlanChangesTests.GappyAsync, with the tier as an argument and a third unused measure.</summary>
-        private static async Task<DecisionFixture> GappyAsync(string file, bool pro = true)
+        private async Task<DecisionFixture> GappyAsync(string file, bool pro = true)
         {
             var f = new DecisionFixture(pro ? TestEntitlements.Pro : TestEntitlements.Free);
+            await _templates.OpenCopyAsync(f, "gappy", BuildGappyAsync, file);
+            f.UseNull();
+            return f;
+        }
+
+        private static async Task BuildGappyAsync(DecisionFixture f)
+        {
             await f.Engine.CreateModelAsync("Contoso", 1604);
             await f.Engine.CreateTableAsync("Sales", "human");
             await f.Engine.CreateColumnAsync("table:Sales", "Amount", "Double", null, "human");
@@ -46,9 +57,6 @@ namespace Semanticus.Tests
             await f.Engine.CreateMeasureAsync("table:Sales", "Total Sales", "SUM ( Sales[Amount] )", "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Old Total", "SUM ( Sales[Amount] )", "human");
             await f.Engine.CreateMeasureAsync("table:Sales", "Spare Total", "SUM ( Sales[Amount] )", "human");
-            await f.SaveAsAsync(file);
-            f.UseNull();
-            return f;
         }
 
         /// <summary>The Wide fixture of the commutation gate: a Date table the time intelligence reads and nobody
@@ -56,8 +64,10 @@ namespace Semanticus.Tests
         private static Task<DecisionFixture> WideAsync(string tag) =>
             CommutationFixtures.All.Single(x => x.Name == "Wide").Copy(tag);
 
+        // A found assistant row is carried by its task once a press queues it, so the task answers for the row's id.
         private static ModelPlanItem Row(ModelPlanView plan, string id) =>
-            plan.Items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal));
+            plan.Items.FirstOrDefault(i => string.Equals(i.Id, id, StringComparison.Ordinal))
+            ?? plan.Items.FirstOrDefault(i => i.OriginLink?.Kind == PlanOriginKinds.Item && i.OriginLink.Ref == id);
 
         /// <summary>Set aside every open row that is not Semanticus's (and not in <paramref name="keep"/>), the way a
         /// person clears their own rows out of the way. Under the careful rule (contract 5.1) the person's cleanup and
@@ -79,9 +89,41 @@ namespace Semanticus.Tests
 
         // ---- one press, one step -------------------------------------------------------------------------------
 
+        [Theory]
+        [InlineData(true, false)]
+        [InlineData(false, false)]
+        [InlineData(true, true)]
+        [InlineData(false, true)]
+        public async Task Safe_fix_step_names_Pro_with_the_measured_count(bool pro, bool bestPractice)
+        {
+            using var f = await GappyAsync("ProVisible" + pro + bestPractice + ".bim", pro);
+            f.Sessions.Bus.HumanClientAttached = () => true;
+            var plan = await ClearTheWayAsync(f);
+            var row = plan.Items.First(i => bestPractice ? i.Id == "bpafix/model" : i.Id.StartsWith("safefix/", StringComparison.Ordinal));
+            var proposed = await f.Engine.ModelPlanActionAsync(row.Id, "propose", "human");
+            var count = Row(proposed.Plan, row.Id).ChangeSet.Lines.Count(l => l.Kept);
+            Assert.True(count > 0);
+            var revision = f.Sessions.Current.Revision;
+            var result = await f.Engine.ModelPlanActionAsync(row.Id, "start", "human");
+            var notes = await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId);
+            var note = Assert.Single(notes.Notes);
+            var kind = bestPractice ? "best-practice" : "safe";
+            Assert.Equal(pro
+                ? "Pro applied " + count + " " + kind + " " + (count == 1 ? "fix" : "fixes") + " in one step. One undo takes " + (count == 1 ? "it" : "them") + " back."
+                : "Pro would apply " + count + " " + kind + " " + (count == 1 ? "fix" : "fixes") + " in one step.", note.Say);
+            Assert.Equal(pro, result.Performed);
+            if (!pro)
+            {
+                Assert.Equal(revision, f.Sessions.Current.Revision);
+                await f.Engine.ModelPlanActionAsync(row.Id, "start", "human");
+                Assert.Single((await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId)).Notes);
+            }
+        }
+
         /// <summary>The finish line of lane E5, on the Wide fixture: one call from the agent door takes "Hide the key
         /// columns" and "Mark Date as the date table" as ONE undo entry by Semanticus, the time intelligence row
         /// turns Ready on the next read, and one undo takes both back.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task One_press_applies_the_ready_set_as_one_undo_entry_and_one_undo_takes_it_back()
         {
@@ -103,6 +145,11 @@ namespace Semanticus.Tests
             var revisionBefore = f.Sessions.Current.Revision;
 
             var result = await McpTools.ApplyPlanItems(f.Engine, null, plan.ReadyDigest);   // the agent door
+
+            var proNotes = (await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId)).Notes.Where(n => n.ProStep).ToArray();
+            Assert.Contains(proNotes, n => n.Say.StartsWith("Pro applied ", StringComparison.Ordinal));
+            foreach (var note in proNotes)
+                Assert.EndsWith("back.", note.Say);
 
             Assert.True(result.Performed, result.Sentence);
             // Every row that was Ready is in the press; a row that waited for one of them runs behind it, in a later batch of the same press.
@@ -130,6 +177,7 @@ namespace Semanticus.Tests
         /// <summary>Lane E5's second finding: after an undo the stored header still said "applied", so the rows the
         /// run applied read "checking", blocked nothing, and a second run skipped them as already in. Contract 5.2:
         /// a row whose applied changes are no longer in the model is open again.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task After_undo_the_rows_a_run_applied_are_open_again_block_again_and_run_again()
         {
@@ -161,6 +209,7 @@ namespace Semanticus.Tests
             Assert.Equal("Time", await f.Sessions.Current.ReadAsync(m => m.Tables["Date"].DataCategory));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_held_row_is_skipped_and_the_rest_runs()
         {
@@ -181,6 +230,7 @@ namespace Semanticus.Tests
             Assert.NotEqual("Time", await f.Sessions.Current.ReadAsync(m => m.Tables["Date"].DataCategory));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_row_whose_blocker_is_in_the_ready_set_runs_in_a_second_batch_of_the_same_press()
         {
@@ -214,13 +264,14 @@ namespace Semanticus.Tests
             await f.Engine.SetDescriptionAsync("column:Sales/Note", "Changed after the read.", "human");
             var revision = f.Sessions.Current.Revision;
 
-            var result = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
+            var result = await f.Engine.ApplyPlanItemsAsync(null, "agent", plan.ReadyDigest);
 
             Assert.False(result.Performed);
-            Assert.Equal("The plan moved since you read it. Read it again.", result.Sentence);
+            Assert.Equal("The plan changed since you last looked. Look at it again, then press Run the plan.", result.Sentence);
             Assert.Equal(revision, f.Sessions.Current.Revision);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_hold_or_a_doer_switch_after_the_read_is_refused_by_the_digest_with_no_revision_change()
         {
@@ -231,7 +282,7 @@ namespace Semanticus.Tests
             // A hold moves no revision.
             await f.Engine.HoldPlanItemAsync("safefix/Visibility", true);
             Assert.Equal(revision, f.Sessions.Current.Revision);
-            var held = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
+            var held = await f.Engine.ApplyPlanItemsAsync(null, "agent", plan.ReadyDigest);
             Assert.False(held.Performed);
             Assert.Equal(LocalEngine.PlanMovedSentence, held.Sentence);
             Assert.Equal(revision, f.Sessions.Current.Revision);
@@ -242,7 +293,7 @@ namespace Semanticus.Tests
             Assert.Equal(plan.ReadyDigest, reread.ReadyDigest);   // back to the same set, same digest
             await f.Engine.SetPlanItemDoerAsync("datetable/model", PlanDoers.You);
             Assert.Equal(revision, f.Sessions.Current.Revision);
-            var switched = await f.Engine.ApplyPlanItemsAsync(null, "human", reread.ReadyDigest);
+            var switched = await f.Engine.ApplyPlanItemsAsync(null, "agent", reread.ReadyDigest);
             Assert.False(switched.Performed);
             Assert.Equal(LocalEngine.PlanMovedSentence, switched.Sentence);
             Assert.Equal(revision, f.Sessions.Current.Revision);
@@ -254,10 +305,18 @@ namespace Semanticus.Tests
         /// it anyway. Every change that affects Ready now takes the same gate, so a control that arrives mid-run
         /// waits for the run to finish and lands after it, never inside it.</summary>
         [Theory]
+        [InlineData("skip")]
+        public Task A_control_that_arrives_after_the_digest_check_never_lands_before_the_apply(string control) => ControlAfterTheDigestCheckAsync(control);
+
+        /// <summary>The other two controls take the same gate (lean suite, 10 Oct): one row per run keeps the default tier fast and
+        /// the nightly sweep runs the rest.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Theory]
         [InlineData("hold")]
         [InlineData("doer")]
-        [InlineData("skip")]
-        public async Task A_control_that_arrives_after_the_digest_check_never_lands_before_the_apply(string control)
+        public Task A_control_that_arrives_after_the_digest_check_never_lands_before_the_apply_hold_and_doer(string control) => ControlAfterTheDigestCheckAsync(control);
+
+        private async Task ControlAfterTheDigestCheckAsync(string control)
         {
             using var f = await WideAsync("RunRace" + control);
             var plan = await ClearTheWayAsync(f);
@@ -300,6 +359,7 @@ namespace Semanticus.Tests
         /// of them, so the re-check inside the batch keeps it and names it; the other is removed; and the rest of
         /// the batch applies, as one undo entry. Two unused COLUMNS: since m11/plan-harm round 2 the cleanup never
         /// offers a measure.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_cleanup_row_removes_an_unused_column_and_skips_one_the_same_batch_started_using()
         {
@@ -355,6 +415,7 @@ namespace Semanticus.Tests
 
         // ---- done today -----------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Done_counts_cover_today_across_two_sessions()
         {
@@ -388,6 +449,7 @@ namespace Semanticus.Tests
 
         // ---- all or nothing -------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task An_applier_that_throws_leaves_the_model_and_the_redo_stack_as_they_were()
         {
@@ -422,6 +484,7 @@ namespace Semanticus.Tests
 
         // ---- free -----------------------------------------------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_is_refused_as_today()
         {
@@ -436,6 +499,22 @@ namespace Semanticus.Tests
             Assert.Equal(revision, f.Sessions.Current.Revision);
         }
 
+        [Fact]
+        public async Task Free_run_names_the_measured_fixes_once_per_row_and_session()
+        {
+            using var f = await GappyAsync("ProVisibleFreeRun.bim", pro: false);
+            var plan = await ClearTheWayAsync(f);
+            var ids = ReadyIds(plan);
+            Assert.Contains(ids, id => id.StartsWith("safefix/", StringComparison.Ordinal) || id == "bpafix/model");
+            await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
+            var notes = (await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId)).Notes;
+            Assert.NotEmpty(notes);
+            Assert.All(notes, n => Assert.StartsWith("Pro would apply ", n.Say));
+            await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
+            Assert.Equal(notes.Length, (await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId)).Notes.Length);
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Items_and_a_ready_digest_together_are_refused_before_anything_is_read()
         {

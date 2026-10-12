@@ -251,7 +251,7 @@ namespace Semanticus.Engine
                 || !CensusEnums.TryGetValue(typeName, out var settings)
                 || !settings.TryGetValue(property, out var choices))
                 throw new InvalidOperationException(
-                    $"{(property.Length == 0 ? "This line" : property)} is not a setting the plan can change on {name} this way. "
+                    $"{(property.Length == 0 ? "This change" : property)} is not a setting the plan can change on {name} this way. "
                     + "Only settings with a fixed list of choices can be set here.");
 
             var value = (it.After ?? "").Trim();

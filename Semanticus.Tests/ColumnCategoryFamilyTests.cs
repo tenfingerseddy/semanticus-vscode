@@ -177,7 +177,7 @@ namespace Semanticus.Tests
 
             var stores = Assert.Single(rows);
             Assert.Equal("jev.column-category.table:Stores", stores.Id);
-            Assert.Equal("Categorize 3 columns in Stores", stores.Title);
+            Assert.Equal("Mark what 3 columns in Stores hold", stores.Title);
             Assert.Equal(ModelPlanSections.Meaning, stores.Section);
             Assert.Equal(ModelPlanOwners.Jev, stores.Who);
             Assert.Equal(ModelPlanItemStates.Proposed, stores.State);

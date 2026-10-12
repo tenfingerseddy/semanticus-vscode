@@ -7,6 +7,7 @@
 //                 never waits behind the unused-object cleanup.
 //   Starts        an empty model offers "From a SQL source" and "New blank model" instead of an empty plan.
 
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -28,7 +29,7 @@ namespace Semanticus.Tests
             var row = Row(plan, LocalEngine.BpaFixItemId);
             Assert.Equal(ModelPlanOwners.Auto, row.Who);
             Assert.StartsWith("Fix ", row.Title);
-            Assert.EndsWith(row.Title.Contains(" issues") ? "best-practice issues" : "best-practice issue", row.Title);
+            Assert.EndsWith(row.Title.Contains(" findings") ? "Model quality findings" : "Model quality finding", row.Title);
 
             // The count on the row is the number of lines it works out: nothing more, nothing less.
             var n = int.Parse(row.Title.Split(' ')[1]);
@@ -38,6 +39,24 @@ namespace Semanticus.Tests
             Assert.All(set.Lines, l => Assert.Equal("bpa_fix", l.Op));
         }
 
+        [Fact]
+        public async Task The_best_practice_and_safe_fix_rows_name_their_changes_in_plain_words()
+        {
+            // hero16 section 10: "[Formatting] Do not summarize numeric columns" is the rule list's sorting word in brackets, and
+            // "Fix 2 safe things in naming" does not say what changes. Neither reaches the Plan.
+            using var f = await ChangeCauseTests.PlanModelAsync("BpaPlain.bim");
+            var plan = await f.Engine.GetModelPlanAsync();
+            var row = Row(plan, LocalEngine.BpaFixItemId);
+            Assert.DoesNotMatch(@"\[[A-Za-z ]+\]", row.Sub ?? "");
+            Assert.All(row.Diff, d => Assert.DoesNotMatch(@": \[[A-Za-z ]+\] ", d));
+            foreach (var safe in plan.Items.Where(i => i.Id.StartsWith("safefix/", StringComparison.Ordinal)))
+            {
+                Assert.DoesNotContain("safe thing", safe.Title, StringComparison.Ordinal);
+                Assert.Matches(@"^Fix \d+ [A-Za-z ]+ problems?$", safe.Title);
+            }
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Run_the_plan_takes_the_best_practice_row_and_one_undo_puts_it_back()
         {
@@ -74,6 +93,7 @@ namespace Semanticus.Tests
             Assert.Equal(before.ViolationCount, (await f.Engine.BpaScanAsync()).ViolationCount);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Fixes_a_press_uncovers_open_the_row_again_instead_of_leaving_it_checking()
         {
@@ -98,6 +118,7 @@ namespace Semanticus.Tests
                 v.RuleId + " " + v.ObjectRef));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_best_practice_row_never_overwrites_a_format_the_model_already_has()
         {
@@ -117,6 +138,7 @@ namespace Semanticus.Tests
             Assert.Equal("#,##0.00", props.First(p => string.Equals(p.Key, "FormatString", System.StringComparison.OrdinalIgnoreCase)).Value?.ToString());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_sees_the_best_practice_row_and_is_told_running_it_is_pro()
         {
@@ -131,6 +153,7 @@ namespace Semanticus.Tests
             Assert.StartsWith(LocalEngine.RunIsProLead, approve.Sentence);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_words_row_hands_the_whole_queue_over_and_never_waits_for_the_cleanup()
         {
@@ -153,7 +176,7 @@ namespace Semanticus.Tests
             // A measure format Semanticus cannot prove is a choice in the queue too (THE FORMAT FILL RULE, review-fix round 2),
             // and so are the AI instructions once the synonym store exists, and a key's or date's column format (set_property FormatString,
             // plan statement check 2 item 3a: no readiness rule asks for it, the best-practice rule does).
-            Assert.All(queue.Items, x => Assert.Contains(x.Tool, new[] { "set_description", "rename_object", "set_synonyms", "create_linguistic_schema", "set_measure_format", "set_ai_instructions", "set_property" }));
+            Assert.All(queue.Items, x => Assert.Contains(x.Tool, new[] { "write_words", "edit_objects", "create_linguistic_schema", "set_ai_instructions" }));
             var keys = queue.Items.Select(x => (x.HoldsGate ? 1 : 0, x.Lift)).ToArray();
             Assert.Equal(keys.OrderByDescending(k => k.Item1).ThenByDescending(k => k.Lift).ToArray(), keys);
             Assert.NotNull(queue.Grounding[queue.Items[0].ObjectRef]);

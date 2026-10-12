@@ -138,59 +138,47 @@ namespace Semanticus.Tests
 
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task The_aim_tools_are_refused_from_both_agent_routes_and_work_from_the_ui_door()
+        public async Task The_aim_tools_work_from_both_agent_routes_and_the_person_s_queue_controls_stay_off_the_agent_connection()
         {
             using var f = await GappyAsync("PersonAims.bim");
             await using var pipe = await Pipe.OpenAsync(f);
 
-            // The MCP door (this process owns the model).
-            var mcp = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                McpTools.AddPlanTarget(f.Engine, "Every measure has a description", ModelPlanSections.Meaning));
-            Assert.Equal(LocalEngine.AimsArePersonsSentence, mcp.Message);
-
-            // The UI door: the person adds an aim and an asked task.
-            var added = await pipe.Human.InvokeAsync<ModelPlanView>("addPlanTarget", "Every measure has a description", ModelPlanSections.Meaning, "human");
-            var aim = added.Items.Single(i => i.Title == "Every measure has a description");
+            // Kane, 10 Oct 2026: the person's word in chat is enough. The MCP door (the gated engine the assistant holds) adds an aim,
+            // marks it done and removes it; the same on an agent pipe connection.
+            var gated = AssistantEngine.ForAssistant(f.Engine);
+            var viaMcp = await McpTools.AddPlanTarget(gated, "Every measure has a description", ModelPlanSections.Meaning);
+            var aim = viaMcp.Items.Single(i => i.Title == "Every measure has a description");
             var task = await AskAsync(f.Engine, "Describe the Margin measure", Free("Margin"));
 
-            await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.RemovePlanTarget(f.Engine, aim.Id));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.ModelPlanAction(f.Engine, aim.Id, "done"));
-            await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.ModelPlanAction(f.Engine, task, "done"));
+            var done = await McpTools.ModelPlanAction(gated, aim.Id, "done");
+            Assert.Contains(done.Rows, r => r.Id == aim.Id && r.StateWord == PlanStateWords.Done);
+            var taskDone = await McpTools.ModelPlanAction(gated, task, "done");
+            Assert.Contains(taskDone.Rows, r => r.Id == task && r.StateWord == PlanStateWords.Done);
+            var removed = await McpTools.RemovePlanTarget(gated, aim.Id);
+            Assert.DoesNotContain(removed.Items, i => i.Id == aim.Id);
 
-            // An agent pipe connection, and the attached assistant's engine: the same sentence, even when the agent
-            // passes the page's own "plan" origin on the wire.
-            async Task Refused(Func<Task> call)
-            {
-                var ex = await Assert.ThrowsAnyAsync<Exception>(call);
-                Assert.Contains("Aims and tasks are the person's", ex.Message);
-            }
-            await Refused(() => pipe.Agent.InvokeAsync<ModelPlanView>("addPlanTarget", "Invented aim", ModelPlanSections.Meaning, "human"));
-            await Refused(() => pipe.Agent.InvokeAsync<ModelPlanView>("removePlanTarget", aim.Id, "human"));
-            await Refused(() => pipe.Agent.InvokeAsync<ModelPlanActionResult>("modelPlanAction", task, "done", "plan", null));
-            await Refused(() => pipe.Agent.InvokeAsync<ModelPlanActionResult>("markPlanTargetDone", aim.Id, "human"));
-            await Refused(() => pipe.Assistant.AddPlanTargetAsync("Invented aim", ModelPlanSections.Meaning, "agent"));
-            await Refused(() => pipe.Assistant.ModelPlanActionAsync(aim.Id, "done", "agent"));
+            var viaPipe = await pipe.Agent.InvokeAsync<ModelPlanView>("addPlanTarget", "Pipe aim", ModelPlanSections.Meaning, "human");
+            var pipeAim = viaPipe.Items.Single(i => i.Title == "Pipe aim");
+            var marked = await pipe.Assistant.ModelPlanActionAsync(pipeAim.Id, "done", "agent");
+            Assert.Equal(PlanStateWords.Done, Row(marked.Plan, pipeAim.Id).StateWord);
+            var gone = await pipe.Agent.InvokeAsync<ModelPlanView>("removePlanTarget", pipeAim.Id, "human");
+            Assert.DoesNotContain(gone.Items, i => i.Id == pipeAim.Id);
 
-            // The person's own queue controls are absent from an agent connection.
+            // The person's own claim, Mark done and Could not are absent from an agent connection: the assistant uses claim_request and the rest.
             async Task NotFound(Func<Task> call)
             {
                 var ex = await Assert.ThrowsAnyAsync<Exception>(call);
                 Assert.Contains("method", ex.Message, StringComparison.OrdinalIgnoreCase);
             }
-            await NotFound(() => pipe.Agent.InvokeAsync<ModelPlanView>("claimPlanTask", task));
-            await NotFound(() => pipe.Assistant.CompletePlanTaskAsync(task, "x"));
-            await NotFound(() => pipe.Assistant.DeclinePlanTaskAsync(task, "x"));
+            var open = await AskAsync(f.Engine, "Describe the Net Sales measure", Free("Net Sales"));
+            await NotFound(() => pipe.Agent.InvokeAsync<ModelPlanView>("claimPlanTask", open));
+            await NotFound(() => pipe.Assistant.CompletePlanTaskAsync(open, "x"));
+            await NotFound(() => pipe.Assistant.DeclinePlanTaskAsync(open, "x"));
+            Assert.True(PlanStateWords.IsOpen(Row(await f.Engine.GetModelPlanAsync(), open).StateWord));
 
-            // Nothing any of them tried landed, and the UI door still does all three.
-            var plan = await f.Engine.GetModelPlanAsync();
-            Assert.DoesNotContain(plan.Items, i => i.Title == "Invented aim");
-            Assert.True(PlanStateWords.IsOpen(Row(plan, task).StateWord));
-            var marked = await pipe.Human.InvokeAsync<ModelPlanActionResult>("modelPlanAction", aim.Id, "done", "plan", null);
-            Assert.Equal(PlanStateWords.Done, Row(marked.Plan, aim.Id).StateWord);
-            var removed = await pipe.Human.InvokeAsync<ModelPlanView>("removePlanTarget", aim.Id, "human");
-            Assert.DoesNotContain(removed.Items, i => i.Id == aim.Id);
-            var mine = await pipe.Human.InvokeAsync<ModelPlanView>("claimPlanTask", task);
-            Assert.Equal(PlanStateWords.OnIt, Row(mine, task).StateWord);
+            // The UI door still does all three.
+            var mine = await pipe.Human.InvokeAsync<ModelPlanView>("claimPlanTask", open);
+            Assert.Equal(PlanStateWords.OnIt, Row(mine, open).StateWord);
         }
     }
 }

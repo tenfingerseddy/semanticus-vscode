@@ -131,7 +131,7 @@ namespace Semanticus.Engine
         /// <summary>Said after a write to a model that has never been saved: the changes are in the open model and undoable, and the Plan
         /// has no file to keep its record in. Plain words, no blame on the person.</summary>
         internal const string UnsavedNote =
-            "This model is not saved yet, so the changes are in the open model only and the Plan keeps no record of them. Save the model to a file to keep them.";
+            "This model is not saved to a file yet. The changes are only in the open model, and the Plan does not keep them. Save the model to keep them.";
 
         /// <summary>What a person is told when the model was exchanged while their verb was in flight. The
         /// wording is the one the plan memory itself refuses with, shared rather than restated, so the two
@@ -190,7 +190,7 @@ namespace Semanticus.Engine
 
             if (string.Equals(item.Status, ModelPlanStatuses.Skipped, StringComparison.Ordinal))
                 return await RefusedAsync(item, "propose", s.Revision, origin,
-                    "This item is set aside. Put it back first, then work out its changes.", bound).ConfigureAwait(false);
+                    "This task is set aside. Put it back first, then work out its changes.", bound).ConfigureAwait(false);
 
             // The readiness scan the plan already paid for, not a fresh one.
             var sourceVersion = SourceVersionOf(s);
@@ -223,8 +223,8 @@ namespace Semanticus.Engine
             // change plan itself, by EnsureContextCurrent under its own gate.
             if (!ReferenceEquals(_sessions.Current, s) || s.Revision != readAt)
                 return await RefusedAsync(item, "propose", s.Revision, origin,
-                    "The model changed while these were being worked out, so nothing was proposed. Read the "
-                    + "plan again and work them out from there.", bound).ConfigureAwait(false);
+                    "The model changed while Semanticus worked these out, so nothing was suggested. "
+                    + "Open the task again to get new changes, then press Run the plan.", bound).ConfigureAwait(false);
 
             ModelPlanChangeLine[] snapshot;
             await context.PlanGate.WaitAsync().ConfigureAwait(false);
@@ -291,14 +291,14 @@ namespace Semanticus.Engine
                          // it (verify m11/plan-rows L8).
                          + (string.Equals(item.Who, ModelPlanOwners.Auto, StringComparison.Ordinal)
                             && !Entitlement.FeatureGrants.IsProTier(_entitlement)
-                            ? "Nothing has been written. Approving them is part of Semanticus Pro. Open "
-                              + (item.Jump?.Label ?? "the page it names") + " to make them by hand."
-                            : "Nothing has been written. Keep the ones you want, drop the rest, then approve them.")
+                            ? "Nothing is changed yet. Approving them needs Semanticus Pro. Open "
+                              + (item.Jump?.Label ?? "the page it names") + " to make them yourself."
+                            : "Nothing is changed yet. Keep the ones you want, drop the rest, then press Approve.")
                          + (collected.Refused.Count == 0 ? ""
                             : " " + CountOf(collected.Refused.Count, "other thing was", "other things were")
                               // The row lists them (its change set's refused list), on the page and in the row's own read
                               // on the agent door; the short answer does not (verify R5 L-2).
-                              + " left out; the row lists each one with the reason."),
+                              + " left out. The task lists each one with the reason."),
             };
         }
 
@@ -310,21 +310,21 @@ namespace Semanticus.Engine
 
             // A proposal the assistant does (a rename, a rewrite, a setting): a choice case by case, not words and not one exact change.
             if (IsProposalItem(item.Id) && string.Equals(item.Who, ModelPlanOwners.Assistant, StringComparison.Ordinal))
-                return "The rules have an opinion here and the answer is a choice, case by case, so your assistant makes it rather than "
-                     + "the engine working it out. Ask it to take this row, and what it writes lands here for you to approve.";
+                return "This needs a choice, case by case, so your assistant makes it, not Semanticus. "
+                     + "Ask your assistant to take this task. What it writes comes back here for you to approve.";
 
             if (string.Equals(item.Who, ModelPlanOwners.Assistant, StringComparison.Ordinal))
-                return "This one is words, so your assistant writes them rather than the engine working them "
-                     + "out. Ask it to, and what it writes lands here on this same row for you to approve.";
+                return "This task needs words, so your assistant writes them, not Semanticus. "
+                     + "Ask your assistant to do it. What it writes comes back to this task for you to approve.";
 
             if (IsProposalItem(item.Id))
-                return "The rules have an opinion here and you have the answer, so there is no one change to "
-                     + "work out. Open " + place + " and choose, case by case.";
+                return "This needs your choice, case by case, so Semanticus cannot suggest one change. "
+                     + "Open " + place + " and choose.";
 
             return refused.Count == 0
-                ? "Nothing here can be turned into an exact change yet. Open " + place + " and do it there."
-                : CountOf(refused.Count, "thing was", "things were") + " looked at and none of them could be "
-                  + "turned into an exact change. Open " + place + " and do it there.";
+                ? "Semanticus cannot suggest an exact change for this yet. Open " + place + " and do it there."
+                : CountOf(refused.Count, "thing was", "things were") + " looked at, but Semanticus could not suggest "
+                  + "an exact change for any. Open " + place + " and do it there.";
         }
 
         // ---- approve ------------------------------------------------------------------------------------
@@ -406,7 +406,7 @@ namespace Semanticus.Engine
                 // receipt-as-proposal mix-up the other way round.
                 if (AlreadyAppliedNow(bound, item.Id, quoted))
                     return await RefusedAsync(item, "approve", s.Revision, origin,
-                        "These changes are already in. Nothing was applied a second time. Undo puts them back.", bound).ConfigureAwait(false);
+                        "These changes are already made, so nothing was changed a second time. Undo takes them back.", bound).ConfigureAwait(false);
 
                 // THE MODEL THIS APPROVAL IS ABOUT MUST STILL BE THE OPEN ONE, AND THE CHECK IS HERE RATHER
                 // THAN ONLY AT THE RECORD. This is the last instant at which nothing has been written, so it
@@ -437,8 +437,7 @@ namespace Semanticus.Engine
                     {
                         // A set the assistant put on the plan has no stored header, so one is written here
                         // rather than the outcome being lost.
-                        var h = HeaderFor(memory, item, set);
-                        h.State = ModelPlanChangeStates.RolledBack;
+                        RememberRollback(memory, item, set, refused);
                         memory.History.Add(Entry(ModelPlanHistoryKinds.Refused, ActorOf(origin), item.Id, item.Title,
                             s.Revision, "Nothing was changed on " + Lower(item.Title) + ".", new[] { refused.Message }));
                     }).ConfigureAwait(false);
@@ -455,6 +454,9 @@ namespace Semanticus.Engine
                     };
                 }
 
+                // Count the committed result, before the slower plan refresh.
+                NoteProFixes(s.Id, item, (report.Items ?? Array.Empty<ChangeItem>()).Count(i =>
+                    string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase)));
                 // The automatic format lines this approval left out (never written), named with their own reason.
                 var leftOut = (report.Items ?? Array.Empty<ChangeItem>())
                     .Where(i => string.Equals(i.Status, "skipped", StringComparison.OrdinalIgnoreCase) && IsAutomaticFormatWrite(i)).ToList();
@@ -503,7 +505,7 @@ namespace Semanticus.Engine
                     Sentence = CountOf(made.Length, "change was", "changes were") + " made in one step. "
                              + (left.Length == 0 ? "" : left + " ")
                              + (report.GradeAfter == null ? "" : "The AI readiness grade is now " + report.GradeAfter + ". ")
-                             + "Undo puts " + (made.Length == 1 ? "it" : "them all") + " back in one step."
+                             + "One undo takes " + (made.Length == 1 ? "it" : "them all") + " back."
                              + (bound.Nowhere ? " " + UnsavedNote : ""),
                 };
             }
@@ -520,9 +522,14 @@ namespace Semanticus.Engine
         /// <summary>A person's change that moves the Ready set (a pause, a doer switch, a skip or its undoing, a set
         /// worked out or dropped) runs under the approve gate, so it can never land between Run the plan's digest
         /// check and its commit (Sol 6, slice 7, finding 1). A control made during a run waits for the run and lands
-        /// after it; the next read shows both. Never called with the gate already held: the gate is not reentrant.</summary>
+        /// after it; the next read shows both. Only a scoped row-control batch reuses its already-held gate.</summary>
         private async Task<T> UnderReadyGateAsync<T>(Func<Task<T>> change)
         {
+            if (_planRowBatch.Value != null)
+            {
+                if (!PlanMemoryStillOpen(_planRowBatch.Value.Bound)) throw new InvalidOperationException(BulkPlanModelSwitchedSentence);
+                return await change().ConfigureAwait(false);
+            }
             await _planApproveGate.WaitAsync().ConfigureAwait(false);
             try { return await change().ConfigureAwait(false); }
             finally { _planApproveGate.Release(); }
@@ -573,6 +580,17 @@ namespace Semanticus.Engine
             return header;
         }
 
+        /// <summary>Marks a set rolled back and keeps the line that stopped it, with its reason.</summary>
+        private static void RememberRollback(PlanMemoryState memory, ModelPlanItem item, ModelPlanChangeSet set,
+                                             PlanApprovalRefusedException refused)
+        {
+            var h = HeaderFor(memory, item, set);
+            h.State = ModelPlanChangeStates.RolledBack;
+            h.FailedLineId = refused.Line == null ? null : LineIdFor(refused.Line);
+            h.FailedAfter = refused.Line?.After;
+            h.FailureReason = refused.Line?.Note ?? refused.Message;
+        }
+
         /// <summary>The way back approve promises, made before anything is written.
         ///
         /// Today that is the session undo timeline and it always exists, so this never refuses. It is a
@@ -613,7 +631,7 @@ namespace Semanticus.Engine
             //    false and is the exact double-submit lie the contract puts this check first to avoid.
             if (string.Equals(item.State, ModelPlanItemStates.Done, StringComparison.Ordinal))
                 return (ApprovalOutcome.AlreadyIn,
-                    "That is already done, so there was nothing left to apply. Nothing was applied a second time.", null);
+                    "That is already done, so nothing was changed a second time.", null);
 
             if (set != null && string.Equals(set.State, ModelPlanChangeStates.Applied, StringComparison.Ordinal))
                 return (ApprovalOutcome.AlreadyIn, AlreadyInSentence, null);
@@ -621,7 +639,7 @@ namespace Semanticus.Engine
             // 2. Nothing proposed.
             if (set == null || !string.Equals(set.State, ModelPlanChangeStates.Proposed, StringComparison.Ordinal))
                 return (ApprovalOutcome.Refused,
-                    "No changes have been worked out for this one, so nothing was applied. Work them out first.", null);
+                    "Nothing was changed, because this task has no changes yet. Press Show the changes first.", null);
 
             // 3, 5. The session, the revision and the source. Freshened() worked all three out when the plan
             // was composed and put the reason in plain words; repeating the comparison here would be a second
@@ -633,11 +651,11 @@ namespace Semanticus.Engine
             // did not read is the one thing the digest exists to stop.
             if (quoted.Length == 0)
                 return (ApprovalOutcome.Refused,
-                    "Name the exact set of changes you are approving. Read the plan and approve the digest it "
-                    + "shows beside this item.", null);
+                    "Name the exact set of changes you are approving. Get the plan again and approve the digest it "
+                    + "shows beside this task.", null);
             if (!string.Equals(quoted, set.Digest, StringComparison.OrdinalIgnoreCase))
                 return (ApprovalOutcome.Refused,
-                    "The changes on the plan are not the ones you approved, so nothing was applied. Read them "
+                    "The changes on the plan are not the ones you approved, so nothing was changed. Look at them "
                     + "again and approve what you see.", null);
 
             var kept = (set.Lines ?? Array.Empty<ModelPlanChangeLine>())
@@ -645,14 +663,14 @@ namespace Semanticus.Engine
                 .ToArray();
             if (kept.Length == 0)
                 return (ApprovalOutcome.NothingKept,
-                    "Every change here is dropped, so there was nothing to apply. Keep at least one, or drop "
-                    + "the whole set.", null);
+                    "You dropped every change here, so nothing was changed. Keep at least one, or set the "
+                    + "task aside.", null);
 
             return (ApprovalOutcome.Ready, null, kept);
         }
 
         private const string AlreadyInSentence =
-            "These changes are already in. Nothing was applied a second time. Undo puts them back.";
+            "These changes are already made, so nothing was changed a second time. Undo takes them back.";
 
         /// <summary>WHAT WAS APPROVED, CARRIED INTO THE WRITE. Everything checked before the batch was checked
         /// on a model that can still move before the batch runs, so none of it is trusted on its own: the
@@ -717,19 +735,19 @@ namespace Semanticus.Engine
             {
                 if (asked.Length > 0)
                     throw new ArgumentException(
-                        "Pass the items or the ready digest, not both. The ready digest runs every row that is ready "
-                        + "for Semanticus; the items apply exactly the rows you name.", nameof(readyDigest));
+                        "Pass the items or the ready digest, not both. The ready digest runs every task that is ready "
+                        + "for Semanticus. The items run only the tasks you name.", nameof(readyDigest));
                 return await RunReadySetAsync(quotedReady, origin).ConfigureAwait(false);
             }
             if (asked.Length == 0)
                 throw new ArgumentException(
                     "Name the items to apply, each with the digest the plan showed for it, or pass the plan's "
-                    + "readyDigest to run every row that is ready. Call get_model_plan for both.",
+                    + "readyDigest to run every task that is ready. Call get_model_plan for both.",
                     nameof(items));
             if (asked.Any(i => string.IsNullOrWhiteSpace(i.Id)))
-                throw new ArgumentException("Every item needs its id from get_model_plan.", nameof(items));
+                throw new ArgumentException("Every task needs its id from get_model_plan.", nameof(items));
             if (asked.Select(i => i.Id).Distinct(StringComparer.Ordinal).Count() != asked.Length)
-                throw new ArgumentException("Name each item once.", nameof(items));
+                throw new ArgumentException("Name each task once.", nameof(items));
 
             var s = _sessions.Require();
             var readAt = s.Revision;
@@ -738,7 +756,10 @@ namespace Semanticus.Engine
             var plan = await ComposeAsync(null, bound).ConfigureAwait(false);
 
             if (!Entitlement.FeatureGrants.IsProTier(_entitlement))
+            {
+                await NoteFreeProRowsAsync(s, plan.Items.Where(i => asked.Any(a => a.Id == i.Id))).ConfigureAwait(false);
                 return await BulkRefusedAsync(bound, null, null, s.Revision, origin, BulkRunIsProSentence).ConfigureAwait(false);
+            }
 
             var ready = new List<(ModelPlanItem Item, ModelPlanChangeLine[] Kept)>();
             var alreadyIn = 0;
@@ -753,8 +774,8 @@ namespace Semanticus.Engine
                     // says so, and the answer is then "already in", not "no such item".
                     if (AlreadyAppliedNow(bound, ask.Id, quoted)) { alreadyIn++; continue; }
                     return await BulkRefusedAsync(bound, null, ask.Id, s.Revision, origin,
-                        "Nothing was changed, because nothing on the plan has the id " + ask.Id + ". It may have "
-                        + "been finished or set aside since the plan was last read.").ConfigureAwait(false);
+                        "Nothing was changed, because no task on the plan has the id " + ask.Id + ". It may be "
+                        + "done or set aside now. Get the plan again.").ConfigureAwait(false);
                 }
 
                 var check = ApprovalPrecheck(item, quoted);
@@ -772,7 +793,7 @@ namespace Semanticus.Engine
             if (ready.Count == 0)
                 return NothingToApply(s.Revision, plan, alreadyIn > 0
                     ? AlreadyInSentence
-                    : "Every change on these items is dropped, so there was nothing to apply.");
+                    : "Every change on these tasks is dropped, so there was nothing to apply.");
 
             var shared = await SharedLineRefusalAsync(bound, s, ready, origin).ConfigureAwait(false);
             if (shared != null) return shared;
@@ -813,9 +834,11 @@ namespace Semanticus.Engine
         // would apply lines the person may have kept or dropped differently. A removal whose object is in use by
         // the time the batch reaches it is skipped inside the batch the same way (ApplyPlanCoreAsync).
 
-        internal const string PlanMovedSentence = "The plan moved since you read it. Read it again.";
+        internal const string PlanMovedSentence = "The plan changed since you last looked. Look at it again, then press Run the plan.";
+
+        private static bool IsPersonOrigin(string origin) => string.Equals(origin, "human", StringComparison.OrdinalIgnoreCase);
         internal const string NothingReadySentence =
-            "Nothing on the plan is ready for Semanticus to run, so nothing was changed.";
+            "No task on the plan is ready for Semanticus, so nothing was changed.";
 
         /// <summary>The most batches one press runs. A row that waits only for rows in the press runs in the next batch of the SAME
         /// press, so a plan of chained Semanticus rows is done by one press (Kane, 8 Oct 2026: it must finish, not stop and ask for
@@ -829,9 +852,14 @@ namespace Semanticus.Engine
             // One binding, taken before the first await, for every read and every record below.
             var bound = BindPlanMemory();
 
-            // Pro before anything is read or worked out: running the plan is Pro on both doors (F-238).
+            // Free can read the exact Pro work here, but only Pro runs it on either door (F-238).
             if (!Entitlement.FeatureGrants.IsProTier(_entitlement))
+            {
+                var plan = await ComposeAsync(null, bound).ConfigureAwait(false);
+                await NoteFreeProRowsAsync(s, plan.Items.Where(i => i.Doer == PlanDoers.Semanticus
+                    && i.StateWord == PlanStateWords.Ready && !i.Held)).ConfigureAwait(false);
                 return await BulkRefusedAsync(bound, null, null, s.Revision, origin, BulkRunIsProSentence).ConfigureAwait(false);
+            }
 
             // THE WHOLE PRESS IS UNDER THE ONE GATE, every batch of it. Another approval cannot land between two batches
             // of the same press, and the digest the caller read fences the first batch; the later batches are fenced by
@@ -843,7 +871,13 @@ namespace Semanticus.Engine
                 var run = new RunClock(Guid.NewGuid().ToString("N").Substring(0, 12));
                 var first = await RunWaveUnderGateAsync(s, bound, origin, run, wave: 1, quoted, null, new HashSet<string>(StringComparer.Ordinal))
                     .ConfigureAwait(false);
-                if (!first.Performed) return first;
+                if (!first.Performed)
+                {
+                    // Nothing for Semanticus to run is still a press: the assistant's rows go on its queue (verifier, 11 Oct: Kane's model
+                    // had only assistant rows left, and the press said "nothing is ready" and queued nothing). A refusal hands nothing over.
+                    if (run.NothingToRun) await QueueAssistantRowsAfterRunAsync(bound, first).ConfigureAwait(false);
+                    return first;
+                }
 
                 var merged = first;
                 var attempted = new HashSet<string>(StringComparer.Ordinal);
@@ -854,6 +888,7 @@ namespace Semanticus.Engine
                     // (bounded), read the plan again, and run the row in this press: leaving it out made the person press twice.
                     var plan = await LetJevLookAgainAsync(s, bound, run, wave, merged.Plan, attempted).ConfigureAwait(false);
                     var next = await RunWaveUnderGateAsync(s, bound, origin, run, wave, null, plan, attempted).ConfigureAwait(false);
+                    merged.Plan = next.Plan ?? merged.Plan;   // the plan read after Jev settled, so the receipt shows the rows it found
                     // A batch that applied nothing ends the press: nothing more was ready, rows that turned Ready were all left out
                     // (named in the skipped list), or it was refused (named in the sentence).
                     if (!next.Performed)
@@ -867,6 +902,7 @@ namespace Semanticus.Engine
                 }
                 merged.Unsaved = s.HasUnsavedEdits;
                 merged.CanSave = merged.Unsaved;   // the result line offers Save on every model; on a live one the window's Save writes to the service (D9). Run never saves by itself.
+                await QueueAssistantRowsAfterRunAsync(bound, merged).ConfigureAwait(false);
                 return merged;
             }
             finally { _planApproveGate.Release(); }
@@ -876,17 +912,72 @@ namespace Semanticus.Engine
         /// bounds a Jev that never answers, and then the row is left out and named as before.</summary>
         internal static TimeSpan JevLookAgainWait = TimeSpan.FromSeconds(120);
 
+        /// <summary>When the Semanticus rows are done, the assistant's rows go on its queue (Kane, 11 Oct: he had to switch to Claude Code
+        /// and type an instruction for 8 rows). A found row becomes a task linked to it, and the receipt says so. The queue switch is left as
+        /// it is: it is On unless someone paused it, and a pause is kept (verifier 5b), so the receipt says the tasks wait for it.
+        /// Offering work never starts, wakes or claims for an assistant: it sees the tasks on its next call.</summary>
+        private async Task QueueAssistantRowsAfterRunAsync(PlanMemoryBinding bound, ApplyPlanItemsResult result)
+        {
+            if (result.Plan == null || !PlanMemoryStillOpen(bound)) return;
+            var rows = result.Plan.Items.Where(i => i.Doer == PlanDoers.Assistant && !i.Held && i.Claim == null
+                && (i.StateWord == PlanStateWords.Ready || i.StateWord == PlanStateWords.Waiting)
+                && !Composer.DraftRows.IsDraftRow(i.Id) && !IsRunRow(i.Id)).ToArray();
+            if (rows.Length == 0) return;
+            // Only a found row with no lines of its own becomes a task. A row that carries the assistant's own proposed lines is already
+            // the assistant's, and a task made from it would lose those lines and what the row waits for (a task's footprint is its objects).
+            foreach (var row in rows.Where(i => !PlanTasks.IsTaskId(i.Id) && (i.ChangeSet?.Lines?.Length ?? 0) == 0))
+            {
+                if (!PlanMemoryStillOpen(bound)) return;
+                // The press already wrote: a row that finished or moved since the read is simply not queued, never a failed press.
+                try { await GiveRowToAssistantAsync(row.Id).ConfigureAwait(false); }
+                catch (ArgumentException) { }
+            }
+            if (!PlanMemoryStillOpen(bound)) return;
+            var plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false);
+            if (plan == null) return;
+            result.Plan = plan;
+            TellThePlanMoved(bound);
+            // Counted off the plan, not the offer: a paused queue offers nothing, yet its tasks are still queued.
+            var mine = plan.Items.Where(i => PlanTasks.IsTaskId(i.Id) && i.Doer == PlanDoers.Assistant && i.Claim == null).ToArray();
+            var waiting = mine.Count(i => i.StateWord == PlanStateWords.Waiting);
+            var queued = mine.Count(i => i.StateWord == PlanStateWords.Ready) + waiting;
+            if (queued == 0) return;
+            var paused = plan.AssistantQueue == PlanAssistantQueue.Paused;
+            result.Note = (!result.Performed ? ""
+                    : result.Skipped.Any(x => x.What == null) ? "Semanticus finished what it can run. " : "Semanticus finished its tasks. ")
+                + CountOf(queued, "task is", "tasks are") + " queued for your assistant."
+                + (paused
+                    ? " The queue is paused, so " + (queued == 1 ? "it waits" : "they wait") + " until you turn it on."
+                    : (waiting == 0 ? "" : queued == 1 ? " It waits for another task."
+                        : " " + CountOf(waiting, "of them waits", "of them wait") + " for another task.")
+                      + (queued == 1 ? " It sees it on its next call." : " It sees them on its next call."));
+            result.Sentence = string.IsNullOrEmpty(result.Sentence) ? result.Note : result.Sentence + " " + result.Note;
+        }
+
         /// <summary>When Ready Jev rows are stale because of the batch before, wait for Jev to settle and read the plan again, so they are
         /// not stale and the next batch takes them. Every other case returns the plan as it is. Called under the approve gate; Jev's own run
         /// takes no part in that gate, so waiting here cannot hold it up.</summary>
         private async Task<ModelPlanView> LetJevLookAgainAsync(Session s, PlanMemoryBinding bound, RunClock run, int wave, ModelPlanView plan, HashSet<string> leftOut)
         {
-            var looking = PlanReadySet.JevRowsLookingAgain(plan.Items, leftOut);
-            if (looking.Count == 0) return plan;
-            foreach (var row in looking) PublishRun(run, wave, PlanRunPhases.Work, new[] { row.Id });
-            await JevSettledAsync(JevLookAgainWait).ConfigureAwait(false);
-            var again = await ComposeBoundAsync(bound, null).ConfigureAwait(false);
-            return again ?? plan;
+            // The batch before can make measures that have no row yet (Kane, 11 Oct: the Tidy rows for the press's own new measures
+            // came only after it ended). So Jev is started for this revision whether or not a Ready row looks stale, the press follows
+            // a partial run to its end, and only the plan read after Jev settled decides that the press is done. Bounded by the wait.
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var waited = false;
+            while (PlanMemoryStillOpen(bound))
+            {
+                var state = await KickJevFamiliesAsync(bound).ConfigureAwait(false);
+                if (!state.Live && !waited) return plan;   // no Jev in this session: nothing to wait for, and no second read
+                if (!state.Pending) return await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+                foreach (var row in PlanReadySet.JevRowsLookingAgain(plan.Items, leftOut))
+                    PublishRun(run, wave, PlanRunPhases.Work, new[] { row.Id });
+                var left = JevLookAgainWait - clock.Elapsed;
+                waited = true;
+                if (left <= TimeSpan.Zero || !await JevSettledAsync(left).ConfigureAwait(false))
+                    return await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+                plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+            }
+            return plan;
         }
 
         /// <summary>One press's clock and name. Every event of the press carries the same run id and the milliseconds since the press began.</summary>
@@ -895,6 +986,8 @@ namespace Semanticus.Engine
             public RunClock(string id) { Id = id; Watch = System.Diagnostics.Stopwatch.StartNew(); }
             public string Id { get; }
             public System.Diagnostics.Stopwatch Watch { get; }
+            /// <summary>The first batch found nothing to write (no row Ready, or every Ready row left out), as opposed to a refusal.</summary>
+            public bool NothingToRun { get; set; }
         }
 
         private void PublishRun(RunClock run, int wave, string phase, string[] itemIds, int? changes = null, string reason = null) =>
@@ -932,7 +1025,7 @@ namespace Semanticus.Engine
                                ? "Applied " + CountOf(total, "change", "changes") + " in " + waves + " steps. One undo takes the whole run back."
                                : merged.Sentence)
                          + (alreadyIn == 0 ? ""
-                            : " " + CountOf(alreadyIn, "item was", "items were") + " already in, so "
+                            : " " + CountOf(alreadyIn, "task was", "tasks were") + " already in, so "
                               + (alreadyIn == 1 ? "it was" : "they were") + " not applied a second time.")
                          + (left.Length == 0 ? "" : " " + left)
                          + (!stopped ? "" : " The run stopped there: " + next.Sentence)
@@ -955,14 +1048,28 @@ namespace Semanticus.Engine
                 if (plan == null)
                     return new ApplyPlanItemsResult { Performed = false, Revision = s.Revision, Sentence = PlanMemoryModelSwitchedSentence };
 
-                if (!string.Equals(plan.ReadyDigest ?? "", quoted, StringComparison.OrdinalIgnoreCase))
+                // A person's press means the plan as it is now: the page cannot "read it again" for them (Kane, 11 Oct:
+                // four presses refused in five seconds). An assistant still quotes the set it read, and is fenced on it.
+                if (!IsPersonOrigin(origin) && !string.Equals(plan.ReadyDigest ?? "", quoted, StringComparison.OrdinalIgnoreCase))
                     return await BulkRefusedAsync(bound, null, null, s.Revision, origin, PlanMovedSentence).ConfigureAwait(false);
+                readAt = plan.Revision;
             }
             else if (s.Revision != composed.Revision)
-                return NothingToApply(s.Revision, plan, PlanMovedSentence);
+            {
+                if (!IsPersonOrigin(origin))
+                    return NothingToApply(s.Revision, plan, PlanMovedSentence);
+                plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false);
+                if (plan == null)
+                    return new ApplyPlanItemsResult { Performed = false, Revision = s.Revision, Sentence = PlanMemoryModelSwitchedSentence };
+                readAt = plan.Revision;
+            }
 
             var set = PlanReadySet.Rows(plan.Items).Where(r => !leftOut.Contains(r.Id)).ToList();
-            if (set.Count == 0) return NothingToApply(s.Revision, plan, NothingReadySentence);
+            if (set.Count == 0)
+            {
+                run.NothingToRun = wave == 1;
+                return NothingToApply(s.Revision, plan, NothingReadySentence);
+            }
 
             var checkedSeam = System.Threading.Interlocked.Exchange(ref RunReadyCheckedForTest, null);
             if (checkedSeam != null) await checkedSeam().ConfigureAwait(false);
@@ -980,6 +1087,20 @@ namespace Semanticus.Engine
             {
                 var item = row;
                 var state = item.ChangeSet?.State;
+                // A Jev row that rolled back still has Jev's lines. The generic propose path has no seeds for it and used to send
+                // the person to Pending changes on every press (Kane, 11 Oct). Rebuild it from those lines without the one that failed.
+                if (JevFamily.IsJevItem(item.Id) && string.Equals(state, ModelPlanChangeStates.RolledBack, StringComparison.Ordinal))
+                {
+                    var rebuilt = await RebuildRolledBackJevRowAsync(bound, item).ConfigureAwait(false);
+                    plan = rebuilt ?? plan;
+                    item = rebuilt?.Items.FirstOrDefault(i => string.Equals(i.Id, row.Id, StringComparison.Ordinal));
+                    if (item?.ChangeSet == null)
+                    {
+                        LeaveOut(row, "Jev no longer offers changes for this task. Open this task on the Plan to see what remains.");
+                        continue;
+                    }
+                    state = item.ChangeSet.State;
+                }
                 if (!string.Equals(state, ModelPlanChangeStates.Proposed, StringComparison.Ordinal)
                     && !string.Equals(state, ModelPlanChangeStates.Applied, StringComparison.Ordinal))
                 {
@@ -1023,7 +1144,9 @@ namespace Semanticus.Engine
                 {
                     case ApprovalOutcome.AlreadyIn: alreadyIn++; continue;
                     case ApprovalOutcome.NothingKept:
-                        LeaveOut(item, "Every change on it is dropped.");
+                        LeaveOut(item, string.IsNullOrWhiteSpace(item.ChangeSet.FailureReason)
+                            ? "Every change on it is dropped."
+                            : item.ChangeSet.FailureReason + " " + OpenRowOnPlanSentence);
                         continue;
                     case ApprovalOutcome.Refused:
                         LeaveOut(item, check.Sentence);
@@ -1034,6 +1157,7 @@ namespace Semanticus.Engine
 
             if (ready.Count == 0)
             {
+                run.NothingToRun = wave == 1;
                 // After a batch that wrote, "Nothing was changed" is false for the press (the receipt says 16 changes and that line together).
                 var none = NothingToApply(s.Revision, plan, alreadyIn > 0 && skipped.Count == 0
                     ? AlreadyInSentence
@@ -1061,10 +1185,56 @@ namespace Semanticus.Engine
         internal static string CleanupNotReviewedSentence(int unreviewed) =>
             CountOf(unreviewed, "removal is", "removals are") + " ticked only because Semanticus suggested "
             + (unreviewed == 1 ? "it" : "them") + ", and you have not looked at "
-            + (unreviewed == 1 ? "it" : "them") + " yet. Nothing was removed. Open the row, untick what you want to keep, then press Approve.";
+            + (unreviewed == 1 ? "it" : "them") + " yet. Nothing was removed. Open the task, untick what you want to keep, then press Approve.";
 
         private static ApplyPlanSkip Skip(ModelPlanItem item, string what, string reason) =>
             new ApplyPlanSkip { ItemId = item?.Id, Title = item?.Title, What = what, Reason = (reason ?? "").Trim() };
+
+        internal const string OpenRowOnPlanSentence = "Open this task on the Plan to choose its changes.";
+
+        /// <summary>A rolled-back Jev row, rebuilt from Jev's live lines: the decisions on them stay, and only the exact line and value
+        /// that failed is dropped (with its reason, so a row left with nothing kept says why). A legacy header with no failed line
+        /// recorded just gets a fresh header over the current lines. Returns the plan composed after, or null when the model left.</summary>
+        private async Task<ModelPlanView> RebuildRolledBackJevRowAsync(PlanMemoryBinding bound, ModelPlanItem item)
+        {
+            ReadPlanState(bound).Changes.TryGetValue(item.Id, out var old);
+            string failedTarget = null;
+            await bound.Context.PlanGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!PlanMemoryStillOpen(bound)) return null;
+                var changes = bound.Context.Plans.Current;
+                var failed = old?.FailedLineId == null ? null : changes?.Snapshot().FirstOrDefault(l =>
+                    string.Equals(l.JevItem, item.Id, StringComparison.Ordinal) && IsPendingLine(l)
+                    && LineIdFor(l) == old.FailedLineId && l.After == old.FailedAfter);
+                if (failed != null)
+                {
+                    failedTarget = failed.ObjectRef;
+                    // Dropped as a person's untick is, so the drop holds when Jev answers for this object again; a tick brings it back.
+                    failed.Status = "rejected";
+                    failed.KeptByPerson = false;
+                    failed.KeptAgainst = null;
+                    failed.KeptDigest = null;
+                    failed.DroppedBy = "person";
+                    failed.Note = old.FailureReason;
+                    PlanLineExecutor.FollowKeep(failed, changes.Snapshot().Where(IsPendingLine), keep: false);
+                    PublishPlan(changes, bound.Session.Revision);
+                }
+            }
+            finally { bound.Context.PlanGate.Release(); }
+
+            var plan = await ComposeBoundAsync(bound, m => m.Changes.Remove(item.Id)).ConfigureAwait(false);
+            var fresh = plan?.Items.FirstOrDefault(i => string.Equals(i.Id, item.Id, StringComparison.Ordinal));
+            if (fresh?.ChangeSet != null && failedTarget != null && !string.IsNullOrWhiteSpace(old?.FailureReason))
+                plan = await ComposeBoundAsync(bound, m =>
+                {
+                    var h = HeaderFor(m, fresh, fresh.ChangeSet);
+                    h.FailureReason = old.FailureReason;
+                    h.Refused = (h.Refused ?? Array.Empty<ModelPlanChangeRefusal>())
+                        .Append(new ModelPlanChangeRefusal { Target = failedTarget, Reason = old.FailureReason }).ToArray();
+                }).ConfigureAwait(false);
+            return plan;
+        }
 
         /// <summary>One sentence naming what was left out, or empty when nothing was.</summary>
         internal static string SkippedSentenceForTest(IReadOnlyList<ApplyPlanSkip> skipped) => SkippedSentence(skipped);
@@ -1083,7 +1253,7 @@ namespace Semanticus.Engine
                 parts.Add(CountOf(accepted.Count, "change was", "changes were") + " left out because you accepted "
                           + (accepted.Count == 1 ? "it" : "them") + ": " + string.Join(", ", accepted.Select(l => l.What)) + ".");
             if (rows.Count > 0)
-                parts.Add(CountOf(rows.Count, "row was", "rows were") + " left out: "
+                parts.Add(CountOf(rows.Count, "task was", "tasks were") + " left out: "
                           + string.Join("; ", rows.Take(5).Select(r => Lower(r.Title) + " (" + r.Reason.TrimEnd('.') + ")"))
                           + (rows.Count > 5 ? "; and " + (rows.Count - 5) + " more, still on the plan." : "."));
             if (fixes.Count > 0)
@@ -1112,7 +1282,7 @@ namespace Semanticus.Engine
             if (shared == null) return null;
             var both = ready.First(r => r.Kept.Any(l => string.Equals(l.PlanItemId, shared.Key, StringComparison.OrdinalIgnoreCase))).Item;
             return await BulkRefusedAsync(bound, both, both.Id, s.Revision, origin,
-                ItemStopped(both, "One of its changes is also listed under another item. Read the plan again "
+                ItemStopped(both, "One of its changes is also on another task. Get the plan again "
                                   + "and apply what you see.")).ConfigureAwait(false);
         }
 
@@ -1170,12 +1340,29 @@ namespace Semanticus.Engine
                 {
                     if (culprit != null)
                     {
-                        var h = HeaderFor(memory, culprit, culprit.ChangeSet);
-                        h.State = ModelPlanChangeStates.RolledBack;
+                        RememberRollback(memory, culprit, culprit.ChangeSet, refused);
                     }
                     memory.History.Add(Entry(ModelPlanHistoryKinds.Refused, ActorOf(origin), culprit?.Id, culprit?.Title ?? "the plan",
                         s.Revision, "Nothing was changed on the plan.", new[] { sentence }));
                 }).ConfigureAwait(false);
+                // Run the plan: one row that cannot be made does not hold back the others. The batch's rollback put the
+                // model and every line back, so the other rows' guards still hold; they go in again as one undo step.
+                if (run != null && rolledBack != null && culprit != null)
+                {
+                    var reason = refused.Line?.Note ?? refused.Message;
+                    skipped.Add(Skip(culprit, null, reason));
+                    PublishRun(run, wave, PlanRunPhases.Skipped, new[] { culprit.Id }, reason: reason);
+                    var rest = stillReady.Where(r => r.Item.Id != culprit.Id).ToList();
+                    if (rest.Count > 0)
+                        return await ApplyListedUnderGateAsync(s, bound, rolledBack, readAt, rest, alreadyIn,
+                            checkpointId, origin, skipped, run, wave).ConfigureAwait(false);
+                    return new ApplyPlanItemsResult
+                    {
+                        Performed = false, Revision = s.Revision, Plan = rolledBack, FailedItemId = culprit.Id,
+                        FailedLine = refused.Line?.Id, Skipped = skipped.ToArray(),
+                        Sentence = "Nothing was changed. " + SkippedSentence(skipped),
+                    };
+                }
                 return new ApplyPlanItemsResult
                 {
                     Performed = false,
@@ -1203,6 +1390,11 @@ namespace Semanticus.Engine
             }
 
             var total = report.AppliedCount;
+            var landedIds = new HashSet<string>((report.Items ?? Array.Empty<ChangeItem>())
+                .Where(i => string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase)).Select(i => i.Id),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var (item, kept) in stillReady)
+                NoteProFixes(s.Id, item, kept.Count(l => landedIds.Contains(l.PlanItemId)));
             // The receipt names what was written: a line the batch left out (in use, or a fix the row refuses) is not in it.
             var leftOutLines = new HashSet<string>(
                 (report.Items ?? Array.Empty<ChangeItem>())
@@ -1261,7 +1453,7 @@ namespace Semanticus.Engine
                 Plan = applied,
                 Sentence = "Applied " + CountOf(total, "change", "changes") + " as one step you can undo."
                          + (alreadyIn == 0 ? ""
-                            : " " + CountOf(alreadyIn, "item was", "items were") + " already in, so "
+                            : " " + CountOf(alreadyIn, "task was", "tasks were") + " already in, so "
                               + (alreadyIn == 1 ? "it was" : "they were") + " not applied a second time.")
                          + (left.Length == 0 ? "" : " " + left)
                          + (bound.Nowhere && total > 0 ? " " + UnsavedNote : ""),
@@ -1274,8 +1466,8 @@ namespace Semanticus.Engine
         /// E2, measured on the 15-table model with Jev live). Any other row is worked out again by the person, as before.</summary>
         internal static string StaleRowSentence(ModelPlanItem item) =>
             item != null && item.Id != null && item.Id.StartsWith("jev.", StringComparison.Ordinal)
-                ? "Jev is looking again at what the last step changed. Run the plan once more in a moment; there is nothing to work out."
-                : "Its changes were worked out before the model last changed. Work them out again, then run the plan.";
+                ? "Jev did not finish looking at what the last step changed during this run. Open this task on the Plan to see what remains."
+                : "The model changed after these changes were worked out. Open the task again to get new changes, then press Run the plan.";
 
         /// <summary>"Nothing was changed, because of this item", then the item's own reason.</summary>
         private static string ItemStopped(ModelPlanItem item, string reason) =>
@@ -1335,11 +1527,11 @@ namespace Semanticus.Engine
             var set = item.ChangeSet;
             if (set != null && string.Equals(set.State, ModelPlanChangeStates.Applied, StringComparison.Ordinal))
                 return await RefusedAsync(item, "cancel", s.Revision, origin,
-                    "These changes are already in, so there was nothing to drop. Undo them instead.", bound).ConfigureAwait(false);
+                    "These changes are already made, so there is nothing to drop. Use undo instead.", bound).ConfigureAwait(false);
 
             if (set == null)
                 return await RefusedAsync(item, "cancel", s.Revision, origin,
-                    "There are no changes waiting on this one, so nothing was dropped.", bound).ConfigureAwait(false);
+                    "This task has no changes waiting, so nothing was dropped.", bound).ConfigureAwait(false);
 
             // The context this verb bound at its top, so the lines it drops are the ones the person was
             // shown on the model they were looking at.
@@ -1431,7 +1623,7 @@ namespace Semanticus.Engine
                     else refused.Add(new ModelPlanChangeRefusal
                     {
                         Target = f.ObjectRef,
-                        Reason = "There is no one exact change for this one, so it was left out.",
+                        Reason = "Semanticus has no exact change for this one, so it was left out.",
                     });
                 }
                 return (seeds, refused);
@@ -1467,7 +1659,7 @@ namespace Semanticus.Engine
                     refused.Add(new ModelPlanChangeRefusal
                     {
                         Target = null,
-                        Reason = "The model does not name one table and date column to mark, so which one is yours to choose.",
+                        Reason = "Semanticus cannot tell which table and date column to mark. You choose.",
                     });
                     return (seeds, refused);
                 }
@@ -1487,7 +1679,7 @@ namespace Semanticus.Engine
                     RuleId = "DATE-MARK",
                     Target = "dataCategory",
                     Title = "Mark " + mark.Table + " as the date table",
-                    Rationale = "The model's time intelligence reads " + mark.Table + "[" + mark.Column + "], and no table is marked as the date table.",
+                    Rationale = "Your date measures use " + mark.Table + "[" + mark.Column + "], but no table is marked as the date table.",
                     Before = ctx.before,
                     After = mark.Column,
                     Status = "approved",
@@ -1521,7 +1713,7 @@ namespace Semanticus.Engine
                     refused.Add(new ModelPlanChangeRefusal
                     {
                         Target = measure.Ref,
-                        Reason = "A measure is not on this list. Remove a measure on its own, when you are sure no report needs it.",
+                        Reason = "Measures are not removed here. Remove a measure by itself when you are sure no report uses it.",
                     });
 
                 foreach (var (u, pick) in ordered.OrderBy(x => x.Pick.Ticked ? 0 : 1))   // stable: sweep order inside each half
@@ -1622,6 +1814,8 @@ namespace Semanticus.Engine
         public string FailedItemId { get; set; }
         public string FailedLine { get; set; }
         public string Sentence { get; set; }
+        /// <summary>The assistant handoff after a press, shown beside the run receipt on the page.</summary>
+        public string Note { get; set; }
         public long Revision { get; set; }
         public ModelPlanView Plan { get; set; }
 

@@ -72,9 +72,9 @@ namespace Semanticus.Engine
             }
         }
 
-        // A label is one of the four we understand; anything else (including unlabelled, which arrives here as "prod"
-        // from ConnectionRegistry.EffectiveLabel) is treated as prod — the strictest ROW. The registry already did the
-        // unlabelled→prod mapping; this is the belt-and-braces so a bad string can't dodge the strict row.
+        // A label is one of the four we understand; anything else is treated as prod, the strictest ROW, so a bad string
+        // can't dodge it. An UNLABELLED target never gets here as a blank: ConnectionRegistry.EffectiveLabel turns it into "dev"
+        // first (Kane, 10 Oct 2026: no label counts as test).
         internal static string NormalizeLabel(string label)
         {
             var l = label?.Trim().ToLowerInvariant();
@@ -150,7 +150,7 @@ namespace Semanticus.Engine
                 "open" => PolicyAction.Allow,
 
                 // The DEFAULT and the Free posture: nothing is hard-blocked, so it "just works", but a live touch on a
-                // labelled uat/prod (or an unlabelled target, which resolves to prod) asks for a one-time approval.
+                // labelled uat/prod asks for a one-time approval (an unlabelled target counts as dev, so it does not ask).
                 "standard" => lvl <= 1 ? PolicyAction.Allow : PolicyAction.Ask,
 
                 // Ask earlier — from dev up.

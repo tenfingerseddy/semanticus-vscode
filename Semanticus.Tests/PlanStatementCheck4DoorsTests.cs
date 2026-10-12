@@ -69,6 +69,10 @@ namespace Semanticus.Tests
             return s;
         }
 
+        [Theory, InlineData(false, false, false)]
+        public Task A_start_built_with_the_assistants_names_has_no_broken_formula_on_every_tier_door_and_key_shape_sample(bool pro, bool mcpDoor, bool keyless) => A_start_built_with_the_assistants_names_has_no_broken_formula_on_every_tier_door_and_key_shape(pro, mcpDoor, keyless);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, false, false)]
         [InlineData(false, true, false)]

@@ -31,6 +31,7 @@ namespace Semanticus.Tests
 
         /// <summary>Coordinator's finding from lane E5: the person's open cleanup and proposal rows (population and
         /// report-aware READERS) held every Semanticus row (a WRITER), so Run the plan did nothing on a fresh model.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("Gappy")]
         [InlineData("Wide")]
@@ -263,6 +264,7 @@ namespace Semanticus.Tests
             Assert.Equal(new[] { "pt-1" }, waits["cleanup/model"]);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_task_on_an_unused_column_is_never_held_by_the_cleanup_even_when_its_delete_line_is_kept()
         {

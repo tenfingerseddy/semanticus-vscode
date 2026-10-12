@@ -187,11 +187,12 @@ namespace Semanticus.Tests
 
                 var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => McpTools.RunDraft(engine, v.DraftId));
                 Assert.Equal(DraftCopy.HeldRefusal(DraftHolds.RowSecurity), ex.Message);
-                // The UI door's run_draft is refused too: the approval is the person's own, on the human-only target.
+                // The UI door's run_draft is refused too: a held draft needs Approve and run (approve_draft, or the person's button).
                 await Assert.ThrowsAsync<InvalidOperationException>(() => new EngineRpcTarget(engine).runDraft(v.DraftId));
                 Assert.Equal(0, await sm.Current.ReadAsync(m => m.Roles.Count));
 
-                var ran = await new HumanGovernanceRpcTarget(engine).approveDraft(v.DraftId);
+                // Kane, 10 Oct 2026: the person's word in chat is enough, so the assistant approves through approve_draft on the gated engine.
+                var ran = await McpTools.ApproveDraft(AssistantEngine.ForAssistant(engine), v.DraftId);
                 Assert.Equal(DraftStates.Done, ran.State);
                 Assert.Equal("[Quantity] > 0", await sm.Current.ReadAsync(m => m.Roles["Readers"].RowLevelSecurity["Sales"]));
             }
@@ -364,7 +365,7 @@ namespace Semanticus.Tests
             var (engine, sm) = await OpenAsync();
             using (sm)
             {
-                var person = new HumanGovernanceRpcTarget(engine);
+                var person = new EngineRpcTarget(engine);
 
                 // Approve with the blank open, then fill it: nothing runs.
                 var v = await McpTools.ComposeTask(engine, JsonDocument.Parse(RowFilterBlankSteps()).RootElement, title: "Readers see sold rows");

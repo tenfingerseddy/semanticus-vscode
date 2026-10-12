@@ -67,7 +67,7 @@ namespace Semanticus.Engine
                 "connect_local", "disconnect", "refresh_partition", "export_vpax", "clear_cache", "evaluate_and_log",
                 "run_interview");
             // Cloud/network reads not caught by a prefix.
-            Add(CloudReason, "analyze_cloud_reports", "list_workspaces", "list_workspace_models", "autogenerate_spec_from_fabric");
+            Add(CloudReason, "analyze_cloud_reports", "list_workspaces", "list_workspace_models", "list_workspace_sql_endpoints", "autogenerate_spec_from_fabric");
             // History checkpoints do a real git commit + model save (and restore reopens the model) when their
             // commit/restore flag is set, outside MutateAsync — a rehearsal cannot roll them back, so refuse like the
             // git_/deploy families rather than execute a real commit under a "nothing was changed" report.
@@ -75,10 +75,11 @@ namespace Semanticus.Engine
             // The spec-first start (M11) creates a folder and a saved model, keeps its plan in a sidecar and builds into the
             // person's model with a plan the person approved: none of that rolls back with a rehearsal, which would then
             // report that nothing changed. The two reads (get_start_plan, get_start_words) change nothing and stay rehearsable.
-            Add(StartPlanReason, "start_model_from_sql", "edit_start_plan", "grant_start_disclosure", "write_start_words",
+            Add(StartPlanReason, "start_model_from_sql", "edit_start_plan", "edit_start_plans", "grant_start_disclosure", "write_start_words",
                 "build_start_plan", "discard_start_plan");
             // Undo timeline.
             Add(TimelineReason, "undo_change", "redo_change");
+            Add(BookkeepingReason, "set_plan_items", "add_plan_items", "plan_rows", "unwaive_findings");
             // Multi-mutate composites whose later steps read earlier persisted writes.
             Add(CompositeReason, "apply_plan", "apply_safe_fixes", "make_model_ai_ready",
                 "apply_model_diff", "cherry_pick", "build_model_from_spec", "apply_dax_script", "apply_tmdl");

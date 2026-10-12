@@ -99,6 +99,7 @@ namespace Semanticus.Tests
         /// On the lane's base the pair was ordered (the mark read every column of its table, and the partner writes one
         /// of them); the lane narrowed the mark to its key column and the columns keyed now, so the engine now calls the
         /// pair independent. Done both ways, the partner's lines and the model differ, so the order matters.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("VerifyNewKey", "safefix/Formatting")]
         [InlineData("VerifyOldKey", "proposal/formats")]
@@ -160,6 +161,7 @@ namespace Semanticus.Tests
         /// no longer there. The gate's rule: an independent pair must give the same model and the same lines both ways.
         /// (set_relationship_active: the harness cannot even work the row out again after the rename, because the
         /// relationship it names is gone under that name.)</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("asst/create_column")]
         [InlineData("asst/create_relationship")]
@@ -236,6 +238,7 @@ namespace Semanticus.Tests
         /// create_column writes the name of column:Customer/Segment and create_measure the name of
         /// measure:Customer/Segment, two different keys, so the engine calls the pair independent. Column first, the
         /// measure is refused ("already has a column named Segment"); measure first, the column is added beside it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_column_and_a_measure_given_one_name_on_one_table_are_ordered()
         {
@@ -260,6 +263,7 @@ namespace Semanticus.Tests
         /// new measure Customer[Customer Count] name the same measure name on two tables, and the footprint keys a measure's
         /// name by its table, so the engine calls the pair independent. Rename first, the new measure is refused ("A
         /// measure named Customer Count already exists"); create first, the rename meets a name already taken.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_a_rename_and_a_new_measure_that_take_one_measure_name_are_ordered()
         {
@@ -290,6 +294,7 @@ namespace Semanticus.Tests
         /// one writes that relationship's ref and name only, not the relationships at its tables, and switching the other
         /// one on writes the relationships at Customer and Product, so the engine calls the pair independent. Delete first,
         /// the switch goes through; switch first, it is refused ("An active relationship already exists").</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_deleting_an_active_relationship_is_ordered_against_switching_on_another_between_the_same_tables()
         {
@@ -326,6 +331,7 @@ namespace Semanticus.Tests
         /// Scratch (which holds the measure Scratch Count) and a new measure Customer[Scratch Count] meet on nothing and
         /// the engine calls them independent. Delete first, the new measure is added; create first, it is refused ("A
         /// measure named Scratch Count already exists in this model").</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify_deleting_a_table_frees_the_names_of_its_measures_for_a_new_measure()
         {

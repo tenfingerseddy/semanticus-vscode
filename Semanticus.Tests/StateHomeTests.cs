@@ -192,6 +192,23 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Learn_demo_copies_outside_temp_do_not_become_saved_connections()
+        {
+            ThrowawayPaths.RootsOverride = new[] { Path.Combine(_root, "elsewhere") };
+            var folder = Path.Combine(_root, "globalStorage", "learn", "plan-20261011-123000");
+            Directory.CreateDirectory(folder);
+            var bim = Path.Combine(folder, "Contoso.bim");
+            TinyBim.Write(bim);
+            using var engine = new LocalEngine(new SessionManager(), TestEntitlements.Pro, _root);
+            await engine.OpenAsync(bim);
+            Assert.DoesNotContain(ConnectionRegistry.List(), r => r.Endpoint == Path.GetFullPath(bim));
+            Assert.Contains(ConnectionHistory.List(), e => e.Endpoint == Path.GetFullPath(bim));
+            ConnectionRegistry.Remember("file", Path.GetFullPath(bim), null, "Contoso Shop");
+            Assert.DoesNotContain(await engine.ListConnectionsAsync(), r => r.Endpoint == Path.GetFullPath(bim));
+            Assert.False(ThrowawayPaths.IsThrowaway(Path.Combine(_root, "learn", "My model", "Contoso.bim")));
+        }
+
+        [Fact]
         public async Task Opening_a_temp_model_keeps_the_history_row_but_does_not_save_the_connection()
         {
             var bim = Path.Combine(_root, "Throwaway.bim");

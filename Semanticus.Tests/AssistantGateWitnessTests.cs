@@ -28,10 +28,10 @@ namespace Semanticus.Tests
             "BuildModelFromSpecAsync", "SaveSpecAsync", "SetSpecAsync", "ClearSpecAsync", "LoadSpecAsync", "AutogenerateSpecFromModelAsync",
             "AutogenerateSpecFromFabricAsync", "OpenAsync", "CreateModelAsync", "OpenLocalAsync", "OpenLiveAsync", "ClearPlanAsync", "ProposePlanAsync", "ProposeReplaceAsync", "CherryPickAsync", "ApproveInsightAsync",
             "EditInsightAsync", "DeleteInsightAsync", "PurgeKnowledgeAsync", "ApplyPlanAsync",
-            "RunDraftAsync", "LoadBpaRulesAsync", "LoadReadinessRulesAsync", "DaxLibInstallAsync", "SaveEvidenceAsync", "RunInterviewAsync", "InstantiateWorkflowTemplateAsync", "AcceptPrimerSuggestionAsync", "RejectPrimerSuggestionAsync", "SetPrimerAsync", "SaveWorkflowAsync", "SaveWorkflowTemplateAsync", "SaveTestDefinitionAsync", "RunTestSuiteAsync", "GitPushAsync",
+            "RunDraftAsync", "ApproveHeldDraftAsync", "ContinueDraftAsync", "LoadBpaRulesAsync", "LoadReadinessRulesAsync", "DaxLibInstallAsync", "SaveEvidenceAsync", "RunInterviewAsync", "InstantiateWorkflowTemplateAsync", "AcceptPrimerSuggestionAsync", "RejectPrimerSuggestionAsync", "SetPrimerAsync", "SaveWorkflowAsync", "SaveWorkflowTemplateAsync", "SaveTestDefinitionAsync", "RunTestSuiteAsync", "GitPushAsync",
             "DeleteWorkflowAsync", "DeleteWorkflowTemplateAsync", "DeleteTestDefinitionAsync", "DeleteInterviewQuestionAsync", "AddInterviewQuestionAsync",
             "SaveLayoutAsync", "SaveWorkflowLayoutAsync", "SetReportScopeAsync", "ClearTableSourceMappingAsync", "SetTableSourceMappingAsync", "SaveSqlSourceAsync", "DeleteSqlSourceAsync",
-            "RememberXmlaConnectionAsync", "SetConnectionWorkingFolderAsync", "ForgetConnectionAsync", "SetModelSqlEndpointAsync", "SetPublishDestinationAsync",
+            "LabelConnectionAsync", "RememberXmlaConnectionAsync", "SetConnectionWorkingFolderAsync", "ForgetConnectionAsync", "SetModelSqlEndpointAsync", "SetPublishDestinationAsync",
         };
 
         /// <summary>Held rows that write a path or the model's own files: bound to the real state of each (the path witness), every link followed.</summary>
@@ -46,16 +46,34 @@ namespace Semanticus.Tests
         private static readonly string[] BoundByOwnArguments =
         {
             "ApplyPlanItemsAsync", "ModelPlanActionAsync", "EditWorkflowDocumentAsync", "EditStartPlanAsync", "WriteStartWordsAsync",
-            "BuildStartPlanAsync", "DiscardStartPlanAsync", "UndoToEntryAsync", "RedoToEntryAsync",
+            "BuildStartPlanAsync", "DiscardStartPlanAsync", "ApproveStartPlanAsync", "UndoToEntryAsync", "RedoToEntryAsync",
+            "EditStartPlansAsync",
         };
 
         /// <summary>Rows that read only their own arguments, each with the one line of why. The test prints them. (This list was the "known gaps" until the
         /// coordinator ordered every gap closed: a row either gets a witness above or says here why it needs none.)</summary>
         private static readonly Dictionary<string, string> ReadsOnlyOwnArguments = new(StringComparer.Ordinal)
         {
+            ["SetDefaultAccountProfileAsync"] = "profileId fixes the saved identity to select; the write uses its current sign-in record, and CAS refuses a competing switch",
             ["RecordTestRunAsync"] = "it names a finished run by its unique id, and a finished run is an immutable snapshot, so the id is the content",
             ["UpgradeWorkflowAsync"] = "it applies only with expectPath and expectByteHash from the reviewed preview, an argument the approval binds, and the engine refuses when the file no longer has that hash",
             ["CaptureBaselineAsync"] = "it writes a NEW baseline under a fresh id of the values as they are when it runs and replaces nothing, so there is no earlier state for an approval to be stale against",
+            // Kane, 10 Oct 2026: the Plan controls are the assistant's too. Each acts on the plan row its id names, with the values in its arguments.
+            ["AddPlanTargetAsync"] = "it adds a NEW aim with the words and section in its arguments and changes no earlier row of the plan",
+            ["RemovePlanTargetAsync"] = "it removes the aim its id names, the id is the argument the approval binds, and Restore puts the row back",
+            ["MarkPlanTargetDoneAsync"] = "it marks the row its id names done and the id is the argument the approval binds",
+            ["AddPlanTaskAsync"] = "it adds a NEW task with the words in its request and changes no earlier row of the plan",
+            ["HoldPlanItemAsync"] = "it pauses or resumes the row its id names, and the id and the state are the arguments the approval binds",
+            ["SetPlanItemDoerAsync"] = "it gives the row its id names to the doer in its arguments; the result is the same whatever the doer was before",
+            ["MovePlanTaskUpAsync"] = "it moves the task its id names up the assistant's order and the id is the argument the approval binds; the order is a preference, not words the person wrote",
+            ["SetAssistantQueueAsync"] = "it sets the queue switch to the state in its arguments; the result is the same whatever the switch was before",
+            ["SetPlanTaskNoteAsync"] = "it sets the note of the row its id names to the words in its arguments, which the person is shown when asked",
+            ["RemovePlanRowAsync"] = "it removes the row its id names, the id is the argument the approval binds, and Restore puts the row back",
+            ["RestorePlanRowAsync"] = "it puts back the row its id names, the id is the argument the approval binds, and Remove takes it away again",
+            ["AddPlanRepeatAsync"] = "it adds a NEW repeat with the settings in its arguments and changes no earlier repeat",
+            ["SetPlanRepeatAsync"] = "it sets the repeat its id names to the settings in its arguments, which the person is shown when asked",
+            ["DeletePlanRepeatAsync"] = "it deletes the repeat its id names, and the id is the argument the approval binds",
+            ["PlanRowsAsync"] = "it acts on the plan rows its ids name, like the single plan controls, and the ids and actions are the arguments the approval binds",
         };
 
         /// <summary>Rows that write a store beside the model but only ADD to it: they replace and delete nothing, so there is no earlier state for an approval to
@@ -73,6 +91,8 @@ namespace Semanticus.Tests
         /// file moved. A reply that carries changes belongs to a claimed request, and refuses without the claim.)</summary>
         internal static readonly Dictionary<string, string> GuardedByTheOpItself = new(StringComparer.Ordinal)
         {
+            ["RefreshPlanAsync"] = "refresh reads the current plan; WritePlanTasks binds the write to the same model and preserves authored rows, adding history and finished-row ids; PlanRefreshTests proves refresh keeps earlier finished rows cleared",
+            ["ResolveFileRecoveryAsync"] = "expectedSession binds the immutable recovery copy loaded when that session opens; the op refuses another session and never rereads the payload from disk; UnsavedRecoveryTests proves the fence and exact restore",
             ["UndoAsync"] = "the revision binds the step the person was shown, and a step that put the Primer or its suggestions in a file refuses to undo when that file moved since (SidecarUndo.Refusal); AssistantGateStoreWriteSweepTests.Undo_and_redo_of_a_step_that_owns_the_Primer_refuse_when_the_person_changed_the_file",
             ["RedoAsync"] = "the same as undo: the revision binds the step, and a step that owns the Primer file refuses when the file moved; the same test",
             ["CompleteAssistantRequestAsync"] = "a held reply (one that carries changes) names a request and the claim token its holder was given, and the op refuses a stale claim or a run that is not paused at that step (DraftStops.cs); what it rewrites is the run's own state, not words the person wrote",
@@ -85,6 +105,7 @@ namespace Semanticus.Tests
         /// input is in the sentence the person is asked with.</summary>
         private static readonly string[] ModelAndArguments =
         {
+            "WaiveFindingsAsync", "WriteWordsAsync", "EditObjectsAsync", "CreateMeasuresAsync",
             "ApplyDaxScriptAsync", "ApplyFixAsync", "ApplySafeFixesAsync", "ApplySchemaUpdateAsync",
             "ApplyTmdlScriptAsync", "BpaFixAllAsync", "BpaFixAsync", 
             "CreateCalculatedColumnAsync", "CreateCalculatedTableAsync", "CreateCalculationGroupAsync", "CreateCalculationItemAsync",
@@ -105,6 +126,8 @@ namespace Semanticus.Tests
             "SetRolePermissionAsync", "SetSynonymsAsync", "SetTableObjectPermissionAsync", "SetTablePermissionAsync", 
             "SubmitWorkflowStepAsync", "TagCalendarColumnAsync", "UnwaiveFindingAsync", "UpdateNamedExpressionAsync",
             "WaiveFindingAsync",
+            // The model forms of the bulk tools (lane bulk-more): each reads the open model and its items, like its single tool.
+            "UnwaiveFindingsAsync", "ApplyFixesAsync", "DuplicateObjectsAsync", "SetDocSectionsAsync", "SetPerspectiveMembersAsync", "SetObjectPermissionsAsync",
         };
 
         /// <summary>The list above, for the sweep that measures it (AssistantGateStoreWriteSweepTests).</summary>

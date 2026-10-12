@@ -73,8 +73,8 @@ namespace Semanticus.Engine
             // keep its unsaved session. See ParentLifetime for why.
             using var lifetime = new CancellationTokenSource();
             var watchTarget = ParentWatchdog.ResolveWatchTarget(args);
-            // An owner the ASSISTANT started (VS Code was closed) holds work nobody else can see. It never leaves
-            // while it has unsaved changes or any client attached; the grace is only for a clean, unused owner.
+            // Every owner keeps unsaved work when the editor closes. The next window adopts that same session,
+            // so the extension does not need to open a dirty placeholder tab while the assistant works.
             // Filled in once the server exists; before that there is nothing to lose.
             var assistantOwner = Array.IndexOf(args, OwnerSpawner.AssistantOwnerFlag) >= 0;
             Func<bool> hold = null;
@@ -82,7 +82,7 @@ namespace Semanticus.Engine
                 // An adoption changes who we die with, so the published record has to say so. A reader that
                 // still saw the OLD parent would judge this engine by a window that has already gone.
                 onAdopted: adoptedPid => EngineBroker.UpdateParentPid(workspace, Environment.ProcessId, adoptedPid),
-                holdOpen: assistantOwner ? () => hold?.Invoke() ?? false : null);
+                holdOpen: () => hold?.Invoke() ?? false);
             Console.Error.WriteLine(watchTarget.HasValue
                 ? $"[engine] tied to parent process {watchTarget.Value}; it exits {parent.Grace.TotalSeconds:0}s after that process goes, unless a returning window adopts it."
                 : "[engine] no parent process to watch; this engine runs until it is stopped.");
@@ -155,7 +155,7 @@ namespace Semanticus.Engine
                 // ASSISTANT PRESENCE, door one: an attached assistant is an agent-role client on this pipe.
                 // Without this the engine answers "nobody is there" and a job that needs words stops at a stub.
                 engine.ObserveAgentClients(() => server.AgentClientCount);
-                hold = () => server.ClientCount > 0 || (sessions.Current?.HasUnsavedChanges ?? false);
+                hold = () => KeepOwnerAlive(assistantOwner, server.ClientCount, sessions.Current);
                 var info = NewInfo(pipe, workspace, parent.WatchedPid);
                 if (assistantOwner) info.StartedBy = EngineInfo.StartedByAssistant;
                 EngineBroker.WriteInfo(workspace, info);
@@ -172,6 +172,11 @@ namespace Semanticus.Engine
             EngineBroker.ClearInfo(workspace, Environment.ProcessId);
             return 0;
         }
+
+        // File edits survive in recovery. Live and never-saved models still need their owner in memory.
+        internal static bool KeepOwnerAlive(bool assistantOwner, int clientCount, Session session)
+            => (assistantOwner && clientCount > 0) || (session != null && session.HasUnsavedEdits
+                && (string.IsNullOrEmpty(session.SourcePath) || session.LiveOrigin != null || session.SnapshotOf != null));
 
         /// <summary>A window is replacing this engine and it was clean (F-244). The dispatcher is held by then, so
         /// the exit is the only thing left to do; it waits a moment so the clean answer reaches the window first.</summary>
@@ -393,10 +398,13 @@ namespace Semanticus.Engine
                     "previous call, the result ends with one line, 'changed since your last call (in Studio): <refs>; rev N'; " +
                     "re-read those objects before relying on them. When a result starts a line with 'Plan:', the person " +
                     "has tasks for you: list them with list_assistant_requests, claim one with claim_request, and finish " +
-                    "it with complete_request; while you hold a claim, your edits count toward that task (the one you claimed most recently). When an edit " +
+                    "it with complete_request; while you hold a claim, your edits count toward that task (the one you claimed most recently). When the person tells you in chat " +
+                    "to change the Plan (add, pause, reassign, remove or finish a task or an aim, approve a draft or a start plan), do it with the Plan tools; only the Permissions page is theirs alone. When an edit " +
                     "moves model health, its result ends with a text block starting 'health:': grade is the AI-readiness " +
                     "grade change, new lists rule ids of new findings on the objects the edit touched, findings counts " +
-                    "them, and impact counts the downstream objects the edit reaches.")
+                    "them, and impact counts the downstream objects the edit reaches. Semanticus has one writer. On Pro use " +
+                    "write_words, edit_objects, waive_findings and create_measures: one bulk call per page of work. " +
+                    "Send these one after another. Parallel calls wait for the same writer and are not faster.")
                 .WithStdioServerTransport()
                 .WithToolsFromAssembly()
                 // A failed tool call must carry the engine's TEACHING message (scrubbed), not the SDK's opaque

@@ -166,6 +166,7 @@ namespace Semanticus.Tests
 
         /// <summary>The assistant asks get_model_facts right after the build, before the Plan's first run, and again after an edit, so the snapshot that carries
         /// the sample is the newest one for each revision. The Plan's runs must still send nothing from the sample after Not now, and must send it after Allow.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(Answer.NotNow)]
         [InlineData(Answer.Allow)]
@@ -199,6 +200,7 @@ namespace Semanticus.Tests
 
         /// <summary>Allow, build, the Plan runs with the sample (control). The person withdraws the model's permission, then gives it again. The source grant was
         /// for the old permission and is over: the next runs, on this engine after an edit and on a fresh engine after a restart, send nothing from the sample.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify3_withdrawing_the_models_permission_ends_the_samples_grant_even_once_it_is_given_again()
         {
@@ -235,6 +237,7 @@ namespace Semanticus.Tests
 
         /// <summary>The stored grant for this plan names the tables but not the sample (the record is rewritten to say so, as the gate's own test does, because a
         /// person cannot give one while a sample is on). This engine had already seen it covered; the next run after an edit, and a fresh engine, send nothing.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify3_a_grant_that_did_not_cover_the_sample_sends_nothing_from_it_even_on_an_engine_that_saw_it_covered()
         {
@@ -273,6 +276,7 @@ namespace Semanticus.Tests
 
         /// <summary>Two starts on the same source, one engine, two models. One the person allowed, one they said Not now to. Each model's Plan sends the sample
         /// only for the model whose start the person allowed, in either order, and opening the other model again does not carry the grant across.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(true)]
         [InlineData(false)]
@@ -335,6 +339,7 @@ namespace Semanticus.Tests
             await engine.StartPreviewSettledForTest();
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(Path2.Answer, false)] [InlineData(Path2.Answer, true)]
         [InlineData(Path2.KeepLine, false)] [InlineData(Path2.KeepLine, true)]
@@ -373,6 +378,7 @@ namespace Semanticus.Tests
 
         /// <summary>An assistant's pin of an unsure format (its own, and over the person's keep) is not a person's tick: the build leaves the format out, holds the
         /// line with a reason, and the line never says the person kept or pinned it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -416,6 +422,7 @@ namespace Semanticus.Tests
         /// <summary>The person keeps Jev's unsure format, which is stored against the NEW name of a time measure the assistant renamed. Then the person drops that
         /// rename. The measure is built under its old name and the kept line's spelling no longer leads anywhere the manifest can explain. Whatever the plan does
         /// with the line, it must not read "Kept by you" while the build leaves the format out.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify3_a_kept_format_whose_rename_the_person_dropped_is_built_or_marked_never_shown_kept_and_skipped()
         {
@@ -453,6 +460,7 @@ namespace Semanticus.Tests
 
         /// <summary>The person keeps Jev's unsure format on a time measure, then changes the pick of the base measure it comes from, so the time measure is replaced
         /// by another. A line the build leaves out must not read "Kept by you" with no mark.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Verify3_a_kept_format_on_a_time_measure_whose_base_pick_changed_is_never_shown_kept_and_skipped()
         {

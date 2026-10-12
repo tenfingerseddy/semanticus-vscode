@@ -229,6 +229,23 @@ function remember(sendKey: string, taskId: string) {
 
 export function sentTaskFor(sendKey: string): string | null { return given.get(wireSendKey(sendKey)) ?? null; }
 
+/** The findings no open plan row carries (Kane, 11 Oct): AI readiness and Model quality findings join the Plan by themselves,
+ *  so Give the rest offers only what is not on it yet, and never a second copy of a row's work. `rows` is the plan as last read. */
+export function notOnPlan<T extends { ruleId: string; objectRef: string }>(items: T[], rows: PlanRowsForFindings = planRows): T[] {
+  return items.filter((i) => !rowCoveringFinding(rows, i.ruleId, i.objectRef));
+}
+
+/** Draw again when the plan as last read moves, for a page that leaves out what a plan row carries (notOnPlan). */
+export function usePlanRowsSeen(): void {
+  const [, bump] = useState(0);
+  useEffect(() => {
+    watchGiven();
+    const seen = () => bump((n) => n + 1);
+    givenListeners.add(seen);
+    return () => { givenListeners.delete(seen); };
+  }, []);
+}
+
 /** Post the task through the person's add-task control. One call, one task, and the same task on a second press. */
 export async function giveToAssistant(sendKey: string, build: () => PlanTaskRequest | Promise<PlanTaskRequest>): Promise<{ taskId: string }> {
   const request = await build();

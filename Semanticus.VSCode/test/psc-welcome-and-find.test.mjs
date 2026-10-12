@@ -42,7 +42,7 @@ test('5 every command the welcome runs is declared in the package and registered
 
 test('5 the context key follows the session: set from every SessionInfo, and cleared when a reopen finds no model', () => {
   assert.match(extension, /function setHasModelContext\(has: boolean\)[\s\S]{0,200}'setContext', 'semanticus\.hasModel', has/);
-  assert.match(extension, /function setStatusFromInfo\(info\?: SessionInfo\): void \{[\s\S]{0,600}setHasModelContext\(!!info\?\.sessionId\)/);
+  assert.match(extension, /function setStatusFromInfo\(info\?: SessionInfo\): void \{[\s\S]{0,1200}setHasModelContext\(!!info\?\.sessionId\)/);
   assert.ok((extension.match(/setHasModelContext\(false\)/g) ?? []).length >= 2, 'both "no model" paths of the cold reopen clear it');
 });
 

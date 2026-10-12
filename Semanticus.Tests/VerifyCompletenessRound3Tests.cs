@@ -41,6 +41,7 @@ namespace Semanticus.Tests
 
         private static bool MenuAdds(string id) => DraftMenu.All.Any(t => t.Id == id && DescribedSteps.Adds(t));
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("delete the old measures and the old role")]
         [InlineData("remove the Sales Manager and Region Manager roles")]
@@ -70,6 +71,7 @@ namespace Semanticus.Tests
         /// removing verb ("Deletion Flag", "Drop Off Location"), and "remove" a setting FROM an object, ask for an action
         /// Semanticus has. The lane's base (568435d3, its Release engine over MCP, Jev off) drafted each of these ops; round 3
         /// makes every one a placeholder with the reason "Semanticus has no action that deletes or removes yet".</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("Deletion Flag should be hidden", "set_column_hidden")]
         [InlineData("Drop Off Location should be a geography column", "set_data_category")]
@@ -91,6 +93,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("delete the old measures and the old role")]
         [InlineData("remove the Sales and Date relationship")]

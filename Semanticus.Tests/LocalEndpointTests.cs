@@ -77,7 +77,7 @@ namespace Semanticus.Tests
         {
             Assert.Equal(local, LiveDeploy.IsLocalEndpoint(endpoint));
             if (string.IsNullOrEmpty(endpoint)) return;
-            var expectedLabel = local ? "local" : "prod";
+            var expectedLabel = local ? "local" : "dev";   // a spoofed loopback is never "local"; unlabelled counts as test
             Assert.Equal(expectedLabel, LocalEngine.ResolveTargetLabel(endpoint, "DS"));
             _ = id;
         }
@@ -130,7 +130,11 @@ namespace Semanticus.Tests
             await engine.CreateModelAsync("ScrubDeploy", 1604);
             var secret = "DEP" + Guid.NewGuid().ToString("N");
             var raw = "Data Source=powerbi://api.powerbi.com/v1.0/myorg/WS;Initial Catalog=Sales;" + PwdKey() + secret;
+            // An unlabelled target counts as dev since 1.4; the ask this test reads is the one for a production target.
+            ConnectionRegistry.SetLabel(ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/WS", "Sales").Id, "prod", "human");
 
+            // An unlabelled target counts as test since 1.4 (3a4dc874), so the approval this test is about needs a target labelled production.
+            ConnectionRegistry.SetLabel(ConnectionRegistry.Remember("xmla", "powerbi://api.powerbi.com/v1.0/myorg/WS", "Sales", "Sales", null, "azcli").Id, "prod", "human");
             var token = await ReviewFenceTest.TokenAsync(engine, "powerbi://api.powerbi.com/v1.0/myorg/WS", "Sales", "agent");
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 engine.DeployLiveAsync(raw, "Sales", "azcli", null, null, commit: true, origin: "agent", overrideReason: null, confirmToken: token));

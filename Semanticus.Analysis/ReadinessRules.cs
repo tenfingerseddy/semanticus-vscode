@@ -766,17 +766,27 @@ namespace Semanticus.Analysis
                 objects.AddRange(model.AllMeasures.Where(x => !x.IsHidden));
                 objects.AddRange(model.AllColumns.Where(c => !c.IsHidden && c.Type != ColumnType.RowNumber));
 
+                // One walk over the entities, then a lookup per object: the first entity whose binding matches an object,
+                // as TryReadMatchKey reads it, is the one read. Looping objects x entities cost a full walk per object.
+                var tableEntities = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                var memberEntities = new Dictionary<(string, string), JsonElement>();
+                foreach (var candidate in entities.EnumerateObject())
+                {
+                    if (!TryReadMatchKey(candidate.Value, out var boundTable, out var boundProperty)) continue;
+                    if (boundProperty == null) tableEntities.TryAdd(boundTable, candidate.Value);
+                    else memberEntities.TryAdd((boundTable, boundProperty), candidate.Value);
+                }
+
                 foreach (var obj in objects)
                 {
                     JsonElement entity = default;
-                    var found = false;
-                    foreach (var candidate in entities.EnumerateObject())
+                    var found = obj switch
                     {
-                        if (!BindingMatches(candidate.Value, obj)) continue;
-                        entity = candidate.Value;
-                        found = true;
-                        break;
-                    }
+                        Table table => tableEntities.TryGetValue(table.Name, out entity),
+                        ITabularTableObject tableObject when tableObject.Table?.Name != null
+                            => memberEntities.TryGetValue((tableObject.Table.Name, obj.Name), out entity),
+                        _ => false,
+                    };
                     if (!found || !entity.TryGetProperty("Terms", out var terms) || terms.ValueKind != JsonValueKind.Array)
                         continue;
 
@@ -810,8 +820,12 @@ namespace Semanticus.Analysis
             return result;
         }
 
-        private static bool BindingMatches(JsonElement entity, TabularNamedObject obj)
+        /// <summary>Which object an entity's binding names for SYN-COLLIDE: a table (<paramref name="property"/> null) when
+        /// the binding carries a string ConceptualEntity and no ConceptualProperty at all, a column or measure when it
+        /// carries both as strings, and nothing otherwise. Names are compared exactly by the caller.</summary>
+        private static bool TryReadMatchKey(JsonElement entity, out string table, out string property)
         {
+            table = null; property = null;
             JsonElement binding;
             // Every TryGetProperty is guarded by an Object kind check first: JsonElement.TryGetProperty THROWS
             // InvalidOperationException on a non-object, so valid JSON carrying Definition:null (or a string, or an
@@ -827,17 +841,11 @@ namespace Semanticus.Analysis
                 || !binding.TryGetProperty("ConceptualEntity", out var tableNode)
                 || tableNode.ValueKind != JsonValueKind.String) return false;
 
-            if (obj is Table table)
-                return string.Equals(tableNode.GetString(), table.Name, StringComparison.Ordinal)
-                    && !binding.TryGetProperty("ConceptualProperty", out _);
-
-            if (obj is ITabularTableObject tableObject)
-                return string.Equals(tableNode.GetString(), tableObject.Table?.Name, StringComparison.Ordinal)
-                    && binding.TryGetProperty("ConceptualProperty", out var propertyNode)
-                    && propertyNode.ValueKind == JsonValueKind.String
-                    && string.Equals(propertyNode.GetString(), obj.Name, StringComparison.Ordinal);
-
-            return false;
+            table = tableNode.GetString();
+            if (!binding.TryGetProperty("ConceptualProperty", out var propertyNode)) return true;
+            if (propertyNode.ValueKind != JsonValueKind.String) return false;
+            property = propertyNode.GetString();
+            return true;
         }
 
         // ---- DAX best-practice shared helpers (see docs/dax-best-practice-rules.md §3) ----------------------
@@ -950,7 +958,7 @@ namespace Semanticus.Analysis
             WaiverStore.Match(WaiverStore.Load(m), "air", ruleId, Refs.For(target)) != null;
 
         private static bool HasNoSynonyms(TabularNamedObject o, Culture culture) =>
-            culture == null || string.IsNullOrWhiteSpace(SynonymHelper.GetSynonyms(o, culture));
+            culture == null || string.IsNullOrWhiteSpace(SynonymIndex.Terms(o, culture));
 
         /// <summary>Why VIS-TECH-COLUMN must not advise removing <paramref name="c"/>, in plain words, or null when BPA's
         /// UNNECESSARY_COLUMNS raises it once it is hidden. This mirrors that rule's expression clause by clause (a key or
@@ -1007,7 +1015,7 @@ namespace Semanticus.Analysis
         }
 
         /// <summary>The Binding of an LSDL entity, accepting both the flat and Definition-wrapped shapes that
-        /// <see cref="BindingMatches"/> already handles.</summary>
+        /// <see cref="TryReadMatchKey"/> already handles.</summary>
         private static bool TryReadBinding(JsonElement entity, out string table, out string property)
         {
             table = null; property = null;

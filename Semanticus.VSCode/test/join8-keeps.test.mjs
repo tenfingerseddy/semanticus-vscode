@@ -60,7 +60,7 @@ const body = (extra = {}) => renderToStaticMarkup(React.createElement(P.StartPla
 {
   const html = body();
   assert.match(html, /data-testid="sp-name-flag"/, 'the row says its name is flagged');
-  assert.match(readable(html), /Name reads as a code/);
+  assert.match(readable(html), /Use a name people recognise/);
   const detail = renderToStaticMarkup(React.createElement(P.LineDetail, { line: staffLine, view, tier: { pro: false }, busy: false, onEdit() {}, onKeepName() {} }));
   assert.match(detail, /data-testid="sp-keepname"/, 'the open row has the Keep this name button');
   assert.match(readable(detail), /Keep this name/);

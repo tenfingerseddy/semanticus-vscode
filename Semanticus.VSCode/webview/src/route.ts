@@ -32,7 +32,10 @@ export type Seed = {
     // question box so the page opens on their words instead of empty (fix-askdata-r6).
     | 'askWords'
     // The new model wizard's SQL step, asked for by SQL_DRAFT_TARGET below. One use: the draft panel says when it took it.
-    | 'specStart';
+    | 'specStart'
+    // The Plan's start view, asked for by show_in_studio place plan/start (route tool 'plan', target PLAN_START_TARGET): the start plan when
+    // there is one, else the start form. One use: the Plan says when it took it.
+    | 'planStart';
   value: string | string[];
 };
 
@@ -44,6 +47,8 @@ export type Seed = {
  * page, `navigateInStudio('spec', SQL_DRAFT_TARGET)` from anywhere else in the webview.
  */
 export const SQL_DRAFT_TARGET = 'start:sql';
+/** Route tool 'plan' with this target puts the Plan's start view on screen: the start plan, or the start form when there is none yet (place plan/start). */
+export const PLAN_START_TARGET = 'start';
 export interface Route { sessionId: string; destination: Destination; tool: ToolId; object?: ObjectRef; seed?: Seed; nonce: number; }
 
 export const DESTINATION_OF_TOOL: Record<ToolId, Destination> = {

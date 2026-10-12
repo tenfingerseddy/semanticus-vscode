@@ -161,6 +161,7 @@ namespace Semanticus.Tests
         /// steps, even when Jev was sure of nothing and the words matched nothing, so the draft opened as the menu with no
         /// step on it. The sentence then says "only the first 12 are here" about a draft that holds none.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task R2_D6a_a_menu_draft_with_no_steps_does_not_say_twelve_are_here()
         {
             var (f, jev) = await ProAsync("R2MenuThirteen.bim", (w, q) => null);   // Jev sure of nothing, and no word match

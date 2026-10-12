@@ -68,7 +68,7 @@ assert.match(pro, /export function useFeature\(feature: ProFeature \| RetiredPro
   'useFeature is the page half of the gate, and still answers about a retired feature');
 assert.match(pro, /if \(isRetiredFeature\(feature\)\) return 'granted';/,
   'a freed feature is granted BEFORE the entitlement answers, not held on "checking" for a question the answer no longer depends on');
-assert.match(pro, /rpc<\{ tier\?: string; features\?: string\[\] \}>\('getEntitlement'\)/,
+assert.match(pro, /rpc<\{ tier\?: string; features\?: string\[\]; planInactive\?: boolean; manageUrl\?: string \}>\('getEntitlement'\)/,
   'the one fetch now reads the features array the engine adds');
 // A token minted with no features claim must still grant the whole list (mint.mjs:39), so an older engine
 // that answers with a tier and no features does not silently demote a paying customer to an empty tier.
@@ -239,12 +239,12 @@ assert.doesNotMatch(instructionsCard, /acceptPrimerSuggestion/, 'the Instruction
 // offers the classic date-table approach below 1701 and it works. Calendars are the one thing refused.
 assert.match(planPage, /const LEVEL_BLOCKS: \{ capability: string; floor: number \}\[\]/,
   'what a level blocks is a list of named capabilities, not a bare constant');
-assert.match(planPage, /\{ capability: 'Calendars', floor: 1701 \}/, 'and Calendars is the capability 1701 unblocks');
+assert.match(planPage, /\{ capability: 'Custom calendars for time calculations', floor: 1701 \}/, 'and custom calendars are the capability 1701 unblocks');   // named in Power BI words by 6343ed4b
 assert.match(planPage, /return LEVEL_BLOCKS\.find\(\(entry\) => level < entry\.floor\) \?\? null;/,
   'the prompt shows only when a named capability is actually below its floor');
 assert.match(planPage, /if \(typeof level !== 'number' \|\| level <= 0\) return null;/,
   'an unknown level blocks nothing, because "not known to be blocking" is not "blocking"');
-assert.match(planPage, /\{blocked\.capability\} need level \{blocked\.floor\}\./,
+assert.match(planPage, /\{blocked\.capability\} need level \{blocked\.floor\} or higher\./,   // wording from h16-words
   'the sentence names the one capability that is refused, and claims nothing wider');
 assert.doesNotMatch(planPage, /Calendars and date calculations need/,
   'the old, too-broad claim must be gone: date calculations work below 1701');
@@ -341,6 +341,7 @@ const PAID_WORDS = {
   Workflows: /\bWorkflows\b/,
   Ask: /\bask box\b/,
   AskData: /\bAsk your data\b/,
+  Batch: /\bbulk edits that change many objects in one step\b/,   // the m14/batch bulk tools
   planRankingOf: /\bplan ranked, scored and run\b/,
 };
 assert.deepEqual(

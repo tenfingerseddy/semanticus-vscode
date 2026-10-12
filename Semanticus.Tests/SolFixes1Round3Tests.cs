@@ -48,6 +48,7 @@ namespace Semanticus.Tests
         /// neither the old model's Primer (another model's file now) nor the target's own, and must not be refused: the
         /// step lets its file go. At 4d81c149 the step kept naming the old model's Primer and Undo deleted it.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public Task Save_as_onto_a_model_with_its_own_Primer_leaves_both_Primers_and_undo_goes_on() => InFoldersAsync(async dir =>
         {
             var target = Path.Combine(dir, "b", "Model2.bim");
@@ -168,6 +169,7 @@ namespace Semanticus.Tests
         /// names it, however far down, and stays quick on a draft at the cap. Here thousands of kept clauses all name
         /// Hide an object: one pick resolves them all. The time bound is loose on purpose; the count test guards the cost.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_step_picked_from_the_menu_lets_go_of_every_kept_word_it_names_quickly_at_the_cap()
         {
             var (f, jev) = await ProAsync("R3MenuCap.bim", (w, q) => null);
@@ -190,6 +192,7 @@ namespace Semanticus.Tests
         /// any sane time bound): of hundreds of kept words, a pick from the menu reads against the whole list only those
         /// that name the picked step, and lets exactly those go, however far down they are (VR2).</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_step_picked_from_the_menu_reads_only_the_kept_words_that_name_it()
         {
             var (f, _) = await ProAsync("R3MenuCount.bim", (w, q) => null);
@@ -214,6 +217,7 @@ namespace Semanticus.Tests
         /// must not be said as "only the first 12 were read" with a promise that Add more words adds the rest: nothing was
         /// read, and the next Add more words asks no one either. The note says why.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_first_draft_no_one_could_read_never_says_its_first_words_were_read()
         {
             var (f, jev) = await ProAsync("R3NoConsent.bim", (w, q) => ("yes", 0.99), consent: false);
@@ -231,6 +235,7 @@ namespace Semanticus.Tests
         /// <summary>VR4's other half: the reason stays while it is still true. Without permission the note keeps saying why
         /// on a later read, and never promises that Add more words asks Jev.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task The_note_keeps_saying_why_while_permission_is_still_missing()
         {
             var (f, _) = await ProAsync("R3StillNo.bim", (w, q) => ("yes", 0.99), consent: false);
@@ -246,6 +251,7 @@ namespace Semanticus.Tests
 
         /// <summary>VR4 in full: once permission is given the note promises what is now true, that Add more words asks Jev.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Once_permission_is_given_the_note_says_add_more_words_asks_jev()
         {
             var (f, _) = await ProAsync("R3NowYes.bim", (w, q) => ("yes", 0.99), consent: false);
@@ -264,6 +270,7 @@ namespace Semanticus.Tests
         /// words asks Jev. Once permission is withdrawn that promise is false (the next Add more words asks no one), so the
         /// note says why instead, read when the draft is shown.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Once_permission_is_withdrawn_the_note_stops_promising_that_jev_is_asked()
         {
             var (f, _) = await ProAsync("R3NowNo.bim", (w, q) => null);
@@ -295,6 +302,7 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData("studio")]
         [InlineData("agent")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_clause_jev_is_not_sure_of_takes_an_adding_step_only_when_it_asks_to_add(string door)
         {
             var (f, _) = await ProAsync("R3AddRule" + door + ".bim", (w, q) => null);
@@ -316,6 +324,11 @@ namespace Semanticus.Tests
                 Assert.Contains(StepTitles(v), t => t == "Hide an object");
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("studio")]
+        public Task A_clause_jev_is_not_sure_of_takes_an_adding_step_only_when_it_asks_to_add_sample(string door) => A_clause_jev_is_not_sure_of_takes_an_adding_step_only_when_it_asks_to_add(door);
 
         // ---- Author: a step title typed with a space before a new word -------------------------------------------------
 

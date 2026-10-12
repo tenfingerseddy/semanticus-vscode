@@ -99,29 +99,10 @@ namespace Semanticus.Tests
                 Assert.Equal(DecisionRegistry.ConsentSchemaVersion, before.SchemaVersionInForce);
                 Assert.NotEmpty(before.FieldsInForce);
 
-                // The assistant's door never agrees for the person: its call puts the person's own question and answers asked.
-                // Only the person's yes lets the same call through (m11/uat-undo, Q4). The ledger is a scratch one.
-                var scratch = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dct-" + Guid.NewGuid().ToString("N").Substring(0, 6));
-                ApprovalLedger.RootOverride = scratch;
-                AgentPolicyStore.RootOverride = scratch;
-                DecisionConsentInfo granted;
-                try
-                {
-                    var asked = await McpTools.SetConsent(f.Engine, before.FieldsInForce, before.SchemaVersionInForce);
-                    Assert.True(asked.Asked);
-                    Assert.False(asked.Granted);
-                    Assert.False((await f.Engine.GetConsentAsync()).Granted);
-                    var question = Assert.Single(await f.Engine.ListPendingApprovalsAsync());
-                    Assert.Contains(before.FieldsInForce[0], question.Summary, StringComparison.Ordinal);
-                    await f.Engine.ApproveAgentActionAsync(question.Id, "human");
-                    granted = await McpTools.SetConsent(f.Engine, before.FieldsInForce, before.SchemaVersionInForce);
-                }
-                finally
-                {
-                    ApprovalLedger.RootOverride = null;
-                    AgentPolicyStore.RootOverride = null;
-                    try { System.IO.Directory.Delete(scratch, true); } catch { }
-                }
+                // The assistant's door agrees on the person's word in chat (1.4 chatyes): one call, no question, recorded as the assistant's.
+                var granted = await McpTools.SetConsent(f.Engine, before.FieldsInForce, before.SchemaVersionInForce);
+                Assert.False(granted.Asked);
+                Assert.Equal("agent", granted.GrantedBy);
                 Assert.True(granted.Current);
                 Assert.Equal(before.FieldsInForce, granted.Fields);
                 Assert.NotNull(granted.GrantedUtc);
@@ -454,6 +435,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Astra_1_a_day_of_editing_keeps_the_permission()
         {
@@ -528,6 +510,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Astra_3_a_folder_or_format_write_named_for_another_model_is_refused_by_the_engine()
         {

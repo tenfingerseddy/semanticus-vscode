@@ -281,6 +281,33 @@ export function opTitle(op: unknown): string {
   return OP_TITLE[raw] ?? uiLabel(raw, 'An action');
 }
 
+// The engine names each undo step with a short working label ("edit objects", "write words"). A person reads these on a History
+// row and on the Plan's Latest mark, so they are put into plain words here. A label not in the table reads as the engine wrote it.
+const EDIT_LABEL_WORDS: Record<string, string> = {
+  'edit objects': 'Changed fields',
+  'write words': 'Wrote descriptions and synonyms',
+  'waive findings': 'Set findings aside',
+  'rename': 'Renamed a field',
+  'set synonyms': 'Wrote synonyms',
+  'set description': 'Wrote a description',
+  'set dax': 'Changed a formula',
+  'set measure format': 'Changed a number format',
+  'set measure format expression': 'Changed a number format',
+  'set column metadata': 'Changed a column',
+  'set column data type': 'Changed a data type',
+  'set ai instructions': 'Wrote notes for AI',
+  'set relationship': 'Changed a link between tables',
+  'create relationship': 'Linked two tables',
+  'optimize measure': 'Made a measure faster',
+  'mark date table': 'Marked the date table',
+  'bpa: apply all auto-fixes': 'Applied the safe quality fixes',
+};
+/** An undo step's engine label in plain words. */
+export function editWords(label: unknown): string {
+  const raw = String(label ?? '').trim();
+  return EDIT_LABEL_WORDS[raw.toLowerCase()] ?? raw;
+}
+
 /** The audit trail's name for a model operation. */
 export function opLabel(op: unknown): string {
   const raw = String(op ?? '').trim();

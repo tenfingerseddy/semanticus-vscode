@@ -25,6 +25,11 @@ namespace Semanticus.Engine.Entitlement
                                                         // grace advisory while still Pro ("expired X; in grace until Y")
         public string ManageUrl { get; set; } = LicenseEntitlement.ManageUrl; // one product-owned Pro plans/support page
 
+        /// <summary>True while the Pro service refuses this licence because its subscription is not active (cancelled, refunded, unpaid).
+        /// The tier is still "pro", because the licence is valid; the header says "Pro, plan not active" with a Billing link
+        /// (ManageUrl) so the screen never says Pro and refuses Pro at once. False on a free session and whenever Jev has not refused.</summary>
+        public bool PlanInactive { get; set; }
+
         /// <summary>The effective feature grants, as wire ids. Today there is exactly one, "workflows", so a Pro
         /// session reports ["workflows"] and a free session reports []. Never null. Only a feature that IS a tab
         /// has a wire id, because this array exists for a page to lock a tab on; the ask box and the ranked plan
@@ -32,6 +37,10 @@ namespace Semanticus.Engine.Entitlement
         /// (<see cref="FeatureGrants"/>) and used by both this response and the gate, so a page and the engine
         /// can never disagree.</summary>
         public string[] Features { get; set; } = Array.Empty<string>();
+
+        /// <summary>The assistant attached to this session, from its MCP clientInfo (read once by the engine, AssistantIdentity). Null until an
+        /// assistant has made a call. Not part of the licence: LocalEngine stamps it on a copy, on both doors.</summary>
+        public Semanticus.Engine.AssistantInfo Assistant { get; set; }
     }
 
     /// <summary>Thrown when a Pro feature is reached on the free tier. Carries a user-facing, actionable message;

@@ -30,9 +30,10 @@ namespace Semanticus.Decisions
         public static readonly DecisionConsent None = new DecisionConsent(false, 0, new string[0], null, null);
 
         public DecisionConsent(bool granted, int schemaVersion, IEnumerable<string> approvedFields,
-                               DateTimeOffset? grantedUtc, DateTimeOffset? withdrawnUtc, long generation = 0)
+                               DateTimeOffset? grantedUtc, DateTimeOffset? withdrawnUtc, long generation = 0, string grantedBy = null)
         {
             Generation = generation;
+            GrantedBy = grantedBy;
             Granted = granted;
             SchemaVersion = schemaVersion;
             ApprovedFields = (approvedFields ?? Enumerable.Empty<string>())
@@ -52,6 +53,9 @@ namespace Semanticus.Decisions
         public IReadOnlyList<string> ApprovedFields { get; }
 
         public DateTimeOffset? GrantedUtc { get; }
+
+        /// <summary>Who gave it: "human" (the person, in Studio) or "agent" (their assistant, on their word in chat). Null on a record an older build wrote, which reads as the person's.</summary>
+        public string GrantedBy { get; }
         public DateTimeOffset? WithdrawnUtc { get; }
 
         /// <summary>Which version of this model's permission this is. It goes up on every grant and every
@@ -59,11 +63,11 @@ namespace Semanticus.Decisions
         public long Generation { get; }
 
         public static DecisionConsent Grant(IEnumerable<string> fields, int schemaVersion, DateTimeOffset nowUtc,
-                                            long generation = 0) =>
-            new DecisionConsent(true, schemaVersion, fields, nowUtc, null, generation);
+                                            long generation = 0, string grantedBy = null) =>
+            new DecisionConsent(true, schemaVersion, fields, nowUtc, null, generation, grantedBy);
 
         public DecisionConsent Withdraw(DateTimeOffset nowUtc, long generation = 0) =>
-            new DecisionConsent(false, SchemaVersion, ApprovedFields, GrantedUtc, nowUtc, generation);
+            new DecisionConsent(false, SchemaVersion, ApprovedFields, GrantedUtc, nowUtc, generation, GrantedBy);
 
         /// <summary>Whether this consent covers <paramref name="point"/> right now, and if not, why not in plain
         /// words. The reason is shown to the person and recorded in the result, so it never says "denied".</summary>

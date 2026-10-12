@@ -169,6 +169,7 @@ namespace Semanticus.Tests
         /// words asks no one. The same holds with the drafting point switched off in "what Pro decides". The words must
         /// stay named; only the promise is wrong.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task V3_the_Plan_does_not_promise_Jev_reads_the_words_when_Jev_cannot_be_asked()
         {
             var (f, jev) = await ProAsync("VNoPermission.bim", (w, q) => Yes(0.99), consent: false);
@@ -264,6 +265,7 @@ namespace Semanticus.Tests
         /// words drafted from the first 12 and said how many were left. Measured in Debug on a loaded machine; the bound
         /// here is generous.</summary>
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task V5_a_Plan_draft_at_the_character_cap_still_opens_in_seconds()
         {
             var (f, _) = await ProAsync("VPlanCap.bim", (w, q) => null);

@@ -45,6 +45,7 @@ namespace Semanticus.Tests
         // ---- S1: TOPN and SAMPLE scan their SECOND argument. The lane's list has no TOPN, so the order-by [Revenue] is read from the home table:
         // renaming Metrics[Revenue] rewrites the Sales sort key to [Net Revenue] and the top row (and every number built on it) changes.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("CONCATENATEX ( TOPN ( 1, Sales, [Revenue] ), Sales[Region], \",\" )")]
         [InlineData("COUNTROWS ( TOPN ( 1, Sales, [Revenue], DESC ) )")]
@@ -62,6 +63,7 @@ namespace Semanticus.Tests
         // ---- S1 regression: a scan of a table EXPRESSION over the measure's own table. Revenue exists only in Sales, so [Revenue] has no name conflict and
         // is Sales[Revenue] (syntax reference). m11/join 0fa4b384 rewrote these (home table Sales); the lane records no dependency and leaves the old name.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData("SUMX ( FILTER ( Sales, Sales[Region] = \"West\" ), [Revenue] )")]
         [InlineData("SUMX ( ALL ( Sales ), [Revenue] )")]
@@ -77,6 +79,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_bare_column_in_a_calculated_column_ranking_its_own_table_still_follows_the_rename()
         {
@@ -106,6 +109,7 @@ namespace Semanticus.Tests
 
         // ---- S1 attack that holds: the innermost scan wins over an outer scan that has the same column name.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_innermost_scan_wins_over_an_outer_scan_with_the_same_column()
         {
@@ -122,6 +126,7 @@ namespace Semanticus.Tests
 
         // ---- The measure-only refinement in an unknown scan, attacked with a COLUMN and a MEASURE of the same name: no column is ever rewritten wrongly.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task In_a_scan_of_a_table_expression_a_name_a_column_and_a_measure_share_is_never_rewritten_for_the_column()
         {
@@ -165,6 +170,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_rename_after_an_undo_still_carries_the_helpers()
         {
@@ -218,6 +224,7 @@ namespace Semanticus.Tests
 
         /// <summary>RANKX's third argument is the value whose rank is found, outside the rows of the table; in a calculated column of Metrics a bare [Revenue]
         /// there is Metrics' own column. Only the second argument is read per row of Sales.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_value_argument_of_rankx_is_not_in_the_rows_of_the_ranked_table()
         {

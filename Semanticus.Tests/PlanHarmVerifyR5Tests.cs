@@ -131,6 +131,10 @@ namespace Semanticus.Tests
 
         // ---- R2 (PlanHarmVerifyR2Tests), builds copied word for word -------------------------------------------------
 
+        [Theory, InlineData(false)]
+        public Task R2_S5_a_code_table_with_a_number_column_is_never_pre_ticked_sample(bool reportRead) => R2_S5_a_code_table_with_a_number_column_is_never_pre_ticked(reportRead);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false), InlineData(true)]
         public async Task R2_S5_a_code_table_with_a_number_column_is_never_pre_ticked(bool reportRead)
         {
@@ -152,6 +156,10 @@ namespace Semanticus.Tests
             AssertNeverPreTicked(l, "column:status/STATUS_CD", "column:status/STATUS_DESC", "column:status/SORT_ORD", "column:fact_invoice/STATUS_CD");
         }
 
+        [Theory, InlineData(false, true)]
+        public Task R2_S12_a_single_flat_tables_columns_are_listed_and_none_is_pre_ticked_sample(bool reportRead, bool pro) => R2_S12_a_single_flat_tables_columns_are_listed_and_none_is_pre_ticked(reportRead, pro);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false, true), InlineData(true, true), InlineData(false, false)]
         public async Task R2_S12_a_single_flat_tables_columns_are_listed_and_none_is_pre_ticked(bool reportRead, bool pro)
         {
@@ -169,6 +177,10 @@ namespace Semanticus.Tests
             AssertNeverPreTicked(l, "column:sales/QTY", "column:sales/AMOUNT", "column:sales/DISCOUNT", "column:sales/NOTE_TXT", "column:sales/PRODUCT");
         }
 
+        [Theory, InlineData(false)]
+        public Task R2_S13_a_header_facts_numbers_are_never_pre_ticked_sample(bool reportRead) => R2_S13_a_header_facts_numbers_are_never_pre_ticked(reportRead);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false), InlineData(true)]
         public async Task R2_S13_a_header_facts_numbers_are_never_pre_ticked(bool reportRead)
         {
@@ -187,6 +199,10 @@ namespace Semanticus.Tests
             AssertNeverPreTicked(l, "column:fact_invoice/INV_AMT", "column:fact_invoice/TAX_AMT");
         }
 
+        [Theory, InlineData(false)]
+        public Task R2_S14_a_month_grain_calendars_columns_are_never_pre_ticked_sample(bool reportRead) => R2_S14_a_month_grain_calendars_columns_are_never_pre_ticked(reportRead);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false), InlineData(true)]
         public async Task R2_S14_a_month_grain_calendars_columns_are_never_pre_ticked(bool reportRead)
         {
@@ -222,6 +238,10 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(row.Diff ?? Array.Empty<string>(), d => d.Contains("Invoice Count", StringComparison.Ordinal));
         }
 
+        [Theory, InlineData(false)]
+        public Task R2_S17_a_name_column_named_after_its_entity_is_never_pre_ticked_sample(bool reportRead) => R2_S17_a_name_column_named_after_its_entity_is_never_pre_ticked(reportRead);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false), InlineData(true)]
         public async Task R2_S17_a_name_column_named_after_its_entity_is_never_pre_ticked(bool reportRead)
         {
@@ -244,6 +264,10 @@ namespace Semanticus.Tests
 
         // ---- R3 (PlanHarmVerifyR3Tests), its own Build(shape) ----------------------------------------------------------
 
+        [Theory, InlineData("none", true)]
+        public Task R3_N9_a_header_fact_that_two_facts_share_its_counts_and_rates_are_never_pre_ticked_sample(string report, bool pro) => R3_N9_a_header_fact_that_two_facts_share_its_counts_and_rates_are_never_pre_ticked(report, pro);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("none", true), InlineData("read", true), InlineData("none", false)]
         public async Task R3_N9_a_header_fact_that_two_facts_share_its_counts_and_rates_are_never_pre_ticked(string report, bool pro)
         {
@@ -254,6 +278,10 @@ namespace Semanticus.Tests
             AssertNeverPreTicked(l, "column:fact_order_hdr/ITEM_COUNT", "column:fact_order_hdr/FX_RATE");
         }
 
+        [Theory, InlineData("none")]
+        public Task R3_N10b_a_budget_fact_joined_many_to_many_from_the_dimensions_side_its_numbers_are_never_pre_ticked_sample(string report) => R3_N10b_a_budget_fact_joined_many_to_many_from_the_dimensions_side_its_numbers_are_never_pre_ticked(report);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData("none"), InlineData("read")]
         public async Task R3_N10b_a_budget_fact_joined_many_to_many_from_the_dimensions_side_its_numbers_are_never_pre_ticked(string report)
         {
@@ -306,10 +334,15 @@ namespace Semanticus.Tests
             await f.Engine.AddPlanItemAsync("column:dim_client/CLNT_NM", "delete_if_unused", null, "Remove CLNT_NM", null, null, "agent");
             await f.Engine.AddPlanItemAsync("column:dim_client/ONBOARDED_ON", "delete_if_unused", null, "Remove ONBOARDED_ON", null, null, "agent");
 
+            // The lines exist only once the set is proposed (ListAsync does the same); a read before it saw no lines and passed for nothing.
             var plan = await f.Engine.GetModelPlanAsync();
             var row = Assert.Single(plan.Items, i => i.Id == "cleanup/model");
             Assert.Contains(LocalEngine.CleanupPurposeSentence, row.Why);
-            var lines = row.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>();
+            var proposed = await f.Engine.ModelPlanActionAsync("cleanup/model", "propose", "human");
+            var set = proposed.Plan.Items.Single(i => i.Id == "cleanup/model").ChangeSet;
+            Assert.NotNull(set);
+            var lines = set.Lines;
+            Assert.Contains(lines, x => x.Kept && x.Suggested);   // the control: the set suggests something, so an empty read cannot pass
             var ticked = lines.Where(x => x.Kept && (x.Target == "column:dim_client/CLNT_NM" || x.Target == "column:dim_client/ONBOARDED_ON"))
                               .Select(x => x.Target).ToArray();
             Assert.True(ticked.Length == 0, "the cleanup row starts the assistant's removal of " + string.Join(", ", ticked) + " ticked");
@@ -363,6 +396,10 @@ namespace Semanticus.Tests
 
         // ---- R4 (PlanHarmVerifyR4Tests), its own fixtures ---------------------------------------------------------------
 
+        [Theory, InlineData(false, true)]
+        public Task R4_S12_relabelled_a_single_flat_tables_columns_are_never_pre_ticked_with_the_frames_column_as_the_control_sample(bool reportRead, bool pro) => R4_S12_relabelled_a_single_flat_tables_columns_are_never_pre_ticked_with_the_frames_column_as_the_control(reportRead, pro);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false, true), InlineData(true, true), InlineData(false, false)]
         public async Task R4_S12_relabelled_a_single_flat_tables_columns_are_never_pre_ticked_with_the_frames_column_as_the_control(bool reportRead, bool pro)
         {
@@ -399,6 +436,10 @@ namespace Semanticus.Tests
             Assert.True(await Present(), target + " was removed by the assistant's apply_plan naming it before the person looked");
         }
 
+        [Theory, InlineData(false, true)]
+        public Task R4_H1_a_facts_text_that_holds_a_date_is_listed_and_never_removed_before_the_person_looks_sample(bool reportRead, bool pro) => R4_H1_a_facts_text_that_holds_a_date_is_listed_and_never_removed_before_the_person_looks(reportRead, pro);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false, true), InlineData(true, true), InlineData(false, false)]
         public async Task R4_H1_a_facts_text_that_holds_a_date_is_listed_and_never_removed_before_the_person_looks(bool reportRead, bool pro)
         {
@@ -408,6 +449,10 @@ namespace Semanticus.Tests
             await AssertHeldOutReviewedFirstAsync(f, "column:fact_invoice/BILLED_AS");
         }
 
+        [Theory, InlineData(false, true)]
+        public Task R4_H2_a_dimensions_alternate_key_is_listed_and_never_removed_before_the_person_looks_sample(bool reportRead, bool pro) => R4_H2_a_dimensions_alternate_key_is_listed_and_never_removed_before_the_person_looks(reportRead, pro);
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory, InlineData(false, true), InlineData(true, true), InlineData(false, false)]
         public async Task R4_H2_a_dimensions_alternate_key_is_listed_and_never_removed_before_the_person_looks(bool reportRead, bool pro)
         {

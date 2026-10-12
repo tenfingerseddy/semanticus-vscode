@@ -183,7 +183,7 @@ namespace Semanticus.Engine
             // Dry-run path returns BEFORE token acquisition — no HTTP, offline-safe.
             if (!commit) return DryRun(summary);
             // Agent-permissions gate — creating an item in a Fabric workspace is a live cloud write. The workspace id
-            // is the gate's target: unlabelled ⇒ prod (fail closed) until the user labels it. Refusal on the DTO.
+            // is the gate's target: unlabelled ⇒ test (dev) until the user labels it production. Refusal on the DTO.
             { var refusal = GuardAgent(AgentCapability.DeployLive, workspaceId, null, origin, isCommit: true, summary: summary, intentBasis: "create_data_agent:" + name); if (refusal != null) return Err(refusal); }
             try
             {

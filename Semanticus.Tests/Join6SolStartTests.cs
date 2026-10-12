@@ -120,6 +120,7 @@ namespace Semanticus.Tests
             Assert.Contains("Total Amount", ytd.Why);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false, "ui")]
         [InlineData(false, "mcp")]
@@ -159,6 +160,7 @@ namespace Semanticus.Tests
             Assert.True(reviewedMeasures.Count >= 7, "the six time measures were not in the review");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A1_a_build_that_would_write_an_object_the_review_did_not_show_is_refused_and_writes_nothing()
         {
@@ -218,6 +220,7 @@ namespace Semanticus.Tests
             return (e, sm, oracle);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A2_a_table_added_back_after_the_grant_sends_no_sample_fact_to_Jev_on_the_plan_path()
         {
@@ -233,6 +236,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A2_the_decide_scratch_path_lays_only_granted_tables_of_the_sample_over_the_model()
         {
@@ -263,6 +267,7 @@ namespace Semanticus.Tests
             return (e, sm, e.StartPlanDocForTest().Id);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A3_a_second_start_refused_for_unsaved_work_keeps_the_first_plans_document_and_its_undo()
         {
@@ -282,6 +287,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A3_a_second_start_refused_by_its_folder_keeps_the_first_plans_document()
         {
@@ -296,6 +302,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A3_a_second_start_whose_source_cannot_be_read_keeps_the_first_plans_document()
         {
@@ -310,6 +317,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A3_a_second_start_that_succeeds_retires_the_first_plans_document()
         {
@@ -399,6 +407,7 @@ namespace Semanticus.Tests
             Assert.True(refused != null || written.Written == 0, "the words were accepted after the build had taken its copy of the plan");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A4_the_build_commits_only_while_the_live_plan_still_has_the_approved_digest()
         {
@@ -415,6 +424,43 @@ namespace Semanticus.Tests
             Assert.Contains("changed", built.Refused);
             Assert.Equal(0, await sm.Current.ReadAsync(m => m.Tables.Count));
             Assert.Equal("Moved under the build.", e.StartPlanDocForTest().Pins["table:Sales"]);
+        }
+        // Verifier (v-agent-controls, 11 Oct 2026): the person says yes in chat, the assistant approves and builds through the gated MCP door.
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task V_agentctl_the_assistant_approves_then_builds_a_start_plan_through_the_gated_MCP_door_and_one_undo_takes_it_back(bool pro)
+        {
+            using var sm = new SessionManager(); using var e = Engine(sm, pro);
+            await Start(e, Path.Combine(Root, "m"), "Model", "mcp");
+            var view = pro ? await GrantPro(e) : await Ready(e);
+            var gated = AssistantEngine.ForAssistant(e);
+            var approved = await McpTools.ApproveStartPlan(gated, view.Digest);
+            Assert.Equal(view.Digest, approved.Approval?.Digest);
+            var built = await McpTools.BuildStartPlan(gated, approved.Digest);
+            Assert.True(built.Built, built.Refused);
+            Assert.True(await sm.Current.ReadAsync(m => m.Tables.Count) > 0);
+            await McpTools.UndoChange(gated);
+            Assert.Equal(0, await sm.Current.ReadAsync(m => m.Tables.Count));
+        }
+
+        // A build the assistant approved (the person said yes in chat) is credited to the assistant in History; one the person approved stays theirs.
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public async Task A_start_plan_build_names_who_approved_it_the_assistant_or_the_person(bool byAssistant)
+        {
+            using var sm = new SessionManager(); using var e = Engine(sm, false);
+            await Start(e, Path.Combine(Root, "m"), "Model", "mcp");
+            var view = await Ready(e);
+            var gated = AssistantEngine.ForAssistant(e);
+            var approved = byAssistant ? await McpTools.ApproveStartPlan(gated, view.Digest) : await e.ApproveStartPlanAsync(view.Digest);
+            var commits = new List<ChangeNotification>();
+            sm.Bus.Changed += n => { if (n.IsCommit) lock (commits) commits.Add(n); };
+            var built = await McpTools.BuildStartPlan(gated, approved.Digest);
+            Assert.True(built.Built, built.Refused);
+            var build = Assert.Single(commits, n => n.Cause?.Kind == ChangeCauseKinds.StartPlan);
+            Assert.Equal(byAssistant ? ChangeBy.Assistant : ChangeBy.You, build.Cause.ApprovedBy);
         }
     }
 }

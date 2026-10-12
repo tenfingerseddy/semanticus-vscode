@@ -166,6 +166,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task With_Jev_off_no_labelled_phrasing_drafts_an_add_it_did_not_ask_for_and_each_keeps_its_step()
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);
@@ -182,6 +183,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task With_Jev_sure_of_every_add_no_labelled_phrasing_drafts_an_add_it_did_not_ask_for()
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);
@@ -205,6 +207,7 @@ namespace Semanticus.Tests
         [InlineData("and delete the old measures and the old role")]
         [InlineData("then remove the Sales and Date relationship")]
         [InlineData("and clear the old measures")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task Add_more_words_that_take_away_add_no_step_and_do_not_call_Jev_unsure(string more)
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);
@@ -226,6 +229,11 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(DraftCopy.JevNotSure, agent.Sentence);
             Assert.Contains(agent.Notes, n => n.StartsWith("No step for", StringComparison.Ordinal) && n.Contains(AddingRule.TakeAwayReason, StringComparison.Ordinal));
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("and delete the old measures and the old role")]
+        public Task Add_more_words_that_take_away_add_no_step_and_do_not_call_Jev_unsure_sample(string more) => Add_more_words_that_take_away_add_no_step_and_do_not_call_Jev_unsure(more);
 
         /// <summary>Sol on round 4: words added with Add more words are read in the words they join. "add a measure" then
         /// "and a role" asks for a role too, so the menu matches Add a role and the answer does not say the new words
@@ -327,6 +335,7 @@ namespace Semanticus.Tests
         [InlineData("strip the Dim prefix from the table names")]
         [InlineData("remove spaces from the column names")]
         [InlineData("drop the time part from the Order Date column")]
+        [Trait(TestCost.Key, TestCost.Sweep)]
         public async Task A_step_no_action_matches_gets_the_plain_reason_on_either_door(string words)
         {
             using var f = new DecisionFixture(TestEntitlements.Pro);
@@ -341,6 +350,11 @@ namespace Semanticus.Tests
                 Assert.Equal(DraftCopy.DescribeNoMatch, step.Reason);
             }
         }
+
+        // Default tier: the first row of the sweep form, through the same body (lean suite, lane A).
+        [Theory]
+        [InlineData("remove the prefix from the table names")]
+        public Task A_step_no_action_matches_gets_the_plain_reason_on_either_door_sample(string words) => A_step_no_action_matches_gets_the_plain_reason_on_either_door(words);
 
         /// <summary>The describe_workflow_steps tool text says what the engine does: a step that adds is chosen only for
         /// words that ask to add. Round 3's text said a step that asks to delete stays a placeholder, which was false for

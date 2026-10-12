@@ -43,6 +43,7 @@ namespace Semanticus.Tests
             return f;
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_counts_per_track_and_state_are_the_rows_own_state_words()
         {
@@ -96,6 +97,7 @@ namespace Semanticus.Tests
             Assert.Equal(1, strip.Tracks.Single(t => t.Doer == PlanDoers.Assistant).Done);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Latest_is_the_newest_ledger_entry()
         {
@@ -109,6 +111,7 @@ namespace Semanticus.Tests
             Assert.Equal(plan.Strip.Latest.When, plan.Strip.Updated.When);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Free_reads_the_rules_line_never_jev()
         {
@@ -117,6 +120,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStripUpdatedBy.Semanticus, plan.Strip.Updated.By);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_pro_plan_jev_did_not_touch_reads_the_rules_line()
         {
@@ -128,6 +132,7 @@ namespace Semanticus.Tests
 
         /// <summary>Jev ranked the plan on Pro: the strip says Jev updated it. Same two-step as ModelPlanCacheTests:
         /// learn the ranking's digest with an empty oracle, then answer it.</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_jev_line_only_when_jev_ran_on_pro()
         {
@@ -172,6 +177,7 @@ namespace Semanticus.Tests
 
         /// <summary>The measures point is on, consent is given, and every ask fails. Jev was asked and answered
         /// nothing, so the strip must not say Jev updated the plan (honesty lane).</summary>
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Every_ask_failing_reads_the_rules_line_not_jev()
         {
@@ -193,6 +199,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStripUpdatedBy.Semanticus, plan.Strip.Updated.By);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_ready_digest_moves_with_a_hold_and_comes_back_when_it_is_lifted()
         {

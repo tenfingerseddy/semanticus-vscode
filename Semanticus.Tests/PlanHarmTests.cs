@@ -114,6 +114,7 @@ namespace Semanticus.Tests
 
         // ---- 1. the cleanup row never harms a new model ---------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_model_built_in_this_session_starts_nothing_ticked_and_nothing_waits_for_a_cleanup()
         {
@@ -139,6 +140,7 @@ namespace Semanticus.Tests
             });
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task On_an_opened_model_no_report_has_been_read_for_the_cleanup_is_optional_last_and_holds_nothing()
         {
@@ -181,6 +183,7 @@ namespace Semanticus.Tests
 
         // ---- 2. following the Plan reaches an end ---------------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Starter_measures_Run_the_plan_adds_are_never_listed_unused_and_a_removed_one_is_not_offered_again()
         {
@@ -216,6 +219,7 @@ namespace Semanticus.Tests
 
         // ---- 3. starter measures never total an id, a date key or a rate ------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_starter_row_never_totals_a_date_key_or_a_rate()
         {
@@ -285,6 +289,7 @@ namespace Semanticus.Tests
 
         // ---- 4. the grade the Plan names is AI readiness --------------------------------------------------
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_Plan_names_the_AI_readiness_grade_not_a_model_quality_grade()
         {
@@ -382,6 +387,7 @@ namespace Semanticus.Tests
             Assert.Equal(((int)status).ToString(), code);   // the number still reaches the log line
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Giving_or_withdrawing_permission_on_a_model_already_marked_tells_the_other_door()
         {
@@ -502,6 +508,7 @@ namespace Semanticus.Tests
         // how many were read. It never offers a key, a column a relationship uses (every part of a key made of
         // several), a date or a date key, a column of a date table, a name column, a measure, or a code table.
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task With_a_report_read_the_cleanup_stays_optional_last_and_says_how_many_reports_were_read()
         {
@@ -512,7 +519,7 @@ namespace Semanticus.Tests
             var cleanup = Assert.Single(plan.Items, i => i.Id == "cleanup/model");
 
             Assert.True(cleanup.Optional);
-            Assert.Equal("Optional. 1 report's use of this model has been read, and it does not show these. Other reports may still use them. Nothing else on the plan waits for this.",
+            Assert.Equal("Optional. Semanticus looked at 1 report that uses this model, and it does not show these. Other reports may still use them. No other task waits for this one.",
                 cleanup.Why.First());
             Assert.Equal("cleanup/model", Open(plan).Last().Id);
             Assert.DoesNotContain(plan.Items, i => (i.WaitsFor ?? Array.Empty<PlanWaitRef>()).Any(w => w.Id == "cleanup/model"));
@@ -566,6 +573,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task A_report_checked_again_at_a_new_revision_brings_the_cleanup_back_on_the_next_read()
         {
@@ -586,6 +594,7 @@ namespace Semanticus.Tests
             Assert.Contains(Open(await f.Engine.GetModelPlanAsync()), i => i.Id == "cleanup/model");
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task The_optional_row_says_Optional_even_while_it_waits()
         {
@@ -597,7 +606,7 @@ namespace Semanticus.Tests
             // It waits for the rows it conflicts with, and the waits line replaces its sub line on the collapsed row, so
             // the word must be on that line too (verify, 28 Sep, L1).
             Assert.NotEmpty(cleanup.WaitsFor ?? Array.Empty<PlanWaitRef>());
-            Assert.StartsWith("Optional. Waits for: ", cleanup.Sub, StringComparison.Ordinal);
+            Assert.StartsWith("Optional. " + PlanFootprint.WaitsForWords(cleanup.WaitsFor[0].Doer), cleanup.Sub, StringComparison.Ordinal);
         }
     }
 
@@ -700,8 +709,8 @@ namespace Semanticus.Tests
 
             var row = Assert.Single((await f.Engine.GetModelPlanAsync()).Items, i => i.Id == "cleanup/model");
             Assert.Equal(LocalEngine.CleanupOptionalUnreadableSentence(1), row.Why[0]);
-            Assert.Contains("could not be read", row.Why[0], StringComparison.Ordinal);
-            Assert.DoesNotContain(row.Why, w => w.Contains("has been read", StringComparison.Ordinal));
+            Assert.Contains("could not open", row.Why[0], StringComparison.Ordinal);
+            Assert.DoesNotContain(row.Why, w => w.Contains("Semanticus looked at", StringComparison.Ordinal));
         }
     }
 }

@@ -27,7 +27,54 @@ namespace Semanticus.Engine
         /// <summary>Contract 8.6: undo every step down to and including <paramref name="entryId"/> in ONE commit,
         /// one broadcast, one revision bump, labelled "Undo to" and the entry's label. Refused with a sentence when
         /// the entry is not undoable (from before this session, already undone, or never on the stack).</summary>
-        public Task<UndoState> UndoToEntryAsync(string entryId, string origin) => WalkToEntryAsync(entryId, origin, redo: false);
+        public Task<UndoState> UndoToEntryAsync(string entryId, string origin, long? throughRevision = null) =>
+            throughRevision.HasValue ? UndoAssistantGroupAsync(entryId, throughRevision.Value, origin) : WalkToEntryAsync(entryId, origin, redo: false);
+
+        private sealed class SaidHistoryRequired : Exception { }
+
+        // Resolve and check on the dispatcher in the mutation itself. A writer can land while the UI reads History.
+        private async Task<UndoState> UndoAssistantGroupAsync(string entryId, long throughRevision, string origin)
+        {
+            var context = _sessions.CurrentContext;
+            var s = context.RequireSession();
+            try
+            {
+                await s.ReverseStepsAsync(origin, "Undo assistant changes", () =>
+                {
+                    var steps = s.UndoStateNow().Steps;
+                    var rows = _sessions.Ledger.Undoable(s.Id, steps);
+                    var first = rows.FirstOrDefault(e => e.EntryId == entryId);
+                    if (first == null || throughRevision < first.Revision) throw new SaidHistoryRequired();
+                    var group = rows.Where(e => e.Revision >= first.Revision && e.Revision <= throughRevision).ToArray();
+                    bool Assistant(EditLedgerEntry e) => e.By == ChangeBy.Assistant || e.Cause?.ApprovedBy == ChangeBy.Assistant;
+                    if (group.Length == 0 || group.Last().Revision != throughRevision || group.Any(e => !Assistant(e))) throw new SaidHistoryRequired();
+                    var refs = group.SelectMany(e => e.Deltas ?? Array.Empty<ChangeDelta>()).Select(d => d.Ref).ToArray();
+                    var later = _sessions.Ledger.Entries(s.Id).Where(e => e.Kind == EditLedgerKinds.Edit && !e.Undone && !e.Gone
+                        && e.Revision > throughRevision).ToArray();
+                    if (later.Any(e => !Assistant(e) || e.Deltas == null || e.Deltas.Length == 0
+                        || (e.Deltas ?? Array.Empty<ChangeDelta>()).Any(d => refs.Any(r => SaidRefsOverlap(r, d.Ref)))))
+                        throw new SaidHistoryRequired();
+                    return (first.StepFirst, group.Last().StepIndex);
+                });
+            }
+            catch (SaidHistoryRequired)
+            {
+                var unchanged = await s.ReadAsync(_ => s.UndoStateNow());
+                unchanged.HistoryRequired = true;
+                return unchanged;
+            }
+            await ReconcilePlanAfterHistoryAsync(context, s);
+            await RefreshStartPlanAfterHistoryAsync(origin);
+            return await s.ReadAsync(_ => s.UndoStateNow());
+        }
+
+        private static bool SaidRefsOverlap(string a, string b)
+        {
+            if (a == b) return true;
+            bool Contains(string table, string child) => table.StartsWith("table:", StringComparison.Ordinal)
+                && child.Contains(":" + table.Substring(6) + "/", StringComparison.Ordinal);
+            return Contains(a, b) || Contains(b, a);
+        }
 
         /// <summary>Contract 8.6: redo every undone step up to and including <paramref name="entryId"/> in one commit.</summary>
         public Task<UndoState> RedoToEntryAsync(string entryId, string origin) => WalkToEntryAsync(entryId, origin, redo: true);

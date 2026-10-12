@@ -447,6 +447,7 @@ namespace Semanticus.Engine.Decisions
                                 var answers = Parse(request, text);
                                 if (answers.Decided)
                                 {
+                                    Volatile.Write(ref _subscriptionInactive, 0);
                                     LastServedModelVersion = answers.ServedModelVersion;
                                     // On the relay route the relay says what it charged the licence (x-relay-tokens-used),
                                     // and that is what this session counts. An answer it serves from its store under the
@@ -560,6 +561,19 @@ namespace Semanticus.Engine.Decisions
         /// refusal the PERSON can act on (an ended licence, a plan without Jev, a spent month) keeps the relay's own sentence.</summary>
         public const string NotAvailableReason = "Jev is not available right now.";
 
+        /// <summary>The relay refused because the licence's subscription is not active (cancelled, refunded, unpaid). The relay's own text is
+        /// two sentences, which the Plan used to join into its order line with "because"; the engine says it once, in its own words, and
+        /// the Plan and the header read the same fact (<see cref="SubscriptionInactive"/>).</summary>
+        public const string SubscriptionInactiveReason = "Your Pro plan is not active.";
+
+        public static bool IsSubscriptionInactive(string reason) =>
+            string.Equals((reason ?? string.Empty).Trim(), SubscriptionInactiveReason, StringComparison.Ordinal);
+
+        /// <summary>True from the relay's last refusal for an inactive subscription until an ask is answered. The header shows
+        /// "Pro, plan not active" from this, so the screen never says Pro and refuses Pro at once.</summary>
+        public bool SubscriptionInactive => Volatile.Read(ref _subscriptionInactive) != 0;
+        private int _subscriptionInactive;
+
         /// <summary>What an Ask says for the same stop (Kane, D17, 8 Oct: no word-match fallback; say plainly what happened and what to do).</summary>
         public const string NotAvailableAskNote = "Couldn't reach Jev. Check your internet connection and ask again.";
 
@@ -617,6 +631,9 @@ namespace Semanticus.Engine.Decisions
         internal static bool IsFreeRelayRefusal(HttpStatusCode status, string code) =>
             code != null && FreeRelayRefusals.TryGetValue(code, out var expected) && expected == (int)status;
 
+        // An inactive subscription (403 subscription_inactive) is held off the same way: it lifts only when billing is fixed, so asking again
+        // on every model change only collects the same refusal. A licence change builds a new oracle, which asks at once.
+
         // ---- the brake after a spent month or a pause (ai.schema final verify, low item 5) --------------------------
         //
         // A free refusal costs this session nothing, which is right, but it also left nothing to stop the next ask: every
@@ -638,7 +655,9 @@ namespace Semanticus.Engine.Decisions
 
         private void HoldOffAfter(string pointName, HttpStatusCode status, string code, string reason)
         {
-            if ((int)status != 402 && (int)status != 503) return;
+            var inactive = (int)status == 403 && string.Equals(code, "subscription_inactive", StringComparison.Ordinal);
+            if (inactive) Volatile.Write(ref _subscriptionInactive, 1);
+            if ((int)status != 402 && (int)status != 503 && !inactive) return;
             var key = string.Equals(code, "point_paused", StringComparison.Ordinal) ? pointName ?? EveryPoint : EveryPoint;
             lock (_holdOffGate) _heldOff[key] = (UtcNow + RefusedHoldOff, reason);
         }
@@ -813,6 +832,8 @@ namespace Semanticus.Engine.Decisions
                             JsonElement error, reason;
                             if (doc.RootElement.TryGetProperty("error", out error) && error.ValueKind == JsonValueKind.String)
                                 code = error.GetString();
+                            if ((int)status == 403 && string.Equals(code, "subscription_inactive", StringComparison.Ordinal))
+                                return SubscriptionInactiveReason;
                             if (doc.RootElement.TryGetProperty("reason", out reason) && reason.ValueKind == JsonValueKind.String)
                             {
                                 var sentence = reason.GetString();

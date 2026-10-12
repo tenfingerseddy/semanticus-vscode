@@ -66,6 +66,9 @@ namespace Semanticus.Engine
 
             // --- a calculation (scalar/measure) is explicitly NOT QueryData: allowed everywhere ---
             ["run_dax"] = AgentCapability.QueryCalc,       // note: run_dax can return rows; the call site re-classifies a row query
+            ["benchmark_cold_warm"] = AgentCapability.QueryCalc,
+            ["label_connection"] = AgentCapability.DeployFile,
+            ["set_default_account_profile"] = AgentCapability.DeployFile,
             ["benchmark_dax"] = AgentCapability.QueryCalc,
             ["probe_measure"] = AgentCapability.QueryCalc,
 

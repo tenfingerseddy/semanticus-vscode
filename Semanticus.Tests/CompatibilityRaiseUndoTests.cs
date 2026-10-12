@@ -120,19 +120,48 @@ namespace Semanticus.Tests
         [Fact]
         public void A_batch_that_raises_the_level_adds_a_table_and_rolls_back_leaves_the_model_as_it_was()
         {
+            var (level, before, after) = RaiseAddAndRollBack(otherModelBuiltMeanwhile: false);
+            Assert.Equal(1200, level);
+            Assert.Equal(before, after);
+        }
+
+        // The flake of CI run 4 (12 Oct): this test drives a bare handler, and the vendored wrapper binds every object it
+        // makes to the process-wide TabularModelHandler.Singleton. Another model coming to life on a dispatcher thread (the
+        // warm-up of an earlier test's session, or any second model) moves that static, so the new table was bound to a
+        // level-1200 model and the raise looked missing. The product keeps the static safe with WrapperGate; the test
+        // has to hold the gate too. This one builds the other model mid-way, on purpose, so the order no longer matters.
+        [Fact]
+        public void A_second_model_built_mid_batch_does_not_change_which_model_the_new_table_belongs_to()
+        {
+            var (level, before, after) = RaiseAddAndRollBack(otherModelBuiltMeanwhile: true);
+            Assert.Equal(1200, level);
+            Assert.Equal(before, after);
+        }
+
+        private static (int Level, int TablesBefore, int TablesAfter) RaiseAddAndRollBack(bool otherModelBuiltMeanwhile)
+        {
             // The rollback removes the new table while the level is still raised, so it runs the same gated delete
             // path as an undo. Driven on the handler directly because no engine op fails on purpose after a raise.
-            var h = new TabularEditor.TOMWrapper.TabularModelHandler(TestModels.FindBim());
+            var h = TabularEditor.TOMWrapper.Utils.WrapperGate.Construct(() => new TabularEditor.TOMWrapper.TabularModelHandler(TestModels.FindBim()));
             TabularEditor.TOMWrapper.Utils.CompatibilityGatedMembers.Track(h);
             var tables = h.Model.Tables.Count;
+            Task<TabularEditor.TOMWrapper.TabularModelHandler> other = null;
 
-            h.BeginUpdate("raise then fail");
-            h.Model.Database.CompatibilityLevel = 1701;
-            h.Model.AddCalculatedTable("Rolled Back Table", "{1}");
-            h.EndUpdate(undoable: true, rollback: true);
-
-            Assert.Equal(1200, h.CompatibilityLevel);
-            Assert.Equal(tables, h.Model.Tables.Count);
+            using (TabularEditor.TOMWrapper.Utils.WrapperGate.Pin(h))
+            {
+                h.BeginUpdate("raise then fail");
+                h.Model.Database.CompatibilityLevel = 1701;
+                if (otherModelBuiltMeanwhile)
+                {
+                    other = Task.Run(() => TabularEditor.TOMWrapper.Utils.WrapperGate.Construct(() => new TabularEditor.TOMWrapper.TabularModelHandler(1200)));
+                    // Done at once (nothing held the static) or parked at the gate: either way it has settled.
+                    Assert.True(System.Threading.SpinWait.SpinUntil(() => other.IsCompleted || TabularEditor.TOMWrapper.Utils.WrapperGate.WaitingCount > 0, System.TimeSpan.FromSeconds(60)));
+                }
+                h.Model.AddCalculatedTable("Rolled Back Table", "{1}");
+                h.EndUpdate(undoable: true, rollback: true);
+            }
+            other?.GetAwaiter().GetResult();
+            return (h.CompatibilityLevel, tables, h.Model.Tables.Count);
         }
 
         private static object ObjectRefsProbe(LocalEngine engine, string objRef)

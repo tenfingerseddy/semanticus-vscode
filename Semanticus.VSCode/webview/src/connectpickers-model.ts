@@ -17,9 +17,9 @@ export interface WorkspaceChoice {
 }
 
 // The environment labels a workspace model can carry. The same values and words as the hub's list; "Local" is left
-// out because a workspace model is never local. Unlabelled is the safe default: it keeps the Production settings on.
+// out because a workspace model is never local. An unlabelled model counts as test, so it uses the Development settings.
 export const ENV_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '', label: 'No label (Production settings)' },
+  { value: '', label: 'No label (Development settings)' },
   { value: 'dev', label: 'Development' },
   { value: 'uat', label: 'UAT' },
   { value: 'prod', label: 'Production' },

@@ -1,0 +1,36 @@
+/* The note strip, What I did and the suggestion line (1.4, lane notes). Tokens only: the assistant is --sem-doer-agent,
+   text is --sem-fg and --sem-muted, gaps are the space steps. No new hue, no animation: a note that moves the screen is
+   enough movement for one moment. */
+.sn { display: block; }
+.sn-note {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--sem-space-3);
+  padding: var(--sem-space-2) var(--sem-page-margin);
+  background: var(--sem-tint-agent);
+  border-left: var(--sem-space-1) solid var(--sem-doer-agent);
+  border-bottom: var(--sem-hairline) solid var(--sem-rule);
+}
+.sn-say { margin: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); color: var(--sem-fg); overflow-wrap: anywhere; }
+.sn-how { margin: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); overflow-wrap: anywhere; }
+.sn-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sem-space-2); }
+.sn-more { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); white-space: nowrap; }
+.sn-bare { display: flex; justify-content: flex-end; padding: var(--sem-space-1) var(--sem-page-margin); }
+
+.sn-list { padding: var(--sem-space-2) var(--sem-page-margin) var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
+.sn-list-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sem-space-3); }
+.sn-list-title { margin: 0; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); color: var(--sem-fg); }
+.sn-lines { list-style: none; margin: var(--sem-space-2) 0 0; padding: 0; max-height: calc(var(--sem-row) * 6); overflow-y: auto; }
+.sn-line {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; gap: var(--sem-space-3);
+  width: 100%; min-height: var(--sem-row); padding: var(--sem-space-1) var(--sem-space-2);
+  background: transparent; border: 0; border-radius: var(--sem-radius-control); color: var(--sem-fg); text-align: left; cursor: pointer;
+  font: inherit; font-size: var(--sem-text-body); line-height: var(--sem-lh-body);
+}
+.sn-line:hover { background: var(--sem-hover); }
+.sn-line-time { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sn-line-say { overflow-wrap: anywhere; }
+.sn-dot { width: var(--sem-space-2); height: var(--sem-space-2); border-radius: 9999px; background: var(--sem-doer-agent); align-self: center; }
+
+.sn-suggest { padding: var(--sem-space-2) var(--sem-page-margin) var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); display: grid; gap: var(--sem-space-2); }
+.sn-steps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
+.sn-added { display: inline-flex; align-items: center; min-height: var(--sem-control-h-sm); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.sn-failed { margin: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-bad); }

@@ -114,6 +114,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -150,6 +151,7 @@ namespace Semanticus.Tests
             new object[] { "column format", "ColumnFormat" },
         };
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [MemberData(nameof(UnshownWrites))]
         public async Task Item1_a_build_that_sets_a_property_the_review_did_not_show_is_refused_and_writes_nothing(string label, string what)
@@ -237,6 +239,7 @@ namespace Semanticus.Tests
             }
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item1_a_synonym_the_person_reviewed_is_built()
         {
@@ -257,6 +260,7 @@ namespace Semanticus.Tests
 
         private static string PlanText(ModelPlanView plan) => JsonSerializer.Serialize(plan, Wire);
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -280,6 +284,7 @@ namespace Semanticus.Tests
             Assert.DoesNotContain(plan.Items, i => i.Id != null && i.Id.StartsWith("starter/", StringComparison.Ordinal));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item4_undoing_the_build_gives_the_refused_measure_back_to_the_Plan()
         {
@@ -297,6 +302,7 @@ namespace Semanticus.Tests
 
         // ================================================================== item 2: the person's line controls (UAT-J7-S1-002, -003, S2-001, -005, -006, -007)
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
@@ -313,6 +319,7 @@ namespace Semanticus.Tests
             Assert.Equal(ids.Count, ids.Distinct(StringComparer.Ordinal).Count());
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item2_drop_and_keep_by_the_id_the_page_sends_work_on_every_kind_of_line()
         {
@@ -358,6 +365,7 @@ namespace Semanticus.Tests
             Assert.Contains("date table", refused.Message);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item2_the_person_can_pin_a_value_on_a_line_by_its_id()
         {
@@ -374,6 +382,7 @@ namespace Semanticus.Tests
             Assert.Equal("Every sale, tax included.", LinesOf(view).Single(l => l.Item.Kind == "set_description").Item.After);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item2_the_person_edits_words_and_the_assistant_cannot_write_over_them()
         {
@@ -399,6 +408,7 @@ namespace Semanticus.Tests
             Assert.Equal("One row per order line.", LinesOf(await e.GetStartPlanAsync()).Single(l => l.Item.Kind == "set_description").Item.After);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item2_a_plan_with_the_persons_own_words_still_previews_approves_and_builds()
         {
@@ -430,6 +440,7 @@ namespace Semanticus.Tests
             Assert.Equal("Every sale, as the assistant now says.", LinesOf(await e.GetStartPlanAsync()).Single(l => l.Item.Kind == "set_description").Item.After);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item2_a_person_editing_words_after_dropping_them_keeps_them_again()
         {
@@ -459,6 +470,7 @@ namespace Semanticus.Tests
 
         private static string Source(string table) => "dbo." + table;
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item3_a_table_can_be_left_out_of_the_sample_without_leaving_the_plan_on_both_doors()
         {
@@ -478,6 +490,7 @@ namespace Semanticus.Tests
             await Assert.ThrowsAnyAsync<Exception>(() => e.EditStartPlanAsync(new StartPlanEdit { Op = "set_table_sample", Target = "Nope", Value = "off" }, "human"));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item3_the_grant_sends_no_sample_fact_for_a_table_whose_sample_the_person_refused()
         {
@@ -511,6 +524,7 @@ namespace Semanticus.Tests
             Assert.Equal(new DisclosedScope("s/d", tables, true).Digest, new DisclosedScope("s/d", tables, true, tables).Digest);
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item3_the_needs_you_band_names_the_tables_and_the_sample_before_the_person_allows_it()
         {
@@ -534,6 +548,7 @@ namespace Semanticus.Tests
 
         // ================================================================== item 5: friction worth fixing now
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
         public async Task Item5_an_undo_of_the_build_tells_the_page_the_plan_is_a_plan_again()
         {
@@ -564,6 +579,7 @@ namespace Semanticus.Tests
             Assert.Contains("not sure", StartPlanDecide.LeftOutWhy(new ChangeItem()));
         }
 
+        [Trait(TestCost.Key, TestCost.Sweep)]
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
