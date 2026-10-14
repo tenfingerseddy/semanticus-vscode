@@ -179,7 +179,41 @@
       return { four: four, eleven: eleven, thirty: thirty }[scenario] || null;
     }());
 
-    const GRAPH = cfg.graph || SIZED || (scenario === 'mini' ? MINI : null) || (scenario === 'stack' ? STACK : null) || (scenario === 'galaxy' ? GALAXY : null) || (scenario === 'star' ? STAR : null) || (scenario === 'docstress' ? DOCSTRESS : null) || (scenario === 'twofact' ? TWOFACT : null) || (scenario === 'onerel' ? ONEREL : null) || {
+
+    // ?g=contoso -> Kane's 1.4.0 hero model: 4 facts (Sales, Returns, Budget, Inventory), 4 shared dimensions
+    // (Customer, Date, Product, Store) and a Measures table, 14 links. The facts are written in a scrambled order
+    // on purpose, so the layout has to choose the order that keeps lines short.
+    const CONTOSO = {
+      tables: [
+        tbl('Returns', { columns: 7, keyColumns: [] }), tbl('Sales', { measures: 0, columns: 8, keyColumns: [] }),
+        tbl('Budget', { columns: 4, keyColumns: [] }), tbl('Inventory', { columns: 4, keyColumns: [] }),
+        tbl('Store', { columns: 4 }), tbl('Customer', { columns: 4 }), tbl('Product', { columns: 4 }),
+        tbl('Date', { isDateTable: true, columns: 5 }), tbl('Measures', { measures: 11, columns: 1, keyColumns: [] }),
+      ],
+      relationships: [
+        rel('Returns', 'Customer'), rel('Returns', 'Date'), rel('Returns', 'Product'), rel('Returns', 'Store'),
+        rel('Sales', 'Customer'), rel('Sales', 'Date'), rel('Sales', 'Product'), rel('Sales', 'Store'),
+        rel('Budget', 'Date'), rel('Budget', 'Product'), rel('Budget', 'Store'),
+        rel('Inventory', 'Date'), rel('Inventory', 'Product'), rel('Inventory', 'Store'),
+      ],
+    };
+    // ?g=twenty -> a 20-table model: 3 facts, 11 dimensions, 2 outriggers, 4 loose tables.
+    const TWENTY = (function () {
+      const facts = ['Sales', 'Orders', 'Returns'];
+      const dims = ['Date', 'Product', 'Customer', 'Store', 'Promotion', 'Currency', 'Channel', 'Employee', 'Geography', 'Category', 'Supplier', 'Warehouse', 'Region'];
+      const loose = ['Measures', 'Parameters', 'Notes', 'Sort Order'];
+      const uses = { Sales: ['Date', 'Product', 'Customer', 'Store', 'Promotion', 'Currency', 'Channel'],
+        Orders: ['Date', 'Product', 'Customer', 'Employee', 'Supplier', 'Currency'], Returns: ['Date', 'Product', 'Customer', 'Store'] };
+      const relationships = [];
+      facts.forEach(function (f) { uses[f].forEach(function (d) { relationships.push(rel(f, d)); }); });
+      relationships.push(rel('Customer', 'Geography'), rel('Product', 'Category'), rel('Orders', 'Warehouse'), rel('Store', 'Region'));
+      return { tables: facts.map(function (n, i) { return tbl(n, { measures: 8 - i, columns: 12 - i * 2, keyColumns: [] }); })
+          .concat(dims.map(function (n, i) { return tbl(n, { isDateTable: n === 'Date', columns: 4 + (i % 5) * 2 }); }))
+          .concat(loose.map(function (n, i) { return tbl(n, { isCalculated: true, columns: 2 + i, keyColumns: [], measures: i === 0 ? 14 : 0 }); })),
+        relationships: relationships };
+    }());
+
+    const GRAPH = cfg.graph || SIZED || (scenario === 'contoso' ? CONTOSO : null) || (scenario === 'twenty' ? TWENTY : null) || (scenario === 'mini' ? MINI : null) || (scenario === 'stack' ? STACK : null) || (scenario === 'galaxy' ? GALAXY : null) || (scenario === 'star' ? STAR : null) || (scenario === 'docstress' ? DOCSTRESS : null) || (scenario === 'twofact' ? TWOFACT : null) || (scenario === 'onerel' ? ONEREL : null) || {
       tables: [
         tbl('Sales', { measures: 12, columns: 14, keyColumns: [], hasDescription: true }),
         tbl('Date', { isDateTable: true, columns: 16 }),
@@ -296,10 +330,10 @@
         { category: 'Performance', errors: 0, warnings: 1, objectsChecked: 30, score: 86 },
       ], bestPracticeWhy: "Best practice B: 0 open errors and 3 warnings across 72 objects checked, 0.08 weighted per object (B is up to 0.10). A needs no open errors or warnings.",
       violations: [
-        { ruleId: 'BIDI', ruleName: 'Avoid bi-directional relationships', category: 'Performance', severity: 2, objectRef: 'rel:Customer_Geography', objectName: 'Customer ↔ Geography', message: 'Bi-directional cross-filter can hurt performance and create ambiguity.', canAutoFix: true },
-        { ruleId: 'HIDE_FK', ruleName: 'Hide foreign-key columns', category: 'Formatting', severity: 1, objectRef: 'column:Sales/CustomerKey', objectName: 'Sales[CustomerKey]', message: 'Foreign-key columns should be hidden from report authors.', canAutoFix: true },
+        { ruleId: 'BIDI', ruleName: '[Performance] Avoid bi-directional relationships', category: 'Performance', severity: 2, objectRef: 'rel:Customer_Geography', objectName: 'Customer ↔ Geography', message: 'Bi-directional cross-filter can hurt performance and create ambiguity.', canAutoFix: true },
+        { ruleId: 'HIDE_FK', ruleName: '[Formatting] Hide foreign-key columns', category: 'Formatting', severity: 1, objectRef: 'column:Sales/CustomerKey', objectName: 'Sales[CustomerKey]', message: 'Foreign-key columns should be hidden from report authors.', canAutoFix: true },
         { ruleId: 'NO_DESC', ruleName: 'Provide descriptions', category: 'Metadata', severity: 1, objectRef: 'table:Promotion', objectName: 'Promotion', message: 'Object has no description.', canAutoFix: false },
-        { ruleId: 'SUMMARIZE', ruleName: 'Set SummarizeBy=None on key columns', category: 'Formatting', severity: 2, objectRef: 'column:Date/DateKey', objectName: 'Date[DateKey]', message: 'Key column should not be summarized.', canAutoFix: true },
+        { ruleId: 'SUMMARIZE', ruleName: '[Formatting] Set SummarizeBy=None on key columns', category: 'Formatting', severity: 2, objectRef: 'column:Date/DateKey', objectName: 'Date[DateKey]', message: 'Key column should not be summarized.', canAutoFix: true },
         { ruleId: 'NAMING', ruleName: 'Measure naming convention', category: 'Naming', severity: 1, objectRef: 'measure:Sales/m1', objectName: 'Sales[m1]', message: 'Measure name is not descriptive.', canAutoFix: false },
         { ruleId: 'UNNECESSARY_COLUMNS', ruleName: 'Remove unnecessary columns', category: 'Maintenance', severity: 1, objectRef: 'column:Account/MA P&L Level 3', objectName: 'Account[MA P&L Level 3]', message: 'Column is not referenced by any measure or relationship.', canAutoFix: false, waived: true, waiverReason: 'Kept intentionally for ad-hoc P&L drill-down.' },
         // A violation from a USER-AUTHORED (model-embedded) rule — renders with the "(custom rule)" suffix.
@@ -1573,7 +1607,14 @@
             openShapesFrom: verify.openShapesFrom || null, openMismatch: verify.openMismatch || null, anchors: verify.anchors || null,
           }; }),
         } : null;
-        return {
+        // A format 3 file's edit model also carries who does a step, its action, its parts and its checks (WorkflowDocument.cs).
+        const v3 = modelFormat === 'v3';
+        const more = v3 ? { performer: step.performer || 'assistant', phase: step.phase || 'change', brief: step.brief || null,
+          action: step.action ? { op: step.action.op, args: (step.action.args || []).map(function (a) { return { name: a.name, value: a.value == null ? null : a.value, values: a.values || null }; }) } : null,
+          questions: (step.questions || []).map(function (q) { return { name: q.name, question: q.question || null, type: q.type || 'text', required: q.required || 'required', by: q.by || 'you', values: q.values || [], from: null, jev: null, default: null }; }),
+          blanks: (step.blanks || []).map(function (b) { return { name: b.name, kind: b.kind || null, fills: b.fills || null, by: b.by || 'assistant', dependsOn: [], maxChars: null, choices: null, generator: null }; }),
+          checks: (step.checks || []).map(function (c) { return { kind: c.kind, phase: c.phase || null, target: null, min: c.min == null ? null : String(c.min), max: c.max == null ? null : String(c.max), of: c.of || [], when: null }; }) } : {};
+        return Object.assign({
           key, fingerprint: 'step-' + index, id: step.id || 'step-' + (index + 1), number: index + 1,
           idKind: modelFormat === 'v1' ? 'implicit-positional' : step.hasExplicitId === false ? 'implicit-positional' : 'explicit-stable',
           title: step.title || '', instructions: step.instructions || '', ops: step.ops || [], when: step.when || null,
@@ -1583,12 +1624,19 @@
             as: step.forEach.as || 'item', maxIterations: step.forEach.maxIterations || 100 } : null,
           call: step.call ? { workflow: step.call.workflow || '', with: entryList(step.call.with, key + '/call.with'), returns: step.call.returns || [] } : null,
           gate,
-        };
+        }, more);
       });
+      const v3 = modelFormat === 'v3';
+      const choices = structuredClone(WORKFLOW_EDIT_CHOICES);
+      if (v3) Object.assign(choices, { executableOps: ['create_measure', 'verify_dax_equivalence', 'export_workflow_evidence', 'create_import_table', 'preview_deploy', 'deploy_stage'],
+        checkKinds: { before: ['name_free'], written: ['valid_dax', 'refs_within', 'dax_lint'], after: ['result_range', 'bpa_clean'] },
+        questionTypes: ['text', 'enum', 'number', 'objectRef'], questionBy: ['you', 'assistant', 'semanticus'], blankKinds: ['dax', 'description', 'm', 'name', 'choice'], blankBy: ['assistant', 'you'] });
       return {
-        format: modelFormat, restrictions: [], choices: structuredClone(WORKFLOW_EDIT_CHOICES),
+        format: modelFormat, restrictions: [], choices,
         definition: {
-          key: 'workflow', schemaVersion: modelFormat === 'v1' ? 1 : 2, name: def.name,
+          key: 'workflow', schemaVersion: modelFormat === 'v1' ? 1 : v3 ? 3 : 2, name: def.name,
+          assistantNotes: v3 ? (def.assistantNotes || null) : undefined,
+          inputs: v3 ? (def.inputs || []).map(function (i) { return { name: i.name, question: i.question || null, type: i.type || 'text', required: i.required || 'required', by: i.by || 'you', values: i.values || [], from: null, jev: null, default: null }; }) : undefined,
           kind: def.kind || 'workflow', title: def.title || def.name, description: def.description || '',
           whenToUse: def.whenToUse || null, version: def.version || 1, strictness: def.strictness || null,
           triggers: def.triggers || [], tags: def.tags || [], provenance: entryList(def.provenance, 'provenance'), slots: [], steps,
@@ -1600,7 +1648,7 @@
       const exactText = ['---', 'schemaVersion: 2', 'name: ' + name, 'title: ' + def.title, 'version: ' + (def.version || 1), '---', '']
         .concat((def.steps || []).flatMap(function (step) { return ['## Step ' + step.number + ': ' + step.title, step.instructions || '', '']; })).join(String.fromCharCode(10));
       return { name, library: def.source || 'stock', path: (def.source === 'user' ? '/project/.semanticus/workflows/' : '/engine/workflows/') + name + '.md',
-        exactText, byteHash: 'sha256:' + name.padEnd(64, '0').slice(0, 64), editModel: workflowEditModel(def, 'v2'),
+        exactText, byteHash: 'sha256:' + name.padEnd(64, '0').slice(0, 64), editModel: workflowEditModel(def, (def.schemaVersion || 0) >= 3 ? 'v3' : 'v2'),
         metadata: { schemaVersion: 2, title: def.title, version: def.version || 1, stepIds: (def.steps || []).map(function (step) { return step.id; }), explicitIds: true, parses: true, parseError: null } };
     };
 
@@ -4095,6 +4143,37 @@
           else proTurnOn({ purchase: 'idle', key: { result: 'ok', licensedTo: 'you@contoso.com' } });
         }, 150);
       }
+    };
+    // ---- the free Pro month (m15 trial, option B) as a fixture --------------------------------------------------
+    // ?trial=day1|during|last3|end puts the engine in that part of the month: get_entitlement's trial fields and
+    // get_trial_tally's counts. Free with no ?trial is the offer. On the page, Start free month with an email that
+    // contains "used" answers as an email that had its month; any other email waits, and __uishotPro.confirm()
+    // presses the link in the email (the trial licence goes in and Pro turns on).
+    var trialQ = new URLSearchParams(location.search).get('trial');
+    var TRIAL_END = Date.parse('2026-11-10T00:00:00Z') / 1000, TRIAL_START = Date.parse('2026-10-11T00:00:00Z') / 1000;
+    var nowS = Math.floor(Date.now() / 1000);
+    var trialEnt = function (left) { return { tier: 'pro', features: PRO_FEATURE_IDS.slice(), licensedTo: 'ana@contoso.com', expiry: TRIAL_END, isTrial: true, trialEndsAt: TRIAL_END, trialDaysLeft: left, trialEnded: false }; };
+    var TALLY_FULL = { startedAt: TRIAL_START, changesApplied: 1240, steps: 14, jevChoices: 86, workflowsRun: 3 };
+    RESPONSES.getTrialTally = { startedAt: 0, changesApplied: 0, steps: 0, jevChoices: 0, workflowsRun: 0 };
+    if (trialQ === 'day1') { RESPONSES.getEntitlement = trialEnt(30); RESPONSES.getTrialTally = { startedAt: nowS - 3600, changesApplied: 38, steps: 1, jevChoices: 0, workflowsRun: 0 }; proState = { purchase: 'idle', trial: { step: 'on', email: 'ana@contoso.com' } }; }
+    if (trialQ === 'during') { RESPONSES.getEntitlement = trialEnt(14); RESPONSES.getTrialTally = TALLY_FULL; }
+    if (trialQ === 'last3') { RESPONSES.getEntitlement = trialEnt(3); RESPONSES.getTrialTally = TALLY_FULL; }
+    if (trialQ === 'end') { RESPONSES.getEntitlement = { tier: 'free', features: [], isTrial: false, trialEndsAt: TRIAL_END, trialDaysLeft: 0, trialEnded: true }; RESPONSES.getTrialTally = TALLY_FULL; }
+    var proHostBase = proHost;
+    proHost = function (msg) {
+      if (msg.action === 'trialStart') {
+        proSend(Object.assign({}, proState, { trial: { step: 'sending', email: msg.email } }));
+        setTimeout(function () { proSend(Object.assign({}, proState, { trial: { step: /used/.test(msg.email || '') ? 'used' : 'waiting', email: msg.email } })); }, 120);
+        return;
+      }
+      if (msg.action === 'trialCancel') { proSend(Object.assign({}, proState, { trial: undefined })); return; }
+      proHostBase(msg);
+    };
+    window.__uishotTrialConfirm = function () {
+      RESPONSES.getEntitlement = trialEnt(30);
+      RESPONSES.getTrialTally = { startedAt: nowS, changesApplied: 0, steps: 0, jevChoices: 0, workflowsRun: 0 };
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'reconnected' } }));
+      setTimeout(function () { proSend(Object.assign({}, proState, { trial: { step: 'on', email: (proState.trial || {}).email } })); }, 60);
     };
     window.__uishotPro = {
       state: function () { return proState; },

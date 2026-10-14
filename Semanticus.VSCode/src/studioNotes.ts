@@ -1,6 +1,6 @@
 // What the assistant says to the Studio (1.4, Claude drives; contract sections 1, 4 and 6).
 //
-// The engine broadcasts studio/show, studio/suggest and assistant/call. The Studio webview may not be mounted when they
+// The engine broadcasts studio/show, studio/suggest, studio/nextStep and assistant/call. The Studio webview may not be mounted when they
 // arrive (it was closed, or is still loading), so this buffer holds them and posts them in order once the Studio says
 // 'studioReady'. It is the same pattern as pendingNav and flushNav in extension.ts, with two differences: it keeps up to
 // 20 messages, not one, and it may open a closed Studio.
@@ -8,7 +8,7 @@
 // It never moves a screen. The webview's driver store decides that. The host's only decision here is whether a note is
 // worth opening a closed Studio for: only in Claude drives mode, and only while the person has not taken the wheel.
 
-export type StudioMessageType = 'studioShow' | 'studioSuggest' | 'studioAnswer' | 'assistantCall';
+export type StudioMessageType = 'studioShow' | 'studioSuggest' | 'studioAnswer' | 'assistantCall' | 'studioNextStep';
 export interface StudioMessage { type: StudioMessageType; payload: unknown }
 
 /** Who drives, as the Studio last reported it. The Studio reports on every change; until then, a fresh Studio's start. */
@@ -46,6 +46,8 @@ export class StudioNotes {
         if (message.type === 'studioSuggest') this.pending = this.pending.filter((m) => m.type !== 'studioSuggest');
         // Likewise one current answer: the Ask page shows the latest the assistant asked for.
         if (message.type === 'studioAnswer') this.pending = this.pending.filter((m) => m.type !== 'studioAnswer');
+        // And one current Next line (studio/nextStep, 1.5): only the latest view matters.
+        if (message.type === 'studioNextStep') this.pending = this.pending.filter((m) => m.type !== 'studioNextStep');
         this.pending.push(message);
         if (this.pending.length > STUDIO_BUFFER_LIMIT) this.pending.splice(0, this.pending.length - STUDIO_BUFFER_LIMIT);
         if (message.type === 'studioShow' && !this.host.isOpen() && this.mayOpen()) this.host.open();

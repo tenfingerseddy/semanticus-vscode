@@ -21,7 +21,7 @@ import { usePersistedState } from './hooks';
 import { AllowButton, useConsentCard } from './consent';
 import {
   HISTORY_METHOD, addFilter, addGroup, addMeasure, askableColumns, checkDraftOf, chipsOf, cleanParts, columnName, columnRef, filterableColumns, filterKind, filterOps, opFor,
-  needsData, outcomeOf, partsAfter, questionLine, pivotConfigOf, removeFilter, removeGroup, removeMeasure, removeSort, removeTop, resultSetOf, rowLabel,
+  crowdedChart, needsData, outcomeOf, partsAfter, questionLine, pivotConfigOf, removeFilter, removeGroup, removeMeasure, removeSort, removeTop, resultSetOf, rowLabel,
   emptyFinderLine, runAsk, runWords, setFilterValues, setSort, setTop, swapGroup, swapMeasure, whoAsked,
   type Chip, type CheckDraft, type ColumnInfo, type DataAnswer, type DataAsk, type DataQuestionHistory, type DataQuestionRecord, type QueriesHandoff,
 } from './askdata-model';
@@ -203,33 +203,8 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
       {/* The strip names the page and the page notes keep the "only reads" fact, so no visible title line. */}
       <h1 className="sr-only">Ask your data</h1>
 
-      <aside className="sem-span-3 sem-card sem-stack" aria-label="Asked before" data-testid="askdata-history">
-        <span className="sem-label">Asked before</span>
-        {history?.note && <div className={meta} style={muted}>{history.note}</div>}
-        {history && !history.note && history.questions.length === 0 && <div className={meta} style={muted}>No questions yet. Each question you or your assistant asks is kept here with the model.</div>}
-        {/* K17 (Kane, 8 and 9 Oct): the list has no scroll bar of its own. It shows the latest few questions, "Show all" opens
-            the rest in place, and the page scrolls. */}
-        <ul className="m-0 p-0 sem-stack" style={{ listStyle: 'none' }} data-testid="askdata-history-list">
-          {shownHistory.map(({ r, times }) => (
-            // The whole row asks again; the button is the keyboard and screen-reader door and shows on hover or focus.
-            <li key={r.id} className={`group sem-stack ${busy ? '' : 'cursor-pointer'}`} data-testid="askdata-history-row" onClick={() => { if (!busy) again(r); }}>
-              <span className={meta}>{unbroken(rowName(r))}</span>
-              <span className="sem-inline">
-                <span className={`sem-doer ${r.origin === 'agent' ? 'sem-doer-agent' : 'sem-doer-you'} text-(length:--sem-text-label)`}>{whoAsked(r)}</span>
-                <span className="text-(length:--sem-text-label)" style={muted}>{when(r.askedAt)}{typeof r.rowCount === 'number' && r.outcome === 'answered' ? `, ${r.rowCount} ${r.rowCount === 1 ? 'row' : 'rows'}` : r.outcome && r.outcome !== 'answered' ? `, ${OUTCOME_WORD[r.outcome] ?? r.outcome}` : ''}{times > 1 ? `, ×${times}` : ''}</span>
-                <button type="button" className="sem-btn sem-btn-sm sem-push opacity-0 group-hover:opacity-100 focus:opacity-100" disabled={busy}
-                  aria-label={`Run again: ${rowName(r)}`}>Run again</button>
-              </span>
-            </li>
-          ))}
-        </ul>
-        {mergedHistory.length > HISTORY_SHOWN && (
-          <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" style={{ alignSelf: 'flex-start' }} aria-expanded={showAllHistory} data-testid="askdata-history-all"
-            onClick={() => setShowAllHistory(!showAllHistory)}>{showAllHistory ? 'Show fewer' : 'Show all'}</button>
-        )}
-      </aside>
-
-      <section className="sem-span-9 sem-card sem-stack-gap" aria-label="Your question">
+      {/* The answer comes first in the page, the history after it, so a window too narrow for two columns shows the answer first (hero19 D14). The rail sits on the left again wherever there are two columns (styles.css). */}
+      <section className="sem-span-9 sem-card sem-stack-gap sem-main-right" aria-label="Your question">
         <form className="sem-inline" onSubmit={(e) => { e.preventDefault(); void askWords(); }} aria-label="Ask in your own words">
           <input value={words} onChange={(e) => setWords(e.target.value)} disabled={busy} placeholder="Ask about your numbers, like net sales by region for 2025"
             aria-label="Ask in your own words" className="sem-field flex-1" />
@@ -301,6 +276,32 @@ export function AskDataView({ onOpenQueries, onOpenTests, navWords, onNavConsume
 
         <div className="sr-only" aria-live="polite" data-testid="askdata-announce">{announce}</div>
       </section>
+
+      <aside className="sem-span-3 sem-card sem-stack sem-rail-left" aria-label="Asked before" data-testid="askdata-history">
+        <span className="sem-label">Asked before</span>
+        {history?.note && <div className={meta} style={muted}>{history.note}</div>}
+        {history && !history.note && history.questions.length === 0 && <div className={meta} style={muted}>No questions yet. Each question you or your assistant asks is kept here with the model.</div>}
+        {/* K17 (Kane, 8 and 9 Oct): the list has no scroll bar of its own. It shows the latest few questions, "Show all" opens
+            the rest in place, and the page scrolls. */}
+        <ul className="m-0 p-0 sem-stack" style={{ listStyle: 'none' }} data-testid="askdata-history-list">
+          {shownHistory.map(({ r, times }) => (
+            // The whole row asks again; the button is the keyboard and screen-reader door and shows on hover or focus.
+            <li key={r.id} className={`group sem-stack ${busy ? '' : 'cursor-pointer'}`} data-testid="askdata-history-row" onClick={() => { if (!busy) again(r); }}>
+              <span className={meta}>{unbroken(rowName(r))}</span>
+              <span className="sem-inline">
+                <span className={`sem-doer ${r.origin === 'agent' ? 'sem-doer-agent' : 'sem-doer-you'} text-(length:--sem-text-label)`}>{whoAsked(r)}</span>
+                <span className="text-(length:--sem-text-label)" style={muted}>{when(r.askedAt)}{typeof r.rowCount === 'number' && r.outcome === 'answered' ? `, ${r.rowCount} ${r.rowCount === 1 ? 'row' : 'rows'}` : r.outcome && r.outcome !== 'answered' ? `, ${OUTCOME_WORD[r.outcome] ?? r.outcome}` : ''}{times > 1 ? `, ×${times}` : ''}</span>
+                <button type="button" className="sem-btn sem-btn-sm sem-push opacity-0 group-hover:opacity-100 focus:opacity-100" disabled={busy}
+                  aria-label={`Run again: ${rowName(r)}`}>Run again</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+        {mergedHistory.length > HISTORY_SHOWN && (
+          <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" style={{ alignSelf: 'flex-start' }} aria-expanded={showAllHistory} data-testid="askdata-history-all"
+            onClick={() => setShowAllHistory(!showAllHistory)}>{showAllHistory ? 'Show fewer' : 'Show all'}</button>
+        )}
+      </aside>
 
       {draft && <AuthorDrawer shape="measureValue" handedFrom="askdata" editing={draft} onClose={() => setDraft(null)} onSaved={() => { setDraft(null); onOpenTests(); }} />}
     </div>
@@ -399,6 +400,9 @@ export function AnswerBody({ answer, parts, connected, view, viz = 'bar', onViz,
     measures: (parts.measures ?? []).length, rows: rs.rows.length,
   }) : null;
   const shownViz: VizType = rule && !rule.fits.includes(viz) ? rule.pick as VizType : viz;
+  // A bar chart over hundreds of rows is drawn from the top few, with a line that says so; the table keeps every row (hero19 D15).
+  const measureCol = Math.max(0, rs.columns.length - Math.max(1, (parts.measures ?? []).length));
+  const crowded = hasRows && shownViz === 'bar' ? crowdedChart(rs.rows, measureCol, rs.columns[measureCol]?.name ?? 'the first number') : null;
   // "Jev read this" shows only over an answer that ran: a reading that was stopped, or only built, was checked and not shown.
   const who = answer.readBy === 'jev' && o === 'answered' ? JEV_READ_THIS : null;
 
@@ -488,7 +492,10 @@ export function AnswerBody({ answer, parts, connected, view, viz = 'bar', onViz,
         </div>
       )}
       {hasRows && !why && (view === 'chart'
-        ? <div data-testid="askdata-chart" style={{ height: 'calc(var(--sem-row) * 10)' }}><DaxVisual res={rs} config={config} viz={shownViz} height={320} /></div>
+        ? <>
+            {crowded && <div className={meta} style={muted} data-testid="askdata-chart-top">{crowded.line}</div>}
+            <div data-testid="askdata-chart" style={{ height: 'calc(var(--sem-row) * 10)' }}><DaxVisual res={crowded ? { ...rs, rows: crowded.rows } : rs} config={config} viz={shownViz} height={320} /></div>
+          </>
         : <ResultGrid columns={rs.columns.map((c, i) => ({ ...c, format: answer.formats?.[i] ?? undefined }))} rows={rs.rows} height={Math.min(360, 72 + rs.rows.length * 26)} truncated={rs.truncated}
             filterable={rs.rows.length > 20} framed={false} />)}
       {showDax && answer.dax && (

@@ -88,6 +88,29 @@ namespace Semanticus.Tests
             Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));
         }
 
+        // PR #399 Codex P1 (comment 4242940063): an unlabelled target reads as dev, so a first label from the assistant must not
+        // pick a looser policy row (local) than that. The person can still label anything.
+        [Fact]
+        public void An_agent_cannot_give_an_unlabelled_target_a_looser_first_label()
+        {
+            var r = Remember("powerbi://x/loose");
+            Assert.Throws<InvalidOperationException>(() => ConnectionRegistry.SetLabel(r.Id, "local", origin: "agent"));
+            Assert.Null(ConnectionRegistry.Find(r.Id).Label);
+            Assert.Equal("dev", ConnectionRegistry.EffectiveLabel(ConnectionRegistry.Find(r.Id)));
+            foreach (var label in new[] { "dev", "uat", "prod" })   // same or stricter is still the assistant's to set
+            {
+                var s = Remember("powerbi://x/strict-" + label);
+                Assert.Equal(label, ConnectionRegistry.SetLabel(s.Id, label, origin: "agent").Label);
+            }
+        }
+
+        [Fact]
+        public void A_person_can_give_an_unlabelled_target_any_first_label()
+        {
+            var r = Remember("powerbi://x/person-local");
+            Assert.Equal("local", ConnectionRegistry.SetLabel(r.Id, "local", origin: "human").Label);
+        }
+
         // ---- The origin default is FAIL-CLOSED: a caller that omits it is treated as the agent, not the human. A
         // forgotten argument must never grant human privileges. ----
         [Fact]

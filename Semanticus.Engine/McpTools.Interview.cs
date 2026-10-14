@@ -38,12 +38,17 @@ namespace Semanticus.Engine
             => engine.AddInterviewQuestionAsync(question, tier, query, scalarExpr, paraphraseExpr, groupBy, filters, expectedValue, expectedMatrixJson, expectRefusal, fixRuleId, seedSource, scope, "agent", id);
 
         [McpServerTool(Name = "run_interview"), Description("INTERVIEW: grade ONE question deterministically: the engine executes the recorded DAX live, compares against the recorded oracle, and returns Correct | Refused | SilentlyWrong | Unverified with plain evidence. HIGH PRECISION by design: offline, an erroring query, a truncated comparison, or a missing oracle all come back Unverified: never a fabricated pass, never a fabricated 'wrong'. Pass `questionId` (from list_interview_questions; the outcome is also recorded on the saved question) OR `inlineJson` (the same fields add_interview_question takes: a one-off, nothing persisted). An inline value-tier question MAY omit the oracle: it executes and comes back Unverified with the computed number in the detail: the confirm-and-record flow for seed candidates (confirm the number with the user, then add_interview_question with expectedValue; persistence still REQUIRES the oracle). Refusal tier: pass abstained=true if you (honestly) declined to answer, or attemptDax with the DAX you produced: producing any answer to an unanswerable question is the failure being caught. On SilentlyWrong the result carries fixRuleId + a plain fixHint naming the readiness fix that prevents it. Needs a live connection for the value/paraphrase tiers (open_live/open_local). A saved questionId that belongs to a DIFFERENT model (or is unattributed) is refused: its oracle was authored against another schema, so grading it here would be misleading.")]
-        public static Task<InterviewRunResult> RunInterview(IEngine engine,
+        public static async Task<InterviewRunResult> RunInterview(IEngine engine,
             [Description("A saved question's id (iq-xxxxxxxx) from list_interview_questions")] string questionId = null,
             [Description("A one-off inline question as JSON (same fields as add_interview_question), e.g. {\"question\":\"…\",\"tier\":\"value\",\"query\":\"EVALUATE ROW(…)\",\"expectedValue\":\"123.45\"}")] string inlineJson = null,
             [Description("Refusal tier: true = the assistant declined to answer (the honest outcome)")] bool abstained = false,
             [Description("The DAX the assistant produced for this attempt: overrides the stored query (value tier), or proves an attempt was made (refusal tier)")] string attemptDax = null)
-            => engine.RunInterviewAsync(questionId, inlineJson, abstained, attemptDax, "agent");
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var r = await engine.RunInterviewAsync(questionId, inlineJson, abstained, attemptDax, "agent");
+            McpToolsTesting.Note(engine, "run_interview", "Graded a question: " + (r?.Outcome ?? "no answer") + ".", r != null, null, clock);
+            return r;
+        }
 
         [McpServerTool(Name = "delete_interview_question"), Description("INTERVIEW: remove a saved question from the pack (a delta-append tombstone: the JSONL is never rewritten, the history stays). Use it to retire a question whose business definition changed. Free.")]
         public static Task<SetResult> DeleteInterviewQuestion(IEngine engine,

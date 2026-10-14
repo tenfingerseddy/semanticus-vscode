@@ -29,21 +29,19 @@ import './plan-guide.css';
 // ===================================================================================================
 
 /** The card this build ships. A content id, not the package version: a release with no card has no entry here. */
-// m11-1 replaces plan-heart-1: it covers every area this release changed, not only the Plan, so a person who closed
-// the first card still sees the new lines once. Every line is a claim in tools/release-claims.mjs, which names the code
-// each one needs; the integrator runs it after the last feature lane merges.
-export const WHAT_CHANGED_CARD_ID = 'm11-1';
+// m15-1 replaces m11-1: the release's own news, so a person who closed the last card sees the new lines once. Every line
+// that makes a claim is checked by tools/release-claims.mjs, which the integrator runs after the last feature lane merges.
+export const WHAT_CHANGED_CARD_ID = 'm15-1';
 export const WHAT_CHANGED: Record<string, { lines: string[] }> = {
-  'm11-1': {
+  'm15-1': {
     lines: [
-      'The Plan is now where you start. The Overview is gone.',
-      'Edit History moved into the Plan. Open History at the top.',
-      'Workflow runs show as tasks in the Plan.',
-      "One switch pauses your assistant's tasks.",
-      'Connections are on one page, with a SQL endpoint for each model.',
-      'Workflows is one page. With Pro, a workflow you describe in words becomes steps.',
-      'With Pro, Ask your data, under Explore, answers a question about your numbers. If it can be read two ways, it names the other.',
-      'With Pro, Jev picks column formats and base measures, and chooses what Copilot sees.',
+      'The Plan is calmer. One header line holds the grade figures, the live slot and Run the plan.',
+      'Run one task on its own, with one Undo.',
+      'Lineage Graph opens in about half a second on a big model.',
+      'Try Pro free for 30 days. Open the Pro page and use your email.',
+      'Connect another assistant from the Your assistant menu.',
+      'You are blue, your assistant is purple and Semanticus is green, on every page.',
+      'Publish now sends role changes. Your yes in chat lets your assistant publish through a red check.',
     ],
   },
 };
@@ -63,15 +61,15 @@ export interface TourStep {
 }
 
 export const PLAN_TOUR: TourStep[] = [
-  { anchor: ['strip'], clearOf: 'facts', title: 'The work on your model',
-    body: 'One track each for Semanticus, you and your assistant: done, on it and waiting. Click a track to see only its tasks.' },
-  { anchor: ['row'], title: 'Every row answers three questions',
-    body: 'Where it came from, who does it, and where it stands. The link on the right opens the page where it gets done.' },
-  { anchor: ['doer', 'row'], title: 'How Semanticus works', how: true },
+  { anchor: ['head'], title: 'The work on your model',
+    body: 'The grade, what is happening now, and Run the plan are on one line. Below it, the tasks are grouped by who does them.' },
+  { anchor: ['row'], title: 'Every row is one task',
+    body: 'Its colour says who does it. Point at a row for its own Run, or for Ask your assistant. Open it to see why.' },
+  { anchor: ['row'], title: 'How Semanticus works', how: true },
   { anchor: ['field'], title: 'Add your own',
-    body: 'Describe a task or an aim in your own words. It becomes a task. Hand it to your assistant, or do it yourself.' },
-  { anchor: ['queue-switch'], title: "Your assistant's tasks", align: 'end',
-    body: 'Your assistant picks up its tasks the next time it checks in. Pause them here and keep talking to it directly.' },
+    body: 'Add a task in your own words. Hand it to your assistant, or do it yourself.' },
+  { anchor: ['drive-switch', 'head'], title: "Your assistant's tasks", align: 'end',
+    body: 'Your assistant picks up its tasks the next time it checks in. Choose I drive to pause them and keep talking to it directly.' },
   { anchor: ['history-row', 'history'], title: 'What changed, and Undo', view: 'history', align: 'end',
     body: 'History lists every change and who made it, newest first. Undo to here takes a change back, with any made after it. Restore brings back a saved version.' },
 ];
@@ -84,7 +82,7 @@ export const CONNECT_STEP: TourStep = { anchor: ['assistant-chip'], title: 'Conn
  *  nothing is connected. Once connected the step is gone, so the tour never tells someone to do what they have done. */
 export function tourSteps(connected: boolean): TourStep[] {
   if (connected) return PLAN_TOUR;
-  const at = PLAN_TOUR.findIndex((s) => s.anchor[0] === 'queue-switch');
+  const at = PLAN_TOUR.findIndex((s) => s.anchor[0] === 'drive-switch');
   return [...PLAN_TOUR.slice(0, at), CONNECT_STEP, ...PLAN_TOUR.slice(at)];
 }
 

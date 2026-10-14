@@ -592,7 +592,8 @@ function checkText(where, text, marketplaceKeyword = false, uiContext = false) {
   const assistantChoice = text === 'Claude Code' && where.startsWith('Semanticus.VSCode/src/extension.ts:');
   // The Studio's driver bar, note strip and cursor name the product "Claude", the name Kane chose (10 Oct 2026, 1.4 contract
   // section 0 rule 2 and section 6: "Added. Tell Claude go."). Everywhere else still says AI Assistant.
-  const claudeSurface = where.startsWith('Semanticus.VSCode/webview/src/studio/');
+  // The driver bar folded into the Plan header in 1.5 (m15/calm-build), so its words now live in plan-calm-model.ts too.
+  const claudeSurface = where.startsWith('Semanticus.VSCode/webview/src/studio/') || where.startsWith('Semanticus.VSCode/webview/src/plan-calm-model.ts:');
   // The first-run choice names the product it connects (Connect Claude Code, Open Claude Code in this folder): a nominative reference, as the command title is.
   const firstRunCard = where.startsWith('Semanticus.VSCode/webview/src/firstrun.tsx:');
   if (!assistantChoice && !claudeSurface && !firstRunCard && /\bclaude\b/i.test(text) && (marketplaceKeyword || /\s/.test(text))) failures.push(`${where}: use AI Assistant, not Claude`);

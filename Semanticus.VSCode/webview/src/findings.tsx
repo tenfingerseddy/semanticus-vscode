@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { revealInTree, copyText } from './bridge';
+import { plainRuleName } from './rule-words';
 import { Caret } from './ui';
 import { draftModel, draftStore, heldDraft } from './drafts';
 import { OrphanDrafts } from './orphandrafts';
@@ -50,7 +51,7 @@ function group(rows: FindingRow[]): CatGroup[] {
     let byRule = cats.get(r.category);
     if (!byRule) { byRule = new Map(); cats.set(r.category, byRule); }
     let g = byRule.get(r.ruleId);
-    if (!g) { g = { ruleId: r.ruleId, ruleName: r.ruleName, category: r.category, severity: r.severity, items: [] }; byRule.set(r.ruleId, g); }
+    if (!g) { g = { ruleId: r.ruleId, ruleName: plainRuleName(r.ruleName), category: r.category, severity: r.severity, items: [] }; byRule.set(r.ruleId, g); }
     g.severity = Math.max(g.severity, r.severity);
     g.items.push(r);
   }
@@ -151,7 +152,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
   const kept = (renderActions || renderRuleActions) ? <OrphanDrafts prefix={prefix} live={shownIds} what="finding"
     nameOf={(id) => { try { const [rule, obj] = JSON.parse(id) as string[]; return obj === '*' ? rule : `${obj} (${rule})`; } catch { return id; } }}
     targetsFor={(_fields, id) => { let rule = ''; try { rule = (JSON.parse(id) as string[])[0]; } catch { /* not a finding id */ }
-      return shown.filter((r) => r.ruleId === rule).map((r) => ({ id: JSON.stringify([r.ruleId, r.objectRef]), label: `${r.objectName} (${r.ruleName})` })); }} /> : null;
+      return shown.filter((r) => r.ruleId === rule).map((r) => ({ id: JSON.stringify([r.ruleId, r.objectRef]), label: `${r.objectName} (${plainRuleName(r.ruleName)})` })); }} /> : null;
   const holdOf = (ruleId: string, objectRef: string, label: string): WaiveHoldId => ({ scope: waiveScope(holdAs, ruleId, objectRef), label });
 
   if (rows.length === 0) return <div className="flex flex-col gap-2">{kept}<div className="sem-text-meta py-3">Nothing to show.</div></div>;
@@ -200,7 +201,7 @@ export function GroupedFindings({ rows, renderActions, renderRuleActions, catego
                             <span style={{ color: 'var(--sem-muted)' }}> Related: {r.coveredBy}{r.coveredReason ? <>, “{r.coveredReason}”</> : ''}.</span></div>
                         )}
                       </div>
-                      {renderActions && <div className="shrink-0 mt-1"><WaiveHold.Provider value={holdOf(r.ruleId, r.objectRef, `${r.objectName} (${r.ruleName})`)}>{renderActions(r)}</WaiveHold.Provider></div>}
+                      {renderActions && <div className="shrink-0 mt-1"><WaiveHold.Provider value={holdOf(r.ruleId, r.objectRef, `${r.objectName} (${plainRuleName(r.ruleName)})`)}>{renderActions(r)}</WaiveHold.Provider></div>}
                     </div>
                   )); })()}
                 </div>
@@ -328,7 +329,7 @@ export function WaivedList({ rows, onUnwaive, open, onOpenChange, embedded }: { 
               <div className="min-w-0 flex-1">
                 <div className="text-(length:--sem-text-meta) truncate">
                   <span className="font-medium" style={{ color: 'var(--sem-muted)' }}>{r.objectName}</span>
-                  <span style={{ color: 'var(--sem-muted)' }}> · {r.ruleName}</span>
+                  <span style={{ color: 'var(--sem-muted)' }}> · {plainRuleName(r.ruleName)}</span>
                   {r.waiverRuleLevel && <span className="sem-chip sem-chip-warn ml-2" title="Whole rule accepted across the model">whole rule</span>}
                   {r.noLongerFires && <span className="sem-chip sem-chip-neutral ml-2" title="The finding no longer shows up, but your acceptance still keeps this change from being made.">no longer fires</span>}
                 </div>

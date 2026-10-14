@@ -7,6 +7,7 @@ import type { PlanRepeat, RepeatCadence, RepeatRequest } from './plan-repeat-mod
 import { jumpTarget } from './search-names';
 import { sameTrimmed, useKeptText } from './keptwords';
 import { draftModel, draftStore, heldDraft, useHeldDrafts } from './drafts';
+import { isNotChecked, NOT_CHECKED_WORD, ROW_PRESS_LABEL, type RowPressKind } from './plan-calm-model';
 
 // ===================================================================================================
 // One Plan row, and its detail (lane U1; shared with U3's Send, U5's composer and RP's repeat editor, who send
@@ -31,6 +32,23 @@ export function SourceMark({ source }: { source: P.PlanSource }) {
   return <svg className="pw-ico" viewBox="0 0 12 12" aria-hidden="true">{SOURCE_PATH[source]}</svg>;
 }
 
+/** Jev's mark on a row Jev chose lines for: a spark and the word, in Jev's colour, so it never rests on colour alone. */
+export function JevMark() {
+  return <span className="pw-jev" data-testid="plan-row-jev" title="Jev chose settings for this task"><SourceMark source="jev" />Jev</span>;
+}
+
+/** What a Jev row is worth, in AI ready points, before the state word. */
+export function RowWorth({ words }: { words: string }) {
+  return <span className="pw-worth" data-testid="plan-row-worth" title="How far this task moves the AI ready score, measured by trying it on the model first">{words}</span>;
+}
+
+/** Jev's reason, in one line, under an opened Jev row. */
+export function JevReason({ item }: { item: P.PlanItem }) {
+  const reason = P.jevReasonOf(item);
+  if (!reason) return null;
+  return <div className="pw-jevline" data-testid={`plan-jev-reason-${item.id}`}><JevMark /><span>{reason}</span></div>;
+}
+
 /** The doer's shape: a square for Semanticus, a circle for you, a diamond for your assistant, so the doer reads without
  *  colour too. Hollow while the row is paused or being checked. */
 export function DoerMark({ doer, hollow = false }: { doer: P.PlanDoer; hollow?: boolean }) {
@@ -46,23 +64,34 @@ export function DoerMark({ doer, hollow = false }: { doer: P.PlanDoer; hollow?: 
 /** The state column. A row a run is working on shows its own step instead of the engine's word (round 1, K1): a spinner
  *  and Working out, Applying, Checking; then Done in green with its change count; a row the press holds but has not reached
  *  says In this run. `note` is a line the page adds after the word (a finished row's "by your assistant"). */
-export function StateWord({ item, step, note: extra }: { item: P.PlanItem; step?: P.RunPhase | null; note?: string | null }) {
+export function StateWord({ item, step, note: extra, calm = false }: { item: P.PlanItem; step?: P.RunPhase | null; note?: string | null; calm?: boolean }) {
   if (step) {
-    const live = step.step === 'work' || step.step === 'apply' || step.step === 'check';
+    const live = step.step === 'work' || step.step === 'waitjev' || step.step === 'apply' || step.step === 'check';
     const tone = live ? 'spin pw-state-run' : step.step === 'done' ? 'good' : 'faint';
     const note = P.stepNote(step);
     return <span className={`pw-state pw-state-${tone}`} data-state={step.step} data-step={step.step}
       title={step.reason ?? (typeof step.ms === 'number' ? `${P.RUN_STEP_WORD[step.step]}, ${(step.ms / 1000).toFixed(1)} s into the run` : undefined)}>
       <span className="pw-state-mark" aria-hidden="true" />
-      <span className="pw-state-w">{P.RUN_STEP_WORD[step.step]}</span>
+      <span className="pw-state-w">{P.stepWords(step)}</span>
       {note && <span className="pw-state-note">{note}</span>}
     </span>;
   }
   const word = P.stateWordOf(item);
+  // A row whose evidence could not be read this time says so as its state, in the muted word (1.5: it was a sentence under the card).
+  const unchecked = isNotChecked(item) && word !== 'done';
+  if (unchecked) {
+    return <span className="pw-state pw-state-faint" data-state="not_checked" title={item.why?.[item.why.length - 1]}>
+      <span className="pw-state-mark" aria-hidden="true" /><span className="pw-state-w">{NOT_CHECKED_WORD}</span></span>;
+  }
   // A row another change closed says so in the word's place, with the reason (which change) on hover.
   const closed = P.closedByOther(item);
-  const stateNote = item.stateNote === 'when your assistant next checks the Plan' ? 'when your assistant checks' : item.stateNote;
-  const note = closed ? null : extra ?? (stateNote && word !== 'needs_you' && stateNote.length <= 28 ? stateNote : null);
+  // On the calm page the row already sits under "Your assistant", and its state cell is too narrow for "when your assistant checks", which
+  // read "Ready when you..." (Kane, 13 Oct 2026). There the word stands alone and the full note is on hover.
+  const nextCheck = item.stateNote === 'when your assistant next checks the Plan';
+  const stateNote = nextCheck ? (calm ? null : 'when your assistant checks') : item.stateNote;
+  // A row the assistant handed back says why on the closed row (hero run 21, N4): the reason is the state note, cut short here and whole on hover.
+  const handedBack = word === 'needs_you' && !!stateNote && !!item.stateNote && !closed;
+  const note = closed ? null : extra ?? (handedBack ? P.reasonShort(stateNote) : stateNote && word !== 'needs_you' ? P.stateNoteShort(stateNote) ?? (stateNote.length <= 28 ? stateNote : null) : null);
   return <span className={`pw-state pw-state-${closed ? 'faint' : P.stateTone(word)}`} data-state={word}
     title={closed ? item.why?.[item.why.length - 1] : item.stateNote ?? undefined}>
     <span className="pw-state-mark" aria-hidden="true" />
@@ -156,7 +185,7 @@ function stepCount(item: P.PlanItem): string | null {
   return m ? `${m[1]} / ${m[2]}` : null;
 }
 
-export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, onGo, labelOf, first = false, lead, meta, step = null, justDone = false, free = false, grant, canRepeat }: {
+export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, onGo, labelOf, first = false, lead, meta, step = null, justDone = false, free = false, grant, canRepeat, calm = false, press = null }: {
   item: P.PlanItem; items: P.PlanItem[]; open: boolean; busy: string | null;
   onToggle: () => void; onAction: RowActionHandler; onDoer: (item: P.PlanItem, doer: P.PlanDoer) => void; onGo: (tool: string, target?: string) => void;
   labelOf?: (tool: string) => string | undefined; first?: boolean;
@@ -172,6 +201,10 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
   free?: boolean;
   grant?: 'granted' | 'denied' | 'unknown';
   canRepeat?: boolean;
+  /** The calm list (1.5, pick C): the group names who and the Plan's header names where, so the row is its words, its state and its buttons. */
+  calm?: boolean;
+  /** The quiet press this row offers on its own (Run, Ask your assistant, Open): shown on hover and focus, and always at a narrow width. */
+  press?: { kind: RowPressKind; onPress: () => void } | null;
 }) {
   const source = P.sourceOf(item);
   const doer = P.doerOf(item);
@@ -181,9 +214,35 @@ export function PlanRow({ item, items, open, busy, onToggle, onAction, onDoer, o
   const steps = word === 'on_it' ? stepCount(item) : null;
   const draft = P.draftOwnState(item);
   const place = P.pagePlace(item.jump);
-  const live = step?.step === 'work' || step?.step === 'apply' || step?.step === 'check';
+  const live = step?.step === 'work' || step?.step === 'waitjev' || step?.step === 'apply' || step?.step === 'check';
   const cls = ['pw-row', open ? 'pw-row-open' : '', doer === 'you' ? 'pw-row-you' : '', live ? 'pw-row-live' : '', justDone ? 'pw-row-justdone' : ''].filter(Boolean).join(' ');
   const doneBy = justDone && !step && doer === 'assistant' && !P.closedByOther(item) ? 'by your assistant' : null;
+  if (calm) {
+    const hold = !!busy;
+    const jev = P.jevChoseRow(item);
+    const worth = P.aiWorthOf(item);
+    return <div className={`${cls} pw-row-calm pw-who-${doer}${worth ? ' pw-row-worth' : ''}`} data-testid={`plan-row-${item.id}`} data-row={item.id}
+      data-doer={doer} data-state={step ? step.step : word} {...(jev ? { 'data-jev': 'yes' } : {})} {...(first ? { 'data-tour': 'row' } : {})}>
+      <button type="button" className={jev ? 'pw-title pw-title-jev' : 'pw-title'} aria-expanded={open} data-testid={`plan-row-open-${item.id}`} onClick={onToggle}>
+        <b className="pw-trunc">{lead && <span className="pw-lead sem-num" data-testid="plan-row-lead">{lead}</span>}{item.title}</b>
+        {jev && <JevMark />}
+        {sub.aside && <span className="pw-sub pw-trunc">{sub.optional ? 'Optional · ' : ''}{sub.text}</span>}
+      </button>
+      {worth && <RowWorth words={worth} />}
+      <StateWord item={item} step={step} note={doneBy} calm />
+      <span className="pw-acts">
+        {steps && <span className="pw-steps sem-num">{steps}</span>}
+        {meta && <span className="pw-steps" data-testid="plan-row-meta">{meta}</span>}
+        {draft && <span className="pw-steps" data-testid="plan-row-draft" title={draft.title}>{draft.text}</span>}
+        {press && !step && <button type="button" className="sem-btn sem-btn-sm pw-press" data-testid={`plan-row-press-${press.kind}`} data-press={press.kind}
+          disabled={hold} onClick={(e) => { e.stopPropagation(); press.onPress(); }}>{ROW_PRESS_LABEL[press.kind]}</button>}
+        {main && !(open && main.id === 'open') && <ActionButton item={item} action={main} busy={busy} onAction={onAction} />}
+        {!main && sub.aside && <ActionButton item={sub.aside} busy={busy} onAction={onAction}
+          action={{ id: 'putback', label: P.ACTION_WORD.putback, title: `Put back '${sub.aside.title}'` }} />}
+        <PlanRowMenu item={item} items={items} busy={busy} onAction={onAction} grant={grant} canRepeat={canRepeat} />
+      </span>
+    </div>;
+  }
   return <div className={cls} data-testid={`plan-row-${item.id}`} data-row={item.id}
     data-doer={doer} data-state={step ? step.step : word} {...(first ? { 'data-tour': 'row' } : {})}>
     <span className="pw-src">
@@ -263,7 +322,7 @@ export function PlanRowWordsKept({ items }: { items: P.PlanItem[] }) {
 /** Everything a row knows, opened under it, for reading: why, done when, what it touches, what it changed, one note and
  *  one reply. No control rows (round 1, K5): who does it is the doer menu on the row, where it is done is the page link on
  *  the row, and the rest is in the dots. The one exception is the repeat editor, which the dots' Repeat... opens here. */
-export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onRepeat, showRepeat, onHistory }: {
+export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onRepeat, showRepeat, onHistory, onDoer, onOpenPage }: {
   item: P.PlanItem; busy: string | null; labelOf?: (tool: string) => string | undefined;
   /** Opens the Plan's History on one of this row's edits (contract 1.6: a Done row shows exactly what it changed). */
   onHistory?: (entryId: string) => void;
@@ -273,6 +332,10 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
   onRepeat?: { add: (r: RepeatRequest) => void | Promise<boolean>; change: (id: string, r: RepeatRequest) => void | Promise<boolean>; remove: (id: string) => void };
   /** The dots' Repeat... was pressed on this row: the editor is drawn here. */
   showRepeat?: boolean;
+  /** The calm list has no doer column: who does the task is changed here, in the opened row (the same doer menu). */
+  onDoer?: (item: P.PlanItem, doer: P.PlanDoer) => void;
+  /** The calm list has no page column: where the task is done by hand is a link here. */
+  onOpenPage?: (tool: string, target?: string) => void;
 }) {
   // Words typed in the note stay when the note changes underneath them (the assistant, or the page's own re-read); the newer note is the one shown above (R-B).
   const scope = rowScope(item.id);
@@ -299,7 +362,9 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
   const live = item.note ?? '';
   const shownMoved = noteMoved ?? (heldNote && !sameTrimmed(noteBase.current, live) && !sameTrimmed(note, live) ? live : null);
   const doer = P.doerOf(item);
-  const why = (item.why ?? []).filter(Boolean);
+  // A Jev row opens with its reason line above the detail, so Why does not say that line a second time.
+  const jevReason = P.jevReasonOf(item);
+  const why = (item.why ?? []).filter((w) => Boolean(w) && !(jevReason && w.trim() === jevReason));
   const replyWord = item.claim?.claimedBy === 'you' || doer === 'you' ? 'Your reply' : 'Its reply';
   const hasEvents = (item.events?.length ?? 0) > 0;
   return <div className="pw-detail" data-testid={`plan-detail-${item.id}`}>
@@ -307,8 +372,11 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
     <div className="pw-detail-l">
       <dl className="pw-kv">
         <dt>From</dt><dd data-testid="plan-detail-source">{P.sourceLine(item, labelOf)}</dd>
-        <dt>Why</dt><dd>{why.length ? why.join(' ')
-          : P.sourceOf(item) === 'words' || P.sourceOf(item) === 'you' ? 'You asked for it.' : 'Semanticus gave no reason for this one.'}</dd>
+        {onDoer && <><dt>Who does it</dt><dd className="pw-doer" data-testid="plan-detail-doer"><DoerMenu item={item} busy={busy} onDoer={onDoer} word={P.stateWordOf(item)} /></dd></>}
+        {onOpenPage && item.jump?.tool && P.pagePlace(item.jump) && <><dt>Where</dt><dd><button type="button" className="plan-link" data-testid="plan-detail-page"
+          onClick={() => onOpenPage(item.jump!.tool, jumpTarget(item.jump))}>{P.pagePlace(item.jump)}</button></dd></>}
+        {(why.length > 0 || !jevReason) && <><dt>Why</dt><dd>{why.length ? why.join(' ')
+          : P.sourceOf(item) === 'words' || P.sourceOf(item) === 'you' ? 'You asked for it.' : 'Semanticus gave no reason for this one.'}</dd></>}
         <dt>Done when</dt><dd>{item.doneText || 'You mark it done.'}</dd>
         {!!item.waitsFor?.length && <><dt>Finish these tasks first</dt><dd>
           {item.waitsFor.map((w) => <div key={w.id}>{w.title}</div>)}
@@ -321,6 +389,10 @@ export function PlanRowDetail({ item, busy, onNote, labelOf, repeats, isPro, onR
       <dl className="pw-kv pw-convo">
         <dt><DoerMark doer="you" />Your note</dt>
         <dd>{item.note || <span className="plan-muted">No note.</span>}</dd>
+        {item.assistantNote && <>
+          <dt data-testid="plan-assistant-note"><DoerMark doer="assistant" />Your assistant's note</dt>
+          <dd>{item.assistantNote}</dd>
+        </>}
         {/* THE REPLY, ONLY WHERE SOMEBODY REPLIES. The assistant reads a note on its own rows on its next call, so
             that promise is made there. Semanticus does not read notes, so a row it runs has no reply line unless
             one was really written, and a row that is yours says only that nothing has been written yet. */}

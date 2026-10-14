@@ -9,6 +9,7 @@
 // ===================================================================================================
 
 import type { WorkflowEditBlank, WorkflowEditCheck, WorkflowEditQuestion } from './workflowdraft.mjs';
+import { plainWords } from './workflowboxes.mjs';
 
 export type Performer = 'semanticus' | 'assistant' | 'person';
 
@@ -105,4 +106,38 @@ export const CHECK_NAMES: Record<string, string> = {
 
 export function checkName(kind: string): string {
   return CHECK_NAMES[kind] ?? 'Another check Semanticus runs';
+}
+
+// ---- A step's settings in plain words (1.5 visuals) -----------------------------------------------------------------
+// The engine's setting ids (tableRef, expression, displayFolder) and its {{inputs.table}} value syntax are its own words.
+// The editor shows "Table", "Formula", "Folder", and a value that comes from a question or a part as a chip.
+
+const ARG_WORDS: Record<string, string> = {
+  tableRef: 'Table', table: 'Table', name: 'Name', expression: 'Formula', displayFolder: 'Folder', description: 'Description',
+  formatString: 'Format', columnRef: 'Column', column: 'Column', measureRef: 'Measure', measure: 'Measure', dataType: 'Data type',
+  sourceColumn: 'Source column', isHidden: 'Hidden', query: 'Query', filter: 'Filter', partition: 'Partition', folder: 'Folder',
+};
+
+/** A setting's id in plain words; a setting not listed here still reads as words, and a trailing "Ref" is dropped. */
+export function argWords(name: string): string {
+  return ARG_WORDS[name] ?? plainWords(name.replace(/Ref$/, '')) ?? name;
+}
+
+export interface ArgContext {
+  inputs?: { name: string; question?: string | null }[] | null;
+  questions?: { name: string; question?: string | null }[] | null;
+  blanks?: { name: string }[] | null;
+}
+export interface ArgSource { kind: 'answer' | 'part'; text: string }
+
+/** The chip for a value that is exactly one answer or one part, or null when it is typed text (or a token this editor does not know). */
+export function argSource(value: string | null | undefined, ctx: ArgContext): ArgSource | null {
+  const m = /^\{\{(inputs|questions|blanks)\.([A-Za-z0-9_]+)\}\}$/.exec((value ?? '').trim());
+  if (!m) return null;
+  const [, group, name] = m;
+  const list = group === 'inputs' ? ctx.inputs : group === 'questions' ? ctx.questions : ctx.blanks;
+  if (!(list ?? []).some((x) => x.name === name)) return null;
+  return group === 'blanks'
+    ? { kind: 'part', text: `Your assistant writes: ${plainWords(name)}` }
+    : { kind: 'answer', text: `Your answer: ${plainWords(name)}` };
 }

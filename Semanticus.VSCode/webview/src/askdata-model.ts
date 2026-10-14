@@ -521,3 +521,16 @@ export function emptyFinderLine(what: 'number' | 'column', typed: string): strin
   if (words) return `No ${what} matches "${words}". Check the spelling, or clear the words to see them all.`;
   return what === 'number' ? 'This model has no measures to show.' : 'There are no columns to show here.';
 }
+
+// ---- a crowded chart (hero19 D15) ----
+// 500 bars in one colour cannot be read. A bar chart over more rows than this draws the top few and says so on one line; the table keeps every row.
+export const CHART_MAX_ROWS = 40;
+export const CHART_TOP_ROWS = 20;
+
+/** The rows a bar chart draws, and the line that says it drew only some. `measureCol` is the first number's column. Rows with no number come last. */
+export function crowdedChart(rows: unknown[][], measureCol: number, measureName: string): { rows: unknown[][]; line: string } | null {
+  if (rows.length <= CHART_MAX_ROWS) return null;
+  const num = (r: unknown[]) => (typeof r[measureCol] === 'number' ? (r[measureCol] as number) : Number.NEGATIVE_INFINITY);
+  const top = [...rows].sort((a, b) => num(b) - num(a)).slice(0, CHART_TOP_ROWS);
+  return { rows: top, line: `${rows.length} rows are too many to read as bars, so the chart shows the top ${CHART_TOP_ROWS} by ${measureName}. The table has every row.` };
+}

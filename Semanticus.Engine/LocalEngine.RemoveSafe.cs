@@ -57,12 +57,12 @@ namespace Semanticus.Engine
                 parsed.Add((p, pr.DefinitionFound ? null : "No readable report definition was found at that path.", pr));
             }
             UnusedResult Sweep(Model m) => parsed.Count == 0
-                ? Lineage.LineageGraph.Unused(m)
+                ? (coverage.NoReports ? Lineage.LineageGraph.UnusedNoReports(m) : Lineage.LineageGraph.Unused(m))
                 : Lineage.LineageGraph.AnalyzeReports(m, parsed).Unused;
             // The verification label counts reports actually READ (DefinitionFound and no error), never paths
             // supplied — a sweep must not claim report-awareness on the strength of unreadable files.
             var readable = parsed.Count(p => p.result.DefinitionFound && p.error == null);
-            var verification = parsed.Count == 0 ? "model-only"
+            var verification = parsed.Count == 0 ? (coverage.NoReports ? "no reports" : "model-only")
                 : $"report-aware ({readable} of {parsed.Count} report(s) readable)";
 
             var requested = (refs ?? Array.Empty<string>())
@@ -183,7 +183,10 @@ namespace Semanticus.Engine
                         }
                         try
                         {
+                            var owner = (obj as Column)?.Table;
                             obj.Delete();
+                            // The validator keeps no history: say that this table lost its last column, so a formula over that column is still refused.
+                            if (owner != null && !owner.Columns.Any(x => x.Type != ColumnType.RowNumber)) DaxValidator.NoteEmptied(owner);
                             removed.Add(new RemovedObject { Ref = c.Ref, Name = c.Name, Kind = c.Kind, Table = c.Table });
                         }
                         // A per-item delete failure (e.g. a column kind the wrapper refuses to delete) must not abort the

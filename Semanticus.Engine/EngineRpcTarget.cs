@@ -152,6 +152,7 @@ namespace Semanticus.Engine
         public Task<ModelSqlEndpointResult> setModelSqlEndpoint(string sqlSourceId, string connectionId = null, string origin = "human") => _engine.SetModelSqlEndpointAsync(sqlSourceId, connectionId, _origin);
         public Task<ModelSqlEndpointList> listModelSqlEndpoints() => _engine.ListModelSqlEndpointsAsync();
         public Task<Entitlement.EntitlementInfo> getEntitlement() => _engine.GetEntitlementAsync();
+        public Task<Entitlement.TrialTally> getTrialTally() => _engine.GetTrialTallyAsync();
         /// <summary>Which build this engine is (F-241). A window asks before it adopts a running engine, so an
         /// in-place reinstall at the same version and path is not joined to the build it replaced. Plumbing for
         /// the attach, not a capability: it reads no model and changes nothing, so either role may ask.</summary>
@@ -194,6 +195,8 @@ namespace Semanticus.Engine
         public Task<Scorecard> aiReadinessScan() => _engine.AiReadinessScanAsync();
         public Task<Scorecard> aiReadinessScanLive() => _engine.AiReadinessScanLiveAsync();
         public Task<SafeFixResult> applySafeFixes(string origin = "human") => _engine.ApplySafeFixesAsync(_origin);
+        public Task<ReadingCardView> readingCard(bool withAfter = true) => _engine.ReadingCardAsync(withAfter);
+        public Task<FixThemResult> fixThem(string origin = "human") => _engine.FixThemAsync(_origin);
         public Task<SetResult> applyFix(string ruleId, string objRef, string origin = "human") => _engine.ApplyFixAsync(ruleId, objRef, _origin);
         public Task<FixPrompt> getFixPrompt(string ruleId, string objRef) => _engine.GetFixPromptAsync(ruleId, objRef);
         public Task<GroundingBundle> getGrounding(string objRef) => _engine.GetGroundingAsync(objRef);
@@ -397,6 +400,8 @@ namespace Semanticus.Engine
         public Task<AuthPrerequisites> probeAuthPrerequisites(string mode, string tenantId = null) => _engine.ProbeAuthPrerequisitesAsync(mode, tenantId);
         public Task<AccountProfile[]> listAccountProfiles() => _engine.ListAccountProfilesAsync();
         public Task<AccountProfile[]> setDefaultAccountProfile(string profileId, string origin = "human") => _engine.SetDefaultAccountProfileAsync(profileId, _origin);
+        public Task<ConnectableAssistant[]> listAssistants() => _engine.ListAssistantsAsync();
+        public Task<AssistantConnectResult> connectAssistant(string assistant, string origin = "human") => _engine.ConnectAssistantAsync(assistant, _origin);
         public Task<ModelConnectionRecord> labelConnection(string id, string label, string origin = "human") => _engine.LabelConnectionAsync(id, label, _origin);
         public Task<ModelConnectionRecord> setConnectionWorkingFolder(string id, string folder) => _engine.SetConnectionWorkingFolderAsync(id, folder);
         public Task<bool> forgetConnection(string id, string origin = "human") => _engine.ForgetConnectionAsync(id, _origin);
@@ -498,7 +503,7 @@ namespace Semanticus.Engine
         /// <summary>The switch "Tasks for your assistant": "on" or "paused".</summary>
         public Task<ModelPlanView> setAssistantQueue(string state) => _engine.SetAssistantQueueAsync(state);
         /// <summary>One note on a row; empty clears it.</summary>
-        public Task<ModelPlanView> setPlanTaskNote(string id, string text) => _engine.SetPlanTaskNoteAsync(id, text);
+        public Task<ModelPlanView> setPlanTaskNote(string id, string text) => _engine.SetPlanTaskNoteAsync(id, text, _origin);
         /// <summary>Remove a task or a draft row (and the draft's parts) from the Plan. A row Semanticus found is set aside instead.</summary>
         public Task<PlanRemoveResult> removePlanRow(string id) => _engine.RemovePlanRowAsync(id);
         /// <summary>Undo a removal: the row goes back where it stood.</summary>
@@ -571,7 +576,10 @@ namespace Semanticus.Engine
         public Task<StudioShowResult> showInStudio(StudioShowRequest request, string call = null) => WithCall(call, () => _engine.ShowInStudioAsync(request));
         public Task<StudioSuggestResult> suggestNext(StudioSuggestRequest request, string call = null) => WithCall(call, () => _engine.SuggestNextAsync(request));
         public Task<StudioNotesView> getStudioNotes(string sessionId = null) => _engine.GetStudioNotesAsync(sessionId);
-        public Task noteAgentCall(string tool, string call = null, string focus = null, string client = null, string clientVersion = null) => WithCall(call, async () => { await _engine.NoteAgentCallAsync(tool, focus, client, clientVersion).ConfigureAwait(false); return 0; });
+        // The Next line (1.5): both doors; the person's own suggestion preference, never the Permissions page.
+        public Task<NextStepView> getNextStep() => _engine.GetNextStepAsync();
+        public Task<NextStepView> setNextStep(string action, string arg = null) => _engine.SetNextStepAsync(action, arg);
+        public Task noteAgentCall(string tool, string call = null, string focus = null, string client = null, string clientVersion = null, bool? commit = null) => WithCall(call, async () => { await _engine.NoteAgentCallAsync(tool, focus, client, clientVersion, commit).ConfigureAwait(false); return 0; });
 
         private static Task<T> WithCall<T>(string call, Func<Task<T>> body)
         {

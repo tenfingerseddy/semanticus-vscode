@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, onDidChange, onProgress, pickReportPaths, revealInTree, type OperationProgress } from './bridge';
+import { rpc, rpcPressed, onDidChange, onProgress, pickReportPaths, revealInTree, type OperationProgress } from './bridge';
 import { useConnection } from './connection';
 import { useFillHeight, KIND_GLYPH, KIND_COLOR, type LineageResult } from './lineagetypes';
 import { LineageGraphView } from './lineagegraph';
@@ -502,7 +502,7 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     const gen = ++cloudGen.current;
     setBusy('workspaces'); setError(null);
     try {
-      const list = await rpc<FabricWorkspace[]>('listWorkspaces', signInMode, tenant.trim() || null);
+      const list = await rpcPressed<FabricWorkspace[]>('listWorkspaces', signInMode, tenant.trim() || null);
       if (gen !== cloudGen.current) return;
       const sorted = [...(list ?? [])].sort((a, b) => (a.displayName || '').localeCompare(b.displayName || ''));
       setWorkspaces(sorted);
@@ -519,7 +519,7 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     const gen = ++cloudGen.current;
     setBusy('reports'); setError(null); setReports(null);
     try {
-      const list = await rpc<CloudReport[]>('listReports', ws.trim(), signInMode, tenant.trim() || null);
+      const list = await rpcPressed<CloudReport[]>('listReports', ws.trim(), signInMode, tenant.trim() || null);
       if (gen !== cloudGen.current) return;
       setReports(list);
     } catch (e) { if (gen === cloudGen.current) setError(String((e as Error).message ?? e)); }
@@ -618,7 +618,7 @@ function DrawerHost({ onPick, returningTo, onScopeChanged }: {
     }
     setBusy('check'); setError(null); setCheckResult(null);
     try {
-      const result = await rpc<ReportScopeResult>('checkReports', asked, consent, signInMode, tenant.trim() || null, null, 'human');
+      const result = await rpcPressed<ReportScopeResult>('checkReports', asked, consent, signInMode, tenant.trim() || null, null, 'human');
       setScope(result);
       if (result.usage) setUsage(result.usage);
       // A check that changes nothing a person can see is a check that did nothing, as far as they can tell.

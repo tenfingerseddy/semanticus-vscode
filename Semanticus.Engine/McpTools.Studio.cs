@@ -23,5 +23,14 @@ namespace Semanticus.Engine
             [Description("2 or 3 steps, each { label, prompt }.")] StudioStep[] steps,
             [Description("Optional lead line, 200 characters at most.")] string say = null)
             => engine.SuggestNextAsync(new StudioSuggestRequest { Steps = steps, Say = say });
+
+        [McpServerTool(Name = "get_next_step"), Description("Read the Next line the person sees under the Studio's driver bar: where they are on the journey (stage 1 to 7: open the model, get it AI ready, check the numbers, save, publish to test, publish to production, keep it healthy) and the one next step Semanticus suggests, with why, where it came from (the rules, Jev on Pro, or your own suggest_next) and whether Semanticus can do it alone (doIt). 'on' false means the person turned suggestions off. It changes nothing.")]
+        public static Task<NextStepView> GetNextStep(IEngine engine) => engine.GetNextStepAsync();
+
+        [McpServerTool(Name = "set_next_step"), Description("Change the person's Next line suggestions when they ask you to. 'action' is one of: hide (arg = the step id from get_next_step; hides that step until it changes), unhide (arg = the id), stopKind (arg = the step kind, e.g. 'save'; never suggest that kind again), resumeKind (arg = the kind), turnOff (no suggestions at all), turnOn. stopKind, turnOff and turnOn are kept for the person across sessions. It returns the Next line as it is now. It changes nothing in the model.")]
+        public static Task<NextStepView> SetNextStep(IEngine engine,
+            [Description("hide, unhide, stopKind, resumeKind, turnOff or turnOn.")] string action,
+            [Description("The step id for hide and unhide, the kind for stopKind and resumeKind; empty for turnOff and turnOn.")] string arg = null)
+            => engine.SetNextStepAsync(action, arg);
     }
 }

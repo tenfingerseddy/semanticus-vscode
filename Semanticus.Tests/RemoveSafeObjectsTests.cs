@@ -51,6 +51,7 @@ namespace Semanticus.Tests
             // Hidden: the table is a dimension, where a visible unreferenced column is never "safe" (visibleAttribute).
             await engine.SetObjectPropertyAsync(c, "IsHidden", "true", "human");
 
+            await engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
             var scan = await engine.UnusedObjectsAsync();
             foreach (var r in new[] { a, b, c })
                 Assert.Contains(scan.Items, i => i.Ref == r && i.Verdict == "safe");
@@ -80,6 +81,7 @@ namespace Semanticus.Tests
             using var __ = engine;
             var a = await engine.CreateMeasureAsync("table:" + table, "Sweep_Stale", "1", "human");
             var b = await engine.CreateMeasureAsync("table:" + table, "Sweep_StillSafe", "2", "human");
+            await engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
             var scan = await engine.UnusedObjectsAsync();   // the caller's scan: both "safe"
             Assert.Contains(scan.Items, i => i.Ref == a && i.Verdict == "safe");
             Assert.Contains(scan.Items, i => i.Ref == b && i.Verdict == "safe");
@@ -295,6 +297,7 @@ namespace Semanticus.Tests
             var (engine, _, table) = await OpenAsync(pro: true);
             using var __ = engine;
             await engine.CreateMeasureAsync("table:" + table, "Sweep_AllA", "1", "human");
+            await engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
             var preSafe = (await engine.UnusedObjectsAsync()).SafeCount;
             Assert.True(preSafe >= 1);
 

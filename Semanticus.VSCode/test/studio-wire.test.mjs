@@ -206,6 +206,15 @@ const show = (n) => ({ type: 'studioShow', payload: { id: `sn-${n}`, say: `Note 
   h.ready = true; h.notes.flush();
   assert.deepEqual(h.posted.map((m) => m.payload.id), ['sn-1', 'sg-2']);
 }
+{ // the Next line (1.5): held for a Studio that is not ready, and a newer view replaces a waiting one
+  const h = harness({ open: true });
+  h.notes.push({ type: 'studioNextStep', payload: { id: 'ns-1' } });
+  h.notes.push(show(1));
+  h.notes.push({ type: 'studioNextStep', payload: { id: 'ns-2' } });
+  assert.equal(h.opened, 0);
+  h.ready = true; h.notes.flush();
+  assert.deepEqual(h.posted.map((m) => m.payload.id), ['sn-1', 'ns-2']);
+}
 { // an answer the assistant asked for: held for a Studio that is not ready, and a newer one replaces a waiting one
   const h = harness({ open: true });
   h.notes.push({ type: 'studioAnswer', payload: { id: 'sa-1' } });
@@ -361,6 +370,25 @@ const show = (n) => ({ type: 'studioShow', payload: { id: `sn-${n}`, say: `Note 
   const page = src('tests.tsx');
   assert.match(page, /useClaudeReflection\('run_tests'/, 'Validation takes the assistant\'s run');
   assert.match(page, /onAssistantCall\(\(call\) => setAssistantRun\(/, 'Validation shows the assistant\'s run as running');
+
+  // The other Validation tools (testspeed2, 13 Oct): one sentence on the page, and what the tool changed is read again.
+  const t = C.toolNote({ seq: 9, kind: 'try_test', ok: true, label: 'Tried a check: Total Sales. The measure matched the number you trust.' });
+  assert.equal(t.note.text, 'Tried a check: Total Sales. The measure matched the number you trust.');
+  assert.equal(t.note.ok, true);
+  assert.deepEqual(t.reload, [], 'a single try writes nothing, so nothing is read again');
+  const failed = C.toolNote({ seq: 10, kind: 'record_test_run', ok: false, label: 'The run was not saved.', error: 'Only a full run can be recorded.' });
+  assert.equal(failed.note.ok, false);
+  assert.equal(failed.note.text, 'Only a full run can be recorded.', 'a failure says why');
+  assert.deepEqual(failed.reload, ['history']);
+  assert.deepEqual(C.toolNote({ kind: 'save_test', ok: true, label: 'Saved a check: A.' }).reload, ['suite', 'mappings']);
+  assert.deepEqual(C.toolNote({ kind: 'delete_test', ok: true, label: 'Deleted a check.' }).reload, ['suite', 'mappings']);
+  assert.deepEqual(C.toolNote({ kind: 'test_sql_source', ok: true, label: 'x' }).reload, ['sources']);
+  assert.equal(C.toolNote({ kind: 'run_dax', ok: true, label: 'Ran DAX query' }), null, 'only Validation tools');
+  assert.equal(C.toolNote({ kind: 'try_test', ok: true }), null, 'no sentence, no note');
+  for (const kind of ['try_test', 'run_interview', 'reconcile_measure', 'get_unmatched_rows', 'record_test_run', 'test_sql_source', 'review_reconcile_mapping', 'export_test_report', 'save_test', 'delete_test'])
+    assert.ok(C.TOOL_NOTE_KINDS.includes(kind), kind + ' is shown on the page');
+  assert.match(page, /for \(const kind of TOOL_NOTE_KINDS\) useClaudeReflection\(kind, takeToolEvent\)/, 'Validation listens for every one of them');
+  assert.match(page, /data-assistant-note=/, 'and shows the sentence');
 }
 
 console.log('studio wire tests passed');

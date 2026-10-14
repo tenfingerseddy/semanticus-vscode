@@ -1,0 +1,7 @@
+/* Semanticus speaks in the app accent. The assistant keeps its own note colour. */
+.personality-message {
+  background: var(--sem-accent-soft);
+  border-left-color: var(--sem-accent);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+}
+.personality-message > p { grid-column: 1 / -1; }

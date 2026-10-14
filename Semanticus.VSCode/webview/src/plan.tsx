@@ -1,26 +1,32 @@
 import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { copyText, focusSelectInProperties, onPlanChange, openExternal, onPlanRunProgress, rpc, runHostCommand, saveModelFromPage, selectInProperties } from './bridge';
-import { Caret } from './ui';
+import { copyText, focusSelectInProperties, onPlanChange, onReconnect, openExternal, onPlanRunProgress, rpc, runHostCommand, saveModelFromPage, selectInProperties } from './bridge';
 import { planRankingOf, type PlanRankingGrant } from './features';
 import { PENDING_ACCESS, refreshEntitlement, upgradeToPro, useTier } from './pro';
 import * as P from './plan-model';
+import { linkWork } from './personality/link-state';
+import { usePersonalitySettings } from './personality/settings';
+import { askAssistant } from './studio/ask-assistant';
 import { useConsentCard } from './consent';
 import { OptimizeView } from './optimize';
-import { PlanStrip } from './plan-strip';
-import { PlanRow, PlanRowDetail, PlanRowWordsKept, withOpenRow, type RowActionHandler } from './plan-row';
+import { PlanHead, DriveSwitch, LiveSlot, usePlanGrade } from './plan-head';
+import { planChrome, type PlanNote } from './plan-chrome';
+import * as C from './plan-calm-model';
+import './plan-calm.css';
+import { Caret } from './ui';
+import { JevReason, PlanRow, PlanRowDetail, PlanRowWordsKept, withOpenRow, type RowActionHandler } from './plan-row';
 import { repeatFace } from './plan-repeat-model';
 import { AskReply, ASK_TOOL_LABEL, fieldTaskPage, useAskSuggestion } from './askbox';
 import { PlanHistory } from './plan-history';
 import { peekRestoreLanding } from './plan-history-model';
 import { PlanGuide } from './plan-guide';
-import { PlanHelpMark } from './help';
 import { RefreshPlanButton } from './plan-refresh';
 import { WorkflowRunDetail } from './workflow-run';
 import type { WorkflowRunView } from './workflow-ui';
 import { ComposerDraft } from './composer-draft';
 import { draftIdOf, draftRowId, type DraftView } from './composer-model';
 import { objectLabel, refToObject, type ObjectRef } from './route';
+import { jumpTarget } from './search-names';
 import { startPageMode, startPlanBelongs } from './startplan-model';
 import { BuiltPlanBand, StartFormKept, StartFromSql, StartPlanPanel, useStartPlan, WordsKeptAfterBuild } from './startplan';
 import { draftModel } from './drafts';
@@ -37,19 +43,21 @@ const SAVE_NOT_DONE = 'Nothing was saved. Press Save again, or use Ctrl+S.';
 const SpecPanel = lazy(() => import('./spec').then((m) => ({ default: m.SpecView })));
 
 // ===================================================================================================
-// The Plan: where a person starts (Plan at the heart, lane U1; the approved mockup plan-heart.html).
+// The Plan: where a person starts (Plan at the heart, lane U1; the approved mockup plan-heart.html), calmed in 1.5 (Kane's pick C,
+// "Header does it all", /tmp/semanticus-joint-review/m15/calm/mockups.html).
 //
-// A picture, the facts, one field, and a short list. The strip on top counts three tracks (Semanticus, you, your
-// assistant) and filters the list to one; the facts line says what model this is; the one field "Describe a task or
-// an aim" adds a row with Enter; the list is Needs you, then Next, seven rows then Show all. Every row says where it
-// came from, who does it and where it stands, and every word of that is the engine's.
+// One header line (plan-head.tsx): Plan, the AI readiness grade, ONE live slot, the drive switch, Work and History, Run the plan.
+// Under it the tasks are grouped by who does them (Your assistant, Semanticus, You), each group folds by its header and shows ten rows then
+// Show all. A long Plan (over fifteen rows) gets one quiet Filter. Every row is its words, its state and its buttons; a row has its own quiet
+// press (Run, Ask your assistant, Open). The last row of the page is "Add a task", with Refresh plan at its end. The page's notes are
+// "2 notes" in the bottom bar. The reading card, the strip, the facts line, the Next line and the driver bar are gone from this page.
 //
 // ---- the calls, all answered with the whole plan ---------------------------------------------------
 //
 //   getModelPlan()                               the plan, its strip, its readyDigest and the switch
 //   movePlanTaskUp(id)                           Move up, in the dots, on the assistant's tasks person-only
 //   setPlanItemDoer(id, doer)                    the doer menu on the row                       person-only
-//   setAssistantQueue('on' | 'paused')           the switch "Tasks for your assistant"          person-only
+//   setAssistantQueue('on' | 'paused')           the drive switch: I drive pauses it            person-only
 //   setPlanTaskNote(id, text)                    one note                                       person-only
 //   addPlanTask({ words })                       the field                                      person-only
 //   claimPlanTask / completePlanTask             Me (on an assistant task), Mark done
@@ -88,12 +96,14 @@ interface ApplyItemsResult {
   revision?: number;
   /** The History entry of this batch: what undo('human', entryId) takes back. */
   entryId?: string;
+  /** The model has changes that are not saved: the Done line may offer Save. */
+  canSave?: boolean;
   plan?: P.Plan;
 }
 
 /** The line at the top of the list after a press (round 1, K1). It has a state of its own and the page's re-read never
  *  clears it: it ends only on the next press, an Undo, or a reload. */
-export type Receipt = (P.PressReceipt & { saved: boolean; savedText?: string }) | { kind: 'said'; text: string };
+export type Receipt = (P.PressReceipt & { saved: boolean; savedText?: string; /** The one line the header says: "Done. 10 tasks in 2 min." */ line?: string }) | { kind: 'said'; text: string };
 
 /** Save for a model open live from a workspace: the changes are written back to that workspace the way the Publish page writes them
  *  (compare, then apply the ticked changes; a removal stays a choice and is not sent). One press, no question, and the engine keeps
@@ -150,19 +160,29 @@ export function PlanStarts({ starts, onStart }: { starts: P.PlanStart[]; onStart
  *    nothing open              Plan done
  *  On free the Pro line stands where the button stands, as before. `unknown` draws neither: a paying customer must not
  *  meet an upsell for one frame while the licence is being read. */
-export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told }: {
+export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told, calm = false }: {
   plan: P.Plan; grant: PlanRankingGrant; running: boolean; held?: readonly string[]; steps?: Readonly<Record<string, P.RunPhase>>;
   onRun: () => void; onTell?: () => void; told?: boolean;
+  /** In the calm header (1.5) the live slot says what is running and the list says who has what, so only the press itself is drawn. */
+  calm?: boolean;
 }) {
+  if (grant === 'denied' && calm) {
+    return <span className="plan-pro" data-testid="plan-pro-line">
+      <span className="plan-pro-tag">Pro</span>
+      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" title="Pro runs the plan for you, as one step you can undo."
+        onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: onRun })}>Unlock Pro</button>
+    </span>;
+  }
   if (grant === 'denied') {
     // A line in the Next header, not an inset: the tag, the sentence, and the one live action.
     return <span className="plan-pro" data-testid="plan-pro-line">
       <span className="plan-pro-tag">Pro</span>
       <span className="plan-muted">Pro runs the plan for you, as one step you can undo.</span>
-      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" onClick={upgradeToPro}>Unlock Pro</button>
+      <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-unlock" onClick={() => upgradeToPro({ label: 'Run the plan', tab: 'plan', run: onRun })}>Unlock Pro</button>
     </span>;
   }
   if (grant !== 'granted') return <span className="plan-muted">{PENDING_ACCESS}</span>;
+  if (running && calm) return null;
   if (running) {
     const w = P.runningWords(held ?? [], steps ?? {});
     return <span className="sem-btn sem-btn-sm pw-run pw-run-live" role="status" aria-live="polite" data-testid="plan-run-live">
@@ -176,6 +196,11 @@ export function RunArea({ plan, grant, running, held, steps, onRun, onTell, told
       title={`Runs ${area.count} as one step you can undo.${after > 0 ? ` ${ready} ${ready === 1 ? 'is' : 'are'} ready now. The other ${after} run after ${after === 1 ? 'it' : 'them'}.` : ''}`}
       onClick={onRun}>Run the plan <span className="pw-run-n sem-num">{area.count}</span></button>;
   }
+  if (area.kind === 'assistant' && calm) {
+    return <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-tell" onClick={onTell}
+      title={`Your assistant has ${area.count} ${area.count === 1 ? 'task' : 'tasks'}. Copies a request. Paste it into your assistant to start them.`}>{told ? 'Copied' : 'Copy request'}</button>;
+  }
+  if (calm && (area.kind === 'you' || area.kind === 'done' || area.kind === 'none')) return null;
   if (area.kind === 'assistant') {
     return <span className="pw-runsay" data-testid="plan-run-assistant">
       <span className="pw-state-mark pw-mark-agent" aria-hidden="true" />
@@ -230,7 +255,7 @@ export function ProPlanWatch({ inactive }: { inactive: boolean }) {
   return null;
 }
 
-export function PlanView({ sessionId, revision, changeNonce, modelName, hostSession, compatibilityLevel, focus, focusNonce, onGo,
+export function PlanView({ sessionId, revision, changeNonce, modelName, hostSession, focus, focusNonce, onGo,
   onGoObject, track: trackSeed, trackNonce, focusObject, onClearObject, historyEntry = null, historyNonce, openRow = null, openRowNonce,
   onRunUpdate, fieldTakenNonce, homeNonce, draftStartSql, onDraftStartTaken, showStart, onShowStartTaken }: {
   sessionId: string;
@@ -241,9 +266,6 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   /** The host's session: the facts line reads it, and the spec editor panel is handed it. */
   hostSession?: { modelName?: string; tables?: number; measures?: number; source?: string; liveKind?: string;
     liveBound?: boolean; hasUnsavedChanges?: boolean; hasUnsavedEdits?: boolean } | null;
-  /** The model's compatibility level; absent on an engine that does not report it, which means "not known to be
-   *  blocking". The facts line offers Raise compatibility level only while the level blocks a named capability. */
-  compatibilityLevel?: number;
   /** Which panel a route asked this page to open over the plan. Undefined is the plan itself. */
   focus?: 'changes' | 'draft';
   /** A route asked for the draft panel ON ITS SQL STEP (route.ts SQL_DRAFT_TARGET): the route's nonce, 0 for none. */
@@ -287,16 +309,17 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   // receipt must still be on screen after the re-read that every press starts.
   /** What the last press did. Ends on the next press, an Undo, a model change of session, or a reload; never on a re-read. */
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  /** The header slot keeps the end-of-run line, with its Undo, until the person's next action (hero19 D8). */
+  const slotShownReceipt = receipt && C.receiptStays(receipt.kind === 'ran' ? receipt : { kind: 'said' }, plan?.revision) ? receipt : null;
   /** Each row's step during a run, from plan/runProgress. A finished row keeps its Done and its change count. */
   const [steps, setSteps] = useState<Record<string, P.RunPhase>>({});
   const [stepAt, setStepAt] = useState(() => Date.now());
   const stepStamp = useRef<Record<string, number>>({});
   /** The rows this press holds, in the order the plan lists them: those not reached yet read In this run. */
   const [pressRows, setPressRows] = useState<string[]>([]);
-  /** Rows that turned done while the page was open (a run, or the assistant): listed in Done just now. */
+  /** Rows that turned done while the page was open (a run, or the assistant): kept in its group as Done. */
   const [justDone, setJustDone] = useState<ReadonlySet<string>>(() => new Set());
   const [told, setTold] = useState(false);
-  const [foldOpen, setFoldOpen] = useState(false);
   /** The row whose Repeat... was chosen in the dots: its repeat editor is drawn in its opened detail. */
   const [repeatRow, setRepeatRow] = useState<string | null>(null);
   const prevPlan = useRef<P.Plan | null>(null);
@@ -309,7 +332,13 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     return () => clearTimeout(t);
   }, [removed]);
   const [retry, setRetry] = useState(0);
-  const generation = useRef(0);
+  /** Reads of the plan land in order, and a late one is still shown when it is newer than what is on screen (hero19 D3). */
+  const reads = useRef(C.createRereadGate());
+  const figureRead = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // The grade in the header (the reading card's fast first read): the Link's dots meet and it flips when it lands (1.5, pick C).
+  const stripGrade = P.gradeLine(plan?.strip)?.now ?? null;
+  const { grade, refresh: refreshGrade } = usePlanGrade(sessionId, changeNonce, stripGrade);
+  const quiet = usePersonalitySettings().personality === 'quiet';
 
   // A different model is a different plan: nothing of the last press belongs to it.
   useEffect(() => {
@@ -324,15 +353,24 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     setStepAt(at);
     setSteps((prev) => P.foldProgress(prev, raw));
     const e = raw as { phase?: string; itemIds?: string[] } | null;
-    if (e?.phase === 'done' && Array.isArray(e.itemIds)) setJustDone((prev) => new Set([...prev, ...e.itemIds!]));
+    if (e?.phase === 'done' && Array.isArray(e.itemIds)) {
+      setJustDone((prev) => new Set([...prev, ...e.itemIds!]));
+      // The figures beside Plan count up as rows turn Done: read the plan again (its strip is the engine's own count), once for a burst of rows.
+      if (figureRead.current) clearTimeout(figureRead.current);
+      figureRead.current = setTimeout(() => {
+        const mine = reads.current.start();
+        rpc<P.Plan>('getModelPlan').then((value) => { if (reads.current.accept(mine)) setPlanQuietly(normalize(value)); }, () => {});
+      }, 250);
+    }
   }), []);
+  useEffect(() => () => { if (figureRead.current) clearTimeout(figureRead.current); }, []);
   // A step that began and never ended (a run that died, or another door's) stops showing after three minutes.
   useEffect(() => {
-    if (!Object.values(steps).some((x) => x.step === 'work' || x.step === 'apply' || x.step === 'check')) return undefined;
+    if (!Object.values(steps).some((x) => x.step === 'work' || x.step === 'waitjev' || x.step === 'apply' || x.step === 'check')) return undefined;
     const t = setInterval(() => setStepAt(Date.now()), 15000);
     return () => clearInterval(t);
   }, [steps]);
-  // Every row that turns done while the page is open joins Done just now: a press, or the assistant on its own.
+  // Every row that turns done while the page is open stays in its group as Done: a press, or the assistant on its own.
   useEffect(() => {
     if (!plan) return;
     const before = prevPlan.current;
@@ -382,12 +420,14 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   // A row's "Open in History" (contract 1.6) opens History on that edit; a route's own entry still wins when it moves.
   const [rowEntry, setRowEntry] = useState<string | null>(null);
   const [track, setTrack] = useState<P.PlanDoer | null>(trackSeed ?? null);
+  // The calm list (1.5): each who-group folds by its header and shows its first rows, then Show all. The one Filter (only on a long Plan)
+  // is typed words plus the goal choice; both live in the page, and an active filter is one small chip.
   const [goal, setGoal] = useState<P.PlanGoal>('all');
-  const [showAll, setShowAll] = useState(false);
-  // The rows Next shows: as many as fit the window, never fewer than NEXT_CAP (the space rule, 27 September).
-  const [fitCap, setFitCap] = useState(P.NEXT_CAP);
-  const [room, setRoom] = useState(0);   // bumped whenever the room for Next can have changed
-  const listRef = useRef<HTMLElement | null>(null);
+  const [filterText, setFilterText] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [expanded, setExpanded] = useState<ReadonlySet<P.PlanDoer>>(() => new Set());
+  const [folded, setFolded] = useState<ReadonlySet<P.PlanDoer>>(() => new Set());
+  const toggleIn = (set: ReadonlySet<P.PlanDoer>, who: P.PlanDoer) => { const next = new Set(set); if (next.has(who)) next.delete(who); else next.add(who); return next; };
   const [openId, setOpenId] = useState<string | null>(null);
   openRef.current = openId;
   const [field, setField] = useState('');
@@ -429,7 +469,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   useEffect(() => {
     if (openRowNonce === undefined || !openRow) return;
     // The draft was made after the plan was read, so the plan is read again for its row.
-    setView('work'); setTrack(null); setShowAll(true); setOpenId(openRow); setRetry((n) => n + 1);
+    setView('work'); setTrack(null); showEverything(); setOpenId(openRow); setRetry((n) => n + 1);
     scrollTo.current = openRow;
   }, [openRow, openRowNonce]);
   // The row asked for is scrolled to once it is DRAWN. A frame after the ask was too early whenever the plan's read
@@ -444,15 +484,31 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     row.scrollIntoView({ block: 'start' });
   });
 
+  // Another model: every read still on its way belongs to the old one.
+  useEffect(() => { reads.current.reset(); }, [sessionId]);
   useEffect(() => {
-    const mine = ++generation.current;
+    // One read per change, and none of them is thrown away because a newer change came: while an assistant edits, each edit starts a
+    // read, and a read that is always replaced before it lands would keep the page as it was (hero19 D3).
+    const mine = reads.current.start();
     setLoading(true); setError(null); setSentence(null);
     rpc<P.Plan>('getModelPlan').then(
-      (value) => { if (mine === generation.current) { setPlanQuietly(normalize(value)); setLoading(false); } },
-      (failure: unknown) => { if (mine === generation.current) { setError(messageOf(failure)); setLoading(false); } },
+      (value) => { if (reads.current.accept(mine)) { setPlanQuietly(normalize(value)); setLoading(false); } },
+      // A read that the engine swap cut off (a model reopening) is not a failure: the page reads again when the engine is back (below).
+      (failure: unknown) => { if (!/engine connection was lost/.test(messageOf(failure))) { setError(messageOf(failure)); setLoading(false); } },
     );
-    return () => { if (generation.current === mine) generation.current++; };
   }, [sessionId, revision, changeNonce, retry]);
+  useEffect(() => onReconnect(() => setRetry((n) => n + 1)), []);
+  // The engine flags a row assistantAtWork only while it reads (the assistant's last edit was under a minute ago). Nothing else moves when that minute
+  // ends, so a row would spin On it for ever: read again quietly just after the window (v-plan-status).
+  const anyAtWork = !!plan?.items?.some((i) => i.assistantAtWork);
+  useEffect(() => {
+    if (!anyAtWork) return;
+    const timer = setTimeout(() => {
+      const mine = reads.current.start();
+      rpc<P.Plan>('getModelPlan').then((value) => { if (reads.current.accept(mine)) setPlanQuietly(normalize(value)); }, () => {});
+    }, P.AT_WORK_REREAD_MS);
+    return () => clearTimeout(timer);
+  }, [anyAtWork, plan]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE ROUTE DECIDES THE PANEL, every time, including when it asks for none (Codex, PR 388): the shell renders all
   // three route ids through one PlanView, so asking for the plan has to close a panel left open.
@@ -485,12 +541,15 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     const off = onPlanChange(() => {
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        const mine = generation.current;
-        rpc<P.Plan>('getModelPlan').then((value) => { if (mine === generation.current) setPlanQuietly(normalize(value)); }, () => {});
+        const mine = reads.current.start();
+        rpc<P.Plan>('getModelPlan').then((value) => { if (reads.current.accept(mine)) setPlanQuietly(normalize(value)); }, () => {});
       }, 150);
     });
     return () => { off(); if (timer) clearTimeout(timer); };
   }, []);
+  // While Jev is still looking at this model, The Link in the status line thinks hard and says so (1.5).
+  const jevPending = !!plan?.jevPending;
+  useEffect(() => { linkWork.setJevPending(jevPending); }, [jevPending]);
 
   /** One person control. Every one of them answers with the whole plan, which is the answer. */
   const run = useCallback(async (key: string, method: string, ...args: unknown[]): Promise<{ ok: boolean; value: P.Plan | PlanActionResult | null }> => {
@@ -498,7 +557,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     try {
       const value = await rpc<P.Plan | PlanActionResult>(method, ...args);
       const next = value && 'items' in (value as P.Plan) ? value as P.Plan : (value as PlanActionResult | null)?.plan;
-      if (next) setPlan(normalize(next));
+      if (next) { reads.current.accept(reads.current.start()); setPlan(normalize(next)); }
       const said = (value as PlanActionResult | null)?.sentence;
       if (said && !('items' in (value as P.Plan))) setSentence(said);
       return { ok: true, value };
@@ -531,7 +590,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     const result = await control('field', 'addPlanTask', fieldPage ? { words: asked.words, fieldPage } : { words: asked.words }) as PlanActionResult | null;
     // The new row is last in Next, so the list opens out to show it, opened with its doer switch.
     if (result) {
-      setField(''); setShowAll(true);
+      setField(''); showEverything();
       if (result.itemId) {
         setOpenId(result.itemId);
         // The new row is last; bring it into view once it has drawn, so Enter visibly did something.
@@ -551,7 +610,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
       await rpc('skipModelPlanItem', item.id, 'Drafted as steps.');
       setPlan(normalize(await rpc<P.Plan>('getModelPlan')));
       const row = draftRowId(v.draftId);
-      setShowAll(true); setOpenId(row);
+      showEverything(); setOpenId(row);
       requestAnimationFrame(() => document.querySelector(`[data-row="${CSS.escape(row)}"]`)?.scrollIntoView({ block: 'start' }));
     } catch (failure: unknown) { setActionError(messageOf(failure)); }
     finally { setBusy(null); }
@@ -583,14 +642,18 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   }, []);
 
   /** Run the plan: ONE press, every wave. Each wave is one engine call; a row that only waited on a row of the same press is
-   *  Ready by the next read, so the loop calls again with the new readyDigest (plan-model runAllWaves). */
+   *  Ready by the next read, so the loop calls again with the new readyDigest (plan-model runAllWaves). The header's live slot says
+   *  what is running while it works and "Done. 10 tasks in 2 min." when it ends. */
   const runPlan = useCallback(async () => {
     if (!plan) return;
-    const hold = P.pressSet(plan.items).map((i) => i.id);
+    const holding = P.pressSet(plan.items);
+    const hold = holding.map((i) => i.id);
     if (hold.length === 0 || !P.runCall(plan)) return;
     setBusy('run'); setActionError(null); setSentence(null);
     setReceipt(null); setSteps({}); setJustDone(new Set()); setPressRows(hold); setTold(false);
     stepStamp.current = {};
+    const startedAt = Date.now();
+    linkWork.hold('plan-press', true);
     try {
       const out = await P.runAllWaves(plan,
         async (call) => {
@@ -601,15 +664,58 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         async () => normalize(await rpc<P.Plan>('getModelPlan')),
         (next) => setPlan(normalize(next)));
       setPlan(normalize(out.plan));
-      setReceipt(out.receipt ? { ...out.receipt, saved: false }
+      if (out.receipt) await refreshGrade();   // the AI ready figure reads the model again; the Done line no longer repeats it
+      setReceipt(out.receipt ? { ...out.receipt, saved: false, line: `${C.doneWords(out.receipt.rows, Date.now() - startedAt, P.jevChoseRan(holding, out.receipt.ranIds))}${out.receipt.note ? ` ${out.receipt.note}` : ''}` }
         : { kind: 'said', text: out.refusal ?? 'Nothing was ready to run.' });
     } catch (failure: unknown) { setActionError(messageOf(failure)); }
     finally {
+      linkWork.hold('plan-press', false);
       setBusy(null); setPressRows([]);
       // What is left of the steps is what finished: a row's Done and its change count stay beside it.
       setSteps((prev) => Object.fromEntries(Object.entries(prev).filter(([, x]) => x.step === 'done' || x.step === 'skipped')));
     }
-  }, [plan]);
+  }, [plan, refreshGrade]);
+
+  /** One row on its own (Kane, 12 Oct: run a single task). The same engine path as the assistant's model_plan_action 'propose' then apply_plan_items
+   *  with this one row and its digest: ONE undo step, and the row turns Done with the same words in the header's slot. */
+  const runRowRef = useRef<(item: P.PlanItem) => Promise<void>>(async () => {});
+  const runRow = useCallback(async (item: P.PlanItem) => {
+    if (!plan) return;
+    if (grant === 'denied') { upgradeToPro({ label: 'Run the plan', tab: 'plan', run: () => { void runRowRef.current(item); } }); return; }
+    if (grant !== 'granted') return;
+    setBusy('run'); setActionError(null); setSentence(null);
+    setReceipt(null); setSteps({ [item.id]: { step: 'work' } }); setJustDone(new Set()); setPressRows([item.id]); setTold(false);
+    stepStamp.current = {};
+    const startedAt = Date.now();
+    linkWork.hold('plan-press', true);
+    try {
+      let digest = C.proposedDigest(item);
+      let ran = item;   // the row as it was written: a row worked out just now carries its lines only in the fresh plan
+      if (!digest) {
+        // The changes are worked out first (nothing is written), exactly as Run the plan does for a row that has none yet.
+        const worked = await rpc<PlanActionResult>('modelPlanAction', item.id, 'propose', 'human', null);
+        if (worked?.plan) setPlan(normalize(worked.plan));
+        ran = worked?.plan?.items.find((i) => i.id === item.id) ?? item;
+        digest = C.proposedDigest(ran);
+        if (!digest) { setReceipt({ kind: 'said', text: worked?.sentence || 'Nothing could be worked out for this task.' }); return; }
+      }
+      const [method, ...args] = C.applyOneCall(item.id, digest);
+      const r = await rpc<ApplyItemsResult>(method, ...args);
+      setPlan(normalize(r?.plan ?? await rpc<P.Plan>('getModelPlan')));
+      if (!r?.performed) { setReceipt({ kind: 'said', text: r?.sentence || 'Nothing was changed.' }); return; }
+      setSteps({ [item.id]: { step: 'done', changes: r.applied } });
+      setJustDone(new Set([item.id]));
+      await refreshGrade();
+      setReceipt({ kind: 'ran', rows: 1, changes: r.applied ?? 0, entryId: r.entryId ?? null, revision: r.revision ?? null, note: null,
+        canSave: r.canSave, saved: false, line: C.doneWords(1, Date.now() - startedAt, P.jevChoseCount([ran])) });
+    } catch (failure: unknown) { setActionError(messageOf(failure)); }
+    finally {
+      linkWork.hold('plan-press', false);
+      setBusy(null); setPressRows([]);
+      setSteps((prev) => Object.fromEntries(Object.entries(prev).filter(([, x]) => x.step === 'done' || x.step === 'skipped')));
+    }
+  }, [plan, grant, refreshGrade]);
+  runRowRef.current = runRow;
 
   /** The receipt's Undo takes back the whole press: undo('human', firstEntryId) walks back through every batch from the first. */
   const undoPress = useCallback(async () => {
@@ -657,7 +763,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
       case 'open': setOpenId(item.id); break;
       // Repeat... in the dots opens the row and draws the repeat editor in its detail.
       case 'repeat': setOpenId(item.id); setRepeatRow(item.id); break;
-      case 'draft': if (grant === 'granted') void draftSteps(item); else upgradeToPro(); break;
+      case 'draft': if (grant === 'granted') void draftSteps(item); else upgradeToPro({ label: 'Draft the steps', tab: 'plan', run: () => void draftSteps(item) }); break;
       // Remove, person-only on the engine: the row goes, the toast offers Undo (restorePlanRow).
       case 'remove': void control(key, 'removePlanRow', item.id).then((value) => {
         const r = value as { itemId?: string; title?: string; toldAssistant?: boolean } | null;
@@ -700,62 +806,34 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
   const liveSteps = useMemo(() => Object.fromEntries(Object.entries(steps).filter(([id, x]) =>
     x.step === 'done' || x.step === 'skipped' || stepAt - (stepStamp.current[id] ?? stepAt) < 180000)), [steps, stepAt]);
   const holding = useMemo(() => (busy === 'run' ? new Set(pressRows) : null), [busy, pressRows]);
-  // The open row keeps the place in the fold it had when it was opened, until it is closed (journey m11 F8). The place is
-  // taken the first time the open row is seen there, from the list as it would be drawn anyway.
-  const kept = useRef<P.KeptRow | null>(null);
-  const work = useMemo(() => {
-    const opts = { track, goal, showAll, cap: fitCap, object: focusObject?.ref ?? null, justDone };
-    const plain = P.workView(items, opts);
-    if (!openId) { kept.current = null; return plain; }
-    if (kept.current?.id !== openId) {
-      const at = plain.onlyYou.findIndex((r) => r.id === openId);
-      kept.current = at >= 0 ? { id: openId, index: at, group: 'you' } : null;
-    }
-    // The open row stays drawn while it is open, wherever another writer moved it (past the cap of Next, or Done): what the person typed under it stays on screen (R-B).
-    return withOpenRow(kept.current ? P.workView(items, { ...opts, keep: kept.current }) : plain, items, openId);
-  }, [items, track, goal, showAll, fitCap, focusObject?.ref, openId, justDone]);
+  // THE CALM LIST (1.5). A narrowed view (a track from the header chip, or the object picked in the tree) keeps today's flat list. Otherwise
+  // every open row is drawn, grouped by who does it; a group shows its first rows and then Show all, and folds by its header.
+  const narrowed = !!track || !!focusObject;
+  // The open row stays drawn while it is open, wherever another writer moved it: what the person typed under it stays on screen (R-B).
+  const work = useMemo(() => withOpenRow(P.workView(items, { track, goal: 'all', showAll: true, object: focusObject?.ref ?? null, justDone }), items, openId),
+    [items, track, focusObject?.ref, justDone, openId]);
+  const everyRow = useMemo(() => C.calmRows(items, justDone, openId), [items, justDone, openId]);
+  const showFilter = everyRow.length > C.FILTER_MIN_ROWS;
+  const filterOn = showFilter && (goal !== 'all' || filterText.trim() !== '');
+  const calmShown = useMemo(() => (filterOn ? C.filterRows(everyRow, filterText, goal, openId) : everyRow), [everyRow, filterOn, filterText, goal, openId]);
+  const groups = useMemo(() => C.groupsOf(calmShown), [calmShown]);
+  /** Show everything: used when a route, a new task or a draft asks for a row that may sit in a folded or capped group. */
+  const showEverything = useCallback(() => { setExpanded(new Set<P.PlanDoer>(['assistant', 'semanticus', 'you'])); setFolded(new Set()); }, []);
   useEffect(() => { if (repeatRow && openId !== repeatRow) setRepeatRow(null); }, [openId, repeatRow]);
-  // Counted again from NEXT_CAP whenever the room can have changed: the window resizing, and the Studio text size
-  // (Ctrl + wheel), which is CSS zoom on the Studio root and fires no window resize but does change the root's size in
-  // its own pixels. Without the second, 100% to 80% left 224 px of empty page under a list that still hid rows behind
-  // Show all, in a real window.
-  useEffect(() => {
-    const onResize = () => { setFitCap(P.NEXT_CAP); setRoom((n) => n + 1); };
-    window.addEventListener('resize', onResize);
-    const root = document.querySelector('.studio-root');
-    let size = root ? `${root.clientWidth}x${root.clientHeight}` : '';
-    const ro = root && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => {
-      const now = `${root.clientWidth}x${root.clientHeight}`;
-      if (now !== size) { size = now; onResize(); }
-    }) : null;
-    if (root && ro) ro.observe(root);
-    return () => { window.removeEventListener('resize', onResize); ro?.disconnect(); };
-  }, []);
-  // Grow Next into the empty space under it: the rows that fit between the Show all line and the bottom of the page's
-  // scroll region, measured from a drawn row. Only while the page does not scroll. The room is what is left once every
-  // bottom padding, border and margin between the list and <main> is taken off (the Plan page's own 32 px as well as
-  // <main>'s: taking <main>'s alone grew one row too many and scrolled the page 15 px in a real window at 90%). Rects
-  // are turned into the list's own pixels by the list's measured scale, so this is right in both zoom models.
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list || showAll || work.nextTotal <= work.next.length) return;
-    const main = list.closest('main');
-    const row = list.querySelector<HTMLElement>('[data-testid^="plan-row-"]');
-    if (!main || !row || main.scrollHeight > main.clientHeight + 1 || !(list.offsetWidth > 0)) return;
-    const scale = list.getBoundingClientRect().width / list.offsetWidth;
-    let under = 0;
-    for (let a: HTMLElement | null = list; a && a !== main; a = a.parentElement) {
-      const cs = getComputedStyle(a);
-      under += parseFloat(cs.marginBottom) || 0;
-      if (a !== list) under += (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-    }
-    const ms = getComputedStyle(main);
-    under += (parseFloat(ms.paddingBottom) || 0) + (parseFloat(ms.borderBottomWidth) || 0);
-    const free = (main.getBoundingClientRect().bottom - list.getBoundingClientRect().bottom) / scale - under;
-    const more = Math.floor(free / (row.getBoundingClientRect().height / scale));
-    if (more > 0) setFitCap(work.next.length + more);
-  }, [work, showAll, room]);
   const labelOf = useCallback((tool: string) => ASK_TOOL_LABEL[tool], []);
+
+  // The page's notes live in the bottom bar as "2 notes" (1.5). The calm header is up only while the plan itself is on screen.
+  const calmOn = !(loading && !plan) && !(error && !plan) && panel === 'none';
+  useLayoutEffect(() => { planChrome.setCalm(calmOn); return () => planChrome.setCalm(false); }, [calmOn]);
+  const noteSource = plan ?? null;
+  const notesNow: PlanNote[] = [
+    ...(noteSource?.note ? [{ text: noteSource.note }] : []),
+    ...(noteSource?.repeatsNote ? [{ text: noteSource.repeatsNote }] : []),
+    // The order line is a note only when it says something a person must act on: the Pro plan is not active.
+    ...(noteSource?.billingUrl ? [...P.orderLines(noteSource).map((text) => ({ text })), { text: 'The Pro plan is not active.', link: { label: 'Billing', run: () => openExternal(noteSource.billingUrl!) } }] : []),
+  ];
+  const notesKey = notesNow.map((n) => `${n.text}|${n.link?.label ?? ''}`).join('\n');
+  useEffect(() => { planChrome.setNotes(calmOn ? notesNow : []); }, [calmOn, notesKey]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading && !plan) {
     return <div className="sem-evidence-page plan-page" data-testid="plan-page">
@@ -786,9 +864,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-panel-back"
           onClick={() => setPanel('none')}>Back to the plan</button>
         <b data-testid="plan-panel-title">{panel === 'draft' ? 'The draft for this model' : 'Every pending change'}</b>
-        <span className="plan-muted">{panel === 'draft'
-          ? 'A draft is kept apart from the model. Nothing is added until you build it.'
-          : 'Nothing is written until you apply.'}</span>
+        {panel === 'draft' && <span className="plan-muted">A draft is kept apart from the model. Nothing is added until you build it.</span>}
       </div>
       {panel === 'draft'
         ? <Suspense fallback={<div className="model-home-state" role="status"><span className="sem-spin" /> <strong>Opening the draft…</strong></div>}>
@@ -800,9 +876,6 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
 
   const showPlan: P.Plan = plan ?? { items: [], history: [], tables: [] };
   const queue = showPlan.assistantQueue === 'paused' ? 'paused' : 'on';
-  const updated = P.updatedLine(showPlan.strip);
-  const order = P.orderLines(showPlan);
-  const grade = P.gradeLine(showPlan.strip);
   const sees = track === 'assistant' ? showPlan.assistantSees ?? null : null;
   // On the assistant's track, the offer is numbered as the fold line numbers it, and two rows say what the switch
   // means for them (mockup section 5).
@@ -822,8 +895,20 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     // While the press runs the plan on the page is the one read before it, so a row the engine reported done is Done here already.
     return st.step === 'done' && busy !== 'run' && w !== 'done' && w !== 'checking' ? null : st;
   };
+  /** The quiet press a row offers on its own: Run for Semanticus's, Ask your assistant for the assistant's, Open for yours. */
+  const pressFor = (item: P.PlanItem) => {
+    const kind = C.rowPressOf(item);
+    if (!kind) return null;
+    if (kind === 'run') return { kind, onPress: () => void runRow(item) };
+    if (kind === 'ask') return { kind, onPress: () => void askRow(item) };
+    return { kind, onPress: () => onGo(item.jump!.tool, jumpTarget(item.jump)) };
+  };
+  const askRow = async (item: P.PlanItem) => {
+    const r = await askAssistant(C.askRowRequest(item));
+    if (r.ok) { setActionError(null); setSentence(r.text); } else setActionError(r.text);
+  };
   const rowProps = (item: P.PlanItem, first = false, recent = false) => ({
-    item, items, busy, onAction, onDoer, onGo, labelOf, first,
+    item, items, busy, onAction, onDoer, onGo, labelOf, first, calm: true, press: pressFor(item),
     lead: offered.has(item.id) ? String(offered.get(item.id)) : null, meta: trackMeta(item),
     open: openId === item.id,
     step: stepFor(item),
@@ -843,7 +928,9 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
     {/* A workflow run is a row whose detail is the run itself (lane W2, R3; Plan-heart contract 11.3). */}
     {openId === item.id && item.id.startsWith('run/') && <div className="pw-detail pw-detail-own"><WorkflowRunDetail runId={item.id.slice('run/'.length)} onRunUpdate={onRunUpdate} /></div>}
     {openId === item.id && P.isDraftItem(item) && <ComposerDraft draftId={draftIdOf(item.id)} changeNonce={changeNonce} onGo={onGo} />}
+    {openId === item.id && P.jevReasonOf(item) && <JevReason item={item} />}
     {openId === item.id && !P.isDraftItem(item) && !item.id.startsWith('run/') && <PlanRowDetail item={item} busy={busy} labelOf={labelOf}
+      onDoer={onDoer} onOpenPage={(tool, target) => onGo(tool, target)}
       onHistory={(entry) => { setRowEntry(entry); setView('hist'); }}
       onNote={(row, text) => void control(`${row.id}:note`, 'setPlanTaskNote', row.id, text)}
       repeats={plan?.repeats} isPro={pro} showRepeat={repeatRow === item.id}
@@ -858,42 +945,54 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         onDecideAll={P.worksOutOnRow(item) ? (kept) => void decideAll(item.changeSet!, kept) : undefined} />
     </div>}
   </div>;
-  // The fold is open when asked, and while a row inside it is open (so a route to a row of yours shows the row).
-  const foldShown = foldOpen || (openId != null && work.onlyYou.some((r) => r.id === openId));
   // The engine says whether the receipt may offer Save (unsaved, and not a live model); an older engine says nothing, so the page's own view of the session decides.
-  const savable = receipt?.kind === 'ran' && typeof receipt.canSave === 'boolean' ? receipt.canSave : true;
+  const savable = slotShownReceipt?.kind === 'ran' && typeof slotShownReceipt.canSave === 'boolean' ? slotShownReceipt.canSave : true;
   // Saved another way (Ctrl+S, the close question): the host says nothing of the person's is unsaved, so the line says Saved and offers no button.
   const savedElsewhere = !!hostSession && (hostSession.hasUnsavedEdits ?? hostSession.hasUnsavedChanges) === false;
-  const shownReceipt = receipt && receipt.kind === 'ran' && savedElsewhere && !receipt.saved ? { ...receipt, saved: true } : receipt;
-  const receiptNode = shownReceipt && <RunReceipt receipt={shownReceipt} busy={!!busy} canSave={savable}
-    canUndo={shownReceipt.kind === 'ran' && !!shownReceipt.entryId && !(typeof plan?.revision === 'number' && typeof shownReceipt.revision === 'number' && plan.revision > shownReceipt.revision)}
-    onUndo={() => void undoPress()} onSave={savePress}
-    onHistory={() => { setRowEntry(shownReceipt.kind === 'ran' ? shownReceipt.entryId : null); setView('hist'); }} />;
-  const firstId = work.filtered ? work.rows[0]?.id : (work.next[0] ?? work.onlyYou[0])?.id;
+  const shownReceipt = slotShownReceipt && slotShownReceipt.kind === 'ran' && savedElsewhere && !slotShownReceipt.saved ? { ...slotShownReceipt, saved: true } : slotShownReceipt;
+  const canUndo = !!shownReceipt && shownReceipt.kind === 'ran' && !!shownReceipt.entryId
+    && !(typeof plan?.revision === 'number' && typeof shownReceipt.revision === 'number' && plan.revision > shownReceipt.revision);
+  const slotReceipt = shownReceipt ? (shownReceipt.kind === 'ran'
+    ? { kind: 'ran' as const, text: shownReceipt.line ?? `${P.ranWords(shownReceipt.rows)} ${P.changesWords(shownReceipt.changes)}` }
+    : { kind: 'said' as const, text: shownReceipt.text }) : null;
+  const receiptActions = shownReceipt && shownReceipt.kind === 'ran' && <span className="pc-done-acts" data-testid="plan-run-receipt">
+    {canUndo && <button type="button" className="pc-undo" data-testid="plan-run-undo" disabled={!!busy} onClick={() => void undoPress()}>Undo</button>}
+    {savable && !shownReceipt.saved && <button type="button" className="pc-undo" data-testid="plan-run-save" disabled={!!busy} onClick={savePress}>Save</button>}
+    {shownReceipt.saved && <span className="plan-muted" data-testid="plan-run-saved">{shownReceipt.savedText ?? 'Saved.'}</span>}
+  </span>;
+  const pressing = busy === 'run' ? C.pressWords(pressRows, liveSteps, items, quiet) : null;
+  const matchedCount = calmShown.length;
+  const filterChip = filterOn ? C.filterChip(filterText, goal, matchedCount, everyRow.length) : null;
+  const clearFilter = () => { setGoal('all'); setFilterText(''); };
+  const shownGroups: C.PlanGroup[] = groups;
 
-  return <div className="sem-evidence-page plan-page pw-page" data-testid="plan-page" data-pro={pro ? 'yes' : 'no'}
+  const renderGroup = (g: C.PlanGroup) => {
+    const holdsOpen = !!openId && g.rows.some((r) => r.id === openId);
+    const isFolded = folded.has(g.who) && !holdsOpen;
+    const all = expanded.has(g.who) || g.rows.length <= C.GROUP_CAP;
+    const rows = C.capRows(g.rows, all, openId);
+    const count = g.rows.length;
+    return <section key={g.who} className={`pc-group pw-who-${g.who}`} data-testid={`plan-group-${g.who}`} data-open={isFolded ? 'no' : 'yes'} aria-label={g.label}>
+      <button type="button" className="pc-ghead" aria-expanded={!isFolded} data-testid={`plan-group-toggle-${g.who}`}
+        onClick={() => setFolded((f) => toggleIn(f, g.who))}>
+        <Caret open={!isFolded} /><span className="pc-gname">{g.label}</span><span className="sem-num pc-gcount" data-testid={`plan-group-count-${g.who}`}>{count}</span>
+      </button>
+      {!isFolded && <div className="pw-list pc-rows" data-testid={g.who === 'semanticus' ? 'plan-list' : `plan-list-${g.who}`}>
+        {rows.map((r, i) => renderRow(r, i === 0 && g.who === shownGroups[0]?.who, justDone.has(r.id)))}
+        {!all && <div className="pw-more"><button type="button" className="plan-link" data-testid={`plan-show-all-${g.who}`}
+          onClick={() => setExpanded((e) => new Set([...e, g.who]))}>Show all {g.rows.length}</button></div>}
+      </div>}
+    </section>;
+  };
+
+  return <div className="sem-evidence-page plan-page pw-page pc-page" data-testid="plan-page" data-pro={pro ? 'yes' : 'no'}
     data-view={view} data-track={track ?? 'all'}>
-    <header className="pw-head">
-      <h1 className="sem-page-title">Plan</h1>
-      <span className="sem-seg" role="group" aria-label="Work or History">
-        <button type="button" className="sem-seg-item" aria-pressed={view === 'work'} data-testid="plan-view-work"
-          onClick={() => setView('work')}>Work</button>
-        <button type="button" className="sem-seg-item" aria-pressed={view === 'hist'} data-testid="plan-view-hist"
-          data-tour="history" onClick={() => setView('hist')}>History</button>
-      </span>
-      <span className="pw-switch" data-tour="queue-switch">
-        <span className="plan-muted">Assistant</span>
-        <span className="sem-seg" role="group" aria-label="Tasks for your assistant">
-          <button type="button" className="sem-seg-item" aria-pressed={queue === 'on'} data-testid="plan-queue-on"
-            disabled={!!busy} onClick={() => { if (queue !== 'on') void control('queue', 'setAssistantQueue', 'on'); }}>On</button>
-          <button type="button" className="sem-seg-item" aria-pressed={queue === 'paused'} data-testid="plan-queue-paused"
-            disabled={!!busy} onClick={() => { if (queue !== 'paused') void control('queue', 'setAssistantQueue', 'paused'); }}>Paused</button>
-        </span>
-        {/* Help at the Plan and the tour (lane U4). */}
-        <PlanHelpMark />
-      </span>
-      <RefreshPlanButton busy={busy} onRefresh={() => void refresh()} />
-    </header>
+    <PlanHead view={view} onView={setView} grade={grade} strip={plan?.strip}
+      slot={<LiveSlot press={pressing} receipt={slotReceipt} receiptActions={receiptActions} />}
+      drive={<DriveSwitch queue={queue} onQueue={(q) => void control('queue', 'setAssistantQueue', q)} />}
+      run={<RunArea calm plan={showPlan} grant={grant} running={busy === 'run'} held={pressRows} steps={liveSteps}
+        onRun={() => void runPlan()} onTell={tellAssistant} told={told} />} />
+    <ProPlanWatch inactive={!!showPlan.billingUrl} />
 
     {/* The tour draws over the page; the What changed card draws here, in flow (lane U4). */}
     <PlanGuide onView={(v) => setView(v === 'history' ? 'hist' : 'work')} />
@@ -920,34 +1019,6 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         <WordsKeptAfterBuild modelKey={draftModel()} why="retired" />
         {/* Words typed on a task that left the plan (the assistant removed it): named here with Discard, never held where nobody sees them (R-B). */}
         {plan && <PlanRowWordsKept items={items} />}
-        <PlanStrip plan={showPlan} track={track} onTrack={(t) => { setTrack(t); setShowAll(false); }} onLatest={() => setView('hist')} />
-
-        <div className="pw-facts" data-testid="plan-facts" data-tour="facts">
-          <span>{hostSession?.modelName || modelName || showPlan.modelName || 'This model'}</span>
-          <span>{sourceWords(hostSession)}</span>
-          {typeof hostSession?.tables === 'number' && <span><b className="sem-num">{hostSession.tables}</b> tables</span>}
-          {typeof hostSession?.measures === 'number' && <span><b className="sem-num">{hostSession.measures}</b> measures</span>}
-          {grade && <span>AI readiness <b>{grade.now}</b>{grade.after && <>, <b>{grade.after}</b> after the plan</>}</span>}
-          {hostSession && <span>{(hostSession.hasUnsavedEdits ?? hostSession.hasUnsavedChanges) ? 'Not saved yet' : 'Saved'}</span>}
-          {showPlan.repeatsNote && <span data-testid="plan-repeats-note">{showPlan.repeatsNote}</span>}
-          {order.map((line, i) => <span key={i} data-testid={i === 0 && showPlan.orderedBy ? 'plan-ordered-by' : 'plan-jev-pending'}>{line}</span>)}
-          {showPlan.billingUrl && <button type="button" className="plan-link" data-testid="plan-billing" onClick={() => openExternal(showPlan.billingUrl!)}>Billing</button>}
-          <ProPlanWatch inactive={!!showPlan.billingUrl} />
-          {updated && <span className="pw-facts-r" data-testid="plan-updated">{updated}</span>}
-        </div>
-        <RaiseLevelAction key={sessionId} level={compatibilityLevel} onRaised={() => setRetry((n) => n + 1)} />
-
-        <form className="pw-field" data-tour="field" onSubmit={(e) => e.preventDefault()}>
-          <textarea data-testid="plan-field" data-ask-carry="yes" className="pw-field-input" value={field} rows={1}
-            placeholder={P.FIELD_PLACEHOLDER} aria-label={P.FIELD_PLACEHOLDER} disabled={busy === 'field'}
-            onChange={(e) => setField(e.target.value)}
-            onKeyDown={(e) => { if (P.fieldAddsOn({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing })) { e.preventDefault(); void addTask(field); } }} />
-          <span className="plan-muted pw-field-hint" data-testid="plan-field-hint">{P.fieldHint(field)}</span>
-        </form>
-        {pro && field.trim() && suggestion && <div className="pw-suggest" data-testid="plan-field-suggest">
-          {/* The typed words go with the person: Open Ask your data lands on the question, not on an empty page. */}
-          <AskReply result={suggestion} onGo={onGo} asked={field} />
-        </div>}
 
         {actionError && <div className="plan-error" role="alert">{receipt?.kind === 'ran' ? '' : 'Nothing was changed. '}{actionError}</div>}
         {/* The toast floats over the page wherever the removed row was, so it is drawn into the Studio root, a layer
@@ -959,7 +1030,6 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
         </div>, (document.querySelector('.studio-root') as HTMLElement | null) ?? document.body)}
         {sentence && <div className="plan-said" role="status" data-testid="plan-said">{sentence}</div>}
         {builtNote && <div className="plan-said" role="status" data-testid="plan-built">{builtNote}</div>}
-        {showPlan.note && <div className="plan-line plan-muted" data-testid="plan-note">{showPlan.note}</div>}
 
         {/* The ways to start, whenever the model has no tables, even with a row open (verify, 28 Sep, H3: a task or a
             model-wide finding on a new model hid them). "From a SQL source" lands on the one SQL entry point of lane
@@ -967,11 +1037,28 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
             blank model opens the hub's create form. */}
         {!!showPlan.starts?.length && <PlanStarts starts={showPlan.starts}
           onStart={(s) => onGo(s.jump.tool, s.id === 'sql' ? 'start:sql' : s.id)} />}
+
+        {/* The one Filter (Kane, 12 Oct): quiet, and only on a long Plan. Typed words match the task and the objects it touches; the goal choice is inside it. */}
+        {!narrowed && showFilter && <div className="pc-listhead" data-testid="plan-listhead">
+          {filterChip && <span className="pc-chip" data-testid="plan-filter-chip">{filterChip}
+            <button type="button" className="pc-chip-x" aria-label="Clear the filter" data-testid="plan-filter-clear" onClick={clearFilter}>{'×'}</button></span>}
+          <button type="button" className="sem-btn sem-btn-sm pw-quiet" data-testid="plan-filter-toggle" aria-expanded={filterOpen}
+            onClick={() => setFilterOpen((o) => !o)}>Filter</button>
+        </div>}
+        {!narrowed && showFilter && filterOpen && <div className="pc-filter" data-testid="plan-filter">
+          <input type="text" className="sem-input pc-filter-input" data-testid="plan-filter-input" value={filterText} placeholder={C.FILTER_PLACEHOLDER}
+            aria-label={C.FILTER_PLACEHOLDER} autoFocus onChange={(e) => setFilterText(e.target.value)} />
+          <span className="sem-seg" role="group" aria-label="Goal">
+            {P.GOAL_ORDER.map((g) => <button key={g} type="button" className="sem-seg-item" aria-pressed={goal === g}
+              data-testid={`plan-goal-${g}`} onClick={() => setGoal(g)}>{P.GOAL_LABEL[g]}</button>)}
+          </span>
+        </div>}
+
         {/* The list is drawn while a row is open too: the last open row, finished by another writer while the person has it open, stays on screen with what they typed under it. */}
-        {items.filter(P.isOpenRow).length === 0 && !(openId && items.some((i) => i.id === openId)) && !receipt && justDone.size === 0
+        {everyRow.length === 0 && !(openId && items.some((i) => i.id === openId)) && !receipt && justDone.size === 0
           ? <>
-            {!showPlan.starts?.length && <div className="model-empty" data-testid="plan-empty"><strong>Nothing to do on the plan</strong>
-              <span>The plan is drawn from the model. Describe a task above, or open a model with tables in it and its tasks appear here.</span></div>}
+            {!showPlan.starts?.length && <div className="model-empty" data-testid="plan-empty"><strong>Nothing on the plan.</strong>
+              <span>The plan is drawn from the model. Add a task below, or open a model with tables in it and its tasks appear here.</span></div>}
             {/* An empty plan still has an object line: picking an object in the tree must always offer its actions. */}
             {!track && focusObject && <section className="pw-list" data-testid="plan-list">
               <div className="pw-grp"><span>Showing <b>{focusObject.label}</b></span>
@@ -981,7 +1068,7 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
                 onGo={(tool, target, addTables) => (onGoObject ?? ((t: string, g?: string) => onGo(t, g)))(tool, target, addTables)} onHistory={() => setView('hist')} />
             </section>}
           </>
-          : work.filtered
+          : narrowed
             ? <div className={sees !== null || track === 'assistant' ? 'pw-split' : undefined}>
               <section className="pw-list" data-testid="plan-list">
                 <div className="pw-grp">
@@ -995,7 +1082,6 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
                       onClick={() => { setTrack(null); onClearObject?.(); }}>Clear filter</button>
                   </span>
                 </div>
-                {receiptNode}
                 {!track && focusObject && <ObjectActions sessionId={sessionId} objectRef={focusObject.ref}
                   onGo={(tool, target, addTables) => (onGoObject ?? ((t: string, g?: string) => onGo(t, g)))(tool, target, addTables)} onHistory={() => setView('hist')} />}
                 {work.rows.length === 0
@@ -1015,89 +1101,36 @@ export function PlanView({ sessionId, revision, changeNonce, modelName, hostSess
                 <ul className="pw-sees-notes">
                   <li><DoerNote doer="assistant" />It sees tasks on its next call. Nothing wakes it.</li>
                   <li><DoerNote doer="you" />Direct work with your assistant carries on either way.</li>
-                  <li><DoerNote doer="semanticus" />The switch is only for your assistant.</li>
+                  <li><DoerNote doer="semanticus" />I drive pauses your assistant's tasks.</li>
                 </ul>
               </aside>}
             </div>
-            : <section className="pw-list" data-testid="plan-list" data-primary ref={listRef}>
-              <div className="pw-grp">
-                <span><b>Next</b><span className="pw-grp-n sem-num">{work.nextTotal}</span></span>
-                <span className="pw-grp-r">
-                  <RunArea plan={showPlan} grant={grant} running={busy === 'run'} held={pressRows} steps={liveSteps}
-                    onRun={() => void runPlan()} onTell={tellAssistant} told={told} />
-                  <span className="sem-seg" role="group" aria-label="Goal">
-                    {P.GOAL_ORDER.map((g) => <button key={g} type="button" className="sem-seg-item" aria-pressed={goal === g}
-                      data-testid={`plan-goal-${g}`} onClick={() => { setGoal(g); setShowAll(false); }}>{P.GOAL_LABEL[g]}</button>)}
-                  </span>
-                </span>
-              </div>
-              {receiptNode}
-              {/* Rows that turned done while the page was open stay here until the next press or a reload. */}
-              {work.justDone.length > 0 && <div data-testid="plan-just-done">
-                <div className="pw-grp"><span><b>Done just now</b><span className="pw-grp-n sem-num">{work.justDone.length}</span></span>
-                  <span className="pw-grp-r plan-muted" data-testid="plan-just-done-note">{P.justDoneNote(work.justDone, showPlan)}</span></div>
-                {work.justDone.map((r) => renderRow(r, false, true))}
-              </div>}
-              {work.next.length === 0
-                ? <div className="plan-muted pw-none">Nothing else is open{goal === 'all' ? '' : ' for this goal'}.</div>
-                : work.next.map((r) => renderRow(r, r.id === firstId))}
-              {work.nextTotal > work.next.length && <div className="pw-more">
-                <button type="button" className="plan-link" data-testid="plan-show-all" data-primary-more onClick={() => setShowAll(true)}>
-                  Show all {work.nextTotal}</button></div>}
-              {/* The rows only a person can do sit last, dimmed, in a closed fold. They never hold up the rest. */}
-              {work.onlyYou.length > 0 && <div className="pw-fold" data-testid="plan-only-you" data-open={foldShown ? 'yes' : 'no'}>
-                <div className="pw-fold-h">
-                  <button type="button" className="pw-fold-btn" aria-expanded={foldShown} data-testid="plan-only-you-toggle" onClick={() => setFoldOpen((o) => !o)}>
-                    <Caret open={foldShown} />
-                    <span><b className="sem-num">{work.onlyYou.length}</b> {P.onlyYouWords(work.onlyYou)}</span>
-                    {work.onlyYou.some((r) => P.stateWordOf(r) === 'needs_you') && <span className="pw-fold-warn" data-testid="plan-only-you-warn" role="img" aria-label="One has a question for you" />}
-                  </button>
-                  <span className="plan-muted pw-fold-hint">Open {work.onlyYou.length === 1 ? 'it' : 'one'} to see what to choose.</span>
-                </div>
-                {foldShown && work.onlyYou.map((r) => renderRow(r))}
-              </div>}
-            </section>}
+            : <div className="pc-groups" data-testid="plan-groups">
+              {shownGroups.length === 0
+                ? <div className="plan-muted pw-none" data-testid="plan-filter-none">Nothing matches. <button type="button" className="plan-link" onClick={clearFilter}>Clear the filter</button></div>
+                : shownGroups.map(renderGroup)}
+            </div>}
+
+        {/* Add a task: the last row of the page. Enter adds it; it starts with your assistant (Kane, 24 Sep). Refresh plan is the quiet word at its end. */}
+        <form className="pw-field pc-add" data-tour="field" onSubmit={(e) => e.preventDefault()}>
+          <span className="pc-add-plus" aria-hidden="true">+</span>
+          <textarea data-testid="plan-field" data-ask-carry="yes" className="pw-field-input" value={field} rows={1}
+            placeholder={P.FIELD_PLACEHOLDER} aria-label={P.FIELD_PLACEHOLDER} disabled={busy === 'field'}
+            onChange={(e) => setField(e.target.value)}
+            onKeyDown={(e) => { if (P.fieldAddsOn({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing })) { e.preventDefault(); void addTask(field); } }} />
+          {/* The hint shows only while words are typed: it carries the one thing worth knowing (a long paste is kept whole). */}
+          {field.trim() && <span className="plan-muted pw-field-hint" data-testid="plan-field-hint">{P.fieldHint(field)}</span>}
+          <RefreshPlanButton busy={busy} onRefresh={() => void refresh()} />
+        </form>
+        {pro && field.trim() && suggestion && <div className="pw-suggest" data-testid="plan-field-suggest">
+          {/* The typed words go with the person: Open Ask your data lands on the question, not on an empty page. */}
+          <AskReply result={suggestion} onGo={onGo} asked={field} />
+        </div>}
       </>}
   </div>;
 }
 
 // ---- moved from the Overview (contract 11.1, lane R1) ----------------------------------------------------
-
-/** What a compatibility level actually blocks, named one capability at a time. A level below a floor is not "held
- *  back": the classic date table works below 1701, and the one thing refused is authoring a calendar. A list, so the
- *  next floor that matters is a second row and cannot widen the first sentence. */
-const LEVEL_BLOCKS: { capability: string; floor: number }[] = [
-  { capability: 'Custom calendars for time calculations', floor: 1701 },
-];
-/** The first capability this level actually blocks, or null. Unknown is "not known to be blocking". */
-export function blockedCapability(level?: number): { capability: string; floor: number } | null {
-  if (typeof level !== 'number' || level <= 0) return null;
-  return LEVEL_BLOCKS.find((entry) => level < entry.floor) ?? null;
-}
-
-/** Raise compatibility level, under the facts line. Shown only while the level blocks a NAMED capability. Free, and
- *  here because its only other control sits inside Advanced modelling. Keyed by session at the call site, because
- *  `done` is about the model that was raised. */
-export function RaiseLevelAction({ level, onRaised }: { level?: number; onRaised: () => void }) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
-  const blocked = blockedCapability(level);
-  if (!blocked || done) return null;
-  const raise = async () => {
-    setBusy(true); setError(null);
-    try { await rpc('setCompatibilityLevel', blocked.floor); setDone(true); onRaised(); }
-    catch (raiseError) { setError(messageOf(raiseError)); }
-    finally { setBusy(false); }
-  };
-  return <div className="pw-raise" data-testid="plan-raise">
-    {/* Names the ONE thing that is actually refused. Everything else at this level keeps working. */}
-    <span>This model uses compatibility level {level} (the Power BI feature level). {blocked.capability} need level {blocked.floor} or higher.</span>
-    <button type="button" className="sem-btn sem-btn-sm" data-testid="plan-raise-level" disabled={busy}
-      onClick={() => void raise()}>{busy ? 'Raising…' : 'Raise compatibility level'}</button>
-    {error && <span className="plan-error" role="alert">The level was not changed. {error}</span>}
-  </div>;
-}
 
 /** The picked object's kind, as a word a person uses. */
 const OBJECT_KIND_WORD: Record<string, string> = {
@@ -1147,14 +1180,6 @@ function DoerNote({ doer }: { doer: P.PlanDoer }) {
     {doer === 'you' && <circle cx="6" cy="6" r="4.3" fill="currentColor" />}
     {doer === 'assistant' && <path d="M6 1L11 6 6 11 1 6z" fill="currentColor" />}
   </svg>;
-}
-
-/** Where the model is: an open Power BI Desktop, a workspace, or a file. Said from the session, never guessed. */
-function sourceWords(session: { source?: string; liveKind?: string; liveBound?: boolean } | null | undefined): string {
-  if (!session) return 'Model';
-  if (session.liveKind === 'local') return 'Power BI Desktop';
-  if (session.liveBound || session.liveKind === 'xmla') return 'Workspace model';
-  return session.source ? 'Model files' : 'Model';
 }
 
 // ---- the review list, kept from the Fix milestone: keep or drop each line of a change set ------------

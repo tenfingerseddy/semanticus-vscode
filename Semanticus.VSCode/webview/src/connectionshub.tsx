@@ -498,7 +498,10 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
   const shown = open || standalone;
   // One way to move between the page and its few full views; the old section names land through routeSection.
   const setView = (v: MainView) => { setViewState(v); setMenuId(null); setJobPick(null); if (v !== 'open') setPanel('none'); };
-  const goTo = (section: string) => { const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
+  // True only when a button opened the workspace picker; a deep link (goTo) leaves it false, so that first list read stays automatic.
+  const pickerPressed = useRef(false);
+  const openPicker = () => { pickerPressed.current = true; setView('workspace'); };
+  const goTo = (section: string) => { pickerPressed.current = false; const r = routeSection(section); setViewState(r.view); setPanel(r.panel); setMenuId(null); setJobPick(null); };
   // Focus the search when the hub opens on the list (the tree "Open Model" lands here with search ready), once.
   const searchWanted = useRef(true);
   // A monotonically-bumped token for host "open" requests that arrive while the hub is ALREADY shown (the focus effect
@@ -1235,7 +1238,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
             <span className="min-w-0 flex-1"><b className="block truncate">{p.username}</b>
               <span className="sem-text-meta block truncate">{[p.tenantId || 'tenant unknown', methodLabel(p.family)].join(' · ')}</span></span>
             {!p.signedIn
-              ? <button className={BTN_QUIET} data-testid="hub-profile-resignin" disabled={busy} onClick={() => { const m = records.find((rec) => rec.kind === 'xmla' && profilesFor(rec).some((pp) => pp.id === p.id)); if (m) openAccountChoice(m); else setView('workspace'); }}>Sign in</button>
+              ? <button className={BTN_QUIET} data-testid="hub-profile-resignin" disabled={busy} onClick={() => { const m = records.find((rec) => rec.kind === 'xmla' && profilesFor(rec).some((pp) => pp.id === p.id)); if (m) openAccountChoice(m); else openPicker(); }}>Sign in</button>
               : p.isDefault ? <span className="sem-chip sem-chip-dot">Default</span>
               : <button className={BTN_QUIET} data-testid="hub-profile-make-default" disabled={busy} onClick={() => setPendingDefault(p)}>Make default</button>}
           </div>
@@ -1243,7 +1246,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         {defaultConfirm}
         <div className="hub-pop-rule" />
         {switchable && <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-switch-account" disabled={busy} onClick={() => openAccountChoice(switchable)}>Use another account for {nameOf(switchable)}</button>}
-        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else setView('workspace'); }}>Sign in another account</button>
+        <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-sign-in-another-top" disabled={busy} onClick={() => { if (switchable) signInAnother(switchable); else openPicker(); }}>Sign in another account</button>
         <button className={`${BTN_QUIET} hub-pop-link`} data-testid="hub-other-sign-in" onClick={() => openAddView()}>Other ways to sign in</button>
         <div className="hub-pop-item"><button className={BTN_QUIET} onClick={() => viewHistoryFor(null)}>History</button></div>
       </div>
@@ -1370,7 +1373,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
         <div className="hub-adds">
           <button className={records.length === 0 ? BTN_PRIMARY : BTN} data-testid="hub-add-file" onClick={() => openLocalModel()}>Open file or folder</button>
           <button className={BTN} data-testid="hub-add-desktop" onClick={() => { setError(null); setView('desktop'); }}>Power BI Desktop</button>
-          <button className={BTN} data-testid="hub-add-workspace" onClick={() => { setError(null); setView('workspace'); }}>Workspace model</button>
+          <button className={BTN} data-testid="hub-add-workspace" onClick={() => { setError(null); openPicker(); }}>Workspace model</button>
           <button className={BTN_QUIET} data-testid="hub-add-blank" onClick={() => openCreate()}>New blank model</button>
           <button className={BTN_QUIET} data-testid="hub-add-sql" onClick={() => openStartFromSql()}>From a SQL source</button>
           {records.length >= SEARCH_FROM && <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} type="search" placeholder="Search models" aria-label="Search models" className="sem-field ml-auto hub-search" />}
@@ -1639,7 +1642,7 @@ export function ConnectionsHub({ open, onClose, standalone = false, initialView 
           {view === 'add' && AddView()}
           {view === 'work' && WorkView()}
           {view === 'desktop' && <DesktopPicker onBack={() => setView('open')} onUseForTests={useDesktopForTests} onOpen={openDesktop} />}
-          {view === 'workspace' && <WorkspacePicker account={signedInAccount} onBack={() => setView('open')}
+          {view === 'workspace' && <WorkspacePicker account={signedInAccount} pressedFirst={pickerPressed.current} onBack={() => setView('open')}
             onPasteAddress={() => openAddView()} onConnect={connectPicked} />}
       </div>
       {error && !switchTarget && <div className="hub-error" role="alert">{error}</div>}

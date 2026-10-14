@@ -27,7 +27,7 @@ const ts = req('typescript');
 
 const cache = new Map();
 function load(file) {
-  const full = /\.(ts|tsx)$/.test(file) ? file : existsSync(file + '.ts') ? file + '.ts' : file + '.tsx';
+  const full = /\.(ts|tsx|mjs|js)$/.test(file) ? file : existsSync(file + '.ts') ? file + '.ts' : file + '.tsx';
   if (cache.has(full)) return cache.get(full);
   const js = ts.transpileModule(readFileSync(full, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }, fileName: full,
@@ -54,6 +54,7 @@ function makeClock() {
     setTimer(fn, ms) { const id = ++seq; timers.set(id, { at: now + ms, fn }); return id; },
     clearTimer(id) { timers.delete(id); },
     live: () => timers.size,
+    elapsed: () => now,
     advance(ms) {
       const end = now + ms;
       for (;;) {
@@ -582,6 +583,7 @@ check('the Free Pro note renders the existing upgrade action, and a completed Pr
     './notes-runtime': { useNotesWire() {}, useNotes: () => ({ current, phase: 'waiting', more: 0, waiting: 1, log: [], unread: new Set(), listOpen: false }), notesStore: {} },
     './what-i-did': { WhatIDid: () => null }, './suggest': { Suggest: () => null }, './studio-notes.css': {},
     '../pro': { upgradeToPro: () => upgrades++ },
+    '../personality/message-line': { MessageLine: () => null },
   })('studio/note-strip');
   const tree = loaded.NoteStrip();
   const html = renderToStaticMarkup(tree);
@@ -598,6 +600,36 @@ check('the Free Pro note renders the existing upgrade action, and a completed Pr
   assert.doesNotMatch(renderToStaticMarkup(React.createElement(loaded.NoteStrip)), /note-upgrade/);
 });
 
+check('a note about the person\'s own press wears the person\'s colour and has no "To do this yourself" line (h17 P15)', () => {
+  const { renderToStaticMarkup } = req('react-dom/server');
+  const draw = (current) => renderToStaticMarkup(makeLoader({
+    './notes-runtime': { useNotesWire() {}, useNotes: () => ({ current, phase: 'waiting', more: 0, waiting: 1, log: [], unread: new Set(), listOpen: false }), notesStore: {} },
+    './what-i-did': { WhatIDid: () => null }, './suggest': { Suggest: () => null }, './studio-notes.css': {},
+    '../pro': { upgradeToPro: () => undefined }, '../personality/message-line': { MessageLine: () => null },
+  })('studio/note-strip').NoteStrip());
+  const mine = draw({ ...note('Pro applied 12 safe fixes in one step. One undo takes them back.', { proStep: true }), by: 'person', how: 'Open the Plan and press Run the plan.' });
+  assert.match(mine, /data-by="person"/);
+  assert.doesNotMatch(mine, /To do this yourself/);
+  const theirs = draw({ ...note('Your assistant is writing descriptions.', { auto: true }), how: 'Open the Plan.' });
+  assert.doesNotMatch(theirs, /data-by="person"/);
+  assert.match(theirs, /To do this yourself: Open the Plan\./);
+});
+
+check('What I did opens as one calm line, the newest step, and the list is one press away (copy21)', () => {
+  const { renderToStaticMarkup } = req('react-dom/server');
+  const React = req('react');
+  const { WhatIDid } = makeLoader({ './studio-notes.css': {} })('studio/what-i-did');
+  const log = [note('Your assistant is checking the model.'), note('Your assistant pressed Save.'), note('AI readiness is now A 91.')];
+  const html = renderToStaticMarkup(React.createElement(WhatIDid, { log, unread: new Set(), onShow: () => undefined, onClose: () => undefined }));
+  assert.match(html, /data-testid="what-i-did-latest"/);
+  assert.match(html, /AI readiness is now A 91\./);
+  assert.doesNotMatch(html, /Your assistant pressed Save/, 'older steps wait behind Show all');
+  assert.doesNotMatch(html, /data-testid="what-i-did-line"/);
+  assert.match(html, /data-testid="what-i-did-all"[^>]*>Show all 3</);
+  const src = readFileSync(join(studio, 'what-i-did.tsx'), 'utf8');
+  assert.match(src, /useState\(false\)/, 'the list starts closed');
+});
+
 check('the shipped copy has no em dash and no "one click"', () => {
   for (const name of readdirSync(studio).filter((f) => /^(notes-|note-strip|what-i-did|suggest|types|studio-notes)/.test(f))) {
     const text = readFileSync(join(studio, name), 'utf8');
@@ -605,6 +637,74 @@ check('the shipped copy has no em dash and no "one click"', () => {
     assert.ok(!/one[- ]click/i.test(text), `${name} says "one click"`);
   }
 });
+
+// ---- drive follow (Kane, 13 Oct): the screen follows the tool to its home, calmly ----------------------------------------
+
+{
+  const placeMap = JSON.parse(readFileSync(join(studio, 'places.json'), 'utf8'));
+  const navs = [];
+  const loadNav = makeLoader({
+    '../bridge': { dispatchNavigate: (m) => navs.push(m), revealInTree: () => undefined },
+    './places.json': placeMap,
+  });
+  const nav = loadNav('studio/notes-nav');
+  const route = loadNav('route');
+  const sayOf = (tool) => placeMap.toolSays[tool].say;
+  const placeOfTool = (tool) => placeMap.places.find((p) => (p.tools ?? []).includes(tool));
+  const autoNote = (tool) => note(sayOf(tool), { auto: true, place: placeOfTool(tool).id });
+
+  /** One scripted assistant: the engine makes a note for each call (engine tests prove that), the Studio's real queue plays them and the real router moves. */
+  function drive(calls, gapMs, mode = 'claudeDrives', state = 'idle') {
+    navs.length = 0;
+    const clock = makeClock(); const driver = makeDriver(mode, state); const seen = [];
+    const store = S.createNotesStore({
+      driver, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+      moveTo: (n) => { const before = navs.length; nav.moveScreenTo(n); seen.push({ at: clock.elapsed(), place: n.place, say: n.say, tab: navs.slice(before).map((m) => m.tab)[0] }); },
+    });
+    for (const tool of calls) { store.push(autoNote(tool)); clock.advance(gapMs); }
+    clock.advance(10_000);
+    return { seen, store };
+  }
+
+  check('drive follow: readiness, then best practice, then the plan: the page and the sub-view follow each call, in order', () => {
+    const { seen } = drive(['ai_readiness_scan', 'bpa_scan', 'get_model_plan'], 1000);
+    assert.deepEqual(seen.map((m) => m.tab), ['readiness', 'bpa', 'plan']);
+    for (const m of seen.slice(0, 2)) assert.equal(route.DESTINATION_OF_TOOL[route.landingOf(m.tab).tool], 'review', 'both scans are on the Review page');
+    assert.match(seen[0].say, /ready the model is for AI/);
+    assert.match(seen[1].say, /best practice/, 'the words on the strip are the words for the view on screen');
+  });
+
+  check('drive follow: no screen waits behind the last one longer than the dwell, however long its sentence takes to read', () => {
+    const { seen } = drive(['ai_readiness_scan', 'bpa_scan', 'get_model_plan'], 500);
+    assert.equal(seen.length, 3);
+    for (let i = 1; i < seen.length; i++) {
+      assert.ok(seen[i].at - seen[i - 1].at <= S.MOVE_DWELL_MS, `move ${i} came ${seen[i].at - seen[i - 1].at} ms after the one before (dwell ${S.MOVE_DWELL_MS})`);
+      assert.ok(seen[i].at - seen[i - 1].at >= S.MOVE_DWELL_MS, `the page before stayed at least the dwell, so nothing flickers`);
+    }
+  });
+
+  check('drive follow: one move per call, and never a bounce back: readiness, best practice, a fix on the same page, readiness shows three pages in that order', () => {
+    const { seen } = drive(['ai_readiness_scan', 'bpa_scan', 'apply_fix', 'ai_readiness_scan'], 400);
+    const pages = seen.map((m) => m.tab).filter((tab, i, all) => tab !== all[i - 1]);
+    assert.deepEqual(pages, ['readiness', 'bpa', 'readiness'], 'a fix on the page already showing changes nothing on screen, and nothing bounces back');
+  });
+
+  check('drive follow: I drive still wins, and a person who took the wheel keeps it', () => {
+    for (const [mode, state] of [['iDrive', 'idle'], ['claudeDrives', 'personHasWheel']]) {
+      const { seen, store } = drive(['ai_readiness_scan', 'bpa_scan'], 1000, mode, state);
+      assert.deepEqual(seen, [], `${mode}/${state}: the screen never moved`);
+      assert.ok(store.getSnapshot().log.length === 2 || store.getSnapshot().unread.size >= 0);
+    }
+  });
+
+  check('drive follow: a note on the same page does not cut the read short', () => {
+    const t = setup();
+    const a = note(words(60)); const b = note(words(60));   // both on the plan, 4800 ms to read
+    t.store.push(a); t.store.push(b);
+    t.clock.advance(S.MOVE_DWELL_MS + 100);
+    assert.deepEqual(t.moved, [a.id], 'the dwell only shortens a wait for a DIFFERENT page');
+  });
+}
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log('studio notes: all checks passed');

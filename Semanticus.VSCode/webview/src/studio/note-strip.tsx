@@ -7,6 +7,7 @@ import { WhatIDid } from './what-i-did';
 import { Suggest } from './suggest';
 import './studio-notes.css';
 import { upgradeToPro } from '../pro';
+import { MessageLine } from '../personality/message-line';
 
 export function NoteStrip() {
   useNotesWire();
@@ -15,11 +16,12 @@ export function NoteStrip() {
   const showLog = (id: string) => notesStore.showMe(id);
   return (
     <div className="sn" data-studio-note-strip data-testid="note-strip">
+      <MessageLine blocked={!!current || !!suggestion || listOpen} />
       {current ? (
-        <div className="sn-note" data-phase={phase ?? undefined} role="status" aria-live="polite">
+        <div className="sn-note" data-phase={phase ?? undefined} data-by={current.by === 'person' ? 'person' : undefined} role="status" aria-live="polite">
           <div>
             <p className="sn-say" data-testid="note-say">{current.say}</p>
-            {current.how ? <p className="sn-how" data-testid="note-how">To do this yourself: {current.how}</p> : null}
+            {current.how && current.by !== 'person' ? <p className="sn-how" data-testid="note-how">To do this yourself: {current.how}</p> : null}
           </div>
           <div className="sn-actions">
             {current.upgrade && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="note-upgrade" onClick={upgradeToPro}>Unlock Pro</button>}

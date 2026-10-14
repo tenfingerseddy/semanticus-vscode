@@ -44,6 +44,51 @@ namespace Semanticus.Tests
         public int SaveChangesCount { get; private set; }
         public int ScriptedChanges { get; private set; }
 
+        /// <summary>Bumped by every change made under a preview. The held-connection double compares it to the one it read.</summary>
+        public long Version { get; private set; }
+        /// <summary>How many times the whole live model was read (a connect plus a full read).</summary>
+        public int FullReads { get; private set; }
+        /// <summary>How many times the cheap "has it changed" question was asked.</summary>
+        public int VersionChecks { get; private set; }
+        /// <summary>When the sign-in token of the next connection stops working. MaxValue = never (a local instance).</summary>
+        public DateTimeOffset TokenExpires { get; set; } = DateTimeOffset.MaxValue;
+        /// <summary>How many connections were closed.</summary>
+        public int Closed => System.Threading.Volatile.Read(ref _closed);
+        private int _closed;
+
+        /// <summary>Like <see cref="Attach"/>, but the publish goes through a held connection the way production does: one full read
+        /// per open, one cheap check per reuse. The older sync hook stays off so the held path is the one exercised.</summary>
+        public void AttachHeld(LocalEngine engine)
+        {
+            Attach(engine);
+            engine.DeployLiveSyncHook = null;
+            engine.LiveOpenHook = (endpoint, database, timer) => new Handle(this, timer);
+        }
+
+        private sealed class Handle : LiveHandle
+        {
+            private readonly RecordedLiveTarget _t;
+            private readonly long _version;
+            public Handle(RecordedLiveTarget t, DeployTimer timer)
+            {
+                _t = t; ExpiresOn = t.TokenExpires;
+                timer.Begin("connect", "Connecting to the service");
+                timer.Begin("read", "Reading the live model");
+                t.FullReads++;
+                _version = t.Version;
+                timer.End();
+            }
+            public override bool IsCurrent() { _t.VersionChecks++; return _version == _t.Version; }
+            public override DeployReport Sync(string bim, string endpoint, string database, bool commit, IReadOnlyCollection<LiveDeleteTarget> targets,
+                bool identityStrict, bool capture, IReadOnlyCollection<string> deleteRefs, DeployTimer timer)
+            {
+                timer.Begin("compare", "Comparing with your copy");
+                try { return _t.Receive(bim, commit, deleteRefs: deleteRefs, beforeSend: n => timer.Begin("send", "Sending " + n + " changes")); }
+                finally { timer.End(); }
+            }
+            public override void Dispose() => System.Threading.Interlocked.Increment(ref _t._closed);
+        }
+
         /// <summary>Five-table star used by later live-write cards: Date, Product, Customer, Store, Sales.</summary>
         public static RecordedLiveTarget FiveTable() => new RecordedLiveTarget(BuildStar(contosoDerived: false));
 
@@ -70,6 +115,7 @@ namespace Semanticus.Tests
             if (mutate == null) throw new ArgumentNullException(nameof(mutate));
             mutate(Live.Model);
             ScriptedChanges++;
+            Version++;
         }
 
         /// <summary>Refs that differ between an earlier snapshot and the live model now. Empty means no drift.</summary>
@@ -91,12 +137,12 @@ namespace Semanticus.Tests
             return DriftSince(_previewSnapshot);
         }
 
-        public DeployReport Receive(string sessionBimPath, bool commit, IReadOnlyCollection<LiveDeleteTarget> deletes = null, IReadOnlyCollection<string> deleteRefs = null)
+        public DeployReport Receive(string sessionBimPath, bool commit, IReadOnlyCollection<LiveDeleteTarget> deletes = null, IReadOnlyCollection<string> deleteRefs = null, Action<int> beforeSend = null)
         {
             if (sessionBimPath == null) throw new ArgumentNullException(nameof(sessionBimPath));
             var bim = File.ReadAllText(sessionBimPath);
             var src = TOM.JsonSerializer.DeserializeDatabase(bim, null, AS.CompatibilityMode.PowerBI).Model;
-            return ReceiveCore(src, bim, commit, deletes, deleteRefs);
+            return ReceiveCore(src, bim, commit, deletes, deleteRefs, beforeSend);
         }
 
         public DeployReport Receive(TOM.Database session, bool commit, IReadOnlyCollection<LiveDeleteTarget> deletes = null, IReadOnlyCollection<string> deleteRefs = null)
@@ -117,13 +163,13 @@ namespace Semanticus.Tests
             engine.DeployLiveSyncHook = (bim, endpoint, database, commit, dels) => Receive(bim, commit, deleteRefs: dels);
         }
 
-        private DeployReport ReceiveCore(TOM.Model src, string bim, bool commit, IReadOnlyCollection<LiveDeleteTarget> deletes, IReadOnlyCollection<string> deleteRefs = null)
+        private DeployReport ReceiveCore(TOM.Model src, string bim, bool commit, IReadOnlyCollection<LiveDeleteTarget> deletes, IReadOnlyCollection<string> deleteRefs = null, Action<int> beforeSend = null)
         {
             if (!commit) _previewSnapshot = Clone(Live);
             var saved = false;
             var rep = LiveDeploy.SyncAndApply(src, Live.Model, commit, Endpoint, DatabaseName, deletes,
                 saveChanges: () => { saved = true; SaveChangesCount++; },
-                recalcCalcTables: _ => { }, identityStrict: false, explicitDeleteRefs: deleteRefs);
+                recalcCalcTables: _ => { }, identityStrict: false, explicitDeleteRefs: deleteRefs, beforeSend: beforeSend);
             _calls.Add(new RecordedLiveCall
             {
                 Commit = commit,

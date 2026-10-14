@@ -157,6 +157,17 @@ check('8. the grades after the build are letters, and a provisional one says so'
   const real = JSON.parse(JSON.stringify(startPlanRealShape({})));
   assert.equal(M.gradeOf(real, { pro: false }).after, 'B', 'the engine shape: the letter from afterBuildGrade');
   assert.equal(M.gradeOf(real, { pro: false }).now, null, 'and nothing made up for now');
+  // D7: a plan whose build was undone says the model has no grade now, beside the forecast, so the person sees the grade fall.
+  assert.equal(M.gradeOf(real, { pro: false }).undone, false, 'a plan never built is not undone');
+  const undone = JSON.parse(JSON.stringify(startPlanRealShape({})));
+  undone.grades = { ...undone.grades, nowUndone: true };
+  assert.equal(M.gradeOf(undone, { pro: false }).undone, true, 'built, then undone');
+  const undoneText = readable(render(undone));
+  assert.match(undoneText, /No tables now/, 'the card says there is no grade now');
+  assert.match(undoneText, /The build is undone, so the model has nothing to grade/, 'and why');
+  assert.match(undoneText, /after the build/, 'the forecast stays, named as a forecast');
+  undone.built = true;
+  assert.equal(M.gradeOf(undone, { pro: false }).undone, false, 'redone: the plan is built again and the card reads as built');
 });
 
 // ---- 9. a held line is marked, and not counted as a change that will be built; Built is its own state ----------------------

@@ -12,6 +12,7 @@
 // THE SENTENCE. One line, the same on both doors: "2 new tasks, 3 done tasks cleared." or "Nothing new."
 
 using System;
+using System.Threading;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -37,7 +38,10 @@ namespace Semanticus.Engine
         public async Task<PlanRefreshResult> RefreshPlanAsync()
         {
             var bound = BindPlanMemory();
+            // A Jev job that stopped on a refusal looks again now (the next compose starts it); the person never has to wait for a later change.
+            RetryStoppedJevOnNextRead();
             var before = await ComposeAsync(null, bound).ConfigureAwait(false);
+            Interlocked.Exchange(ref _jevRetryNow, 0);   // read once by that compose; a later plain read is not a Refresh
             var openBefore = new HashSet<string>(before.Items.Where(IsOpenRow).Select(i => i.Id), StringComparer.Ordinal);
 
             // The kept scans go, so the next compose reads AI readiness and Model quality again.
@@ -49,16 +53,7 @@ namespace Semanticus.Engine
             var added = fresh.Items.Where(i => IsOpenRow(i) && !openBefore.Contains(i.Id)).ToList();
             var memory = PlanMemory.Read(bound.File, bound.Identity);
             var undone = await UndoneAppliesAsync(bound.Session, memory).ConfigureAwait(false);
-            // The Studio keeps vanished completed tasks visible during this session. Earlier sessions have no such rows.
-            // NewestByCause includes the model's older history, so also check the entry's session before counting it.
-            var currentApplies = _sessions.Ledger.NewestByCause(bound.Session.Id, ChangeCauseKinds.PlanItem)
-                .Where(p => !p.Value.TakenBack && string.Equals(_sessions.Ledger.Find(p.Value.EntryId)?.SessionId,
-                    bound.Session.Id, StringComparison.Ordinal))
-                .Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
-            var missing = memory.Changes.Where(p => p.Value?.State == ModelPlanChangeStates.Applied
-                && currentApplies.Contains(p.Key)
-                && !fresh.Items.Any(i => i.Id == p.Key) && !memory.ClearedDone.Contains(p.Key)
-                && !undone.Contains(p.Key)).Select(p => p.Key);
+            var missing = VanishedApplies(bound.Session, memory, fresh.Items.Select(i => i.Id).ToHashSet(StringComparer.Ordinal), undone);
             var done = fresh.Items.Where(IsDoneRow).Select(i => i.Id).Concat(missing).Distinct(StringComparer.Ordinal).ToList();
             var titles = fresh.Items.Where(IsDoneRow).Select(i => i.Title)
                 .Concat(memory.History.Where(h => done.Contains(h.ItemId)).Select(h => h.Title))
@@ -90,6 +85,32 @@ namespace Semanticus.Engine
             {
                 Added = added.Count, AddedIds = added.Select(i => i.Id).ToArray(), Cleared = done.Count, Sentence = sentence, Plan = plan,
             };
+        }
+
+        /// <summary>Applied tasks of THIS session that left the live plan (their gap closed) and were not cleared yet. The Studio keeps them visible
+        /// during the session; earlier sessions have no such rows. NewestByCause includes the model's older history, so the entry's session is
+        /// checked too. Refresh plan clears them, and the strip counts them from the moment they leave (hero run 21, N9: Plan done went from 20% to 70%
+        /// on Refresh plan with no work, because the strip only counted them once Refresh had written them down).</summary>
+        private IEnumerable<string> VanishedApplies(Session s, PlanMemoryState memory, ISet<string> listed, ISet<string> undone)
+        {
+            if (s == null || memory?.Changes == null) return Array.Empty<string>();
+            var currentApplies = _sessions.Ledger.NewestByCause(s.Id, ChangeCauseKinds.PlanItem)
+                .Where(p => !p.Value.TakenBack && string.Equals(_sessions.Ledger.Find(p.Value.EntryId)?.SessionId, s.Id, StringComparison.Ordinal))
+                .Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
+            return memory.Changes.Where(p => p.Value?.State == ModelPlanChangeStates.Applied
+                && currentApplies.Contains(p.Key)
+                && !listed.Contains(p.Key) && !memory.ClearedDone.Contains(p.Key)
+                && !undone.Contains(p.Key)).Select(p => p.Key).ToList();
+        }
+
+        /// <summary>Test seam: how many applied tasks have left the live plan and are counted as done by the strip though no row lists them (see VanishedApplies).</summary>
+        internal async Task<int> VanishedAppliedCountForTest()
+        {
+            var bound = BindPlanMemory();
+            var plan = await ComposeAsync(null, bound).ConfigureAwait(false);
+            var memory = PlanMemory.Read(bound.File, bound.Identity);
+            var undone = await UndoneAppliesAsync(bound.Session, memory).ConfigureAwait(false);
+            return VanishedApplies(bound.Session, memory, plan.Items.Select(i => i.Id).ToHashSet(StringComparer.Ordinal), undone).Count();
         }
 
         private static bool IsDoneRow(ModelPlanItem i) => string.Equals(i.Status, ModelPlanStatuses.Done, StringComparison.Ordinal);

@@ -291,6 +291,12 @@ namespace Semanticus.Engine
                 lock (_gate) { Bind(sessionId); return _empty.TryGetValue(family, out var e) && e.Revision == revision ? e.Runs : 0; }
             }
 
+            /// <summary>A stopped job is asked again: what was heard stays, but nothing is "already tried" and no family is blocked by its empty runs.</summary>
+            public void ForgetStops()
+            {
+                lock (_gate) { _tried.Clear(); _empty.Clear(); }
+            }
+
             public void SetEmptyRuns(string sessionId, string family, long revision, int runs)
             {
                 lock (_gate) { Bind(sessionId); _empty[family] = (revision, runs); }
@@ -473,14 +479,20 @@ namespace Semanticus.Engine
                 if (!string.Equals(_jevProgressSession, sessionId, StringComparison.Ordinal)) return;
                 progress = _jevProgress;
             }
-            if (progress == null) return;
-            var line = AiSchemaFamily.ProgressLine(progress.Value.Looked, progress.Value.Total, progress.Value.RestFollow,
-                                                   progress.Value.StopReason);
+            // While asks wait their turn at a crowded relay the row says so, with how long (the person never has to retry).
+            var waitingSince = _decisions?.WaitingSince;
+            var waitLine = waitingSince == null ? null : AiSchemaFamily.WaitingLine(DateTime.UtcNow - waitingSince.Value);
+            var line = progress == null ? null
+                : AiSchemaFamily.ProgressLine(progress.Value.Looked, progress.Value.Total, progress.Value.RestFollow, progress.Value.StopReason);
             // Null is "nothing was looked at and nobody can act": the Plan's one line says it (RankingFrom), not every row.
-            if (line == null) return;
+            if (line == null && waitLine == null) return;
+            // The crowded stop and the live wait say the same thing; the live line wins while asks are waiting.
+            if (waitLine != null && progress != null && JevDecisionOracle.IsCrowded(progress.Value.StopReason))
+                line = AiSchemaFamily.ProgressLine(progress.Value.Looked, progress.Value.Total, true, null);
+            var lines = new[] { line, waitLine }.Where(l => l != null).ToArray();
             foreach (var item in items ?? Array.Empty<ModelPlanItem>())
                 if (item?.Id != null && item.Id.StartsWith(JevFamily.ItemPrefix + AiSchemaFamily.Name + ".", StringComparison.Ordinal))
-                    item.Why = (item.Why ?? Array.Empty<string>()).Concat(new[] { line }).ToArray();
+                    item.Why = (item.Why ?? Array.Empty<string>()).Concat(lines).ToArray();
         }
 
         /// <summary>Why one ask did not come back with an answer, in the words of whatever refused it, or null when
@@ -507,7 +519,12 @@ namespace Semanticus.Engine
             JevDecisionOracle.UnreachableReason,
             JevDecisionOracle.CancelledReason,
             JevDecisionOracle.QueueDroppedReason,
+            JevDecisionOracle.CrowdedReason,
         };
+
+        /// <summary>The relay stayed crowded for this ask's whole wait. Nothing was charged and nothing is recorded as tried: the next run asks again.</summary>
+        private static bool IsCrowdedOutcome(DecisionOutcome outcome) =>
+            outcome != null && outcome.Asked && !outcome.Answers.Decided && JevDecisionOracle.IsCrowded(outcome.Answers.NotDecidedReason);
 
         /// <summary>WHY THE BATCHES STOPPED, from every ask that did not come back decided. What the service itself said
         /// wins over an ask that heard nothing: one dropped connection used to be named as the reason, because it was
@@ -542,7 +559,9 @@ namespace Semanticus.Engine
                 if (!string.Equals(_jevProgressSession, sessionId, StringComparison.Ordinal)) return null;
                 progress = _jevProgress;
             }
-            if (progress == null || progress.Value.RestFollow) return null;
+            if (progress == null) return null;
+            if (progress.Value.RestFollow && !JevDecisionOracle.IsCrowded(progress.Value.StopReason)
+                && !string.Equals(progress.Value.StopReason, AiSchemaFamily.LookingAgain, StringComparison.Ordinal)) return null;
             // Jev could not be reached and looked at nothing: there is no row to read and nothing for the person to do. The Plan's
             // order line says Jev is not available (RankingFrom), once. A sentence the person can act on (a pause, an ended licence)
             // keeps this row: the order line does not always carry it (measured in the r1 join), and it must not vanish.
@@ -559,14 +578,17 @@ namespace Semanticus.Engine
                 Value = "Copilot and data agents answer from the right parts of this model",
                 // Nothing here runs on its own and nothing is proposed yet, so this is not work Semanticus can take
                 // off the person: Jev tries again after a later change to the model or in the next session (a later change or the next session asks the rest),
-                // and the person decides whether to wait. Ready with no change set is the ordinary "gap" row (StampChangeState).
-                Who = ModelPlanOwners.You,
+                // and the person decides whether to wait. It is a waiting state on the plan, not a task for anyone (Kane, 13 Oct 2026): Semanticus
+                // is the doer and the row reads Waiting (PlanTasks.StampState), so Run the plan, the assistant's queue and Needs you all skip it.
+                Who = ModelPlanOwners.Auto,
                 // Jev chose none of it, so the row is not from Jev (JevFamily.Items says the same about its rows).
                 Source = PlanSources.Found,
                 Status = ModelPlanStatuses.Ready,
                 Why = new[]
                 {
-                    "Jev stopped before it had looked at everything in this model, so what Copilot sees is not settled yet.",
+                    progress.Value.RestFollow
+                        ? "Jev is still looking at this model, so what Copilot sees is not settled yet."
+                        : "Jev stopped before it had looked at everything in this model, so what Copilot sees is not settled yet.",
                 },
                 Diff = Array.Empty<string>(),
                 Touches = "the model",
@@ -637,6 +659,38 @@ namespace Semanticus.Engine
             public Task Task = Task.CompletedTask;
             public bool Done;
             public JevRun Result;
+            public DateTime FinishedUtc;
+        }
+
+        // ---- a stopped job is asked again ---------------------------------------------------------------------------
+
+        /// <summary>Set by Refresh plan: the next read starts the job again if it stopped on a refusal (a crowded relay, a failed forward, a
+        /// timeout), whatever its age. A person who presses Refresh plan after the cause is gone must see Jev look again (Kane, 13 Oct).</summary>
+        private int _jevRetryNow;
+
+        /// <summary>How old a stopped job must be before a plain plan read starts it again by itself, when what stopped it was nobody's answer
+        /// (no reply, a crowd, a service fault). The wait keeps a stop that cannot lift yet from becoming a loop of runs.</summary>
+        internal TimeSpan JevAutoRetryAfter = TimeSpan.FromSeconds(60);
+
+        /// <summary>Ask again for what a stopped job left, on the next read. Refresh plan calls it.</summary>
+        internal void RetryStoppedJevOnNextRead() => Interlocked.Exchange(ref _jevRetryNow, 1);
+
+        /// <summary>True when this finished run stopped before Jev had looked at everything and a refusal said why.
+        /// <paramref name="byItself"/> is true for the stops a plain read may start again without being asked: no reply, a crowd, a fault.</summary>
+        private static bool JevStopped(JevRun r, out bool byItself)
+        {
+            var stopped = false;
+            string reason = null;
+            var ai = r.AiSchemaProgress;
+            if (ai != null && !ai.Value.RestFollow && ai.Value.StopReason != null) { stopped = true; reason = ai.Value.StopReason; }
+            foreach (var p in r.Progress.Values)
+                if (p.Stopped) { stopped = true; reason ??= p.StopReason; }
+            if (r.StopReason != null) { stopped = true; reason ??= r.StopReason; }
+            // A stop with no reason of its own (this session's budget, a family left for now) is not a refusal that can lift: nothing is asked again for it.
+            if (reason == null) { byItself = false; return false; }
+            byItself = stopped
+                && (UnheardReasons.Contains(reason) || JevDecisionOracle.IsNotAvailable(reason) || JevDecisionOracle.IsCrowded(reason));
+            return stopped;
         }
 
         private readonly object _jevRunGate = new object();
@@ -776,6 +830,24 @@ namespace Semanticus.Engine
                     {
                         StartJevRunLocked(s, context, liveKey, decided.AiSchemaAnswers);
                         pending = true;
+                    }
+                    // A job that stopped on a refusal is asked again: at once on Refresh plan, and on a plain read once the stop is old
+                    // enough (JevAutoRetryAfter) when nobody's answer stopped it. What it heard stays; its old refusal text goes with it.
+                    else if (decided != null)
+                    {
+                        var forced = Interlocked.Exchange(ref _jevRetryNow, 0) != 0;
+                        if (JevStopped(decided, out var byItself)
+                            && (forced || (byItself && DateTime.UtcNow - run.FinishedUtc >= JevAutoRetryAfter)))
+                        {
+                            _jevProgressMemory.ForgetStops();
+                            // The old refusal text goes now. The row stays and says Jev is looking again, so the page does not flicker.
+                            RememberJevProgress(s.Id, decided.AiSchemaProgress is { } was
+                                ? (was.Looked, was.Total, true, AiSchemaFamily.LookingAgain)
+                                : ((int, int, bool, string)?)null);
+                            StartJevRunLocked(s, context, liveKey, decided.AiSchemaAnswers);
+                            pending = true;
+                            decided = null;
+                        }
                     }
                 }
                 else
@@ -973,6 +1045,7 @@ namespace Semanticus.Engine
             {
                 run.Result = run.Cancel.IsCancellationRequested ? null : result;
                 run.Done = true;
+                run.FinishedUtc = DateTime.UtcNow;
                 current = ReferenceEquals(_jevRun, run);
                 // A run that came back with nothing (the model moved while it asked, or it failed) is not a
                 // decision for this revision. Forget it, so the next read or change starts a fresh one.
@@ -1385,6 +1458,111 @@ namespace Semanticus.Engine
             return changed;
         }
 
+        /// <summary>WHEN JEV DOES NOT ANSWER, SEMANTICUS STANDS IN FOR IT (Kane, 13 Oct 2026: "clicking run plan here does nothing", "stuck on a
+        /// message about skipped Jev"). A Jev row worked out before the model last changed reads stale, and Run the plan used to leave it out
+        /// and wait for a Jev that might never come back, with the rows behind it Waiting for it. Jev's earlier answer is still Jev's best
+        /// answer; the engine can check for itself whether it still fits the model as it is now. Each line is checked against the live
+        /// object: it still fits when the object holds what the line was written over (or already holds what it writes), or when it is a
+        /// new thing whose name is still free. When every line of a row fits, the row is stamped as current and runs; the approval guard
+        /// still checks every value again inside the write. A row with a line that no longer fits goes off the plan whole, and Jev puts it
+        /// back, worked out again, when it answers. True when anything on the plan changed.</summary>
+        internal async Task<bool> StandInForSilentJevAsync(Session s, PlanMemoryBinding bound, IReadOnlyCollection<ModelPlanItem> rows, List<(string Id, string Title)> wentBack = null)
+        {
+            var context = bound?.Context;
+            if (s == null || context == null || rows == null || rows.Count == 0) return false;
+            await context.PlanGate.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                if (!ReferenceEquals(_sessions.CurrentContext, context) || !ReferenceEquals(_sessions.Current, s)) return false;
+                var plan = context.Plans.Current;
+                if (plan == null) return false;
+                var byRow = rows.ToDictionary(r => r.Id, r => (r.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>()).Select(l => l.PlanItemId).ToHashSet(StringComparer.Ordinal), StringComparer.Ordinal);
+                var all = plan.Snapshot().Where(l => JevFamily.IsJevLine(l) && IsPendingLine(l)).ToList();
+                var look = await s.ReadAsync(m =>
+                {
+                    var missing = Semanticus.Analysis.FormulaReferences.HostChecker(m);
+                    return all.Select(l => (Line: l, Fits: JevLineStillFits(m, l, missing))).ToList();
+                }).ConfigureAwait(false);
+                var fits = look.ToDictionary(x => x.Line, x => x.Fits, ReferenceEqualityComparer.Instance);
+                var revision = s.Revision;
+                var source = SourceVersionOf(s);
+                var gone = new HashSet<ChangeItem>(ReferenceEqualityComparer.Instance);
+                var fresh = new List<string>();
+                foreach (var (rowId, ids) in byRow.Select(kv => (kv.Key, kv.Value)))
+                {
+                    var mine = all.Where(l => l.Id != null && ids.Contains(l.Id)).ToList();
+                    if (mine.Count == 0) continue;
+                    if (mine.All(l => (bool)fits[l]))
+                    {
+                        foreach (var l in mine) { l.ProposedAtRevision = revision; l.ProposedAtSource = source ?? ""; }
+                        fresh.Add(rowId);
+                    }
+                    else
+                    {
+                        foreach (var l in mine) gone.Add(l);
+                        var row = rows.First(r => r.Id == rowId);
+                        wentBack?.Add((rowId, string.IsNullOrWhiteSpace(row.Title) ? rowId : row.Title));
+                    }
+                }
+                if (fresh.Count == 0 && gone.Count == 0) return false;
+                if (fresh.Count > 0)
+                    TryWritePlanMemory(bound, state =>
+                    {
+                        foreach (var id in fresh)
+                            if (state.Changes.TryGetValue(id, out var header) && header != null)
+                            {
+                                header.Revision = revision; header.SourceVersion = source ?? ""; header.StaleAtProposal = false;
+                            }
+                    });
+                if (gone.Count > 0)
+                {
+                    await HoldKeptAsync(s, gone.Where(l => l.AuthoredAfter != null).ToList(), JevFamily.HeldReason).ConfigureAwait(false);
+                    plan.RemoveSynced(l => gone.Contains(l));
+                }
+                PublishPlan(plan, s.Revision);
+                return true;
+            }
+            finally { context.PlanGate.Release(); }
+        }
+
+        private static bool JevLineStillFits(TabularEditor.TOMWrapper.Model m, ChangeItem l, Func<string, string, string[]> missing = null)
+        {
+            TabularEditor.TOMWrapper.ITabularNamedObject obj = null;
+            try { obj = ObjectRefs.Resolve(m, l.ObjectRef); } catch { }
+            var kind = (l.Kind ?? "").Trim();
+            // A line that carries a formula fits only when every table, column and measure it names is still in the model, and a
+            // column it adds up is still a number (a column deleted, renamed or turned to text since Jev answered).
+            if (!DaxStillFits(m, l, kind, missing)) return false;
+            if (kind.StartsWith("create", StringComparison.Ordinal)) return obj == null;   // a name that is taken now is a different job
+            if (obj == null) return PlanTextEquals(l.Before, "");                          // a line on a thing the row itself creates
+            var live = LiveValueForPlanItem(m, l);
+            return live == null || PlanTextEquals(live, l.Before) || PlanTextEquals(live, l.After);
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex AddsUpColumn = new System.Text.RegularExpressions.Regex(
+            @"\b(?:SUM|AVERAGE|MEDIAN)\s*\(\s*(?:'((?:[^']|'')+)'|([A-Za-z_]\w*))\s*\[([^\]]+)\]\s*\)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        private static bool DaxStillFits(TabularEditor.TOMWrapper.Model m, ChangeItem l, string kind, Func<string, string, string[]> missing)
+        {
+            if (kind != "create_measure" && kind != "set_dax" && !string.Equals(l.Target, "expression", StringComparison.Ordinal)) return true;
+            var dax = l.After;
+            if (string.IsNullOrWhiteSpace(dax)) return true;
+            string host = null;
+            var at = (l.ObjectRef ?? "").IndexOf(':');
+            var slash = (l.ObjectRef ?? "").IndexOf('/');
+            if (at >= 0 && slash > at) host = l.ObjectRef.Substring(at + 1, slash - at - 1);
+            if (missing != null && missing(dax, host).Length > 0) return false;
+            foreach (System.Text.RegularExpressions.Match hit in AddsUpColumn.Matches(dax))
+            {
+                var table = hit.Groups[1].Success ? hit.Groups[1].Value.Replace("''", "'") : hit.Groups[2].Value;
+                var col = m.Tables.FirstOrDefault(t => string.Equals(t.Name, table, StringComparison.OrdinalIgnoreCase))?
+                    .Columns.OfType<TabularEditor.TOMWrapper.DataColumn>().FirstOrDefault(c => string.Equals(c.Name, hit.Groups[3].Value, StringComparison.OrdinalIgnoreCase));
+                if (col != null && !StarterMeasureTemplates.IsNumber(col.DataType)) return false;
+            }
+            return true;
+        }
+
         private static void ToSuggestion(ChangeItem line, string note)
         {
             line.Status = "proposed";
@@ -1423,6 +1601,8 @@ namespace Semanticus.Engine
             public Action<string, DecisionOutcome> RememberAnswer;
             /// <summary>The measures a person removed, so the starter rule never offers one back. Null reads none.</summary>
             public Func<HashSet<string>> RemovedMeasures;
+            /// <summary>The columns a start plan heard Jev on for column.summarize (refs), so the Plan does not ask a column the build set to None again. Null reads none.</summary>
+            public Func<ISet<string>> StartDecidedColumns;
             /// <summary>The facts the plan executor's data checks read when the caller applies lines to this model (null: none measured).</summary>
             public Func<IJevModelFacts> ExecutorFacts;
             /// <summary>True when the caller is a batch that loops until nothing is left (the start plan's decide loop): the per-run cap on NEW asks
@@ -1450,6 +1630,9 @@ namespace Semanticus.Engine
             KnownAnswer = digest => TryKnownColumnAnswer(s.Id, digest, out var heard) ? heard : null,
             RememberAnswer = (digest, outcome) => RememberColumnAnswer(s.Id, digest, outcome),
             RemovedMeasures = () => RemovedMeasureRefs(s),
+            StartDecidedColumns = () => string.Equals(_startSummarizeSession, s.Id, StringComparison.Ordinal)
+                ? new HashSet<string>(_startSummarizeDecided.Keys, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase),   // decided in another model (or none): nothing carries over
             ExecutorFacts = JevFacts,
         };
 
@@ -1486,6 +1669,7 @@ namespace Semanticus.Engine
             var dateFacts = dateTableLive ? (target.DateFacts != null ? target.DateFacts() : target.Facts?.Invoke()) : null;
 
             var removed = starterLive || columnSummarizeLive ? target.RemovedMeasures?.Invoke() ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase) : null;
+            var startDecided = columnSummarizeLive ? target.StartDecidedColumns?.Invoke() : null;
             var prepared = await s.ReadAsync(m =>
             {
                 var measures = measuresLive ? MeasuresFamily.Prepare(m, DisplayFolderSuggestions) : new MeasuresFamily.Prepared();
@@ -1500,7 +1684,7 @@ namespace Semanticus.Engine
                 starter.Revision = s.Revision;
                 columnFormat.Revision = s.Revision;
                 dateTable.Revision = s.Revision;
-                var columnSummarize = columnSummarizeLive ? ColumnSummarizeFamily.Prepare(m, facts, removed) : new ColumnSummarizeFamily.Prepared();
+                var columnSummarize = columnSummarizeLive ? ColumnSummarizeFamily.Prepare(m, facts, removed, skipAnswered: !target.UncappedAsks, startDecided: startDecided) : new ColumnSummarizeFamily.Prepared();
                 columnCategory.Revision = s.Revision;
                 columnSummarize.Revision = s.Revision;
                 relationship.Revision = s.Revision;
@@ -1590,7 +1774,7 @@ namespace Semanticus.Engine
 
                 // A run that was cancelled or overtaken by an edit records no tries: what it did not hear is asked again.
                 var settled = !ct.IsCancellationRequested && s.Revision == revision;
-                int answered = 0, noReply = 0;
+                int answered = 0, noReply = 0, crowded = 0;
                 var reasons = new List<string>();
                 for (var k = 0; k < now.Count; k++)
                 {
@@ -1604,12 +1788,15 @@ namespace Semanticus.Engine
                         memory.Heard(memoryId, digests[i], outcome, outcome.Answers.Answers.Count >= questionsOf(asks[i]).Count, revision);
                         continue;
                     }
-                    if (result == JevAskResult.NoReply) noReply++;
+                    var crowdedAsk = IsCrowdedOutcome(outcome);
+                    if (crowdedAsk) crowded++;
+                    else if (result == JevAskResult.NoReply) noReply++;
                     reasons.Add(StopReasonOf(outcome));
-                    if (settled) memory.Tried(memoryId, digests[i], revision);
+                    // A crowded relay says nothing about this object: it is not marked tried, so the next run asks it again.
+                    if (settled && !crowdedAsk) memory.Tried(memoryId, digests[i], revision);
                 }
 
-                var remaining = fresh.Count - now.Count;
+                var remaining = fresh.Count - now.Count + crowded;
                 var answeredAll = outcomes.Count(o => o != null);
                 var progress = new JevFamilyProgress
                 {
@@ -1617,6 +1804,11 @@ namespace Semanticus.Engine
                     AskedThisRun = now.Count,
                 };
                 if (blocked) { progress.Stopped = remaining > 0; }
+                else if (now.Count > 0 && settled && answered == 0 && crowded == now.Count)
+                {
+                    // Every ask waited its turn and none was heard: that is not an empty run, so it is not counted toward blocking
+                    // the family, and the family continues (Remaining > 0, not Stopped) with the next run.
+                }
                 else if (now.Count > 0 && settled)
                 {
                     var runs = answered > 0 ? 0 : memory.EmptyRuns(memoryId, family, revision) + 1;
@@ -1713,6 +1905,8 @@ namespace Semanticus.Engine
                 // A spent budget sends nothing else in this session, so the rows say that and nothing more starts.
                 if (spent && looked < total) run.AiSchemaProgress = (looked, total, false, null);
                 else if (more) run.AiSchemaProgress = (looked, total, true, null);
+                // The relay was crowded for the whole wait: nothing is stopped. The next read starts the next run, which asks what is left.
+                else if (looked < total && JevDecisionOracle.IsCrowded(stopReason)) run.AiSchemaProgress = (looked, total, true, stopReason);
                 else if (looked < total && stopReason != null) run.AiSchemaProgress = (looked, total, false, stopReason);
                 return all;
             }
@@ -1761,6 +1955,8 @@ namespace Semanticus.Engine
                 var stopReason = BatchStopReason(all.Select(x => StopReasonOf(x.Outcome)));
                 if (spent && looked < total) run.AiSchemaProgress = (looked, total, false, null);
                 else if (more) run.AiSchemaProgress = (looked, total, true, null);
+                // The relay was crowded for the whole wait: nothing is stopped. The next read starts the next run, which asks what is left.
+                else if (looked < total && JevDecisionOracle.IsCrowded(stopReason)) run.AiSchemaProgress = (looked, total, true, stopReason);
                 else if (looked < total && stopReason != null) run.AiSchemaProgress = (looked, total, false, stopReason);
                 return all;
             }

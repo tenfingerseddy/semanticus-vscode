@@ -44,10 +44,12 @@ test('press map follows the contract and shares one engine resource', () => {
     : ['plan/start', 'plan', 'publish/changes', 'publish/new-model', 'explore/ask', 'edit/queries', 'explore/lineage'];
   const tools = new Set();
   for (const press of map.presses) {
-    const keys = Object.keys(press).filter((k) => k !== 'say').sort();
+    const keys = Object.keys(press).filter((k) => k !== 'say' && k !== 'previewSay').sort();
     assert.deepEqual(keys, ['id', 'label', 'place', 'selector', 'tools']);
     // A press on a real button names it in the note, in the button's own words (Kane, 11 Oct: "seeing the buttons clicked clearly").
     if (press.say !== undefined) assert.equal(press.say, `Your assistant pressed ${press.label}.`);
+    // A dry run presses nothing (h17 P8): the publish presses say so in their own words.
+    if (press.previewSay !== undefined) assert.match(press.previewSay, /^Your assistant previewed the /);
     assert.ok(places.includes(press.place), press.place);
     assert.ok(press.label.length && press.selector.length);
     assert.ok(Array.isArray(press.tools) && press.tools.length);

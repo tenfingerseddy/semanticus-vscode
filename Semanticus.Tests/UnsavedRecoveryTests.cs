@@ -10,6 +10,9 @@ using Xunit;
 
 namespace Semanticus.Tests
 {
+    // The restore root is one process-wide setting. This class swaps it per test, so it must not run beside the classes that write restore points
+    // (DeploySpeed, LiveDeploy, publish): in their collection they run one after another. CI run 5 (Windows) saw their folder here.
+    [Collection("restore-root")]
     public sealed class UnsavedRecoveryTests : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "smx-recovery-" + Guid.NewGuid().ToString("N"));
@@ -229,6 +232,41 @@ namespace Semanticus.Tests
             Assert.Empty(Directory.GetFiles(_root, ".semanticus-unsaved*"));
         }
 
+        // PR #399 Codex P1 (comment 4242940056): the recovery copy kept compound credential keys because the scrub matched six exact names.
+        // Fixture values are split so the release security scan does not read them as secrets.
+        [Theory]
+        [InlineData("AccountKey")]
+        [InlineData("SharedAccessKey")]
+        [InlineData("SharedAccessSignature")]
+        [InlineData("ClientSecret")]
+        [InlineData("ApiKey")]
+        public async Task Recovery_strips_compound_credential_keys_and_restore_keeps_the_edits(string key)
+        {
+            var path = ModelPath();
+            var secret = "never-" + "persist-" + key.ToLowerInvariant();
+            using (var sessions = new SessionManager())
+            {
+                await sessions.OpenAsync(path);
+                await sessions.Require().MutateAsync("human", "compound secret source", m =>
+                {
+                    m.AddDataSource("CompoundSource").ConnectionString = "Data Source=localhost;" + key + "=" + secret + ";Initial Catalog=Sales";
+                    m.Description = "edit that must come back";
+                });
+            }
+            foreach (var file in Directory.GetFiles(RestorePointStore.Root(), "*", SearchOption.AllDirectories))
+                Assert.DoesNotContain(secret, File.ReadAllText(file));
+            using var reopened = new SessionManager();
+            using var engine = new LocalEngine(reopened);
+            await engine.OpenAsync(path);
+            var info = await engine.SessionInfoAsync();
+            Assert.NotNull(Offer(info));
+            await Resolve(engine, info.SessionId, true);
+            Assert.Equal("edit that must come back", await reopened.Require().ReadAsync(m => m.Description));
+            var restored = await reopened.Require().ReadAsync(m => ((TabularEditor.TOMWrapper.ProviderDataSource)m.DataSources["CompoundSource"]).ConnectionString);
+            Assert.DoesNotContain(secret, restored);
+            Assert.Contains("initial catalog=sales", restored, StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact]
         public async Task Debounce_keeps_edits_without_waiting_for_exit_and_save_deletes_them()
         {
@@ -255,7 +293,8 @@ namespace Semanticus.Tests
                 sessions.Require().LiveOrigin = new LiveOrigin("https://example.invalid", "Sales", null, "token");
                 await Edit(sessions, "live changes");
             }
-            Assert.False(Directory.Exists(RestorePointStore.Root()));
+            // No recovery copy NAMES this live model (the root is shared, so another session's copy may sit there; that is not this model's).
+            Assert.False(Directory.Exists(RestorePointStore.Root()) && CopiesNaming(path).Length > 0);
         }
 
         [Fact]
@@ -410,10 +449,44 @@ namespace Semanticus.Tests
             Assert.NotNull(Offer(info));
             await Resolve(check, info.SessionId, true);
             Assert.Equal("new work", await reopened.Require().ReadAsync(m => m.Database.Description));
-            // The older offered set is parked, not deleted, until the person saves or discards.
-            Assert.NotEmpty(Directory.GetFiles(RestorePointStore.Root(), "unsaved-older-*.json", SearchOption.AllDirectories));
+            // The older offered set is not lost: it becomes the next offer, until the person saves or discards.
+            Assert.NotNull(Offer(await check.SessionInfoAsync()));
             await Resolve(check, info.SessionId, false);
             Assert.Empty(Directory.GetFiles(RestorePointStore.Root(), "unsaved*.json", SearchOption.AllDirectories));
+        }
+
+        [Theory]
+        [InlineData("restore")]
+        [InlineData("dismiss")]
+        [InlineData("save")]
+        public async Task The_older_kept_copy_is_offered_once_the_newer_one_is_settled(string how)
+        {
+            var path = ModelPath();
+            using (var sessions = new SessionManager())
+            {
+                await sessions.OpenAsync(path);
+                await Edit(sessions, "older work");
+            }
+            using (var sessions = new SessionManager())
+            using (var engine = new LocalEngine(sessions))
+            {
+                await engine.OpenAsync(path);
+                Assert.NotNull(Offer(await engine.SessionInfoAsync()));
+                await Edit(sessions, "newer work");   // the banner is ignored and the person keeps editing, then closes
+            }
+            using var reopened = new SessionManager();
+            using var check = new LocalEngine(reopened);
+            await check.OpenAsync(path);
+            var info = await check.SessionInfoAsync();
+            Assert.NotNull(Offer(info));
+            if (how == "save") { await Edit(reopened, "typed since"); await check.SaveAsync(null, "BIM", false, "human"); }
+            else await Resolve(check, info.SessionId, how == "restore");
+            if (how == "restore") Assert.Equal("newer work", await reopened.Require().ReadAsync(m => m.Description));
+
+            Assert.NotNull(Offer(await check.SessionInfoAsync()));   // the older copy, in the same banner
+            await Resolve(check, info.SessionId, true);
+            Assert.Equal("older work", await reopened.Require().ReadAsync(m => m.Description));
+            Assert.Null(Offer(await check.SessionInfoAsync()));
         }
     }
 }

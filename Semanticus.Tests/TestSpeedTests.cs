@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Semanticus.Engine;
@@ -215,7 +216,7 @@ namespace Semanticus.Tests
             await SaveCheckAsync(engine, "E", authMode: "azcli");
             await SaveCheckAsync(engine, "F", authMode: "interactive", tenantId: "tenant-two");
             var fetched = new List<(string Mode, string Tenant)>();
-            engine.SqlTokenFetchForTests = (mode, tenant, origin) => { fetched.Add((mode, tenant)); return "token"; };
+            engine.SqlTokenFetchForTests = (mode, tenant, origin) => { lock (fetched) fetched.Add((mode, tenant)); return "token"; };
             engine.ReconcileSqlForTests = (server, db, sql) => SqlAnswer(sql);
             engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Tokens", DaxAnswer));
 
@@ -433,6 +434,288 @@ namespace Semanticus.Tests
             Assert.Equal(7 + 3, r.SqlElapsedMs);
             Assert.True(r.DaxExecutedAtUtc >= before && r.SqlExecutedAtUtc >= before);
             Assert.Equal(new[] { "SELECT members", "SELECT total" }, sqlSeen.OrderBy(x => x, StringComparer.Ordinal).ToArray());
+        }
+
+        // ---- 6. trusted numbers ask in batches, with the same answers ---------------------------------------------
+
+        private static Task<TestDefinition> SaveValueCheckAsync(LocalEngine engine, string measure, string expected, string expressionDax = null) =>
+            engine.SaveTestDefinitionAsync(new TestDefinition
+            {
+                Kind = TestKinds.MeasureValue, Title = measure, TargetRef = "measure:Sales/" + measure,
+                ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { ExpectedValue = expected, ExpressionDax = expressionDax }),
+            }, "human");
+
+        // A model that answers a measure named M7 with 8, in the shape the query asks: one column v for a single query, a column
+        // v0, v1, ... for a batch. It counts every query and can be told to refuse batches or to break on one measure.
+        private sealed class ValueModel
+        {
+            public readonly List<string> Queries = new List<string>();
+            public bool RefuseBatch;
+            public bool ShortBatch;
+            public string BreakOn;
+            public int Count { get { lock (Queries) return Queries.Count; } }
+            public int Batches { get { lock (Queries) return Queries.Count(q => q.Contains("\"v1\"")); } }
+
+            private static readonly Regex Column = new Regex("\"v(\\d*)\", \\[(M\\d+)\\]", RegexOptions.Compiled);
+            private static double Answer(string measure) => int.Parse(measure.Substring(1), System.Globalization.CultureInfo.InvariantCulture) + 1;
+
+            public ResultSet Ask(string q)
+            {
+                lock (Queries) Queries.Add(q);
+                if (BreakOn != null && q.Contains("[" + BreakOn + "]")) return Failed("measure " + BreakOn + " could not be calculated");
+                var cols = Column.Matches(q).Cast<Match>().ToArray();
+                if (cols.Length == 0) return DaxAnswer(q);
+                if (q.Contains("\"v1\""))
+                {
+                    if (RefuseBatch) return Failed("batches are not allowed here");
+                    var n = ShortBatch ? cols.Length - 1 : cols.Length;
+                    return new ResultSet
+                    {
+                        Columns = cols.Take(n).Select(c => new ColumnDef { Name = "[v" + c.Groups[1].Value + "]" }).ToArray(),
+                        Rows = new[] { cols.Take(n).Select(c => (object)Answer(c.Groups[2].Value)).ToArray() }, RowCount = 1,
+                    };
+                }
+                return Value(Answer(cols[0].Groups[2].Value));
+            }
+        }
+
+        private async Task<LocalEngine> ValueChecksAsync(string name, int count, params (int Index, string Expected)[] wrong)
+        {
+            var engine = await ModelAsync(name, Enumerable.Range(0, count).Select(i => "M" + i).ToArray());
+            for (var i = 0; i < count; i++)
+                await SaveValueCheckAsync(engine, "M" + i, wrong.Any(w => w.Index == i) ? wrong.First(w => w.Index == i).Expected : (i + 1).ToString());
+            return engine;
+        }
+
+        private static string[] Said(TestSuiteRunResult run) =>
+            Ran(run).Select(o => string.Join("|", o.Title, o.Verdict, o.Message, o.Expected, o.Actual, o.Difference, o.Matches, o.Mismatches)).ToArray();
+
+        [Fact]
+        public async Task Trusted_numbers_are_asked_twenty_to_a_query_and_every_check_passes_as_before()
+        {
+            using var engine = await ValueChecksAsync("Batch", 45);
+            var model = new ValueModel();
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Batch", model.Ask));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            var ran = Ran(run);
+            Assert.Equal(45, ran.Length);
+            Assert.All(ran, o => Assert.True(o.Verdict == Verdict.Pass, o.Title + ": " + o.Message));
+            Assert.Equal(3, model.Count);   // 20 + 20 + 5, not 45
+            Assert.Equal(new[] { "M0", "M1", "M2" }, ran.Take(3).Select(o => o.Title).ToArray());   // same order as the suite
+            Assert.All(ran, o => Assert.Contains("\"v", o.Dax));   // a pass shows the query that produced its number: the batch
+            Assert.Equal("1", ran[0].Expected);
+        }
+
+        [Fact]
+        public async Task A_batch_gives_the_same_words_numbers_and_verdicts_as_asking_one_by_one()
+        {
+            var wrong = new[] { (3, "999"), (17, "12.5") };
+            using var batched = await ValueChecksAsync("SameA", 25, wrong);
+            var fast = new ValueModel();
+            batched.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "SameA", fast.Ask));
+            var a = await batched.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            using var single = await ValueChecksAsync("SameB", 25, wrong);
+            var slow = new ValueModel { RefuseBatch = true };
+            single.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "SameB", slow.Ask));
+            var b = await single.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            Assert.Equal(Said(b), Said(a));
+            Assert.Equal(2, Ran(a).Count(o => o.Verdict == Verdict.Fail));
+            Assert.Equal(a.Health.Grade, b.Health.Grade);
+            Assert.Equal(a.Health.Passed, b.Health.Passed);
+            Assert.True(fast.Count < slow.Count, fast.Count + " round trips against " + slow.Count);
+        }
+
+        [Fact]
+        public async Task A_check_that_does_not_match_is_asked_again_alone_so_its_evidence_is_the_exact_query()
+        {
+            using var engine = await ValueChecksAsync("Evidence", 5, (2, "999"));
+            var model = new ValueModel();
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Evidence", model.Ask));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            var ran = Ran(run);
+            Assert.Equal(2, model.Count);   // the batch, then the one that did not match
+            Assert.Equal(Verdict.Fail, ran[2].Verdict);
+            Assert.Equal("EVALUATE ROW(\"v\", [M2])", ran[2].Dax);   // what a person can paste and run
+            Assert.Equal("3", ran[2].Actual);
+            Assert.All(ran.Where((_, i) => i != 2), o => Assert.Equal(Verdict.Pass, o.Verdict));
+        }
+
+        [Fact]
+        public async Task A_batch_that_errors_is_dropped_and_each_check_is_asked_alone_so_only_the_bad_one_blanks()
+        {
+            using var engine = await ValueChecksAsync("Broken", 8);
+            var model = new ValueModel { BreakOn = "M5" };
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Broken", model.Ask));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            var ran = Ran(run);
+            Assert.Equal(1 + 8, model.Count);   // the batch that failed, then one query each
+            Assert.Equal(Verdict.NotVerifiable, ran[5].Verdict);
+            Assert.Contains("measure M5 could not be calculated", ran[5].Message);
+            Assert.All(ran.Where((_, i) => i != 5), o => Assert.Equal(Verdict.Pass, o.Verdict));
+            Assert.Equal("EVALUATE ROW(\"v\", [M0])", ran[0].Dax);
+        }
+
+        [Fact]
+        public async Task A_batch_that_comes_back_the_wrong_shape_is_not_believed()
+        {
+            using var engine = await ValueChecksAsync("Shape", 6);
+            var model = new ValueModel { ShortBatch = true };
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Shape", model.Ask));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            Assert.Equal(1 + 6, model.Count);
+            Assert.All(Ran(run), o => Assert.Equal(Verdict.Pass, o.Verdict));
+        }
+
+        [Fact]
+        public async Task A_check_with_a_comment_in_its_text_is_never_put_in_a_batch()
+        {
+            using var engine = await ModelAsync("Comment", "M0", "M1", "M2");
+            await SaveValueCheckAsync(engine, "M0", "1");
+            await SaveValueCheckAsync(engine, "M1", "2", expressionDax: "[M1] // the second one");
+            await SaveValueCheckAsync(engine, "M2", "3");
+            var model = new ValueModel();
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Comment", model.Ask));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            Assert.Equal(3, Ran(run).Length);
+            lock (model.Queries)
+            {
+                Assert.Equal(1, model.Queries.Count(q => q.Contains("//")));
+                Assert.DoesNotContain(model.Queries, q => q.Contains("//") && q.Contains("\"v1\""));   // it is asked alone
+                Assert.Equal(2, model.Queries.Count);   // M0 and M2 together, the commented one alone
+            }
+        }
+
+        [Fact]
+        public void The_batch_query_is_one_row_with_a_column_per_check_and_each_column_is_the_single_checks_own_expression()
+        {
+            var single = LocalEngine.BuildMeasureValueDax("Total Sales", null, "'Date'[Year] = 2024", out var refusal);
+            var scalar = LocalEngine.BuildMeasureValueScalar("Total Sales", null, "'Date'[Year] = 2024");
+            Assert.Null(refusal);
+            Assert.Equal("EVALUATE ROW(\"v\", " + scalar + ")", single);
+            Assert.Null(LocalEngine.BuildMeasureValueScalar("Total Sales", "EVALUATE ROW(\"v\", 1)", null));   // a complete query is never a column
+            var batch = LocalEngine.BuildMeasureValueBatchDax(new[] { scalar, "[Other]" });
+            Assert.StartsWith("EVALUATE ROW(", batch);
+            Assert.Contains("\"v0\", " + scalar, batch);
+            Assert.Contains("\"v1\", [Other]", batch);
+        }
+
+        // ---- 7. the SQL of several checks runs side by side, three at a time, in the same order of results -------
+
+        [Fact]
+        public async Task The_sql_of_different_checks_runs_together_up_to_three_and_results_keep_their_order()
+        {
+            var names = Enumerable.Range(0, 8).Select(i => "C" + i).ToArray();
+            using var engine = await ModelAsync("Parallel", names);
+            foreach (var m in names) await SaveCheckAsync(engine, m);
+            var running = 0; var most = 0;
+            engine.ReconcileSqlForTests = (server, db, sql) =>
+            {
+                var now = Interlocked.Increment(ref running);
+                lock (names) most = Math.Max(most, now);
+                Thread.Sleep(120);
+                Interlocked.Decrement(ref running);
+                return SqlAnswer(sql);
+            };
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Parallel", DaxAnswer));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            Assert.Equal(names, Ran(run).Select(o => o.Title).ToArray());
+            Assert.All(Ran(run), o => Assert.True(o.Verdict == Verdict.Pass, o.Message));
+            Assert.Equal(3, most);   // three at once: never more, and more than one check's own two
+        }
+
+        [Fact]
+        public async Task Checks_that_wait_on_the_same_sign_in_share_one_fetch_even_when_they_ask_together()
+        {
+            var names = new[] { "A", "B", "C", "D" };
+            using var engine = await ModelAsync("SharedToken", names);
+            foreach (var m in names) await SaveCheckAsync(engine, m, authMode: "interactive");
+            var fetches = 0;
+            engine.SqlTokenFetchForTests = (mode, tenant, origin) => { Interlocked.Increment(ref fetches); Thread.Sleep(200); return "token"; };
+            engine.ReconcileSqlForTests = (server, db, sql) => SqlAnswer(sql);
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "SharedToken", DaxAnswer));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "measures" });
+
+            Assert.Equal(1, fetches);
+            Assert.All(Ran(run), o => Assert.True(o.Verdict == Verdict.Pass, o.Message));
+        }
+
+        // ---- 8. table-count SQL starts while the relationship DAX still runs ---------------------------------------
+
+        [Fact]
+        public async Task A_table_counts_sql_starts_before_the_relationship_probes_have_finished()
+        {
+            using var engine = await ModelAsync("TableOverlap", "Idle");
+            await engine.CreateImportTableAsync("Orders", "let Source = Sql.Database(\"fabric.example.com\", \"LH_Gold\"), t = Source{[Schema=\"dbo\",Item=\"orders\"]}[Data] in t", "human");
+            await engine.SaveAsync(Path.Combine(_root, "TableOverlap"), "TMDL", false, "human");
+            var sqlStarted = new ManualResetEventSlim(false);
+            var firstProbeSawSql = false;
+            var calls = 0;
+            engine.SqlTokenFetchForTests = (mode, tenant, origin) => "token";
+            engine.ReconcileSqlForTests = (server, db, sql) => { sqlStarted.Set(); return Value(15L); };
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "TableOverlap", q =>
+            {
+                if (q.Contains("\"OrphanRows\"") && Interlocked.Increment(ref calls) == 1) firstProbeSawSql = sqlStarted.Wait(TimeSpan.FromSeconds(3));
+                return q.Contains("\"OrphanRows\"") ? ProbeAll() : q.Contains("__table_rows") ? Value(15L) : DaxAnswer(q);
+            }));
+
+            var run = await engine.RunTestSuiteAsync(sections: new[] { "relationships", "tableCounts" });
+
+            Assert.True(firstProbeSawSql, "the table SQL must have started before the first relationship probe finished");
+            var row = run.Relationships.TableRowCounts.Single(t => t.ModelTable == "Orders");
+            Assert.Equal((long?)15, row.ModelCount);
+            Assert.Equal((long?)15, row.SourceCount);
+        }
+
+        // ---- 9. the Validation tools the assistant runs reach the page as one sentence ---------------------------
+
+        [Fact]
+        public async Task A_single_try_a_saved_or_deleted_check_and_a_recorded_run_each_reach_the_page_as_one_sentence()
+        {
+            using var engine = await ModelAsync("Notes", "M0");
+            var heard = new List<ActivityEvent>();
+            _sessions.Bus.Activity += e => { lock (heard) heard.Add(e); };
+            engine.SetLiveConnectionForTest(LiveConnection.ForTest("xmla", DaxEndpoint, "Notes", q => Value(1.0)));
+            var def = new TestDefinition
+            {
+                Kind = TestKinds.MeasureValue, Title = "M0 is one", TargetRef = "measure:Sales/M0",
+                ParamsJson = TestSuiteStore.Serialize(new MeasureValueRequest { ExpectedValue = "1" }),
+            };
+
+            var outcome = await McpToolsTesting.TryTest(engine, def);
+            var saved = await McpToolsTesting.SaveTest(engine, def);
+            var gone = await McpToolsTesting.DeleteTest(engine, saved.Id);
+            var kept = await McpToolsTesting.RecordTestRun(engine, "no-such-run");
+
+            Assert.Equal(Verdict.Pass, outcome.Verdict);
+            Assert.True(gone);
+            lock (heard)
+            {
+                Assert.Equal(new[] { "try_test", "save_test", "delete_test", "record_test_run" }, heard.Select(e => e.Kind).ToArray());
+                Assert.All(heard, e => Assert.Equal("agent", e.Origin));
+                Assert.StartsWith("Tried a check: M0 is one.", heard[0].Label);
+                Assert.Contains("matched", heard[0].Label);
+                Assert.True(heard[0].Ok);
+                Assert.Equal("Saved a check: M0 is one.", heard[1].Label);
+                Assert.Equal("Deleted a check.", heard[2].Label);
+                Assert.False(kept.Recorded);
+                Assert.False(heard[3].Ok);
+                Assert.All(heard, e => Assert.DoesNotContain("\u2014", e.Label));
+            }
         }
     }
 }

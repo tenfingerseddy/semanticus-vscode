@@ -177,6 +177,15 @@ namespace Semanticus.Engine
         /// click, after a reconnect say, reads back which of its controls are already on the plan. Null
         /// for a task that was typed, and on every derived row.</summary>
         public string SendKey { get; set; }
+
+        /// <summary>For a task made from a found or Jev row: who handed it over ("you" for the person's Give, "assistant", or "semanticus" for
+        /// the queue Run the plan fills). The row says "You gave this" only when it is "you" (hero run 21, N4). Null on every other task.</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string GivenBy { get; set; }
+
+        /// <summary>For a task made from a row: that row's source (found or jev), so the task reads "Found by Semanticus", not "You added".</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string RowSource { get; set; }
     }
 
     /// <summary>One open row this row waits for, by id and by the title a person reads.</summary>
@@ -211,6 +220,16 @@ namespace Semanticus.Engine
         /// read-only beside the AI readiness grade. Null when the scan could not run.</summary>
         public string BestPractice { get; set; }
         public string BestPracticeWhy { get; set; }
+
+        /// <summary>The same scan's 0 to 100 score (BpaScorecard.BestPracticeScore), the number the Review page shows beside the letter.
+        /// Null when the scan could not run.</summary>
+        public int? BestPracticeScore { get; set; }
+
+        /// <summary>Every task on the Plan that is done (rows done now, plus the done records the Plan kept and the ones Refresh plan cleared,
+        /// which History holds), and every task counted for the percent: done plus open. A task set aside is in neither. Plan done is
+        /// TasksDone of TasksAll (1.5, the header's third figure).</summary>
+        public int TasksDone { get; set; }
+        public int TasksAll { get; set; }
 
         /// <summary>Semanticus, You, Your assistant, in that order.</summary>
         public PlanStripTrack[] Tracks { get; set; } = Array.Empty<PlanStripTrack>();
@@ -409,6 +428,10 @@ namespace Semanticus.Engine
         /// best-practice row only). Engine-side, never on the wire.</summary>
         internal string[] DerivedKeys;
 
+        /// <summary>The "rule|object" keys of the readiness findings this row acts on (<see cref="LocalEngine.ClaimKey"/>), set by the builders of
+        /// the rows that carry findings. The coverage step reads them to find the findings no row acts on. Engine-side, never on the wire.</summary>
+        internal string[] Claims;
+
         /// <summary>Stable across refreshes because it is built from what the item is ABOUT, never from where it
         /// sits in the list. Shape: "family/subject", for example "safefix/rule:HIDE_KEY_COLUMNS" or
         /// "check/measure:Sales/Margin %".</summary>
@@ -517,11 +540,20 @@ namespace Semanticus.Engine
         /// <summary>A short engine-written qualifier on the state word, or null.</summary>
         public string StateNote { get; set; }
 
+        /// <summary>True while the assistant's own tool calls are touching this row's objects (its edits in the last minute). It is for the page to draw
+        /// the row as On it in the assistant's colour. The state word is left as it is, so the row is still offered and counted as before.</summary>
+        public bool AssistantAtWork { get; set; }
+
         /// <summary>One of <see cref="PlanDoneWhen"/>.</summary>
         public string DoneWhen { get; set; }
 
         /// <summary>The engine's sentence for how done is known.</summary>
         public string DoneText { get; set; }
+
+        /// <summary>What the assistant needs to finish an assistant row without asking: when it is done and the choice to make. Null on a row
+        /// that is not the assistant's. Internal on purpose: the row's wire shape is frozen, so the plan carries these in
+        /// <see cref="ModelPlanView.AssistantBriefs"/> and the request carries them as its Brief.</summary>
+        internal string Brief { get; set; }
 
         /// <summary>What the row touches, as object refs ("column:Sales/CustomerKey").</summary>
         public string[] Objects { get; set; } = Array.Empty<string>();
@@ -549,6 +581,9 @@ namespace Semanticus.Engine
 
         /// <summary>One note from the person, one reply from the assistant.</summary>
         public string Note { get; set; }
+        /// <summary>The assistant's own note on the row, kept beside the person's (null when it wrote none).</summary>
+        [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public string AssistantNote { get; set; }
         public string Reply { get; set; }
 
         /// <summary>The person's whole text, when they gave the Plan more than a title holds. The title is its start.
@@ -808,6 +843,10 @@ namespace Semanticus.Engine
         /// <summary>The text the assistant reads on its next call (contract 6.1): the offer line, or the paused line.
         /// Null when it would read nothing. The page shows this; it never works one out of its own.</summary>
         public string AssistantSees { get; set; }
+
+        /// <summary>For each assistant row, what the assistant reads to finish it without asking (when it is done, and the choice to make), by row id.
+        /// The Plan page never shows it.</summary>
+        public System.Collections.Generic.Dictionary<string, string> AssistantBriefs { get; set; }
 
         /// <summary>The saved repeats and their next due dates (lane RP, contract 1.7), read by both doors. Each
         /// card a repeat brings back is an ordinary row with source "repeat"; its repeat names it in OpenItemId.</summary>

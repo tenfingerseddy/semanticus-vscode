@@ -6,8 +6,8 @@
     { "id": "run-plan", "label": "Run the plan", "say": "Your assistant pressed Run the plan.", "place": "plan", "selector": "[data-testid=\"plan-run\"]", "tools": ["apply_plan_items"] },
     { "id": "undo", "label": "Undo", "say": "Your assistant pressed Undo.", "place": "plan", "selector": "[data-testid=\"plan-run-undo\"], [data-testid=\"said-undo\"]", "tools": ["undo_change"] },
     { "id": "save", "label": "Save", "say": "Your assistant pressed Save.", "place": "plan", "selector": "[data-testid=\"plan-run-save\"]", "tools": ["save_model"] },
-    { "id": "publish", "label": "Publish", "say": "Your assistant pressed Publish.", "place": "publish/changes", "selector": "[data-testid=\"publish-go\"]", "tools": ["apply_model_diff", "deploy_live"] },
-    { "id": "publish-new", "label": "Publish as a new model", "say": "Your assistant pressed Publish as a new model.", "place": "publish/new-model", "selector": "[data-testid=\"publish-go\"]", "tools": ["publish_new_model"] },
+    { "id": "publish", "label": "Publish", "say": "Your assistant pressed Publish.", "previewSay": "Your assistant previewed the publish.", "place": "publish/changes", "selector": "[data-testid=\"publish-go\"]", "tools": ["apply_model_diff", "deploy_live"] },
+    { "id": "publish-new", "label": "Publish as a new model", "say": "Your assistant pressed Publish as a new model.", "previewSay": "Your assistant previewed the new model.", "place": "publish/new-model", "selector": "[data-testid=\"publish-go\"]", "tools": ["publish_new_model"] },
     { "id": "ask", "label": "Ask", "say": "Your assistant pressed Ask.", "place": "explore/ask", "selector": "[data-testid=\"askdata-ask\"]", "tools": ["ask_data"] },
     { "id": "explain", "label": "Explain", "place": "edit/queries", "selector": "[data-testid=\"explain-panel\"]", "tools": ["explain_value"] },
     { "id": "lineage", "label": "Lineage run", "place": "explore/lineage", "selector": "[data-testid=\"lineage-tree\"]", "tools": ["get_lineage", "impact_assessment"] }

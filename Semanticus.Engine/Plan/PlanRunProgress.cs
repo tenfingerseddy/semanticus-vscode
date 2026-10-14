@@ -22,6 +22,8 @@ namespace Semanticus.Engine
         public const string Done = "done";
         /// <summary>The run left the row out; <see cref="PlanRunProgress.Reason"/> says why.</summary>
         public const string Skipped = "skipped";
+        /// <summary>The press waits for Jev to look again at the row (at most 15 seconds, once per press); <see cref="PlanRunProgress.WaitedSeconds"/> counts it.</summary>
+        public const string WaitJev = "waitjev";
     }
 
     /// <summary>One step of a run, for the rows named in <see cref="ItemIds"/>.</summary>
@@ -44,6 +46,9 @@ namespace Semanticus.Engine
 
         /// <summary>For skipped: why the row was left out, in a sentence. Null otherwise.</summary>
         public string Reason { get; set; }
+
+        /// <summary>For waitjev: the seconds the press has waited for Jev so far. Null otherwise.</summary>
+        public int? WaitedSeconds { get; set; }
 
         /// <summary>Milliseconds since the press started (one stopwatch for the whole run), when this step began. The gap between two
         /// events is how long the step before it took, which is how a later job sees where the time goes.</summary>

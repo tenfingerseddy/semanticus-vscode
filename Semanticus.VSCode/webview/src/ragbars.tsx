@@ -17,7 +17,7 @@ export function RagBars({ rows, testId }: { rows: RagRow[]; testId?: string }) {
             <s className="sem-rag-mark" style={{ left: '80%' }} aria-hidden="true" />
           </div>
           <div className="w-12 text-right sem-num sem-rag-score-cell">{c.score.toFixed(0)}</div>
-          <div className="w-40 text-right sem-num sem-text-meta">{c.detail}</div>
+          <div className="w-56 text-right sem-num sem-text-meta">{c.detail}</div>
         </div>
       ))}
     </div>

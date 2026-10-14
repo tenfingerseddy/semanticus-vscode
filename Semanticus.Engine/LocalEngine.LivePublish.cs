@@ -14,17 +14,21 @@ namespace Semanticus.Engine
     // LocalEngine.cs so later live-write work does not contend with editor work on that file.
     public sealed partial class LocalEngine
     {
-        // #141: is an agent-authored override of a RED deploy gate refused? A gate that RAN and returned RED
-        // (gate != null && !gate.Pass) is HUMAN-only to clear (Kane's ruling). A scanner FAILURE (gate == null) is NOT
-        // this gate — it proceeds+records elsewhere; a PASSING gate needs no override. Non-human origin fails closed
-        // (only an exact "human" is the authority — see AgentPolicyGuard.IsHuman). Pure + offline-unit-testable.
-        internal static bool IsAgentRedOverrideRefused(DeployGate gate, string origin) =>
-            gate != null && !gate.Pass && !AgentPolicyGuard.IsHuman(origin);
+        // #141, relaxed by Kane 10 Oct ("telling Claude you approve something should be enough"): the person's word in chat clears a RED
+        // deploy gate for the assistant. The assistant passes those words as overrideReason and the publish goes on, recorded in the
+        // audit chain. With no words the assistant is told to ask the person in chat; nothing needs a click in Studio. A scanner FAILURE
+        // (gate == null) is not this gate, a passing gate needs no override, and a non-human origin that is not "agent" still fails closed.
+        internal static bool IsAgentRedOverrideRefused(DeployGate gate, string origin, string overrideReason = null) =>
+            gate != null && !gate.Pass && !AgentPolicyGuard.IsHuman(origin) && string.IsNullOrWhiteSpace(overrideReason);
 
         // Objects edited this session. The gate scores findings on this set; leftovers become OlderWarnings.
         private readonly object _gateTouchLock = new object();
         private string _gateTouchSessionId;
         private readonly HashSet<string> _gateTouched = new HashSet<string>(StringComparer.Ordinal);
+        // How many times each object was edited this session, and the findings the person said yes to (key -> their words). A cleared
+        // finding stays cleared while its object (or its table) is not edited again; an edit makes it ask again (hero19 D6).
+        private readonly Dictionary<string, long> _gateEditCount = new Dictionary<string, long>(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _gateCleared = new Dictionary<string, string>(StringComparer.Ordinal);
         private int _gateTrackingAttached;
 
         internal void AttachDeployGateTracking()
@@ -40,12 +44,60 @@ namespace Semanticus.Engine
             {
                 if (!string.Equals(_gateTouchSessionId, n.SessionId, StringComparison.Ordinal))
                 {
-                    _gateTouched.Clear();
+                    _gateTouched.Clear(); _gateEditCount.Clear(); _gateCleared.Clear();
                     _gateTouchSessionId = n.SessionId;
                 }
                 if (n.Deltas == null) return;
                 foreach (var d in n.Deltas)
-                    if (!string.IsNullOrEmpty(d.Ref)) _gateTouched.Add(d.Ref);
+                    if (!string.IsNullOrEmpty(d.Ref))
+                    {
+                        _gateTouched.Add(d.Ref);
+                        _gateEditCount[d.Ref] = (_gateEditCount.TryGetValue(d.Ref, out var c) ? c : 0) + 1;
+                    }
+            }
+        }
+
+        /// <summary>Edits made to this object or to anything that holds it (its table). Part of a finding's key, so an edit re-opens it.</summary>
+        private long GateEditsTo(string objectRef)
+        {
+            lock (_gateTouchLock)
+            {
+                long sum = 0;
+                foreach (var kv in _gateEditCount)
+                    if (DeployGateScope.IsParentOrSame(kv.Key, objectRef)) sum += kv.Value;
+                return sum;
+            }
+        }
+
+        /// <summary>The person's words when every blocking finding was already cleared by them and has not changed since; else null.</summary>
+        private string EarlierYesFor(string sessionId, DeployGate gate)
+        {
+            if (gate?.FindingKeys == null || gate.FindingKeys.Length == 0 || gate.FindingKeys.Length < gate.Blockers.Length) return null;
+            lock (_gateTouchLock)
+            {
+                if (!string.Equals(_gateTouchSessionId, sessionId, StringComparison.Ordinal)) return null;
+                string words = null;
+                foreach (var k in gate.FindingKeys)
+                {
+                    if (!_gateCleared.TryGetValue(k, out var w)) return null;
+                    words ??= w;
+                }
+                return words;
+            }
+        }
+
+        private void RememberYes(string sessionId, DeployGate gate, string words)
+        {
+            if (gate?.FindingKeys == null) return;
+            lock (_gateTouchLock)
+            {
+                if (!string.Equals(_gateTouchSessionId, sessionId, StringComparison.Ordinal))
+                {
+                    // No edit has been seen in this session yet: start its record here, so the first yes is remembered too.
+                    _gateTouched.Clear(); _gateEditCount.Clear(); _gateCleared.Clear();
+                    _gateTouchSessionId = sessionId;
+                }
+                foreach (var k in gate.FindingKeys) _gateCleared[k] = words;
             }
         }
 
@@ -164,22 +216,26 @@ namespace Semanticus.Engine
                 // wall. Middle path: proceed, and carry the scrubbed scan error into the deploy's audit record
                 // so a gate-less commit is visible, never silent.
                 try { gate = await DeployGateAsync(null, origin); } catch (Exception ex) { gateScanError = ex.Message; }
+                // D6: findings the person already said yes to, still unchanged, do not ask again. A new red finding still asks.
+                if (gate != null && !gate.Pass && string.IsNullOrWhiteSpace(overrideReason) && !AgentPolicyGuard.IsHuman(origin))
+                    overrideReason = EarlierYesFor(s.Id, gate) ?? overrideReason;
                 if (gate != null && !gate.Pass)
                 {
-                    // #141 (Kane's ruling): a gate that RAN and returned RED is HUMAN-only to clear. Even inside a
-                    // granted deploy window an agent-authored overrideReason is refused — the grant approved a PLAN
-                    // ("push these changes"), never "ship even if the gate turns red". Checked BEFORE the missing-reason
-                    // branch so an agent gets ONE clear teaching refusal, not "pass a reason" then "reason refused". A
-                    // scanner FAILURE (gate == null) never enters this block — it still proceeds+records below, unchanged.
-                    if (IsAgentRedOverrideRefused(gate, origin))
+                    // #141, relaxed by Kane 10 Oct: a gate that RAN and returned RED is cleared for the assistant by the person's words in chat,
+                    // passed as overrideReason. Checked BEFORE the missing-reason branch so the assistant gets ONE clear teaching refusal (ask the
+                    // person in chat). A scanner FAILURE (gate == null) never enters this block, it still proceeds+records below, unchanged.
+                    if (IsAgentRedOverrideRefused(gate, origin, overrideReason))
+                    {
+                        await NoteRedAskAsync(gate);   // the Studio says so on Publish while the assistant waits (hero19 D7)
                         throw new InvalidOperationException(
                             "deploy_live: the deploy gate is RED (" + string.Join("; ", gate.Blockers)
-                            + ") and clearing a red readiness gate is HUMAN-only. An agent cannot override it. The permission "
-                            + "to deploy does not authorize clearing a failed readiness gate. Fix the blockers (apply_safe_fixes "
-                            + "/ apply_fix, then re-run ai_readiness_scan), or ask the user to run deploy_live with overrideReason themselves.");
+                            + "). Fix the blockers (apply_safe_fixes / apply_fix, then re-run ai_readiness_scan), or ask the person in chat "
+                            + "whether to publish anyway. When they say yes, run deploy_live again with overrideReason set to their words.");
+                    }
                     // A person is never asked for a reason (Kane 8 Oct). The red check goes on the audit chain as
                     // "Published with warnings", with the reason only when the person wrote one.
                     var hasReason = !string.IsNullOrWhiteSpace(overrideReason);
+                    RememberYes(s.Id, gate, hasReason ? overrideReason.Trim() : "yes");
                     await RecordVerifiedEditAsync(s, new VerifiedEditRecord
                     {
                         SessionId = s.Id, Revision = 0, Origin = origin, Op = "deploy_live",   // 0: a deploy is not a model mutation
@@ -198,6 +254,7 @@ namespace Semanticus.Engine
                         Evidence = System.Text.Json.JsonSerializer.Serialize(new { gate.Grade, gate.BpaViolations, gate.BpaBlocking, gate.Blockers }),
                     });
                 }
+                await ClearRedAskAsync();   // past the check (yes in chat, or the check is green now): the Studio line goes
             }
             // A LOCAL instance (Power BI Desktop, loopback endpoint) deploys with integrated Windows auth — no
             // token, no secret. A cloud XMLA endpoint needs a bearer token: acquire it FIRST (fail fast — before
@@ -205,28 +262,61 @@ namespace Semanticus.Engine
             // A test hook stands in for the XMLA write, so skip token acquire the same way a local endpoint does.
             var hook = DeployLiveSyncHook;
             var local = LiveDeploy.IsLocalEndpoint(endpoint);
-            var tok = hook != null || local
-                ? default
-                : await AcquireLiveTokenAsync(s, authMode, rawToken, tenantId, origin, endpoint, database, System.Threading.CancellationToken.None);
+            // Every step is timed, logged and told to the page in plain words (Kane, 13 Oct: a publish took minutes and said only "deploy live").
+            var runId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            // Total is 0 on purpose: the number of steps depends on what the publish finds, so the status bar must not show "2 of 6".
+            var timer = new DeployTimer((key, words, i) =>
+                _sessions.Bus.PublishProgress(new OperationProgress { OpKey = "deploy_live", RunId = runId, Done = i, Total = 0, Note = words }));
+            Azure.Core.AccessToken tok = default;
+            if (hook == null && LiveOpenHook == null && !local)
+            {
+                timer.Begin("sign-in", "Signing in");
+                try { tok = await AcquireLiveTokenAsync(s, authMode, rawToken, tenantId, origin, endpoint, database, System.Threading.CancellationToken.None); }
+                finally { timer.End(); }
+            }
+            // The connection a preview left open for this commit, when it is still the same target and still good.
+            var heldKey = HeldLiveKey(s.Id, endpoint, database, authMode, tenantId);
+            LiveHandle handle = null;
             var bim = Path.Combine(Path.GetTempPath(), "semanticus-deploy", Guid.NewGuid().ToString("N").Substring(0, 8) + ".bim");
             Directory.CreateDirectory(Path.GetDirectoryName(bim));
             try
             {
                 // Serialize the edited session WITHOUT resetting the undo checkpoint (deploying is not "saving to file").
+                long serializedAt = 0;
                 await s.RunAsync(() =>
                 {
                     s.Save(bim, SaveFormat.ModelSchemaOnly, SerializeOptions.Default, resetCheckpoint: false);
+                    serializedAt = s.Revision;
                     return true;
                 });
                 // Preview first so the token covers the change set, including live before-values and ticked deletes.
                 // A file hash of the session BIM is not stable across two saves of the same revision.
-                DeployReport Run(bool write, bool captureRestorePoint = false) =>
-                    hook != null
-                        ? hook(bim, endpoint, database, write, deleteList)
-                        : LiveDeploy.SyncSessionToLive(bim, endpoint, database, tok.Token, tok.ExpiresOn, write,
-                            explicitDeleteTargets: null, identityStrict: false, captureRestorePoint: captureRestorePoint,
-                            explicitDeleteRefs: deleteList);
+                LiveHandle Handle()
+                {
+                    if (handle != null) return handle;
+                    if (commit) handle = TakeHeldLive(heldKey, tok.ExpiresOn, timer);
+                    else DropHeldLive("a new preview");
+                    handle ??= LiveOpenHook != null
+                        ? LiveOpenHook(endpoint, database, timer)
+                        : AmoLiveHandle.Open(endpoint, database, tok.Token, tok.ExpiresOn, timer);
+                    return handle;
+                }
+                DeployReport Run(bool write, bool captureRestorePoint = false)
+                {
+                    if (hook != null)
+                    {
+                        timer.Begin(write ? "send" : "compare", write ? "Sending the changes" : "Comparing with your copy");
+                        try { return hook(bim, endpoint, database, write, deleteList); } finally { timer.End(); }
+                    }
+                    return Handle().Sync(bim, endpoint, database, write, null, false, captureRestorePoint, deleteList, timer);
+                }
                 var previewRep = await Task.Run(() => Run(false));
+                // A preview keeps its connection for the commit that usually follows. An error or a refusal keeps nothing.
+                if (!commit && handle != null && previewRep != null && string.IsNullOrEmpty(previewRep.Error))
+                {
+                    HoldLive(heldKey, handle);
+                    handle = null;
+                }
                 var expectedToken = ReviewFence.Mint(s.Id, s.Revision, ReviewFence.TargetIdentity(endpoint, database),
                     ReviewFence.ChangeSetFrom(previewRep).Concat(deleteList));
                 DeployReport rep;
@@ -272,10 +362,12 @@ namespace Semanticus.Engine
                         {
                             Endpoint = endpoint, Database = database,
                             Error = LiveMatchCopy.DeleteRefusedNoRestore(restoreError ?? "the live snapshot was not available"),
-                            ConfirmToken = expectedToken
+                            ConfirmToken = expectedToken, Steps = timer.Steps, Timing = timer.Summary()
                         };
                     }
                     rep = await Task.Run(() => Run(true, captureRestorePoint: restorePoint == null));
+                    // The write is done. Closing the connection can be slow, so it happens after the answer goes back.
+                    if (handle != null) { CloseLater(handle); handle = null; }
                     if (rep != null)
                     {
                         if (string.IsNullOrEmpty(rep.RestorePointId) && restorePoint != null)
@@ -309,19 +401,121 @@ namespace Semanticus.Engine
                         });
                     }
                     catch (Exception ex) { rep.Changes = rep.Changes.Append("audit: deployed, but the outcome record could not be written: " + ex.Message).ToArray(); }
+                // A model opened live and published back to where it came from holds nothing more to save: the Next line and the footer said
+                // "unsaved" after a good publish (h17 P4). It is only clean when the publish wrote every edit: an object it left unwritten
+                // (Unmatched), a rename it skipped (Conflicts) or a delete it refused, or an edit made while the push ran (the revision moved
+                // since the model was written out), is still only in the session, so it stays unsaved and file recovery keeps it.
+                // A file model published to a workspace is still unsaved as a file, so it is left alone.
+                if (rep != null && rep.Committed && string.IsNullOrEmpty(rep.Error) && s.LiveOrigin != null
+                    && (rep.Unmatched?.Length ?? 0) == 0 && (rep.Conflicts?.Length ?? 0) == 0 && (rep.DeletesRefused?.Length ?? 0) == 0
+                    && ShownDestinationRefusal(s.LiveOrigin.Endpoint, s.LiveOrigin.Database, endpoint, database) == null)
+                {
+                    try
+                    {
+                        var marked = await s.RunAsync(() =>
+                        {
+                            if (s.Revision != serializedAt) return false;
+                            s.MarkSavedToDisk(false);
+                            return true;
+                        });
+                        if (marked) PublishSaveNotification(s, "save", origin: origin);
+                    }
+                    catch { /* the publish went out; a stale "unsaved" is only a label */ }
+                }
+                if (rep != null) { timer.End(); rep.Steps = timer.Steps; rep.Timing = timer.Summary(); }
                 return rep;
             }
-            finally { try { File.Delete(bim); } catch { /* temp */ } }
+            finally
+            {
+                timer.End();
+                // Any connection still ours (an error before the write, a refused commit) is closed, off this path.
+                if (handle != null) CloseLater(handle);
+                _sessions.Bus.PublishProgress(new OperationProgress { OpKey = "deploy_live", RunId = runId, Done = timer.Steps.Length, Total = 0, Note = null });
+                try { File.Delete(bim); } catch { /* temp */ }
+            }
+        }
+
+        // ---- The live connection a preview keeps for its commit (Kane, 13 Oct: connect and read of the live model ran twice and took minutes). ----
+        // One held connection at most. It is closed after the commit, when a new preview replaces it, when the engine closes, and after it
+        // sits idle. Reuse needs the same session, target and sign-in, a token with time left, and a cheap check that the live model has
+        // not changed since it was read. Any doubt reads the live model again: slower, never a write over a change the preview did not see.
+        internal static TimeSpan HeldLiveIdle = TimeSpan.FromMinutes(4);
+        private static readonly TimeSpan HeldLiveTokenMargin = TimeSpan.FromMinutes(2);
+        /// <summary>Test seam: opens a connection to the recorded live double instead of a real server. Null in production.</summary>
+        internal Func<string, string, DeployTimer, LiveHandle> LiveOpenHook;
+
+        private sealed class HeldLive { public LiveHandle Handle; public string Key; public System.Threading.Timer Idle; }
+        private readonly object _heldLiveLock = new object();
+        private HeldLive _heldLive;
+
+        internal bool HasHeldLive { get { lock (_heldLiveLock) return _heldLive != null; } }
+
+        private static string HeldLiveKey(string sessionId, string endpoint, string database, string authMode, string tenantId) =>
+            string.Join("|", sessionId, (endpoint ?? "").Trim().TrimEnd('/', '\\').ToLowerInvariant(), (database ?? "").Trim().ToLowerInvariant(),
+                (authMode ?? "").Trim().ToLowerInvariant(), (tenantId ?? "").Trim().ToLowerInvariant());
+
+        private static void CloseLater(LiveHandle h)
+        {
+            if (h == null) return;
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                try { h.Dispose(); } catch { /* closing a dead connection is not a failure */ }
+                DeployTimer.LogLate("disconnect", sw.ElapsedMilliseconds);
+            });
+        }
+
+        private void CloseHeld(HeldLive x)
+        {
+            if (x == null) return;
+            try { x.Idle?.Dispose(); } catch { /* already gone */ }
+            CloseLater(x.Handle);
+        }
+
+        private void HoldLive(string key, LiveHandle h)
+        {
+            var held = new HeldLive { Handle = h, Key = key };
+            held.Idle = new System.Threading.Timer(_ =>
+            {
+                lock (_heldLiveLock) { if (!ReferenceEquals(_heldLive, held)) return; _heldLive = null; }
+                CloseHeld(held);
+            }, null, System.Threading.Timeout.InfiniteTimeSpan, System.Threading.Timeout.InfiniteTimeSpan);
+            HeldLive old;
+            lock (_heldLiveLock) { old = _heldLive; _heldLive = held; }
+            held.Idle.Change(HeldLiveIdle, System.Threading.Timeout.InfiniteTimeSpan);
+            CloseHeld(old);
+        }
+
+        internal void DropHeldLive(string why)
+        {
+            HeldLive old;
+            lock (_heldLiveLock) { old = _heldLive; _heldLive = null; }
+            if (old != null) { try { Console.Error.WriteLine("[deploy] closed the held connection: " + why); } catch { } }
+            CloseHeld(old);
+        }
+
+        /// <summary>The held connection for this exact target when it is still good, else null (and the caller reads the live model again).</summary>
+        private LiveHandle TakeHeldLive(string key, DateTimeOffset tokenExpires, DeployTimer timer)
+        {
+            HeldLive held;
+            lock (_heldLiveLock)
+            {
+                if (_heldLive == null || !string.Equals(_heldLive.Key, key, StringComparison.Ordinal)) return null;
+                held = _heldLive; _heldLive = null;
+            }
+            try { held.Idle?.Dispose(); } catch { /* already gone */ }
+            timer.Begin("check", "Checking the live model has not changed");
+            bool current;
+            try { current = held.Handle.ExpiresOn - DateTimeOffset.UtcNow > HeldLiveTokenMargin && held.Handle.IsCurrent(); }
+            catch { current = false; }
+            finally { timer.End(); }
+            if (!current) { CloseLater(held.Handle); return null; }
+            return held.Handle;
         }
 
         // --- Test seams for the workspace (selective-push) target. Live XMLA is not exercised offline, so tests
         // inject in-memory snapshots (A then B, for the drift check) and a fake push — exercising the merge / validate
         // / drift / gate / audit legs WITHOUT a real endpoint. Null (production) = the real live path. ---
-        // A role Create or Update (a members change among them) cannot be published from here; a role Delete can.
-        internal static bool IsRoleHeld(ModelDiffItem i) => i.ObjectType == "Role" && (i.Action == "Create" || i.Action == "Update");
-        internal static string RoleHeldReason(string roleRef) =>
-            roleRef + " (live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.)";
-
         internal Func<Task<RawTom.Database>> WorkspaceSnapshotHook;
         internal Func<string, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget>, DeployReport> WorkspacePushHook;
         // Whole-model publish path (deploy_live / Save to Live). Tests point this at an in-memory recorded target so a
@@ -329,6 +523,36 @@ namespace Semanticus.Engine
         /// <summary>The closing sentence of a preview note. The assistant is told which flag to pass; a person has a button on
         /// the page, and the flag is not a word they should ever read (UAT-J9-S10d-003).</summary>
         internal static string CommitHint(string origin, string verb) => DeployGuard.IsAgent(origin) ? $" Pass commit=true to {verb}." : "";
+
+        /// <summary>The sign-in a live target uses when the caller names none (hero21 N1/N2). A target the session was opened from, or
+        /// the destination it publishes to, uses the sign-in that opened or created it: the same mode and tenant deploy_live uses, so
+        /// the compare, the merge and the push never fall to az (an agent: "Not signed in") and never open a browser for a destination
+        /// whose sign-in is saved. A target nobody saved uses az as before. Saved is true when the target
+        /// is a destination the app already holds a sign-in for: its sign-in is never answered with a browser window.</summary>
+        internal async Task<(string Mode, string Tenant, bool Saved)> SavedSignInForAsync(string endpoint, string database, string authMode, string tenantId)
+        {
+            var mode = string.IsNullOrWhiteSpace(authMode) ? null : authMode.Trim();
+            var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim();
+            static string E(string v) => (v ?? "").Trim().TrimEnd('/', '\\').ToLowerInvariant();
+            bool Same(string e, string d) => !string.IsNullOrWhiteSpace(e) && !string.IsNullOrWhiteSpace(d) && E(e) == E(endpoint) && E(d) == E(database);
+            var saved = false;
+            void Take(string recMode, string recTenant)
+            {
+                if (string.IsNullOrWhiteSpace(recMode)) return;
+                saved = true;
+                if (mode == null) mode = recMode.Trim();
+                if (tenant == null && string.Equals(mode, recMode.Trim(), StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(recTenant)) tenant = recTenant.Trim();
+            }
+            var src = _sessions.Current?.LiveOrigin;
+            if (src != null && Same(src.Endpoint, src.Database)) Take(src.AuthMode, src.TenantId);
+            try
+            {
+                var publish = (await ConnectionContextAsync())?.Publishing;
+                if (publish != null && publish.Available && Same(publish.Endpoint, publish.Database)) Take(publish.AuthMode, publish.TenantId);
+            }
+            catch { /* the context is a hint; the named or default sign-in still works */ }
+            return (mode ?? "azcli", tenant, saved);
+        }
 
         /// <summary>Null when nothing was named or the named destination is the one in force. Otherwise the refusal in plain words.</summary>
         internal static string ShownDestinationRefusal(string shownEndpoint, string shownDatabase, string endpoint, string database)
@@ -360,17 +584,19 @@ namespace Semanticus.Engine
 
             var cleanups = new System.Collections.Generic.List<Action>();
             void CleanupAll() { foreach (var c in cleanups) { try { c(); } catch { } } }
+            // The revision the model had when it was read for this push: an edit made while the push ran is not in what was written (hero19 D13).
+            var readRevision = _sessions.Current?.Revision ?? -1;
             var (ldb, llabel, lclean) = await ResolveModelRefAsync(left ?? new ModelRef { Kind = "session" }, origin);
             cleanups.Add(lclean);
             try
             {
-                var authMode = string.IsNullOrWhiteSpace(right.AuthMode) ? "azcli" : right.AuthMode;
+                var (authMode, signInTenant, savedDestination) = await SavedSignInForAsync(right.Endpoint, right.Database, right.AuthMode, right.TenantId);
                 var tlabel = right.Label ?? right.Database;
 
                 // Snapshot the CURRENT deployed metadata (read-only), loaded as raw TOM like a file — "snapshot A".
                 // Capture the EFFECTIVE auth mode it authenticated with, so the eventual push reuses that same proven
                 // credential instead of re-acquiring the mode the endpoint already rejected (see PushWorkspaceAsync).
-                var (adb, effectiveMode) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
+                var (adb, effectiveMode) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, signInTenant, savedDestination);
 
                 var diff = ModelCompare.Diff(ldb.Model, adb.Model, llabel, tlabel);
                 var selected = selectedRefs != null && selectedRefs.Length > 0 ? new System.Collections.Generic.HashSet<string>(selectedRefs) : null;
@@ -381,11 +607,7 @@ namespace Semanticus.Engine
                 // (so they never count toward drift / apply) and reported. Deduped by ref.
                 var republishDeleteRefs = selectedItems.Where(i => i.LikelyRepublished).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
                 string RepublishReason(string r) => r + " (refused as a likely republish: a same-named object exists on the target with a DIFFERENT lineage tag; deleting or replacing it would drop the live object and its data. This usually means the model was republished under you. Re-diff against the current model, or push the update instead.)";
-                // A role added or changed (members included) is never carried by a metadata push: Power BI takes role
-                // membership in its own service, and SyncSessionToLive has no role path (only an explicit delete). Say so
-                // BEFORE the press and keep it out of the push, so one role row never blocks the other ticked changes.
-                var roleHeldRefs = selectedItems.Where(IsRoleHeld).Select(i => i.Ref).Distinct(StringComparer.Ordinal).ToArray();
-                var applicableItems = selectedItems.Where(i => !i.LikelyRepublished && !IsRoleHeld(i)).ToList();
+                var applicableItems = selectedItems.Where(i => !i.LikelyRepublished).ToList();
                 var applicable = applicableItems.Select(i => i.Ref).ToArray();
                 var deleteRefs = applicableItems.Where(i => i.Action == "Delete").Select(i => i.Ref).ToArray();
                 var pushRefs = applicableItems.Where(i => i.Action != "Delete").Select(i => i.Ref).ToArray();
@@ -397,18 +619,21 @@ namespace Semanticus.Engine
 
                 if (!commit)
                 {
-                    var note = $"Preview: {pushRefs.Length} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + CommitHint(origin, "push");
-                    if (roleHeldRefs.Length > 0) note += $" {roleHeldRefs.Length} role change(s) cannot go from here: {string.Join(", ", roleHeldRefs)}.";
-                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs.Concat(roleHeldRefs.Select(RoleHeldReason)).ToArray(), Target = tlabel, Note = note };
+                    // Rehearse the push on copies in memory, the way the real one runs: merge the ticked changes into a copy of what
+                    // the destination holds, then compare that with another copy. A change that could not go out is named here, per
+                    // row, so the page can untick it and count only what will go. Nothing is written and no connection is opened.
+                    var cannotGo = RehearsePush(ldb, adb, diff, pushRefs);
+                    var note = $"Preview: {pushRefs.Length - cannotGo.Count} object(s) would be pushed to {right.Database} on {right.Endpoint}." + DeleteNote() + RepublishNote() + CommitHint(origin, "push");
+                    return new ApplyDiffResult { Applied = false, Count = applicable.Length, AppliedRefs = applicable, FailedRefs = republishDeleteRefs.Concat(cannotGo).ToArray(), Target = tlabel, Note = note };
                 }
 
                 // NOTHING TO PUSH: the selection matched no pending difference the push can carry. If the ONLY selection
                 // was a refused republish, say THAT (not "nothing to push"). Either way, no live write happened.
                 if (applicable.Length == 0)
                 {
-                    if (republishDeleteRefs.Length > 0 || roleHeldRefs.Length > 0)
-                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = republishDeleteRefs.Select(RepublishReason).Concat(roleHeldRefs.Select(RoleHeldReason)).ToArray(), Target = tlabel,
-                            Note = "Nothing was pushed." + RepublishNote() + (roleHeldRefs.Length > 0 ? $" Role changes cannot go from here: {string.Join(", ", roleHeldRefs)}." : "") };
+                    if (republishDeleteRefs.Length > 0)
+                        return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = republishDeleteRefs.Select(RepublishReason).ToArray(), Target = tlabel,
+                            Note = "Nothing was pushed." + RepublishNote() };
                     return new ApplyDiffResult { Applied = false, Count = 0, AppliedRefs = Array.Empty<string>(), FailedRefs = Array.Empty<string>(), Target = tlabel,
                         Note = $"Nothing to push: the selection matched no pending difference between the source and {right.Database} on {right.Endpoint}." };
                 }
@@ -435,7 +660,7 @@ namespace Semanticus.Engine
                 // overwrite (adds/updates AND deletes) A-vs-B, restricted to the SELECTED refs; any non-Equal ⇒ someone
                 // edited a ref we intend to change since we diffed. Deletes are irreversible on a published model, so
                 // they are guarded too. Snapshot A stays only the drift BASELINE — we no longer push it (see below).
-                var (bdb, _) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, right.TenantId);
+                var (bdb, _) = await SnapshotWorkspaceAsync(right.Endpoint, right.Database, authMode, cleanups, origin, signInTenant, savedDestination);
                 // The RESTORE POINT is snapshot B, and it must be captured HERE: ModelCompare.Apply below merges the
                 // selected changes INTO bdb in place, so serializing it any later would persist the post-push state and
                 // silently make rollback a no-op. Cheap (in-memory) and it also works under the offline test hook.
@@ -458,7 +683,7 @@ namespace Semanticus.Engine
                 // The A-diff drives the preview count (what the user previewed is what they push);
                 // the B-diff drives what is actually applied.
                 var bdiff = ModelCompare.Diff(ldb.Model, bdb.Model, llabel, tlabel);
-                var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref)) && !IsRoleHeld(i)).ToList();
+                var bItems = bdiff.Items.Where(i => i.Action != "Equal" && (selected == null || selected.Contains(i.Ref))).ToList();
                 // REFUSE retag/republish items (same name, different lineage tag ⇒ Match emits a Delete + Create pair
                 // that SHARE a name-based ref). Both halves are excluded from the push: deleting would drop the live
                 // object + its data, and the paired Create can't add a same-named object while the live one exists. The
@@ -490,7 +715,6 @@ namespace Semanticus.Engine
                 var failed = new System.Collections.Generic.List<string>(outcome.Failed.Select(f => f.Ref + " (" + f.Reason + ")"));
                 // Retag/republish items are refused with a clear, actionable reason (routed to FailedRefs). Never pushed.
                 foreach (var r in republishRefsB) failed.Add(RepublishReason(r));
-                foreach (var r in roleHeldRefs) failed.Add(RoleHeldReason(r));
 
                 // BLOCKER 1 (staging-collision coupling): a relationship Delete whose paired replacement Create was SELECTED
                 // but did NOT stage — an in-place re-point keeps the same endpoint pair on one side so the merged Create
@@ -589,7 +813,7 @@ namespace Semanticus.Engine
                         Error = "Delete refused: a restore point could not be written (" + (restoreError ?? "unknown error")
                             + "), and a delete on a published model cannot be undone without one. Nothing was pushed. Free some disk space under ~/.semanticus/restore and retry, or de-select the deletes to push the remaining changes." };
 
-                var rep = await PushWorkspaceAsync(bim, right.Endpoint, right.Database, effectiveMode, deleteTargetsB, DeployGuard.IsAgent(origin), right.TenantId);   // reuse the snapshot's effective mode (P2-5); tenant threaded (HIGH 6); non-interactive for an agent (round-3)
+                var rep = await PushWorkspaceAsync(bim, right.Endpoint, right.Database, effectiveMode, deleteTargetsB, DeployGuard.IsAgent(origin), signInTenant, savedDestination);   // reuse the snapshot's effective mode (P2-5); tenant threaded (HIGH 6); non-interactive for an agent (round-3)
                 // NOTHING committed (SaveChanges wrote nothing) AND an error ⇒ a true failure; never claim success
                 // (surface it verbatim, incl. a rejected delete-of-a-table-with-dependents, which SaveChanges refuses
                 // atomically). CRITICAL: this branches on rep.Committed, NOT rep.Error. SyncSessionToLive commits in TWO
@@ -665,6 +889,29 @@ namespace Semanticus.Engine
                     }
                     catch { /* the push succeeded; a failed audit write must not misreport it */ }
 
+                // The Publish page writes through here, not through deploy_live. Everything the model differed by went to the model's own live
+                // source, and nothing was left out, refused or changed during the push: there is nothing more to save, so the footer and the
+                // Plan stop saying unsaved at once (hero19 D13; the same rule as deploy_live above). A part of the changes, or a model that is
+                // not the open session, is still only in the session.
+                if (rep != null && rep.Committed && string.IsNullOrEmpty(rep.Error) && failed.Count == 0 && sess?.LiveOrigin != null
+                    && string.Equals((left ?? new ModelRef { Kind = "session" }).Kind, "session", StringComparison.OrdinalIgnoreCase)
+                    && (selected == null || diff.Items.Where(i => i.Action != "Equal").All(i => selected.Contains(i.Ref)))
+                    && (rep.Unmatched?.Length ?? 0) == 0 && (rep.Conflicts?.Length ?? 0) == 0 && (rep.DeletesRefused?.Length ?? 0) == 0
+                    && ShownDestinationRefusal(sess.LiveOrigin.Endpoint, sess.LiveOrigin.Database, right.Endpoint, right.Database) == null)
+                {
+                    try
+                    {
+                        var marked = await sess.RunAsync(() =>
+                        {
+                            if (sess.Revision != readRevision) return false;
+                            sess.MarkSavedToDisk(false);
+                            return true;
+                        });
+                        if (marked) PublishSaveNotification(sess, "save", origin: origin);
+                    }
+                    catch { /* the push went out; a stale "unsaved" is only a label */ }
+                }
+
                 // APPLIED is truthful — tied to the deploy: either it committed real change(s), or (nothing was left to
                 // change AND nothing failed) it's a clean, verified no-op. A push where everything the merge claimed
                 // failed to reach live is NOT a success.
@@ -697,6 +944,33 @@ namespace Semanticus.Engine
             finally { CleanupAll(); }
         }
 
+        /// <summary>A dry run of a selective push, in memory: the refs that would NOT go, each as "ref (reason)". The destination copy is
+        /// scratch (it is merged into and thrown away). A failure of the rehearsal itself never blocks the list.</summary>
+        private static System.Collections.Generic.List<string> RehearsePush(RawTom.Database sourceDb, RawTom.Database destinationDb, ModelDiff diff, string[] pushRefs)
+        {
+            var cannotGo = new System.Collections.Generic.List<string>();
+            if (pushRefs.Length == 0) return cannotGo;
+            try
+            {
+                var before = RawTom.JsonSerializer.SerializeDatabase(destinationDb);
+                var outcome = ModelCompare.Apply(sourceDb.Model, destinationDb.Model, diff, new System.Collections.Generic.HashSet<string>(pushRefs, StringComparer.Ordinal));
+                foreach (var f in outcome.Failed) cannotGo.Add(f.Ref + " (" + f.Reason + ")");
+                var merged = RawTom.JsonSerializer.DeserializeDatabase(RawTom.JsonSerializer.SerializeDatabase(destinationDb), null, Microsoft.AnalysisServices.CompatibilityMode.PowerBI);
+                var live = RawTom.JsonSerializer.DeserializeDatabase(before, null, Microsoft.AnalysisServices.CompatibilityMode.PowerBI);
+                var rep = LiveDeploy.SyncModels(merged.Model, live.Model, apply: false, identityStrict: true);
+                var unsynced = (rep.Unmatched ?? Array.Empty<string>()).Concat(rep.Conflicts ?? Array.Empty<string>()).ToArray();
+                var synced = new System.Collections.Generic.HashSet<string>(rep.SyncedRefs ?? Array.Empty<string>(), StringComparer.Ordinal);
+                foreach (var r in outcome.Applied)
+                {
+                    var entry = unsynced.FirstOrDefault(e => DeployEntryConcernsRef(e, r));
+                    if (entry != null) cannotGo.Add(r + " (live deploy did not sync it: " + entry + ")");
+                    else if (!synced.Contains(r)) cannotGo.Add(r + " (merged locally but the live deploy did not carry it: a metadata deploy doesn't push this object type)");
+                }
+            }
+            catch { /* the real push says no in plain words; a failed rehearsal must not hide the list */ }
+            return cannotGo;
+        }
+
         /// <summary>The words for a push the drift guard refused. A person is told in plain words and is never asked for a
         /// reason (Kane 8 Oct): Studio compares again and the person presses Publish again. The assistant gets the teaching
         /// version: it names the objects and the way past (overrideReason). Only an exact "human" is a person; anything else
@@ -723,13 +997,23 @@ namespace Semanticus.Engine
             var bpa = await BpaScanAsync();
             var card = await AiReadinessScanAsync();
             var blockers = new System.Collections.Generic.List<string>();
+            var keys = new System.Collections.Generic.List<string>();
+            string Key(string kind, string rule, string objectRef) => kind + "|" + rule + "|" + objectRef + "|" + GateEditsTo(objectRef);
             var older = 0;
             if (card.GatedBy != null)
             {
                 foreach (var g in card.GatedBy)
                 {
                     if (DeployGateScope.ReadinessGateTouches(g, card.Findings, changed, wholeModel))
+                    {
                         blockers.Add(g);
+                        // The same findings the gate matched on, one key each. A gate with no matching finding keeps its own text as the key.
+                        var any = false;
+                        foreach (var f in card.Findings ?? Array.Empty<Semanticus.Analysis.ReadinessFinding>())
+                            if (f != null && !f.IsAccepted() && DeployGateScope.ReadinessGateMatches(g, f.RuleId) && DeployGateScope.Touches(f.ObjectRef, changed, wholeModel))
+                            { keys.Add(Key("ready", f.RuleId, f.ObjectRef)); any = true; }
+                        if (!any) keys.Add("ready|" + g);
+                    }
                     else
                         older++;
                 }
@@ -748,13 +1032,14 @@ namespace Semanticus.Engine
             // person, not a fault (BpaViolation.Advice). Before the rule its fix was offered, so it never blocked; a model
             // that carries its own severity-2 format rules would otherwise be refused on advice the engine calls advice. The exception is
             // the model's own severity 3 rule: that is its policy, an error, and it blocks whether or not its fix is withheld.
-            var blockingSet = bpa.Violations?.Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.IsAdviceTheGateSkips() && !v.IsAccepted()).ToList()
+            var blockingSet = bpa.Violations?.Where(v => v.Severity >= 2 && !v.CanAutoFix && !v.IsAdviceTheGateSkips() && !v.IsAccepted() && !v.IsMaintenanceOnly()).ToList()
                               ?? new System.Collections.Generic.List<Semanticus.Analysis.BpaViolation>();
             var scopedBlocking = blockingSet.Where(v => DeployGateScope.Touches(v.ObjectRef, changed, wholeModel)).ToList();
             older += blockingSet.Count - scopedBlocking.Count;
             var blocking = scopedBlocking.Count;
             var waived = bpa.Violations?.Count(v => v.Severity >= 2 && !v.CanAutoFix && !v.IsAdviceTheGateSkips() && v.IsAccepted() && !v.NoLongerFires && !v.WholeRuleRow) ?? 0;   // a row that only shows an acceptance whose finding stopped firing is not a finding the gate looked at
             if (blocking > 0) blockers.Add(Semanticus.Analysis.GateBlockerCopy.ForBlockingViolations(scopedBlocking));
+            keys.AddRange(scopedBlocking.Select(v => Key("bpa", v.RuleId, v.ObjectRef)));
             // A rule the scan could NOT evaluate is not a clean rule. Its evaluation aborted part way through a scope,
             // so the violations listed for it are a prefix and the rest of that scope is unknown — passing the gate on
             // that basis would be the gate reading a truncated scan as a green one. Only unknowns whose rule would
@@ -772,6 +1057,7 @@ namespace Semanticus.Engine
             older += unknownSet.Count - scopedUnknown.Count;
             var unknownBlocking = scopedUnknown.Count;
             if (unknownBlocking > 0) blockers.Add(Semanticus.Analysis.GateBlockerCopy.ForBlockingUnknowns(scopedUnknown));
+            keys.AddRange(scopedUnknown.Select(u => "unk|" + u.RuleId + "|" + u.Scope));
             var changes = 0;
             if (compareTarget != null)
             {
@@ -798,6 +1084,7 @@ namespace Semanticus.Engine
                 BpaWaivedBlocking = waived,
                 BpaUnknownBlocking = unknownBlocking,
                 Blockers = blockers.ToArray(),
+                FindingKeys = keys.ToArray(),
                 OlderWarnings = older,
                 WholeModel = wholeModel,
                 CheckLine = Semanticus.Analysis.GateBlockerCopy.CheckLine(blockers, older, wholeModelReason),

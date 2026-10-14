@@ -185,8 +185,10 @@ const liveLines = (state) => state.lines.filter((l) => (state.granted !== false 
 // The grades the preview made: letters, and "after the build" provisional until the decide has settled.
 function gradesOf(state) {
   const settled = state.decide === 'stable' || state.decide === 'off';
+  // Once the plan has been built the real engine never has a grade for the empty model, and says so when the build is undone (D7).
+  const undone = !!state.builtOnce && !state.built;
   return {
-    now: 35, nowGrade: 'D', nowBestPractice: null,
+    now: state.builtOnce ? null : 35, nowGrade: state.builtOnce ? null : 'D', nowBestPractice: null, nowUndone: undone,
     afterBuild: state.free || state.jevDeclined ? 78 : 92, afterBuildGrade: state.free || state.jevDeclined ? 'C' : 'A', afterBuildBestPractice: 'B', afterBuildBestPracticeOpen: 2,
     afterBuildProvisional: state.provisional ?? !settled,
   };
@@ -297,7 +299,7 @@ export function startPlanBuild(state, digest) {
   const cur = digestOf(state);
   if (!state.approval || state.approval.digest !== cur) return { built: false, refused: 'Nothing was built. The plan has no approval that matches what it says now. Approve it first.', revision: state.revision, view: startPlanView(state) };
   if (digest !== cur) return { built: false, refused: 'Nothing was built. The plan changed since you read it.', revision: state.revision, view: startPlanView(state) };
-  state.built = true; state.revision = 12; return { built: true, refused: null, revision: 12, view: startPlanView(state) };
+  state.built = true; state.builtOnce = true; state.revision = 12; return { built: true, refused: null, revision: 12, view: startPlanView(state) };
 }
 // write_start_words: the person's keep of a flagged name (keep_name) and the person's edit of words. A keep is a line of the person's own; an edit makes the line the person's.
 export function startPlanWriteWords(state, words, origin) {

@@ -12,7 +12,7 @@ One Cloudflare worker, no SDK, no dependencies. `POST /v1/decide` and `GET /v1/b
 |---|---|
 | `worker.mjs` | the routes, the gate order, the forward, the logging and the sweep |
 | `ledger.mjs` | `LicenceLedger`, the Durable Object: reserve, forward, settle, release, stick, sweep |
-| `verify.mjs` | licence verification in WebCrypto, mirroring `LicenseVerifier` and the 14-day grace |
+| `verify.mjs` | licence verification in WebCrypto, mirroring `LicenseVerifier` and the 14-day grace; a `trial: true` token gets no grace |
 | `templates.mjs` | the pinned points and every hard limit |
 | `test/` | the suite, its fakes, and the drift guard that reads the engine's own C# |
 
@@ -33,6 +33,13 @@ this table and those files stop agreeing.
 
 Forty for `plan.rank` is `PlanRankPoint.MaxScoredItems`, which is what `LocalEngine.Plan.cs` takes from the
 open plan in one call.
+
+## The Pro trial
+
+A trial token (`trial: true`, minted by the billing worker's `/trial/confirm`) is refused as `expired` the
+second it passes `exp`; paid tokens keep the 14-day grace. It budgets under `sid:trial_<fingerprint>`, one
+ledger per trial. There is no separate trial cap today: a trial gets the same `RELAY_LICENCE_TOKENS` monthly
+cap as a paid licence, and the house cap (`RELAY_LICENCE_TOKENS * RELAY_LICENCE_COUNT`) does not count trials.
 
 ## What one request reference buys
 

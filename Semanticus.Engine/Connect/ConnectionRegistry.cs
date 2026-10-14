@@ -761,8 +761,21 @@ namespace Semanticus.Engine
                 throw new InvalidOperationException(LabelChangePersonOnlySentence);
         }
 
+        internal const string LooserFirstLabelPersonOnlySentence =
+            "That label would give your assistant more room there than the connection has now, so only you can set it, in Connections.";
+
+        // The label an unlabelled connection acts under today: dev, or local for a loopback address (LocalEngine.ResolveTargetLabel).
+        // An agent's first label may keep or tighten that row, never loosen it (local < dev < uat < prod).
+        internal static void GuardAgentLooserFirstLabel(ModelConnectionRecord record, string newLabel)
+        {
+            if (newLabel == null) return;
+            var current = LiveDeploy.IsLocalEndpoint(record?.Endpoint) ? "local" : EffectiveLabel(record);
+            if (Array.IndexOf(Labels, newLabel) < Array.IndexOf(Labels, current))
+                throw new InvalidOperationException(LooserFirstLabelPersonOnlySentence);
+        }
+
         /// <summary>
-        /// Declare what a target is. The agent can set the first label; only the person can change or clear it.
+        /// Declare what a target is. The agent can set the first label, never a looser one than the target acts under now; only the person can change or clear it.
         /// LocalEngine applies the local-write policy. The live-action policy reads the resulting label.
         /// A null or empty label clears it. An unlabelled target counts as test (dev).
         /// </summary>
@@ -780,7 +793,11 @@ namespace Semanticus.Engine
                 var rec = all.FirstOrDefault(r => string.Equals(r.Id, id, StringComparison.OrdinalIgnoreCase))
                     ?? throw new InvalidOperationException("No connection with that id. Open Connections to see what is known.");
                 // Check under both registry locks so a label the person just set cannot be overwritten.
-                if (!IsHuman(origin)) GuardAgentLabelChange(rec);
+                if (!IsHuman(origin))
+                {
+                    GuardAgentLabelChange(rec);
+                    GuardAgentLooserFirstLabel(rec, normalized);
+                }
                 rec.Label = normalized;
                 return rec;
             });

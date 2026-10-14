@@ -236,6 +236,8 @@ export interface PlanItem {
   sourcePage?: string | null;
   doer?: PlanDoer;
   stateWord?: PlanStateWord;
+  /** The assistant's own tool calls are touching this row now: draw it On it, in the assistant's colour. */
+  assistantAtWork?: boolean;
   stateNote?: string | null;
   doneWhen?: PlanDoneWhen;
   doneText?: string | null;
@@ -249,6 +251,8 @@ export interface PlanItem {
   held?: boolean;
   order?: number | null;
   note?: string | null;
+  /** The assistant's own note on the row, kept beside the person's. */
+  assistantNote?: string | null;
   reply?: string | null;
   /** The person's whole text, when it was longer than the title (the title is its start). */
   fullText?: string | null;
@@ -287,6 +291,11 @@ export interface PlanStrip {
   /** The Best practice letter from the engine's own BPA scan, read-only beside AI readiness. */
   bestPractice?: string | null;
   bestPracticeWhy?: string | null;
+  /** The same scan's 0 to 100 score: the number the Review page shows. Null when the scan could not run. */
+  bestPracticeScore?: number | null;
+  /** Plan done: done tasks (counting the ones History holds) of every task counted. Both come from the engine. */
+  tasksDone?: number;
+  tasksAll?: number;
   tracks: PlanStripTrack[];
   latest?: { entryId: string; when: string; by: string; sentence: string } | null;
   updated?: { when: string; by: string } | null;
@@ -453,6 +462,8 @@ export interface Plan {
   assistantQueue?: 'on' | 'paused';
   /** What the assistant reads on its next call, from the engine (contract 6.1); null when it would read nothing. */
   assistantSees?: string | null;
+  /** For each assistant row, what the assistant reads to finish it without asking. The page never shows it. */
+  assistantBriefs?: Record<string, string> | null;
   revision?: number;
   /** The person's saved repeats and the stock ones offered (lane RP, contract 1.7). */
   repeats?: import('./plan-repeat-model').PlanRepeat[];
@@ -630,13 +641,13 @@ export interface PlanGauge { counts: PlanGaugeBands; shares: PlanGaugeBands }
 /**
  * The ink of each band of the plan's gauge, shared by the Plan strip and the Overview's plan bar so a band is
  * one colour everywhere. Colour level B (24 September 2026): the bands a doer owns take that doer's hue (runs
- * on its own is Semanticus, your assistant is the assistant), needs you keeps the warning colour because it
+ * on its own is Semanticus, your assistant is the assistant), needs you is the person's blue because it
  * is the state that waits on the reader, to approve keeps the jade because it is the "do this" band, done is
  * the text colour, and the rest are faint.
  */
 export const GAUGE_INK: Record<keyof PlanGaugeBands, string> = {
-  done: 'var(--sem-fg)', proposed: 'var(--sem-accent)', ready: 'var(--sem-doer-engine)', you: 'var(--sem-warn)',
-  asst: 'var(--sem-doer-agent)', target: 'var(--sem-faint)', skipped: 'var(--sem-border)',
+  done: 'var(--sem-fg)', proposed: 'var(--sem-accent)', ready: 'var(--sem-actor-semanticus)', you: 'var(--sem-actor-you)',
+  asst: 'var(--sem-actor-assistant)', target: 'var(--sem-faint)', skipped: 'var(--sem-border)',
 };
 
 /** The band a readiness score sits in: 75 and over is good, 60 to 74 is careful, under 60 is wrong. The grade
@@ -838,7 +849,7 @@ export function receiptLine(set: PlanChangeSet | null | undefined): string {
   const n = Number(set?.lastAppliedCount) || 0;
   if (n <= 0) return '';
   const when = set?.lastAppliedAt ? timeLabel(set.lastAppliedAt) : '';
-  const many = `${n} change${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} approved here before`;
+  const many = `${n} change${n === 1 ? '' : 's'} ${n === 1 ? 'was' : 'were'} applied here before`;
   return when ? `${many}, at ${when}.` : `${many}.`;
 }
 
@@ -1273,6 +1284,26 @@ export const DOER_LABEL: Record<PlanDoer, string> = { semanticus: 'Semanticus', 
 export const DOER_ORDER: PlanDoer[] = ['semanticus', 'you', 'assistant'];
 /** The engine's note on a done row whose gap another change closed; the row then says so and never credits its owner. */
 export const NO_LONGER_NEEDED = 'No longer needed';
+/** The short form of a note too long for the state cell, so a Waiting row or a Ready row nobody can take says who and what to do without a hover. The full
+ *  note stays on hover. Null when the note has no short form (the cell then shows it only when it fits). */
+export function stateNoteShort(note: string | null | undefined): string | null {
+  if (!note) return null;
+  const waits = /^Waiting for (you|your assistant|Semanticus|another task)\b/u.exec(note);
+  if (waits) return /^Waiting for your assistant\. Ask it/u.test(note) ? 'ask your assistant' : `for ${waits[1]}`;
+  if (/^Ask your assistant to run the plan/u.test(note) || /^You paused your assistant's tasks\. Ask your assistant/u.test(note)) return 'ask your assistant';
+  return null;
+}
+
+/** A reason on a closed row: the first 30 characters, cut at a word, with three dots when it was cut. The whole reason is on hover and in the open row. */
+export function reasonShort(note: string | null | undefined): string | null {
+  const t = (note ?? '').replace(/\s+/gu, ' ').trim();
+  if (!t) return null;
+  if (t.length <= 30) return t;
+  const cut = t.slice(0, 30);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > 12 ? cut.slice(0, at) : cut).replace(/[.,;:]+$/u, '')}...`;
+}
+
 export const closedByOther = (item: PlanItem): boolean => item.stateWord === 'done' && item.stateNote === NO_LONGER_NEEDED;
 
 export const STATE_WORD_LABEL: Record<PlanStateWord, string> = {
@@ -1280,8 +1311,12 @@ export const STATE_WORD_LABEL: Record<PlanStateWord, string> = {
   checking: 'Applied, checking', done: 'Done', set_aside: 'Set aside',
 };
 
+/** The engine flags a row assistantAtWork for 60 s after the assistant's last edit (AssistantAtWorkWindow). The page reads again just after, so On it ends by itself. */
+export const AT_WORK_REREAD_MS = 61_000;
+
 /** The state word as sent. An engine older than slice 7 sends none; its own status is then read, never guessed past. */
 export function stateWordOf(item: PlanItem): PlanStateWord {
+  if (item.assistantAtWork && (item.stateWord === 'ready' || item.stateWord === 'waiting')) return 'on_it';
   if (item.stateWord) return item.stateWord;
   if (item.status === 'done') return 'done';
   if (item.status === 'skipped') return 'set_aside';
@@ -1342,6 +1377,42 @@ export function noReplyWords(doer: PlanDoer, item: Pick<PlanItem, 'claim'>): str
 
 export function sourceOf(item: PlanItem): PlanSource {
   return item.source ?? (item.who === 'jev' ? 'jev' : 'found');
+}
+
+// ---- Jev on the calm row (1.5, Kane's pick A of the Jev plan) -------------------------------------------------------------
+
+/** Jev's mark: a spark and the word Jev after the title. Only a row whose source is Jev AND that carries a line Jev chose (the "Jev is
+ *  still looking" row has no lines, so it is not "chosen by Jev"). */
+export function jevChoseRow(item: PlanItem): boolean {
+  return sourceOf(item) === 'jev' && changeLines(item.changeSet).some((l) => l.provenance?.kind === 'decision');
+}
+
+/** What the row is worth in AI ready points, as the engine measured it by trying the row on the model ("+4 AI ready"). Null when it
+ *  said nothing: no number is ever worked out here. */
+export const AI_WORTH = /^\+\d+ AI ready$/u;
+export function aiWorthOf(item: PlanItem): string | null {
+  const v = item.value?.trim();
+  return v && AI_WORTH.test(v) ? v : null;
+}
+
+/** Jev's reason for a row in one line: the row's first fact (what is missing and what it costs), which the engine writes. Null when there is none. */
+export function jevReasonOf(item: PlanItem): string | null {
+  if (!jevChoseRow(item)) return null;
+  const first = (item.why ?? []).map((w) => w.trim()).find(Boolean);
+  return first ?? null;
+}
+
+/** How many lines of these rows Jev chose and the person kept, so the Done line can say "Jev chose 37." */
+export function jevChoseCount(items: readonly PlanItem[]): number {
+  let n = 0;
+  for (const item of items) for (const line of keptLines(item.changeSet)) if (jevWord(line) !== null) n++;
+  return n;
+}
+
+/** The same count over only the rows a press really ran (a press can stop after an earlier wave, or skip a row). */
+export function jevChoseRan(held: readonly PlanItem[], ranIds: readonly string[] | undefined): number {
+  const ran = new Set(ranIds ?? []);
+  return jevChoseCount(held.filter((i) => ran.has(i.id)));
 }
 
 /** Still to do: not done, not set aside, and not applied-and-checking (which is off the work list, contract 1.4). */
@@ -1420,9 +1491,9 @@ export function onlyYouWords(rows: PlanItem[]): string {
   return `${n === 1 ? 'task needs' : 'tasks need'} your choice` + (waiting > 0 && waiting < n ? ` (${n - waiting} ready, ${waiting} waiting)` : '');
 }
 
-/** The dot beside a state word. Needs you is the one warning; done is good; the rest are plain rings. */
-export function stateTone(word: PlanStateWord): 'warn' | 'good' | 'ring' | 'faint' | 'spin' {
-  if (word === 'needs_you') return 'warn';
+/** The dot beside a state word. Needs you is the person's blue; done is good; the rest are plain rings. */
+export function stateTone(word: PlanStateWord): 'you' | 'good' | 'ring' | 'faint' | 'spin' {
+  if (word === 'needs_you') return 'you';
   if (word === 'done') return 'good';
   if (word === 'on_it') return 'spin';
   if (word === 'waiting' || word === 'set_aside') return 'faint';
@@ -1514,7 +1585,7 @@ export function bulkRefs(set: PlanChangeSet | null | undefined, kept: boolean): 
 }
 
 /** Why Approve waits on a person's row: no line is kept yet (the cleanup ticks the lines it suggests, so this shows only when none start ticked). */
-export const KEEP_ONE_FIRST = 'Keep at least one change first.';
+export const KEEP_ONE_FIRST = 'Tick the changes you want, then approve them.';
 
 /** A derived row whose lines Semanticus works out on the row itself (modelPlanAction propose). The cleanup: its
  *  lines are the unused objects, each a delete the person keeps or drops. Opening the row works them out. */
@@ -1543,14 +1614,20 @@ export function mainAction(item: PlanItem, free = false): RowAction | null {
   if (!isTask(item) && set && set.state === 'proposed' && set.digest) {
     const lines = changeLines(set).length > 0;
     if ((w === 'needs_you' && lines) || (free && approvable(item))) {
-      const none = keptCount(set) === 0;
-      return { id: 'approve', label: ACTION_WORD.approve, primary: true, disabled: none, title: none ? KEEP_ONE_FIRST : undefined };
+      // Never a button that cannot be pressed (Kane, 13 Oct 2026: "Needs you" beside a greyed Approve). With nothing kept the press is Open,
+      // where the changes are ticked; Approve comes back once one is kept.
+      if (lines && keptCount(set) === 0) return { id: 'open', label: ACTION_WORD.open, primary: true, title: KEEP_ONE_FIRST };
+      return { id: 'approve', label: ACTION_WORD.approve, primary: true };
     }
   }
-  if (!isTask(item) && savesOnRow(item) && w === 'needs_you') return { id: 'save', label: ACTION_WORD.save, primary: true };
+  // The save row is the assistant's since 13 Oct (one call for it), and the person's one press stays on the row whoever does it.
+  if (!isTask(item) && savesOnRow(item) && (w === 'needs_you' || w === 'ready')) return { id: 'save', label: ACTION_WORD.save, primary: true };
   if (isTask(item) && (doerOf(item) === 'you' || item.doneWhen === 'you_mark')) return { id: 'done', label: ACTION_WORD.done, primary: true };
   return null;
 }
+
+/** Said beside a Move up that cannot move: the task is already first. */
+export const UP_FIRST_WHY = 'Already first';
 
 /** What the dots menu holds for this row: the rest, each once, and only what fits the row. */
 export function rowMenuActions(item: PlanItem, ctx: { items?: PlanItem[]; grant?: 'granted' | 'denied' | 'unknown'; canRepeat?: boolean } = {}): RowAction[] {
@@ -1558,7 +1635,11 @@ export function rowMenuActions(item: PlanItem, ctx: { items?: PlanItem[]; grant?
   if (item.id.startsWith('run/')) return [];
   if (!isOpenRow(item)) return removable(item) ? [{ id: 'remove', label: ACTION_WORD.remove }] : [];
   const out: RowAction[] = [];
-  if (showsUp(item)) out.push({ id: 'up', label: ACTION_WORD.up, disabled: upDisabled(item, ctx.items ?? [item]) });
+  if (showsUp(item)) {
+    // A disabled item says why on its right (hero19 D21): the first task in the order has nowhere to go.
+    const first = upDisabled(item, ctx.items ?? [item]);
+    out.push(first ? { id: 'up', label: ACTION_WORD.up, disabled: true, why: UP_FIRST_WHY } : { id: 'up', label: ACTION_WORD.up, disabled: false });
+  }
   if (ctx.canRepeat) out.push({ id: 'repeat', label: ACTION_WORD.repeat });
   if (offersDraftSteps(item) && ctx.grant && ctx.grant !== 'unknown') {
     out.push(ctx.grant === 'granted' ? { id: 'draft', label: ACTION_WORD.draft } : { id: 'draft', label: ACTION_WORD.draft, why: 'Pro' });
@@ -1790,17 +1871,17 @@ export function rowCoveringFinding(items: ReadonlyArray<{ id: string; rules?: st
 export const TELL_ASSISTANT = 'Work through my Semanticus plan.';
 
 /** What a Semanticus row's step looks like while a run works on it. 'queued' is a row the press holds that the run has not reached. */
-export type RunStep = 'queued' | 'work' | 'apply' | 'check' | 'done' | 'skipped';
+export type RunStep = 'queued' | 'work' | 'waitjev' | 'apply' | 'check' | 'done' | 'skipped';
 export const RUN_STEP_WORD: Record<RunStep, string> = {
-  queued: 'In this run', work: 'Working out', apply: 'Applying', check: 'Checking', done: 'Done', skipped: 'Skipped',
+  queued: 'In this run', work: 'Working out', waitjev: 'Waiting for Jev', apply: 'Applying', check: 'Checking', done: 'Done', skipped: 'Skipped',
 };
 
 /** One row's step: the word and, where the engine said it, the count or the reason. `ms` is when the step began, in ms since the press started. */
-export interface RunPhase { step: RunStep; changes?: number; reason?: string; ms?: number }
+export interface RunPhase { step: RunStep; changes?: number; reason?: string; ms?: number; waited?: number }
 
 /** plan/runProgress (the wire contract). `itemIds` is every row the step is about: the one batch check names the rows of the wave.
  *  `ms` is milliseconds since the press started, at the moment the step began (the engine's one stopwatch for the press). */
-export interface RunProgressEvent { runId: string; itemIds: string[]; phase: 'work' | 'apply' | 'check' | 'done' | 'skipped'; wave: number; changes?: number; reason?: string; ms: number }
+export interface RunProgressEvent { runId: string; itemIds: string[]; phase: 'work' | 'waitjev' | 'apply' | 'check' | 'done' | 'skipped'; wave: number; changes?: number; reason?: string; ms: number; waitedSeconds?: number }
 
 const asEvent = (v: unknown): RunProgressEvent | null => {
   const e = v as Partial<RunProgressEvent> | null;
@@ -1820,9 +1901,18 @@ export function foldProgress(steps: Readonly<Record<string, RunPhase>>, raw: unk
       ...(own && typeof e.changes === 'number' ? { changes: e.changes } : {}),
       ...(e.reason ? { reason: e.reason } : {}),
       ...(typeof e.ms === 'number' ? { ms: e.ms } : {}),
+      ...(typeof e.waitedSeconds === 'number' ? { waited: e.waitedSeconds } : {}),
     };
   }
   return next;
+}
+
+/** "0:08": seconds as minutes and seconds. */
+export const clockWords = (seconds: number): string => `${Math.floor(Math.max(0, seconds) / 60)}:${String(Math.max(0, seconds) % 60).padStart(2, '0')}`;
+
+/** The state column's word for a step. While the press waits for Jev it counts: "Waiting for Jev, 0:08". */
+export function stepWords(step: RunPhase): string {
+  return step.step === 'waitjev' && typeof step.waited === 'number' ? `${RUN_STEP_WORD.waitjev}, ${clockWords(step.waited)}` : RUN_STEP_WORD[step.step];
 }
 
 /** "Applying 33 changes", "Done, 4 changes", "In this run": the state column's words for a step. Count first, as the engine counts. */
@@ -1849,6 +1939,8 @@ export interface PressReceipt {
   kind: 'ran';
   rows: number;
   changes: number;
+  /** The rows the waves really ran, so "Jev chose N." counts what was written and not what the press held. */
+  ranIds?: string[];
   /** The History entry of the FIRST wave: undo(entryId) walks back to and including it, so it takes back the whole press. */
   entryId: string | null;
   /** The model revision the press ended on: an Undo is offered only while the model has not moved on since. */
@@ -1907,6 +1999,7 @@ export async function runAllWaves(start: Plan, apply: (call: NonNullable<ReturnT
       break;
     }
     receipt.rows += result.itemIds?.length ?? 0;
+    (receipt.ranIds ??= []).push(...(result.itemIds ?? []));
     receipt.changes += result.applied ?? 0;
     receipt.entryId ??= result.entryId ?? null;
     if (typeof result.revision === 'number') receipt.revision = result.revision;
@@ -1963,15 +2056,15 @@ export function stripSegments(track: PlanStripTrack, cap = STRIP_CAP): { segs: S
 }
 
 /** The three counts at the end of a track: done, on it, and what is open, said as "need you" when all of it does. */
-export function trackCounts(track: PlanStripTrack): { key: string; text: string; warn?: boolean }[] {
+export function trackCounts(track: PlanStripTrack): { key: string; text: string; you?: boolean }[] {
   const open = track.ready + track.needsYou;
   const needs = track.needsYou > 0 && track.needsYou === open;
   return [
     { key: 'done', text: `${track.done} done` },
     { key: 'onit', text: `${track.onIt} on it` },
-    needs ? { key: 'open', text: `${track.needsYou} need you`, warn: true }
+    needs ? { key: 'open', text: `${track.needsYou} need you`, you: true }
       : { key: 'open', text: `${track.ready} ready${track.doer === 'semanticus' ? ' first' : ''}` },
-    ...(!needs && track.needsYou > 0 ? [{ key: 'needs', text: `${track.needsYou} need you`, warn: true }] : []),
+    ...(!needs && track.needsYou > 0 ? [{ key: 'needs', text: `${track.needsYou} need you`, you: true }] : []),
     // Beside "Run the plan 13", "1 ready first" and "12 follow it" add up to the button: the rows that wait for a row in the same run.
     ...(track.waiting > 0 ? [{ key: 'waiting', text: track.doer === 'semanticus' ? `${track.waiting} ${track.waiting === 1 ? 'follows' : 'follow'} it` : `${track.waiting} waiting` }] : []),
   ];
@@ -2035,7 +2128,7 @@ export function assistantChipCount(plan: Plan | null | undefined): number {
 
 // ---- the one field ------------------------------------------------------------------------------------
 
-export const FIELD_PLACEHOLDER = 'Describe a task or an aim';
+export const FIELD_PLACEHOLDER = 'Add a task';
 export const FIELD_HINT = 'Enter adds it to the Plan. Shift+Enter starts a new line.';
 /** How much of a task's words its title holds (PlanTasks.MaxWordsChars). Longer text is kept whole by the engine. */
 export const FIELD_MAX = 280;

@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 
 namespace Semanticus.Engine.Entitlement
@@ -7,7 +8,9 @@ namespace Semanticus.Engine.Entitlement
     /// else ~/.semanticus/license) and verifies it OFFLINE against the embedded public key (rotate at ship-time via
     /// SEMANTICUS_LICENSE_PUBKEY). Absent / invalid / expired / wrong-tier ⇒ FREE (the safe default — a missing or
     /// corrupt license never blocks the free product). A dev escape (SEMANTICUS_DEV_PRO=1) unlocks Pro locally so
-    /// building Semanticus is never self-gated. Evaluated ONCE at construction (a license doesn't change mid-session).</summary>
+    /// building Semanticus is never self-gated. Evaluated at construction, for one instant: a licence with an end carries
+    /// <see cref="ChangesAt"/>, and the engine evaluates the same token again past that instant (<see cref="At"/>), so a
+    /// window left open drops to Free on time without a restart.</summary>
     public sealed class LicenseEntitlement : IEntitlement
     {
         // The issuance keypair's PUBLIC half (SPKI base64). The matching PRIVATE key is the issuer's, kept OFFLINE
@@ -44,16 +47,51 @@ namespace Semanticus.Engine.Entitlement
         ///   turn a clean "no service" into a 401 round trip.
         /// A token inside the grace window IS kept: the relay mirrors the same 14-day grace.
         ///
-        /// Never logged, never returned on any door, never written to disk by anything here. It is internal so a
-        /// new caller has to be inside this assembly, and there is exactly one: the decision oracle's construction
+        /// Never logged, never returned on any door. The one place it is written to disk is LicenseMirror, the user licence file, when the person
+        /// connects another assistant (it says so in its answer). It is internal so a
+        /// new caller has to be inside this assembly, and there are two: LicenseMirror, and the decision oracle's construction
         /// in LocalEngine.Decisions.cs.</summary>
         internal string CloudCredential { get; }
 
-        private LicenseEntitlement(bool isPro, EntitlementInfo info, string cloudCredential = null)
+        /// <summary>The next instant at which the SAME token evaluates differently, or null when it never will (free, the dev
+        /// escape, a perpetual licence, a licence already past its last change). Evaluation is <c>now &gt; instant</c>, so
+        /// the instant itself still reads as before. A running trial changes at its end; a paid licence at its expiry (Pro
+        /// into grace) and then at the end of grace (Free).</summary>
+        internal DateTimeOffset? ChangesAt { get; }
+
+        /// <summary>The claims of a trial token, running or ended, so the engine can key and date the trial's tally. Null for
+        /// every other licence.</summary>
+        internal LicenseClaims TrialClaims { get; }
+
+        private readonly Func<DateTimeOffset, LicenseEntitlement> _again;
+
+        private LicenseEntitlement(bool isPro, EntitlementInfo info, string cloudCredential = null, DateTimeOffset? changesAt = null,
+                                   LicenseClaims trialClaims = null, Func<DateTimeOffset, LicenseEntitlement> again = null)
         {
             IsPro = isPro;
             Info = info;
             CloudCredential = cloudCredential;
+            ChangesAt = changesAt;
+            TrialClaims = trialClaims;
+            _again = again;
+        }
+
+        /// <summary>The claims of the trial token behind <paramref name="entitlement"/>, or null when it is not one. With
+        /// <paramref name="runningOnly"/> only a trial that is still running (still Pro) answers; without it an ended trial
+        /// answers too, so its tally stays readable for the end card. Like <see cref="CloudCredentialOf"/>, this is not a
+        /// tier gate: it decides what the tally counts and reads, never what a person may do.</summary>
+        internal static LicenseClaims TrialOf(IEntitlement entitlement, bool runningOnly) =>
+            entitlement is LicenseEntitlement e && e.TrialClaims != null && (!runningOnly || e.IsPro) ? e.TrialClaims : null;
+
+        /// <summary>The same token evaluated at <paramref name="now"/>, with the same public key. This entitlement itself
+        /// when nothing can change.</summary>
+        internal LicenseEntitlement At(DateTimeOffset now) => ChangesAt == null || _again == null ? this : _again(now);
+
+        /// <summary>Whole days left before <paramref name="end"/>, rounded UP, and never below 0.</summary>
+        internal static int DaysLeft(long end, DateTimeOffset now)
+        {
+            var seconds = end - now.ToUnixTimeSeconds();
+            return seconds <= 0 ? 0 : (int)((seconds + 86399) / 86400);
         }
 
         /// <summary>The credential an entitlement can lend a hosted service, or null when it has none.
@@ -101,6 +139,9 @@ namespace Semanticus.Engine.Entitlement
             if (!string.Equals(claims.Tier, "pro", StringComparison.OrdinalIgnoreCase))
                 return Free("license is not a Pro tier");
 
+            LicenseEntitlement Again(DateTimeOffset at) => Evaluate(token, pubKeyOverride, devPro: false, at);
+            if (claims.Trial) return Trial(claims, token, now, Again);
+
             // Expiry policy: exp==0 ⇒ PERPETUAL. This is also the BACKWARD-COMPAT path — a token minted before the exp
             // claim existed (or with --days<=0) carries no "exp" field, so it deserializes to 0 and stays valid forever.
             // Old dev/founder tokens must never brick, and exp==0 has always been the wire contract for "no expiry".
@@ -114,13 +155,41 @@ namespace Semanticus.Engine.Entitlement
                         // Lapsed but within grace: STILL Pro, but the Reason teaches the (soft) deadline so the user renews.
                         return new LicenseEntitlement(true, new EntitlementInfo { Tier = "pro", LicensedTo = claims.Sub, Expiry = claims.Exp,
                             Reason = $"license expired {exp:yyyy-MM-dd}; in grace until {graceEnd:yyyy-MM-dd}. Renew at {RenewUrl} to stay on Pro" },
-                            cloudCredential: token.Trim());
+                            cloudCredential: token.Trim(), changesAt: graceEnd, again: Again);
                     // Past grace ⇒ drop to Free, but TEACH: what lapsed, where to renew, and that nothing broke.
                     return Free($"license expired {exp:yyyy-MM-dd}. Renew at {RenewUrl}; the engine keeps working on the free tier");
                 }
             }
             return new LicenseEntitlement(true, new EntitlementInfo { Tier = "pro", LicensedTo = claims.Sub, Expiry = claims.Exp },
-                cloudCredential: token.Trim());
+                cloudCredential: token.Trim(),
+                changesAt: claims.Exp == 0 ? null : DateTimeOffset.FromUnixTimeSeconds(claims.Exp), again: Again);
+        }
+
+        /// <summary>A free Pro month (Kane, 11 Oct 2026). Pro until its end and Free the second after, with NO grace: grace
+        /// exists so a paying subscriber's late renewal never drops them mid-work, and a trial has no renewal to wait for.
+        /// The relay mirrors this (tools/relay: a trial token is expired at exp). A trial with no end is not a trial anyone
+        /// sells, so it unlocks nothing rather than becoming a perpetual licence.</summary>
+        private static LicenseEntitlement Trial(LicenseClaims claims, string token, DateTimeOffset now, Func<DateTimeOffset, LicenseEntitlement> again)
+        {
+            if (claims.Exp == 0) return Free("this Pro trial license has no end date, so it was not used");
+            var end = DateTimeOffset.FromUnixTimeSeconds(claims.Exp);
+            if (now > end)
+                return new LicenseEntitlement(false, new EntitlementInfo
+                {
+                    Tier = "free",
+                    TrialEnded = true,
+                    TrialEndsAt = claims.Exp,
+                    Reason = $"Your Pro trial ended on {end.UtcDateTime.ToString("d MMM yyyy", CultureInfo.InvariantCulture)}. Your work is untouched.",
+                }, trialClaims: claims);
+            return new LicenseEntitlement(true, new EntitlementInfo
+            {
+                Tier = "pro",
+                LicensedTo = claims.Sub,
+                Expiry = claims.Exp,
+                IsTrial = true,
+                TrialEndsAt = claims.Exp,
+                TrialDaysLeft = DaysLeft(claims.Exp, now),
+            }, cloudCredential: token.Trim(), changesAt: end, trialClaims: claims, again: again);
         }
 
         /// <summary>A Pro entitlement for the dev/test harnesses (the smoke runners verify FUNCTIONALITY; the gate

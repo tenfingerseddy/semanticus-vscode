@@ -178,7 +178,7 @@ async function runTheme(theme) {
   const errors = []; const notes = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
-  await page.setViewport({ width: 1680, height: 1000, deviceScaleFactor: 1 });
+  await page.setViewport({ width: Number(process.env.WIDTH) || 1680, height: 1000, deviceScaleFactor: 1 });
   await page.emulateTimezone('UTC');
   await page.evaluateOnNewDocument(seed(RUN, SCALE));
   await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&tier=pro&tab=plan`, { waitUntil: 'networkidle0', timeout: 30000 });

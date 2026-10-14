@@ -54,31 +54,27 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task One_press_clears_every_auto_fixable_finding_even_one_a_fix_creates()
+        public async Task One_press_hides_the_key_and_also_does_the_follow_on_fix_it_opens()
         {
             var (engine, sessions) = await CascadeModelAsync();
             using (engine)
             {
                 // The premise: the IsAvailableInMDX rule does NOT fire before the press. Hiding the foreign key
-                // is what makes it fire, so the press's own first scan could not have known about it.
+                // is what makes it fire. Kane, 13 Oct (hero19 D9): one press finishes the job it starts, so Fix N does not
+                // leave a second Fix button and new findings behind it.
                 var before = await engine.BpaScanAsync();
                 Assert.Contains(before.Violations, v => v.RuleId == HideForeignKeysRule && v.CanAutoFix);
                 Assert.DoesNotContain(before.Violations, v => v.RuleId == AvailableInMdxRule);
 
                 var bulk = await engine.BpaFixAllAsync("human");
 
-                // THE PROMISE ON THE BUTTON. One press, and nothing auto-fixable is left.
-                var leftOver = bulk.Scorecard.Violations.Where(v => v.CanAutoFix && !v.Waived)
-                    .Select(v => v.RuleId + " on " + v.ObjectRef).ToList();
-                Assert.True(leftOver.Count == 0,
-                    "still auto-fixable after one press: " + string.Join(", ", leftOver));
+                var (hidden, mdx) = await sessions.Require().ReadAsync(m =>
+                    (m.Tables["Facts"].Columns["CustomerKey"].IsHidden, m.Tables["Facts"].Columns["CustomerKey"].IsAvailableInMDX));
+                Assert.True(hidden);
+                Assert.False(mdx, "the same press leaves MDX on for a column it hid");
+                Assert.Empty(bulk.Unfixed);
                 Assert.Equal(0, bulk.Scorecard.AutoFixable);
-
-                // And the cascade really happened: the rule the press could not have listed is now satisfied
-                // rather than merely absent, i.e. the column ended up with IsAvailableInMDX = false.
-                var stillAvailableInMdx = await sessions.Require().ReadAsync(m =>
-                    m.Tables["Facts"].Columns["CustomerKey"].IsAvailableInMDX);
-                Assert.False(stillAvailableInMdx);
+                Assert.Equal(0, bulk.Remaining);
             }
         }
 
@@ -86,11 +82,13 @@ namespace Semanticus.Tests
         [Fact]
         public async Task A_second_press_is_a_no_op_rather_than_a_failure()
         {
-            // The BPA cases are re-run against the same model after the first pass. The second press must be a
-            // clean no-op, not an error and not a fresh round of edits on the undo timeline.
+            // The BPA cases are re-run against the same model. The first press hides the key and turns MDX off, the
+            // second is a clean no-op, and the press after that must be one too, not an error and not a fresh round
+            // of edits on the undo timeline.
             var (engine, sessions) = await CascadeModelAsync();
             using (engine)
             {
+                await engine.BpaFixAllAsync("human");
                 var first = await engine.BpaFixAllAsync("human");
                 var revAfterFirst = await sessions.Require().ReadAsync(m => m.Tables.Count);
 
@@ -164,9 +162,10 @@ namespace Semanticus.Tests
             var (engine, _) = await CascadeModelAsync();
             using (engine)
             {
-                var bulk = await engine.BpaFixAllAsync("human");
-                Assert.Empty(bulk.Unfixed);
-                Assert.Equal(0, bulk.Remaining);
+                // The first press hides the keys and does the MDX step they open, so nothing is left over.
+                var first = await engine.BpaFixAllAsync("human");
+                Assert.Empty(first.Unfixed);
+                Assert.Equal(0, first.Remaining);
             }
         }
 

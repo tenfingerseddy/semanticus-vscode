@@ -563,12 +563,15 @@ namespace Semanticus.Tests
         public async Task Verify_a_Jev_row_already_on_the_plan_is_not_told_as_new_again_in_History()
         {
             using var f = await ModelAsync("ColFmtHistoryNew.bim");
+            // A date column and no date table now gives the Plan an "Add a date table" row of its own (hero 20 D9), so the model starts with its
+            // date table marked and the row that appears below is the person clearing the mark.
             await AnswerAsync(f);
+            await f.Engine.MarkDateTableAsync("table:Sales", "Ship Date", "human");
             var jev = (await SettledPlanAsync(f)).Items
                 .Where(i => i.Id.StartsWith("jev.column-format.", StringComparison.Ordinal)).Select(i => i.Title).ToArray();
             Assert.NotEmpty(jev);
 
-            await f.Engine.CreateMeasureAsync("table:Sales", "Sales YTD", "TOTALYTD ( SUM ( Sales[Amount] ), Sales[Ship Date] )", "human");
+            await f.Engine.SetObjectPropertyAsync("table:Sales", "DataCategory", "", "human");
             var withDate = await SettledPlanAsync(f);
             Assert.Contains(withDate.Items, i => i.Id == "datetable/model");
             Assert.True(jev.All(t => withDate.Items.Any(i => i.Title == t)), "the Jev rows stay on the plan");
@@ -594,12 +597,13 @@ namespace Semanticus.Tests
         public async Task Verify_an_assistant_row_already_on_the_plan_is_not_told_as_new_again_in_History()
         {
             using var f = await ModelAsync("ColFmtHistoryAsst.bim", pro: false);
+            await f.Engine.DeleteObjectAsync("column:Sales/Ship Date", "human");   // the date column arriving below is what brings the date table row (hero 20 D9)
             await f.Engine.AddPlanItemAsync("column:Sales/Note", "rename", "Remark", null, null, null, "agent");
             var first = await f.Engine.GetModelPlanAsync();
             var asst = first.Items.Where(i => i.Id.StartsWith(LocalEngine.AssistantItemPrefix, StringComparison.Ordinal)).Select(i => i.Title).ToArray();
             Assert.NotEmpty(asst);
 
-            await f.Engine.CreateMeasureAsync("table:Sales", "Sales YTD", "TOTALYTD ( SUM ( Sales[Amount] ), Sales[Ship Date] )", "human");
+            await f.Engine.CreateColumnAsync("table:Sales", "Ship Date", "DateTime", null, "human");
             var withDate = await f.Engine.GetModelPlanAsync();
             Assert.Contains(withDate.Items, i => i.Id == "datetable/model");
 

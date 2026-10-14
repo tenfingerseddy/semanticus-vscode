@@ -21,6 +21,15 @@ export interface BoxesStepView {
   title: string;
   instructions: string;
   ops: string[];
+  /** Format 3: who does the step. */
+  performer?: 'semanticus' | 'assistant' | 'person' | null;
+  /** Format 3: the one action Semanticus runs, as the engine's id. */
+  action?: string | null;
+  /** Format 3: how many questions and parts the step holds. */
+  questions?: number;
+  blanks?: number;
+  /** How many checks the step holds, from either format. */
+  checks?: number;
   when: string | null;
   idKind: 'explicit' | 'positional';
   idLabel: string;
@@ -34,3 +43,6 @@ export interface BoxesView {
   lossy: string[];
 }
 export function boxesView(def: unknown): BoxesView;
+export function plainWords(value: unknown): string;
+export function stepSummary(box: Pick<BoxesStepView, 'ops'> & Partial<BoxesStepView>): { who: 'semanticus' | 'assistant' | 'person'; whoWords: string; action: string | null; detail: string | null; checks: number };
+export function canvasCounts(boxes: Pick<BoxesStepView, 'ops'>[] & Partial<BoxesStepView>[]): { steps: number; actions: number; checks: number };

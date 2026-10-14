@@ -169,6 +169,7 @@ const clickText = (page, text, within = 'body') => page.evaluate((t, w) => {
 async function scene(name, { opts = {}, tab = 'workflows', free = false, steps = [], expect = null, width = 1440, height = 1000, screenRoot = null, screen = true,
   prelude = '', capture = null } = {}) {
   if (only && !only.includes(name)) return;
+  if (process.env.WIDTH) width = Number(process.env.WIDTH);   // 1.5 visuals: the same scene at another width
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
@@ -208,8 +209,9 @@ async function scene(name, { opts = {}, tab = 'workflows', free = false, steps =
   const measured = await page.evaluate(MEASURE);
   const shots = {};
   for (const theme of Object.keys(THEMES)) {
+    if (process.env.THEME_ONLY && theme !== process.env.THEME_ONLY) continue;
     await applyTheme(page, theme); await wait(250);
-    const file = join(OUT, `${name}-${theme}.png`);
+    const file = join(OUT, `${process.env.SHOT_TAG ? process.env.SHOT_TAG + '-' : ''}${name}-${theme}.png`);
     await page.screenshot({ path: file, fullPage: false });
     shots[theme] = file;
   }
@@ -336,7 +338,7 @@ await scene('author', {
   expect: (m) => [
     ...has(m.view === 'author', `view ${m.view}`),
     ...has(/Required for new measures/.test(m.author) && /Saved/.test(m.saved), `head "${m.author}"`),
-    ...has(/You answer 4 questions and your assistant writes 1 part\. Then Semanticus makes the change only if every check passes\./.test(m.summary), `summary "${m.summary}"`),
+    ...has(/You answer 5 questions and your assistant writes 1 part\. Then Semanticus makes the change only if every check passes\./.test(m.summary), `summary "${m.summary}"`),
     ...has(m.outline.length === 4, `outline ${m.outline}`),
     ...has(/You choose/.test(m.stepForm) && /Your assistant writes/.test(m.stepForm) && /Brief for your assistant/.test(m.stepForm) && /The brief is advice\. The checks are law\./.test(m.stepForm), `step form "${m.stepForm.slice(0, 200)}"`),
   ],
@@ -377,6 +379,14 @@ await scene('author-menu', { screen: false,
   expect: () => [],
 });
 await scene('author-canvas', { opts: { rules: true }, steps: [...openTcm, { text: 'More▾' }, { sel: '[data-testid="wf-view-canvas"]', settle: 1500 }] });
+// 1.5 visuals: the Plan's source column must hold "Found by Semanticus" (it read "Found by Sem..." at about 1490 px).
+await scene('plan-source', {
+  tab: 'plan', steps: [{ settle: 1500 }],
+  capture: async (page) => {
+    const found = await page.evaluate(() => [...document.querySelectorAll('.pw-src .pw-trunc')].map((el) => ({ text: el.textContent, clipped: el.scrollWidth > el.clientWidth })));
+    console.log('plan sources', JSON.stringify(found));
+  },
+});
 await scene('author-source', { opts: { rules: true }, steps: [...openTcm, { text: 'More▾' }, { sel: '[data-testid="wf-view-source"]', settle: 1200 }] });
 await scene('author-check', {
   opts: { rules: true }, steps: [...openTcm, { text: 'More▾' }, { sel: '[data-testid="wf-check"]', settle: 800 }],

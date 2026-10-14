@@ -2,7 +2,7 @@
 
 **Build, test and ship Power BI and Fabric semantic models in VS Code. Work alongside your own assistant on one live model.**
 
-[Download 1.4.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
+[Download 1.5.0](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest) ·
 [Website](https://semanticus.com.au) · [User guide](https://semanticus.com.au/docs) ·
 [Release notes](CHANGELOG.md)
 
@@ -70,7 +70,7 @@ Fabric or Azure Analysis Services. On Windows x64, you can also discover a runni
 
 ![A workflow with questions and recorded checks](https://semanticus.com.au/assets/shots/workflows.png)
 
-## Install 1.4.0
+## Install 1.5.0
 
 Install Semanticus from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=semanticus-vscode.semanticus-vscode): in VS Code, open **Extensions**,
 search for Semanticus and choose **Install**. VS Code picks the right build for your computer, and every build
@@ -91,13 +91,17 @@ for the computer where VS Code runs. In VS Code, open **Extensions**, choose **V
 
 The [getting started guide](https://semanticus.com.au/docs/getting-started) covers connections and your first edits.
 
-## What changed in 1.4.0
+## What changed in 1.5.0
 
-Your assistant can now drive Studio while you watch. A bar at the top says who has the wheel, and you can see it press a button. A yes in chat is enough for it to go ahead; only the
-Permissions page still needs you. On Pro, bulk edits change many objects in one step with one Undo, and they are much
-faster. Run the plan finishes the plan in one press, and Refresh plan looks again for new work. The Plan speaks in plain
-words, unsaved changes keep a recovery copy, and your assistant can list a workspace's SQL endpoints. Read
-[the changelog](CHANGELOG.md) for the full list.
+The Plan is calmer. One header line holds the grade figures (AI ready, Best practice and Plan done), the live slot
+and Run the plan, and the list is grouped by who does the work. You can run a single task with its own Undo. The
+Lineage Graph opens in about half a second on a big model, where it took 20 to 40 seconds. You can try Pro free for
+30 days. Connect another assistant adds Claude Desktop, Codex, Cursor and Claude Code from one menu. Semanticus is
+green, you are blue and your assistant is purple, and the charts share one palette. A Next line suggests the next step
+on the other pages, and The Link shows what is working. Publish sends role changes, and your yes in chat lets your
+assistant publish through a red check. The first grade on open is faster. The Diagram keeps the bus matrix and adds a
+dot grid under Arrange. Test runs are faster, and one allow is enough for a build. Read [the changelog](CHANGELOG.md)
+for the full list.
 
 ## Free and Pro
 
@@ -111,6 +115,7 @@ the Data Agent.
 
 Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
+You can try Pro free for 30 days.
 [Compare the current plans](https://semanticus.com.au/pro).
 
 ## Platform and data boundaries

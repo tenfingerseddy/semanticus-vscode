@@ -140,6 +140,10 @@ namespace Semanticus.Engine.Decisions
         /// as "the answer the caller passed still holds", which is what a service with no engine behind it has.</summary>
         public Func<bool> StillEntitled { get; set; }
 
+        /// <summary>Told each time the service itself answered and the answer was accepted (not a reuse from the cache or
+        /// the store). The ENGINE sets it, to count the choices a free Pro month made; null counts nothing.</summary>
+        internal Action<DecisionAnswers> OracleAnswered { get; set; }
+
         /// <summary>Whether this service was retired because the licence it was built for changed.</summary>
         public bool Retired { get { lock (_gate) return _retired; } }
 
@@ -216,6 +220,9 @@ namespace Semanticus.Engine.Decisions
         /// when none is known yet. The cache key: an answer is served again only under the version that gave it.</summary>
         public string ServedVersionNow =>
             (Oracle as JevDecisionOracle)?.LastServedModelVersion ?? (Oracle as RecordedDecisionOracle)?.ServedModelVersion;
+
+        /// <summary>When the oldest ask now waiting its turn at a crowded relay began to wait, or null when none is (the Plan's "Jev is waiting its turn").</summary>
+        public DateTime? WaitingSince => (Oracle as JevDecisionOracle)?.WaitingSince;
 
         public async Task<DecisionOutcome> AskAsync(string pointName,
                                                     IReadOnlyDictionary<string, object> snapshot,
@@ -357,6 +364,12 @@ namespace Semanticus.Engine.Decisions
 
             if (epoch.IsCancellationRequested || !StillAdmitted(scope, point, admittedGeneration, out why))
                 return DecisionOutcome.Skipped("permission was withdrawn while the suggestion was on its way, so it was dropped");
+
+            if (answers.Decided && !answers.OverBudget)
+            {
+                try { OracleAnswered?.Invoke(answers); }
+                catch { /* a counter never fails an answer */ }
+            }
 
             // Kept BEFORE the model check below, and only after the licence and permission checks above. An answer is
             // about the evidence it was asked on (the digest), not about the revision, so a reply that lands after an

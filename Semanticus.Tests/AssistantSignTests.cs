@@ -57,6 +57,9 @@ namespace Semanticus.Tests
         [InlineData("https://evil.example/x?y=1")]
         [InlineData("a;b<script>")]
         [InlineData("this-name-is-far-too-long-to-sit-in-a-small-bar-beside-a-tile")]
+        // A program id, not a name: Kane's driver bar read "local-agent-mode-semanticus drives" (13 Oct 2026).
+        [InlineData("local-agent-mode-semanticus")]
+        [InlineData("mcp_client")]
         public void A_missing_or_odd_client_name_is_Your_assistant_with_no_initials(string client)
         {
             var who = AssistantIdentity.Map(client, "9");

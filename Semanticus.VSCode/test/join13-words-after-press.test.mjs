@@ -43,7 +43,7 @@ test('J-I2: createRole keeps the name typed after Add, and still ends when the n
 test('J-I2: the plan-history version name stays when it changes after Save', async () => {
   for (const typeMore of [true, false]) {
     const disk = makeDisk(); let ok; const sent = [];
-    const pg = makePage({ './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => undefined, onActivity: () => () => undefined,
+    const pg = makePage({ './personality/motion/history': { HistoryMotion: () => null }, './bridge': { loadState: disk.loadState, saveState: disk.saveState, onDidChange: () => () => undefined, onActivity: () => () => undefined,
       onPlanChange: () => () => undefined, onReconnect: () => () => undefined, copyText: async () => true,
       rpc: (m, ...a) => {
         if (m === 'getPlanHistory') return Promise.resolve({ rows: [], more: false, sessionId: 's1', kept: true });

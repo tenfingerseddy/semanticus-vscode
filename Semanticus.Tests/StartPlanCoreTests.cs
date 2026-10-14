@@ -479,6 +479,17 @@ namespace Semanticus.Tests
 
         // ---- the view and its digest (pure) ------------------------------------------------------------------
 
+        // D7 (launch video, 12 Oct): after Undo of a build the Plan showed the forecast and nothing said the model had lost its grade.
+        [Fact]
+        public void A_plan_whose_build_was_undone_says_the_model_has_no_grade_now()
+        {
+            var d = Doc();
+            Assert.False(StartPlanViewBuilder.Build(d).Grades.NowUndone);                                  // never built
+            d.BuiltUtc = DateTime.UtcNow;
+            Assert.False(StartPlanViewBuilder.Build(d, null, builtNow: true).Grades.NowUndone);            // built and the model holds it
+            Assert.True(StartPlanViewBuilder.Build(d, null, builtNow: false).Grades.NowUndone);            // built, then undone
+        }
+
         private static StartPlanDoc Doc() => new StartPlanDoc
         {
             Id = "sp-00000001", Destination = new StartDestination { Folder = "/f", Name = "M", ModelPath = "/f/M.SemanticModel" },

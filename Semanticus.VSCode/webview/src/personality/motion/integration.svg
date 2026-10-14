@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="620" height="150" viewBox="0 0 620 150">
+  <rect width="620" height="150" fill="#fff"/>
+  <g fill="none" stroke="#555"><rect x="10" y="22" width="150" height="80" rx="4"/><rect x="235" y="22" width="150" height="80" rx="4"/><rect x="460" y="22" width="150" height="80" rx="4"/><path d="M160 62H235M226 57L235 62L226 67M385 62H460M451 57L460 62L451 67"/></g>
+  <g fill="#222" text-anchor="middle" font-family="sans-serif" font-size="13"><text x="85" y="51">Link settings</text><text x="85" y="76">+ sound API</text><text x="310" y="51">StudioMotion</text><text x="310" y="76">+ visibility</text><text x="535" y="51">Motion components</text><text x="535" y="76">+ confirmed facts</text><text x="310" y="132">Quiet: short. Reduced motion: final values. Hidden: no clocks.</text></g>
+</svg>

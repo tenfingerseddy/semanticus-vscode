@@ -17,7 +17,7 @@ export type StudioNote = {
   press?: string | null;
   /** ISO time the engine took it. */
   at: string;
-  by: 'assistant' | 'tour';
+  by: 'assistant' | 'tour' | 'person';
   /** The agent call id, so a note groups with that call's toasts. */
   call?: string | null;
   sessionId: string;
@@ -54,3 +54,11 @@ export type StudioNotesView = {
 
 /** The words the engine's suggest_next uses when the assistant sends no lead line. */
 export const DEFAULT_SUGGEST_SAY = 'Here is what I would do next.';
+
+// The "Next:" line (1.5). Mirrors NextStepView, NextStepStep and NextStepDoIt in Semanticus.Engine/Protocol.cs.
+export type NextStepDoIt = { op: string; label: string; done: string };
+export type NextStepStep = {
+  kind: string; lead?: string | null; ask: string; why?: string | null; source?: string | null;
+  chosenBy?: 'rules' | 'jev' | 'assistant' | string; prompt?: string | null; doIt?: NextStepDoIt | null;
+};
+export type NextStepView = { id: string; on: boolean; stage: number; stageName?: string | null; step?: NextStepStep | null; hidden?: boolean };

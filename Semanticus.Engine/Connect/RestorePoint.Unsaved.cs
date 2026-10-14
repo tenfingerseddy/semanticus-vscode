@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading;
 
@@ -44,12 +45,48 @@ namespace Semanticus.Engine
                     if (File.Exists(path)) WithRecoveryRetry(path, () => File.Move(path, Path.Combine(Path.GetDirectoryName(path), "unsaved-older-" + Guid.NewGuid().ToString("N") + ".json")));
                     WithRecoveryRetry(latest, () => File.Move(latest, path));
                 }
-                if (!File.Exists(path)) return null;
-                if (IsReparsePoint(Root()) || IsReparsePoint(Path.GetDirectoryName(path)) || IsReparsePoint(path))
-                    throw new IOException("The recovery copy is a link and could not be read.");
-                var copy = JsonSerializer.Deserialize<FileRecoveryRecord>(WithRecoveryRetry(path, () => ReadShared(path)), JsonOpts);
-                if (copy == null || string.IsNullOrEmpty(copy.BimJson) || FileKey(copy.Source) != FileKey(source))
-                    throw new IOException("The recovery copy does not name this model.");
+                return ReadRecord(path, source);
+            }
+        }
+
+        private static FileRecoveryRecord ReadRecord(string path, string source)
+        {
+            if (!File.Exists(path)) return null;
+            if (IsReparsePoint(Root()) || IsReparsePoint(Path.GetDirectoryName(path)) || IsReparsePoint(path))
+                throw new IOException("The recovery copy is a link and could not be read.");
+            var copy = JsonSerializer.Deserialize<FileRecoveryRecord>(WithRecoveryRetry(path, () => ReadShared(path)), JsonOpts);
+            if (copy == null || string.IsNullOrEmpty(copy.BimJson) || FileKey(copy.Source) != FileKey(source))
+                throw new IOException("The recovery copy does not name this model.");
+            return copy;
+        }
+
+        // The newest parked copy, or null. Parked copies are the older sets a newer offer displaced; the person is shown
+        // one once the set in front of it is settled, so it is never lost to a file hunt.
+        private static string NewestOlderPath(string source)
+        {
+            var dir = Path.GetDirectoryName(UnsavedPath(source));
+            if (!Directory.Exists(dir)) return null;
+            return Directory.GetFiles(dir, "unsaved-older-*.json").OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+        }
+
+        /// <summary>The copy <see cref="PromoteOlder"/> would offer next, without moving anything.</summary>
+        internal static FileRecoveryRecord PeekOlder(string source)
+        {
+            if (string.IsNullOrEmpty(source)) return null;
+            lock (Gate) { var older = NewestOlderPath(source); return older == null ? null : ReadRecord(older, source); }
+        }
+
+        /// <summary>Makes the newest parked copy the current offer. The caller has settled the set that held that place.</summary>
+        internal static FileRecoveryRecord PromoteOlder(string source)
+        {
+            if (string.IsNullOrEmpty(source)) return null;
+            lock (Gate)
+            {
+                var older = NewestOlderPath(source);
+                if (older == null) return null;
+                var copy = ReadRecord(older, source);
+                var current = UnsavedPath(source);
+                WithRecoveryRetry(current, () => File.Move(older, current, overwrite: true));
                 return copy;
             }
         }
@@ -131,8 +168,9 @@ namespace Semanticus.Engine
 
         private static void WithRecoveryRetry(string file, Action act) => WithRecoveryRetry<bool>(file, () => { act(); return true; });
 
-        // latestOnly removes just the second file (the session's new edits are gone). Otherwise every kept copy goes.
-        internal static void DeleteUnsaved(string source, bool latestOnly = false)
+        // latestOnly removes just the second file (the session's new edits are gone). Otherwise every kept copy goes,
+        // except that keepOlder leaves the parked ones for PromoteOlder.
+        internal static void DeleteUnsaved(string source, bool latestOnly = false, bool keepOlder = false)
         {
             if (string.IsNullOrEmpty(source)) return;
             lock (Gate)
@@ -144,7 +182,7 @@ namespace Semanticus.Engine
                     if (latestOnly) return;
                     var current = UnsavedPath(source);
                     WithRecoveryRetry(current, () => File.Delete(current));
-                    foreach (var older in Directory.GetFiles(Path.GetDirectoryName(current), "unsaved-older-*.json")) WithRecoveryRetry(older, () => File.Delete(older));
+                    if (!keepOlder) foreach (var older in Directory.GetFiles(Path.GetDirectoryName(current), "unsaved-older-*.json")) WithRecoveryRetry(older, () => File.Delete(older));
                 }
                 catch (DirectoryNotFoundException) { }   // a save or discard can precede the first debounced copy
             }

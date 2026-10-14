@@ -17,6 +17,7 @@ const { renderToStaticMarkup } = req('react-dom/server');
 const load = makeLoader({
   './startplan.css': {},
   './plan-history.css': {},
+  './personality/motion/history': { HistoryMotion: () => null },
   './sparkline': { ValueSparkline: () => null },
   './bridge': {
     rpc: async () => { throw new Error('the test loader answers no calls'); },

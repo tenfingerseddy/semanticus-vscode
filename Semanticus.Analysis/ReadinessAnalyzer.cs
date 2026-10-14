@@ -253,6 +253,8 @@ namespace Semanticus.Analysis
                                         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 OrphanedWaivers = orphans,
                 OrphanedWaiverCount = orphans.Length,
+                ScoredRuleIds = new HashSet<string>(
+                    evals.Where(x => x.ev.Applicable > 0 && !x.rule.GateOnly).Select(x => x.rule.Id), StringComparer.OrdinalIgnoreCase),
             };
         }
 

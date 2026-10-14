@@ -8,10 +8,11 @@
 // both ways. The page then shows the tier the ENGINE reports, never an assumption. The restart is kept only as
 // the fallback for an engine that cannot swap (one older than this fix, or no connection at all).
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { precheckLicense, swapLicenseInEngine } from '../out/licenseSwap.js';
+import { precheckLicense, removeMirroredLicenceFile, swapLicenseInEngine } from '../out/licenseSwap.js';
 import { keyResultOf, accountOf } from '../out/proPage.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -104,6 +105,26 @@ assert.ok(restartAt > swapAt, 'the restart is only reached from the fallback');
 assert.match(reverify, /await announce\(swap\.entitlement\b/,
   'the announcement is handed the engine answer');
 assert.match(reverify, /entitlementChanged/, 'Studio is told the tier moved, so the chip and locked pages re-read it');
+
+// ---- a removal that falls back to a restart must not leave the file Connect saved ----------------------------
+{
+  const scratch = mkdtempSync(resolve(tmpdir(), 'lsw-'));
+  try {
+    const home = resolve(scratch, 'home'); mkdirSync(resolve(home, '.semanticus'), { recursive: true });
+    const file = resolve(home, '.semanticus', 'license');
+    writeFileSync(file, GOOD);
+    removeMirroredLicenceFile({}, home);
+    assert.equal(existsSync(file), false, 'the default home loses the licence file, so the restart reads Free');
+    removeMirroredLicenceFile({}, home);   // nothing there: no error
+    const moved = resolve(scratch, 'moved'); mkdirSync(moved);
+    writeFileSync(resolve(moved, 'license'), GOOD);
+    removeMirroredLicenceFile({ SEMANTICUS_HOME: moved }, home);
+    assert.equal(existsSync(resolve(moved, 'license')), false, 'a moved home is honoured, as the engine honours it');
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
+}
+const fallbackBody = reverify;
+assert.match(fallbackBody, /if \(!token\) removeMirroredLicenceFile\(\)/, 'the restart fallback clears the saved file on a removal');
+assert.ok(fallbackBody.indexOf('removeMirroredLicenceFile()') < fallbackBody.indexOf('restartEngineCmd('), 'and does it before the restart reads it');
 
 const flow = slice(extension, /async function activateLicenseFlow\(/, 'activateLicenseFlow');
 const precheckAt = flow.indexOf('precheckLicense(');

@@ -66,6 +66,27 @@ namespace Semanticus.Engine
         /// </summary>
         public async Task<NewModelResult> PublishNewModelAsync(string workspace, string name, string authMode = null, string tenantId = null, string origin = "human", string workspaceId = null, bool commit = true)
         {
+            // D6 (launch video, 12 Oct): while the assistant publishes, the Publish page showed "Choose a workspace" and the open model's name. It now hears
+            // where the assistant is publishing, from this start and end pair, and shows that target. Only the assistant's real publish says it: the person's own
+            // press already holds its target in the form, and a dry run contacts nothing.
+            var say = commit && DeployGuard.IsAgent(origin) && !string.IsNullOrWhiteSpace(workspace);
+            var shown = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
+            if (say && shown == null) { try { shown = await _sessions.Require().ReadAsync(m => m.Database?.Name ?? m.Name ?? "Model"); } catch { } }
+            if (say) await SayPublishTargetAsync("start", workspace.Trim(), shown, origin).ConfigureAwait(false);
+            try { return await PublishNewModelCoreAsync(workspace, name, authMode, tenantId, origin, workspaceId, commit).ConfigureAwait(false); }
+            finally { if (say) await SayPublishTargetAsync("end", workspace.Trim(), shown, origin).ConfigureAwait(false); }
+        }
+
+        // A kind of its own, so the live feed and the Link read it as a status line and never as a finished run.
+        private Task SayPublishTargetAsync(string phase, string workspace, string name, string origin) => PublishActivityAsync(new ActivityEvent
+        {
+            Kind = "publish_target", Origin = origin, Ok = true, Target = workspace, Query = name,
+            Label = phase == "start" ? $"Publishing {name} to {workspace}" : $"Finished with {name} in {workspace}",
+            Result = new { phase, workspace, name },
+        });
+
+        private async Task<NewModelResult> PublishNewModelCoreAsync(string workspace, string name, string authMode, string tenantId, string origin, string workspaceId, bool commit)
+        {
             if (string.IsNullOrWhiteSpace(workspace)) throw new ArgumentException("Choose a workspace for the new model.", nameof(workspace));
             var s = _sessions.Require();
             name = string.IsNullOrWhiteSpace(name) ? await s.ReadAsync(m => m.Database?.Name ?? m.Name ?? "Model") : name.Trim();
@@ -88,22 +109,51 @@ namespace Semanticus.Engine
             }
             StartSource source;
             lock (_startPlanLock) source = _startPlan?.Source;
-            if (string.IsNullOrWhiteSpace(authMode)) { authMode = source?.AuthMode ?? "interactive"; tenantId ??= source?.TenantId; }
+            var assistant = DeployGuard.IsAgent(origin);
+            if (assistant)
+            {
+                // The assistant never picks a sign-in that needs a person at the screen. It uses the one that is saved (the start plan's, the
+                // person's saved account, a ready service principal) and, when none is, says what the person does in Studio (hero20 D8).
+                var pick = ResolveNewModelSignIn(authMode, tenantId);
+                if (pick.Mode == null) throw new InvalidOperationException(NewModelPublish.NoSignInSaved);
+                (authMode, tenantId) = pick;
+            }
+            else if (string.IsNullOrWhiteSpace(authMode)) { authMode = source?.AuthMode ?? "interactive"; tenantId ??= source?.TenantId; }
 
+            // Every step is timed and told to the Publish page in plain words, the same line deploy_live uses (hero20 D7: 18 minutes of nothing).
+            var runId = Guid.NewGuid().ToString("N").Substring(0, 8);
+            var timer = new DeployTimer((key, words, i) =>
+                _sessions.Bus.PublishProgress(new OperationProgress { OpKey = "deploy_live", RunId = runId, Done = i, Total = 0, Note = words }));
             var ct = System.Threading.CancellationToken.None;
-            var fabricToken = await AcquireFabricTokenAsync(authMode, tenantId, origin, ct);
-            if (string.IsNullOrWhiteSpace(workspaceId))
-                workspaceId = (await FabricRest.ListWorkspacesAsync(fabricToken, ct))
-                    .FirstOrDefault(w => string.Equals(w.DisplayName, workspace.Trim(), StringComparison.OrdinalIgnoreCase))?.Id
-                    ?? throw new InvalidOperationException($"No workspace called {workspace} was found for this sign-in.");
-            var tok = await AcquireLiveTokenAsync(s, authMode, null, tenantId, origin, endpoint, name, ct);
             NewModelPublish.Outcome outcome;
             try
             {
-                var db = NewModelPublish.Prepare(await SchemaJsonAsync(s), name);
-                outcome = await NewModelPublish.CreateAndLoadAsync(db, workspaceId, fabricToken, tok.Token, ct, workspace.Trim());
+                try
+                {
+                    timer.Begin("sign-in", "Signing in");
+                    var fabricToken = await AcquireFabricTokenAsync(authMode, tenantId, origin, ct);
+                    if (string.IsNullOrWhiteSpace(workspaceId))
+                    {
+                        timer.Begin("workspace", "Finding the workspace");
+                        workspaceId = (await FabricRest.ListWorkspacesAsync(fabricToken, ct))
+                            .FirstOrDefault(w => string.Equals(w.DisplayName, workspace.Trim(), StringComparison.OrdinalIgnoreCase))?.Id
+                            ?? throw new InvalidOperationException($"No workspace called {workspace} was found for this sign-in.");
+                    }
+                    timer.Begin("sign-in", "Signing in");
+                    var tok = await AcquireLiveTokenAsync(s, authMode, null, tenantId, origin, endpoint, name, ct);
+                    timer.Begin("prepare", "Preparing the model");
+                    var db = NewModelPublish.Prepare(await SchemaJsonAsync(s), name);
+                    outcome = await NewModelPublish.CreateAndLoadAsync(db, workspaceId, fabricToken, tok.Token, ct, workspace.Trim(),
+                        step: words => timer.Begin(words.StartsWith("Creating", StringComparison.Ordinal) ? "create" : words.StartsWith("Loading", StringComparison.Ordinal) ? "load" : "name", words));
+                }
+                catch (Exception ex) when (assistant && XmlaAuthHint.IsAuthFailure(ex)) { throw new InvalidOperationException(NewModelPublish.NoSignInSaved); }
+                catch (Exception ex) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
             }
-            catch (Exception ex) { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
+            finally
+            {
+                timer.End();
+                _sessions.Bus.PublishProgress(new OperationProgress { OpKey = "deploy_live", RunId = runId, Done = timer.Steps.Length, Total = 0, Note = null });
+            }
 
             // The local copy matches what was published (one undo step): Direct Lake when it went as Direct Lake, so the next
             // Publish compares like with like and never sends the old import partitions over the new model, and the culture
@@ -142,6 +192,16 @@ namespace Semanticus.Engine
                 SignInNeeded = outcome.SignInNeeded, Mode = outcome.DirectLake ? "Direct Lake" : "Import",
                 Note = NewModelPublish.ResultNote(name, workspace, outcome) + linkNote,
             };
+        }
+
+        /// <summary>The sign-in the assistant publishes a new model with: a service principal or a raw token it was told to use, else the start plan's
+        /// sign-in, else the person's saved account, else a ready service principal, else none. A request for a browser or device-code sign-in, or for az,
+        /// is answered with the saved one: the assistant cannot sit at the screen, and the person's saved sign-in is already theirs.</summary>
+        internal (string Mode, string Tenant) ResolveNewModelSignIn(string authMode, string tenantId)
+        {
+            var asked = authMode?.Trim().ToLowerInvariant();
+            if (asked is "serviceprincipal" or "token") return (asked, tenantId);
+            return ResolveSqlListSignIn(null, tenantId);
         }
 
         // The open model as Power BI takes it (model.bim JSON), written through the same serializer a save uses.

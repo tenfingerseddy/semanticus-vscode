@@ -254,6 +254,17 @@ namespace Semanticus.Decisions
 
         /// <summary>The value ladder the plan is ranked on, lowest rung first. Ordered by meaning, because a
         /// score question's option order is part of the request digest and part of what is being asked.</summary>
+        /// <summary>1.5 (the Next line, Kane picked option A on 11 Oct): which of the next steps the rules found eligible is the one
+        /// to show now. It picks one kind id from the rules' own list; every word on the line (the ask, the why, the button) is the
+        /// engine's fixed table (Semanticus.Engine/NextStepRules.cs). It never invents a step and never writes anything.</summary>
+        public const string NextStep = "next.step";
+
+        /// <summary>Every kind the Next line rules can make eligible, in rule order. Fixed: the ids are NextStepRules' own.</summary>
+        public static readonly IReadOnlyList<string> NextStepKinds = new List<string>
+        {
+            "save", "workflow", "run-plan", "run-checks", "check-then-publish", "publish-test", "publish-production", "keep-healthy",
+        }.AsReadOnly();
+
         public static readonly IReadOnlyList<string> PlanValueRungs = new List<string>
         {
             "none", "small", "useful", "large", "urgent",
@@ -703,6 +714,34 @@ namespace Semanticus.Decisions
                 confidenceBar: 0.6,
                 lowConfidenceBehaviour: "the line is unticked with a note that Jev was not sure, and you decide when you review the list; with no answer at all, it stays as the rule first ticked it",
                 proOnly: true),
+
+            new DecisionPoint(
+                name: NextStep,
+                caller: "get_next_step",
+                purpose: "Choose the one next step the Studio's Next line shows, from the steps Semanticus's own rules already found "
+                       + "worth doing now (save, run the plan, run the checks, save repeated steps as a workflow, publish). It sends "
+                       + "where you are on the journey (a stage number), counts (how many changes are not saved, how many Plan tasks "
+                       + "are ready or done, how many checks ran or failed, how many times the same steps were repeated), yes-or-no "
+                       + "facts (saved, checks run since the save, plan finished, published), the ids of the eligible steps and the "
+                       + "kind of the Plan's top task. It never sends a name, a formula or a value. The words on the line are "
+                       + "Semanticus's own. It never writes anything.",
+                schemaVersion: 1,
+                snapshotFields: new[]
+                {
+                    "journey_stage",
+                    "journey_counts",
+                    "journey_flags",
+                    "candidate_kinds",
+                    "plan_top_kind",
+                },
+                questions: new[]
+                {
+                    new DecisionQuestionShape("next_kind", DecisionQuestionKind.Choice,
+                        "the next steps the rules found eligible now, from a fixed list of eight", NextStepKinds),
+                },
+                confidenceBar: 0.85,
+                lowConfidenceBehaviour: "the rules' first eligible step is shown, labelled with the rule's own source",
+                proOnly: true),
         };
 
         public static IReadOnlyList<DecisionPoint> Points { get { return All.AsReadOnly(); } }
@@ -772,7 +811,11 @@ namespace Semanticus.Decisions
         /// They carry the SAME names, types, counts, shares and yes-or-no facts the per-object requests carried, one request per
         /// table instead of one per object (Plan/JevFamilies/JevTableBatch.cs), so no release holds a version 5 permission they
         /// could fall outside of and the version is not bumped again.</summary>
-        public const int ConsentSchemaVersion = 5;
+        ///
+        /// Version 6 (1.5, the Next line, 11 October 2026): next.step joined with five fields of counts, yes-or-no facts and step
+        /// ids (no names, no values). Version 5 shipped in 1.3 and 1.4, so a permission given under it does not cover them: a Pro
+        /// person who agreed sees the card once more.
+        public const int ConsentSchemaVersion = 6;
 
         /// <summary>Every declared field across every point, as "point:field", sorted. This is the exact list a
         /// person consents to, and the thing the settings page shows.</summary>

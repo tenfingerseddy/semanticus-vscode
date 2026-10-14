@@ -193,7 +193,8 @@ namespace Semanticus.Tests
             Assert.Equal(ModelPlanSections.Structure, item.Section);
             Assert.Equal(CalendarTarget, item.Title);
             Assert.Equal(ModelPlanOwners.You, item.Who);
-            Assert.Contains("nothing exists yet", item.Sub, StringComparison.OrdinalIgnoreCase);
+            // The Plan wording moved from target to aim (m14 f10bbe2b).
+            Assert.Contains("Nothing in the model does it yet", item.Sub, StringComparison.OrdinalIgnoreCase);
             // An empty diff here means "the plan does not know the change", not "there is nothing to do",
             // and inventing a line would be the plan claiming knowledge it does not have.
             Assert.Empty(item.Diff);
@@ -286,7 +287,8 @@ namespace Semanticus.Tests
             var refused = await Assert.ThrowsAsync<ArgumentException>(
                 () => f.Engine.RemovePlanTargetAsync(aim.Id, "human"));
 
-            Assert.Contains("come from the rules cannot be removed", refused.Message, StringComparison.Ordinal);
+            // Wording moved from target to aim (m14 f10bbe2b).
+            Assert.Contains("You can remove only the aims you added", refused.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("—", refused.Message, StringComparison.Ordinal);
         }
 
@@ -323,7 +325,8 @@ namespace Semanticus.Tests
             var result = await f.Engine.MarkPlanTargetDoneAsync("target/nothing-like-this", "human");
 
             Assert.False(result.Performed);
-            Assert.Contains("Only a target you typed", result.Sentence, StringComparison.Ordinal);
+            // Wording moved from target to aim (m14 f10bbe2b).
+            Assert.Contains("Only an aim you typed", result.Sentence, StringComparison.Ordinal);
             Assert.NotNull(result.Plan);
         }
 

@@ -2,7 +2,7 @@
   "name": "semanticus-vscode",
   "displayName": "Semanticus - the semantic model workbench for Fabric and Power BI",
   "description": "The all-in-one workbench for Fabric and Power BI semantic models: modelling, best practices, lineage and impact, a DAX lab, an A-to-F AI-readiness score with fixes you can apply and undo, and an MCP door so your assistant co-edits the same live model.",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "publisher": "semanticus-vscode",
   "galleryBanner": { "color": "#0D1117", "theme": "dark" },
   "qna": false,
@@ -530,6 +530,25 @@
           "type": "boolean",
           "default": true,
           "description": "Open the Studio tab by itself when a model is opened. Turn this off if you would rather open Studio from the side bar each time."
+        },
+        "semanticus.personality": {
+          "type": "string",
+          "enum": ["on", "quiet"],
+          "enumDescriptions": ["Working verbs, a light line at the right moments, and drawn sparkles for big wins.", "Plain words, no jokes, no sparkles, no sounds. Useful motion stays."],
+          "default": "on",
+          "description": "How much personality the Studio shows. Quiet keeps the plain words and the useful motion."
+        },
+        "semanticus.sounds": {
+          "type": "boolean",
+          "default": false,
+          "description": "Play small sounds in the Studio: a relationship made, a publish landing, grade A, and long counts. Never for an error, a warning or a delete."
+        },
+        "semanticus.soundVolume": {
+          "type": "number",
+          "default": 40,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "How loud the Studio's sounds are, from 0 to 100. Counting ticks play at half of this."
         },
         "semanticus.dax.maxLineLength": {
           "type": "number",

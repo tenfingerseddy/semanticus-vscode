@@ -364,9 +364,21 @@ namespace Semanticus.Tests
                          // The licence swap (F-242): the field is volatile so a licence applied in the app takes
                          // effect without a restart. Swapping it and reading it once to answer get_entitlement are
                          // not gates; the swap lives in one file and the read is the same single Stamp as before.
-                         && !x.line.Contains("private volatile Entitlement.IEntitlement _entitlement;")
+                         // Since the free Pro month (m15/trial) the field is _heldEntitlement and every reader goes through
+                         // this property, which moves a licence past its end at the instant it ends. Declaring it is not a gate.
+                         && !x.line.Contains("private Entitlement.IEntitlement _entitlement")
+                         // The get_entitlement answer itself (pushed as entitlement/didChange, and the summary's entitlement
+                         // part): the same single Stamp, plus the trial's days left at this engine's now. Not a gate.
+                         && !x.line.Contains("StampedInfo(_entitlement)")
+                         // The trial's claims, for the tally: what it counts and reads, never what a person may do. The
+                         // policy lives with the entitlement (LicenseEntitlement.TrialOf), like the credential read above.
+                         && !x.line.Contains("LicenseEntitlement.TrialOf(_entitlement")
                          && !(x.file == "LocalEngine.License.cs" && (x.line.Contains("var current = _entitlement;") || x.line.Contains("_entitlement = candidate;")))
-                         && !x.line.Contains("var e = _entitlement;   // one read: a licence swap"))
+                         && !x.line.Contains("var e = _entitlement;   // one read: a licence swap")
+                         // Connecting another assistant saves the Pro licence to the user licence file so that assistant's own engine
+                         // runs as Pro when VS Code is closed (70d50e69, LocalEngine.Assistants.cs). The mirror reads the held licence to
+                         // write it out; it grants and refuses nothing. The policy lives in LicenseMirror, not here.
+                         && !x.line.Contains("LicenseMirror.EnsureSaved(_entitlement"))
                 .Select(x => x.file + ":" + x.no + " " + x.line.Trim())
                 .ToArray();
             Assert.True(strays.Length == 0, "The tier is consulted outside the feature gate:\n" + string.Join("\n", strays));

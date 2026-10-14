@@ -13,7 +13,7 @@ Studio opens on the **Plan**, where you start, and has five more areas: **Explor
 **Publish** and **Workflows**.
 Pick the area by the question you start with, then the page inside it.
 
-![Semanticus Studio model diagram](https://semanticus.com.au/assets/shots/diagram.png)
+![The Plan in Semanticus Studio, with work from Semanticus, Jev and your assistant](https://semanticus.com.au/assets/shots/plan.png)
 
 ## One model, two ways to work
 
@@ -28,6 +28,8 @@ timeline.
 Semanticus never holds your assistant's API key. On Free it runs no AI inference; on Pro, Jev, the Semanticus
 helper, makes small modelling choices you can check (see Free and Pro). Bring your own MCP-compatible assistant
 and account. The [MCP reference](https://semanticus.com.au/docs/mcp-tools) documents more than 340 operations.
+
+![The model diagram in the bus matrix layout](https://semanticus.com.au/assets/shots/diagram-matrix.png)
 
 ## Help as you work
 
@@ -48,19 +50,20 @@ The same content is available as a versioned plugin pack and portable skill fold
 [Download the skills pack](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest)
 
 Skills use your existing MCP connection. **Semanticus: Connect AI Assistant** writes the connection file for clients using
-`.mcp.json`; the setup guide explains the equivalent configuration for other clients. Core orientation also
+`.mcp.json`; the setup guide explains the equivalent configuration for other clients. In Studio, the Your assistant
+menu has **Connect another assistant** for Claude Desktop, Codex, Cursor and Claude Code. Core orientation also
 comes from MCP, so an assistant can work without installing skills.
 
 ## The six areas
 
 | Area | What you do there |
 |---|---|
-| **Plan** | Where you start. Every piece of work on the model is a row that says who does it: Semanticus, you or your assistant. Type a task, give work to your assistant, run the ready fixes as one change you can undo, and open History to see every edit, who made it and undo back to any point. Workflow runs are rows here too. |
-| **Explore** | Data, Ask your data (Pro: type a question about your numbers and get the answer as a table; when the question can be read two ways, it says which one it shows and names the other), Diagram, Lineage and Size. |
+| **Plan** | Where you start. Every piece of work on the model is a row that says who does it: Semanticus, you or your assistant. One header line shows the grade figures, what is happening now and Run the plan, and the list is grouped by who does the work. Type a task, give work to your assistant, run one task or the ready fixes as one change you can undo, and open History to see every edit, who made it and undo back to any point. Workflow runs are rows here too. |
+| **Explore** | Data, Ask your data (Pro: type a question about your numbers and get the answer as a table; when the question can be read two ways, it says which one it shows and names the other), Diagram (a bus matrix, with a dot grid under Arrange), Lineage and Size. |
 | **Edit** | Find and replace, Queries (write a DAX query, run it and compare answers across contexts), AI instructions with Model notes, Advanced modelling and Power Query. Tables, measures, columns, relationships, calculation groups, roles and perspectives are edited here, in DAX and M. |
 | **Review** | Model quality (BPA), AI readiness, Validation with its Reports, and Docs. |
-| **Publish** | Published: compare against a live destination, publish after you confirm, and roll back to a published version. |
-| **Workflows** | Your workflows, and Author for the one you open. Start from a starter that comes with Semanticus, or describe what you want in words. Team rules, when a team sets them, say which workflows must be used. |
+| **Publish** | Published: compare against a live destination, publish after you confirm (roles included), and roll back to a published version. |
+| **Workflows** | Your workflows, and Author for the one you open. Each step shows in plain words on the canvas. Start from a starter that comes with Semanticus, or describe what you want in words. Team rules, when a team sets them, say which workflows must be used. |
 
 Connections and Settings sit in the same header. Connections names four roles: Editing, Tests and queries,
 Publish to and SQL sources.
@@ -96,7 +99,32 @@ Get the matching installer and checksum from the
 [latest GitHub release](https://github.com/tenfingerseddy/semanticus-vscode/releases/latest).
 Marketplace publication is separate, so the version offered there can differ.
 
-## What's new in 1.4
+## What's new in 1.5
+
+The Plan is calmer, and you can see which worker did what.
+
+- **A calmer Plan.** One header line holds the figures AI ready, Best practice and Plan done, the live slot and Run the
+  plan. The list is grouped by who does the work, and History is in one place. Run one task with its own Undo. A long
+  plan folds by group and has a Filter.
+- **Lineage Graph on a big model.** It opens in about half a second, where it took 20 to 40 seconds. It lays out the
+  same way each time.
+- **Try Pro free for 30 days.** Start with your email. Your Pro month shows a tally of what Pro did for you, and a line
+  in the last 3 days offers Keep Pro.
+- **Connect another assistant.** One menu connects Claude Desktop, Codex, Cursor and Claude Code, and saves your Pro
+  licence for them. Pro follows you to an assistant you connected on Free.
+- **One colour for each worker.** Semanticus is green, you are blue and your assistant is purple. Charts share one
+  palette of green, blue and purple. When your assistant drives, a clear purple outline runs round Studio.
+- **The Link and the Next line.** The Link shows when Studio is working, thinking, done or stopped. A Next line names the
+  next step on the other pages. Voice and small movements follow Personality in Help, which can be Quiet.
+- **Publish.** Roles are created, updated and deleted on the live model, and Undo of a push brings a deleted role back.
+  Your yes in chat lets your assistant publish through a red check, and upkeep-only warnings never block.
+- **A bus matrix and a workflow canvas.** The Diagram keeps the bus matrix and adds a dot grid under Arrange. The workflow
+  canvas shows each step in plain words.
+- **Faster.** The first grade on open takes about 0.3 seconds, where it took about 3. A full Validation run on a large
+  suite took 51 seconds and now takes 33.
+- **One allow is enough for a build.** One allow gives Jev its permission for the model and the tables in the plan.
+
+### In 1.4
 
 Your assistant can now drive Studio while you watch.
 
@@ -141,6 +169,7 @@ the Data Agent.
 
 Pro is the product deciding and doing it for you: the plan ranked, scored and run, the ask box on the Plan, Workflows, Ask your data, bulk edits that change many objects in one step, and Jev. Jev is the Semanticus helper that makes small modelling choices on Pro: it picks column formats, chooses base measures for number columns, chooses what Copilot sees and puts the plan in order. It also drafts from your words: a workflow you describe on the Workflows page, a task you type with Ctrl J, and a task you type on the Plan once you press Draft the steps. Each choice about the model arrives as a Plan row you can read, change or drop, and What Pro decides, on the Pro page, lists every choice and switches each one off. Nothing is sent to Jev until you agree for that model. Then what goes is table, column and measure names, their types, formats, folders and descriptions, the other names your model gives a measure (its synonyms) when your question uses one, counts and relationships, facts about a measure's formula such as the functions it uses (never the formula itself), and the words you type: questions in the ask box, in Ask your data and in the question box on Queries, and the words that describe a task or a workflow. Words you type go as you typed them. A row or a value from your tables never goes, and neither do your connection or anything from another model. Your agreement is kept outside the model files; a small marker, `Semanticus_ConsentId`, is written into the model so the agreement stays with it, and you will see it in a commit. On the free plan the plan still lists every gap in rule
 order, with a jump on each one to the page where you can do it by hand.
+You can try Pro free for 30 days.
 [Compare the current plans](https://semanticus.com.au/pro).
 
 ## Know the boundaries

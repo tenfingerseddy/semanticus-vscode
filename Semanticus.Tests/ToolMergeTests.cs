@@ -269,7 +269,10 @@ namespace Semanticus.Tests
             // 385 = 380 plus the four batch tools from the batch lane (write_words, waive_findings, edit_objects, create_measures) plus list_workspace_sql_endpoints (H14); 11 Oct 2026.
             // 395 = 385 plus the ten remaining bulk forms from the bulk-more lane (11 Oct 2026).
             // 396 = 395 plus resolve_file_recovery from studio-polish (11 Oct 2026).
-            Assert.Equal(396, tools.Length);
+            // 398 = 396 plus get_next_step and set_next_step from the Next line lane (1.5, 11 Oct 2026).
+            // 399 = 398 plus get_trial_tally from the free Pro month lane (1.5).
+            // 400 = 399 plus connect_assistant from the connect-any lane (1.5, 12 Oct 2026).
+            Assert.Equal(402, tools.Length);
             foreach (var old in RetiredTools)
             {
                 Assert.DoesNotContain(old, tools);

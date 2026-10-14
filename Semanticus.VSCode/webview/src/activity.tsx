@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback } f
 import { onActivity, onDidChange, runHostCommand, type ActivityEvent } from './bridge';
 import type { SaidGroup } from './studio/said-model';
 import { appendEdit, saidCopy } from './studio/said-model';
+import { ConnectAssistantsPanel } from './connect-assistants';
+import { PANEL_TITLE } from './connect-assistants-model';
 
 export type { ActivityEvent };
 
@@ -138,7 +140,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
   const { feed, pin } = useActivity();
   const [open, setOpen] = useState(false);
   // The menu is the first thing the chip opens; the live feed is one pick in, where it used to be the whole popover.
-  const [view, setView] = useState<'menu' | 'feed'>('menu');
+  const [view, setView] = useState<'menu' | 'feed' | 'connect'>('menu');
   const [highlight, setHighlight] = useState(0);
   const wrap = useRef<HTMLDivElement>(null);
   const chipRef = useRef<HTMLButtonElement>(null);
@@ -158,6 +160,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
   useEffect(() => {
     if (!open) return;
     if (view === 'feed') { feedRef.current?.focus(); return; }
+    if (view === 'connect') return;   // the panel puts the ring on its first button once the list has loaded
     if (highlight >= 0) itemRefs.current[highlight]?.focus(); else menuRef.current?.focus();
   }, [open, view, highlight]);
   const closeAndReturnFocus = () => { setOpen(false); chipRef.current?.focus(); };
@@ -187,10 +190,14 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
   // The palette command (Connect Your Assistant) still rewrites the connection file for anyone who needs it again.
   if (!assistantSeen) items.push({ id: 'connect', label: 'Connect your assistant', title: connectTitle,
     run: () => runHostCommand('semanticus.connectClaudeCode') });
+  // The same press for the person's other assistants (Claude Desktop, Codex, Cursor, Claude Code in a terminal). It stays in the menu
+  // after the first assistant is seen, because a second assistant is exactly when a person comes looking for it.
+  items.push({ id: 'connectOther', label: PANEL_TITLE, title: 'Add Semanticus to another assistant on this computer',
+    run: () => setView('connect') });
 
   const pick = (item: ChipItem, fromKeyboard: boolean) => {
     item.run();
-    if (item.id === 'feed') return;   // stays open one level in; the focus effect moves the ring into the feed
+    if (item.id === 'feed' || item.id === 'connectOther') return;   // stays open one level in; the focus effect moves the ring into it
     setOpen(false);
     if (fromKeyboard) chipRef.current?.focus(); else chipRef.current?.blur();
   };
@@ -220,7 +227,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
         className="studio-header-action studio-feed-mark-host gap-2">
         {/* The dot only pulses while there is something live to pulse about; idle it is a plain muted mark. */}
         <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
-          style={{ background: feed.length > 0 ? 'var(--sem-fg)' : 'var(--sem-muted)' }} />
+          style={{ background: feed.length > 0 ? 'var(--sem-actor-assistant)' : 'var(--sem-muted)' }} />
         <span>Your assistant</span>
         {/* A badge on the chip's corner, drawn by CSS (styles.css .studio-feed-mark) and positioned absolutely: it takes
             no layout width idle or live, so the assistant waking never refolds the header, and the idle header folds
@@ -240,10 +247,10 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
       {pendingApprovalCount > 0 && (
         <button onClick={(e) => { e.stopPropagation(); setOpen(false); onOpen('permissions', firstPendingApprovalId); }}
           aria-label={approvalLabel} title={approvalLabel}
-          // Instrument: the count waiting for you is a number beside the button with a dot in the warning colour, not
-          // an amber badge pinned over its corner. It is still its own button, and still goes to the approvals.
+          // Instrument: the count waiting for you is a number beside the button with a dot in your blue, not
+          // a badge pinned over its corner. It is still its own button, and still goes to the approvals.
           className="flex h-6 items-center gap-1 px-1 text-xs sem-num" style={{ color: 'var(--sem-fg)' }}>
-          <span className="w-1 h-1 rounded-full" aria-hidden style={{ background: 'var(--sem-warn)' }} />
+          <span className="w-1 h-1 rounded-full" aria-hidden style={{ background: 'var(--sem-actor-you)' }} />
           {pendingApprovalCount > 99 ? '99+' : pendingApprovalCount}
         </button>
       )}
@@ -264,6 +271,13 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
           </button>)}
         </div>
       )}
+      {open && view === 'connect' && (
+        <div className="studio-header-pop absolute right-0 top-full mt-1 rounded-(--sem-radius-card) shadow-xl overflow-hidden outline-none"
+          style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}
+          onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setView('menu'); } }}>
+          <ConnectAssistantsPanel onBack={() => setView('menu')} />
+        </div>
+      )}
       {open && view === 'feed' && (
         <div ref={feedRef} tabIndex={-1} className="studio-header-pop absolute right-0 top-full mt-1 w-96 rounded-(--sem-radius-card) shadow-xl overflow-hidden outline-none"
           onKeyDown={(e) => {
@@ -277,7 +291,7 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
           <div className="px-3 py-2 text-xs font-semibold flex items-center gap-2"
             style={{ color: 'var(--sem-muted)', borderBottom: '1px solid var(--sem-border)' }}>
             <span className={`w-1 h-1 rounded-full${feed.length > 0 ? ' animate-pulse' : ''}`}
-              style={{ background: feed.length > 0 ? 'var(--sem-fg)' : 'var(--sem-muted)' }} />
+              style={{ background: feed.length > 0 ? 'var(--sem-actor-assistant)' : 'var(--sem-muted)' }} />
             Live activity · your assistant
             <button type="button" onClick={() => setView('menu')} className="sem-btn sem-btn-sm sem-btn-quiet ml-auto"
               title="Back to the assistant menu">Back</button>
@@ -332,14 +346,15 @@ export function LiveActivity({ onOpen, pendingApprovalCount = 0, firstPendingApp
 }
 
 // In-tab attribution shown above a result the agent produced — "▸ Claude · Profiled server timings — <query>".
-export function ClaudeRanBanner({ event, onClear }: { event: ActivityEvent | null | undefined; onClear?: () => void }) {
+// queryShownAbove: the page already shows this query in full, so the strip does not repeat it.
+export function ClaudeRanBanner({ event, onClear, queryShownAbove }: { event: ActivityEvent | null | undefined; onClear?: () => void; queryShownAbove?: boolean }) {
   if (!event) return null;
   return (
     <div className="sem-inset flex items-center gap-2 text-xs" style={{ color: 'var(--sem-fg)' }}>
       <span className="w-1 h-1 rounded-full shrink-0" style={{ background: 'var(--sem-fg)' }} />
       <span className="font-semibold shrink-0">Your assistant</span>
-      <span className="shrink-0">{event.label}</span>
-      {event.query && <span className="font-mono truncate" style={{ color: 'var(--sem-muted)' }}>{event.query}</span>}
+      <span className="shrink-0">{queryShownAbove ? 'ran this query' : event.label}</span>
+      {event.query && !queryShownAbove && <span className="font-mono truncate" style={{ color: 'var(--sem-muted)' }}>{event.query}</span>}
       {event.elapsedMs != null && <span className="tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>· {event.elapsedMs}ms</span>}
       {event.error && <span className="shrink-0" style={{ color: 'var(--sem-bad)' }}>· {event.error}</span>}
       {onClear && <button onClick={onClear} className="ml-auto shrink-0" style={{ color: 'var(--sem-muted)' }} title="Dismiss">✕</button>}

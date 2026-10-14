@@ -84,12 +84,12 @@ namespace Semanticus.Engine.Entitlement
                 new[] { "askData", "listDataQuestions", "pickChartKind" },
                 new[] { "AskDataAsync", "ListDataQuestionsAsync", "PickChartKindAsync" }),
             new Group(ProFeature.Workflows, "Workflows",
-                new[]   // 35 operations: 30, the composer's four draft ops (lane L4, Kane 24 Sep: draft ops stay Pro), and describe_workflow_steps (Kane's UAT, 25 Sep)
+                new[]   // 38 operations (abort_workflow is free): 30, the composer's four draft ops (lane L4, Kane 24 Sep: draft ops stay Pro), and describe_workflow_steps (Kane's UAT, 25 Sep)
                 {
                     "compose_task", "get_draft", "edit_draft", "run_draft", "describe_workflow_steps",
                     // Held drafts and repeats (Kane, 10 Oct 2026: the assistant may do what the person does, except the Permissions page).
                     "approve_draft", "continue_draft", "add_plan_repeat", "set_plan_repeat",
-                    "abort_workflow", "activate_workflow_profile", "check_workflow", "delete_workflow",
+                    "activate_workflow_profile", "check_workflow", "delete_workflow",
                     "delete_workflow_template", "edit_workflow_document", "export_workflow_evidence", "get_workflow",
                     "get_workflow_document", "get_workflow_enforcement", "get_workflow_layout", "get_workflow_policy",
                     "get_workflow_template", "instantiate_workflow_template", "list_workflow_profiles", "list_workflow_templates",
@@ -102,7 +102,7 @@ namespace Semanticus.Engine.Entitlement
                 {
                     "composeTask", "getDraft", "editDraft", "runDraft", "describeWorkflowSteps",
                     "approveDraft", "continueDraft", "addPlanRepeat", "setPlanRepeat",
-                    "abortWorkflow", "activateWorkflowProfile", "checkWorkflow", "deleteWorkflow",
+                    "activateWorkflowProfile", "checkWorkflow", "deleteWorkflow",
                     "deleteWorkflowTemplate", "editWorkflowDocument", "exportWorkflowEvidence", "getWorkflow",
                     "getWorkflowDocument", "getWorkflowEnforcement", "getWorkflowLayout", "getWorkflowPolicy",
                     "getWorkflowTemplate", "instantiateWorkflowTemplate", "listWorkflowProfiles", "listWorkflowTemplates",
@@ -116,7 +116,7 @@ namespace Semanticus.Engine.Entitlement
                         // stop in a draft (lane author-gaps, B9), and the two repeat controls at the end (38)
                 {
                     "ComposeTaskAsync", "GetDraftAsync", "EditDraftAsync", "RunDraftAsync", "ApproveHeldDraftAsync", "ContinueDraftAsync", "DescribeWorkflowStepsAsync",
-                    "AbortWorkflowAsync", "ActivateWorkflowProfileAsync", "CheckWorkflowAsync", "DeleteWorkflowAsync",
+                    "ActivateWorkflowProfileAsync", "CheckWorkflowAsync", "DeleteWorkflowAsync",
                     "DeleteWorkflowTemplateAsync", "EditWorkflowDocumentAsync", "ExportWorkflowEvidenceAsync", "GetWorkflowAsync",
                     "GetWorkflowDocumentAsync", "GetWorkflowEnforcementAsync", "GetWorkflowLayoutAsync", "GetWorkflowPolicyAsync",
                     "GetWorkflowTemplateAsync", "InstantiateWorkflowTemplateAsync", "ListWorkflowProfilesAsync", "ListWorkflowTemplatesAsync",
@@ -135,11 +135,12 @@ namespace Semanticus.Engine.Entitlement
         /// <summary>The MCP operation names that are free. Everything the agent door exposes is here or in a Group.</summary>
         public static readonly IReadOnlyCollection<string> FreeOperations = new HashSet<string>(StringComparer.Ordinal)
         {
+            "abort_workflow",   // Stop is free: a run that was active when a trial or Pro ended must still be stoppable (Kane, 12 Oct 2026)
             "accept_primer_suggestion", "add_interview_question", "add_plan_item", "ai_readiness_scan",
             "analyze_cloud_reports", "analyze_reports", "apply_dax_script", "apply_fix",
-            "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_tmdl",
+            "apply_model_diff", "apply_plan", "apply_safe_fixes", "apply_tmdl", "fix_them", "reading_card",
             "benchmark_cold_warm", "benchmark_dax", "blame_value", "bpa_scan", "cancel_query", "capture_query_plan", "check_reports",
-            "cherry_pick", "clear_cache", "clear_plan", "connect_local",
+            "cherry_pick", "clear_cache", "clear_plan", "connect_assistant", "connect_local",
             "connect_xmla", "connection_context", "connection_status", "create_calculated_column",
             "create_calculated_table", "create_column", "create_directlake_table", "create_hierarchy",
             "create_history_checkpoint", "create_import_table", "create_measure", "create_model",
@@ -149,7 +150,7 @@ namespace Semanticus.Engine.Entitlement
             "duplicate_object", "create_linguistic_schema", "evaluate_and_log", "explain_value",
             "export_verified_edits", "export_vpax", "forget_connection", "get_agent_policy",
             "get_ai_instructions", "get_custom_rules", "get_dax", "get_dependencies",
-            "get_consent", "get_decision_budget", "get_decision_points", "get_entitlement",
+            "get_consent", "get_decision_budget", "get_decision_points", "get_entitlement", "get_trial_tally",
             "get_fix_prompt", "get_grounding", "get_layout",
             "get_lineage", "get_model_facts", "get_model_fingerprint", "get_model_graph", "get_model_objects",
             "get_model_summary", "get_object", "get_op_catalog", "get_pipeline_stages",
@@ -168,7 +169,7 @@ namespace Semanticus.Engine.Entitlement
             "apply_plan_items",
             "get_next_actions",
             // The Studio wire (1.4, Claude drives): the assistant says what it is doing and what it would do next. Free on every tier.
-            "show_in_studio", "suggest_next",
+            "show_in_studio", "suggest_next", "get_next_step", "set_next_step",
             // The target (the Fix milestone). Free for a further reason of its own: a target is a sentence
             // the person wrote about their own model, so charging for it would be charging them to write
             // down what they want.
@@ -266,14 +267,15 @@ namespace Semanticus.Engine.Entitlement
         public static readonly IReadOnlyCollection<string> FreeRpcMethods = new HashSet<string>(StringComparer.Ordinal)
         {
             "resolveFileRecovery",
+            "abortWorkflow",
             "acceptPrimerSuggestion", "addInterviewQuestion", "addPlanItem", "aiReadinessScan",
             "aiReadinessScanLive", "analyzeCloudReports", "analyzeReports", "applyDaxScript",
-            "applyDiff", "applyFix", "applyPlan", "applySafeFixes",
+            "applyDiff", "applyFix", "applyPlan", "applySafeFixes", "fixThem", "readingCard",
             "applyTmdlScript", "benchmarkColdWarm", "benchmarkDax", "blameValue",
             "bpaFix", "bpaFixAll", "bpaGetFixPrompt", "bpaScan", "buildIdentity",
             "cancelDax", "captureQueryPlan", "checkReports", "cherryPick",
             "clearCache", "clearPlan", "clearReferenceBinding", "compareModels",
-            "connectLocal", "connectXmla", "connectionContext", "connectionStatus",
+            "connectAssistant", "connectLocal", "connectXmla", "connectionContext", "connectionStatus",
             "createCalculatedColumn", "createCalculatedTable", "createColumn", "createDirectLakeTable",
             "createHierarchy", "createHistoryCheckpoint", "createImportTable", "createMeasure",
             "createModel", "createRelationship", "createTable", "deleteInterviewQuestion",
@@ -282,7 +284,7 @@ namespace Semanticus.Engine.Entitlement
             "dryRunOp", "duplicateObject", "createLinguisticSchema", "evaluateAndLog",
             "explainValue", "exportVerifiedEdits", "exportVpax", "forgetConnection",
             "getAgentPolicy", "getAiInstructions", "getCustomRules", "getDax",
-            "getDependencies", "getDependents", "getEntitlement", "getFixPrompt",
+            "getDependencies", "getDependents", "getEntitlement", "getTrialTally", "getFixPrompt",
             "getGrounding", "getLayout", "getLineage", "getModelFacts", "getModelFingerprint",
             "getModelGraph", "getModelObjects", "getObject", "getObjectProperties",
             "getOpCatalog", "getOrientation", "getPipelineStages", "getPlan",
@@ -296,10 +298,10 @@ namespace Semanticus.Engine.Entitlement
             "listAssistantRequests", "claimRequest", "completeRequest", "declineRequest", "pullPlanOffer",
             "getNextActions",
             // The Studio wire (1.4). The driver report, setStudioDriver, is on HumanGovernanceRpcTarget and so not on this list.
-            "showInStudio", "suggestNext", "getStudioNotes", "noteAgentCall",
+            "showInStudio", "suggestNext", "getStudioNotes", "noteAgentCall", "getNextStep", "setNextStep",
             "getStageItems", "getVerifiedMode", "getWorkflowRun", "gitStatus",
             "harnessReport", "impactAssessment", "impactOf", "labelConnection",
-            "lintDax", "listAccountProfiles", "listColumns", "listConnectionHistory",
+            "lintDax", "listAccountProfiles", "listAssistants", "listColumns", "listConnectionHistory",
             "listConnections", "listDeploymentPipelines", "listFormatTemplates", "listFunctions",
             "listHistoryCheckpoints", "listInterviewQuestions", "listInterviewSeeds", "listLocalInstances",
             "listMeasures", "listPendingApprovals", "listPrimerSuggestions", "listReferenceTree",
@@ -380,14 +382,14 @@ namespace Semanticus.Engine.Entitlement
         /// method is unclassified until it is named here or in a Group, and the test says so.</summary>
         public static readonly IReadOnlyCollection<string> FreeEngineMethods = new HashSet<string>(StringComparer.Ordinal)
         {
-            "AcceptPrimerSuggestionAsync", "AddInterviewQuestionAsync", "AddPlanItemAsync", "AiReadinessScanAsync",
-            "AiReadinessScanLiveAsync", "AnalyzeCloudReportsAsync", "AnalyzeReportsAsync", "ApplyDaxScriptAsync",
+            "AbortWorkflowAsync", "AcceptPrimerSuggestionAsync", "AddInterviewQuestionAsync", "AddPlanItemAsync", "AiReadinessScanAsync",
+            "AiReadinessScanLiveAsync", "ReadingCardAsync", "FixThemAsync", "AnalyzeCloudReportsAsync", "AnalyzeReportsAsync", "ApplyDaxScriptAsync",
             "ApplyDiffAsync", "ApplyFixAsync", "ApplyPlanAsync", "ApplySafeFixesAsync",
             "ApplyTmdlScriptAsync", "ApproveAgentActionAsync", "BenchmarkColdWarmAsync", "BenchmarkDaxAsync",
             "BlameValueAsync", "BpaFixAllAsync", "BpaFixAsync", "BpaGetFixPromptAsync",
             "BpaScanAsync", "CancelDaxAsync", "CaptureQueryPlanAsync", "CheckReportsAsync",
             "CherryPickAsync", "ClearCacheAsync", "ClearPlanAsync", "ClearReferenceBindingAsync",
-            "CompareModelsAsync", "ConnectLocalAsync", "ConnectXmlaAsync", "ConnectionContextAsync",
+            "CompareModelsAsync", "ConnectAssistantAsync", "ConnectLocalAsync", "ConnectXmlaAsync", "ConnectionContextAsync",
             "ConnectionStatusAsync", "CreateCalculatedColumnAsync", "CreateCalculatedTableAsync", "CreateColumnAsync",
             "CreateDirectLakeTableAsync", "CreateHierarchyAsync", "CreateHistoryCheckpointAsync", "CreateImportTableAsync",
             "CreateMeasureAsync", "CreateModelAsync", "CreateRelationshipAsync", "CreateTableAsync",
@@ -416,13 +418,14 @@ namespace Semanticus.Engine.Entitlement
             "GetNextActionsAsync",
             // The Studio wire (1.4): free on every tier. SetStudioDriverAsync is the Studio's own report, person-only like the Plan controls above.
             "ShowInStudioAsync", "SuggestNextAsync", "GetStudioNotesAsync", "NoteAgentCallAsync", "SetStudioDriverAsync",
+            "GetNextStepAsync", "SetNextStepAsync",
             "GetCustomRulesAsync", "GetDaxAsync", "GetDependenciesAsync", "GetDependentsAsync",
-            "GetEntitlementAsync", "GetFixPromptAsync", "GetGroundingAsync", "GetLayoutAsync",
+            "GetEntitlementAsync", "GetTrialTallyAsync", "GetFixPromptAsync", "GetGroundingAsync", "GetLayoutAsync",
             "GetLineageAsync", "GetModelFactsAsync", "GetModelFingerprintAsync", "GetModelGraphAsync", "GetModelObjectsAsync",
             "GetObjectAsync", "GetObjectPropertiesAsync", "GetOpCatalogAsync", "GetOrientationAsync",
             "GetPipelineStagesAsync", "GetPlanAsync", "GetStageItemsAsync", "GetVerifiedModeAsync",
             "GetWorkflowRunAsync", "GitStatusAsync", "HarnessReportAsync", "ImpactAssessmentAsync",
-            "ImpactOfAsync", "LabelConnectionAsync", "LintDaxAsync", "ListAccountProfilesAsync",
+            "ImpactOfAsync", "LabelConnectionAsync", "LintDaxAsync", "ListAccountProfilesAsync", "ListAssistantsAsync",
             "ListColumnsAsync", "ListConnectionHistoryAsync", "ListConnectionsAsync", "ListDeploymentPipelinesAsync",
             "ListFormatTemplatesAsync", "ListFunctionsAsync", "ListHistoryCheckpointsAsync", "ListInterviewQuestionsAsync",
             "ListInterviewSeedsAsync", "ListLocalInstancesAsync", "ListMeasuresAsync", "ListPendingApprovalsAsync",

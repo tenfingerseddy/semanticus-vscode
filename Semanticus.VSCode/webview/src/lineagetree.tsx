@@ -83,7 +83,8 @@ function dagreLayout(ids: string[], edges: [string, string][], rankdir: 'LR' | '
   return m;
 }
 
-const VERDICT_COLOR: Record<string, string> = { safe: '#36c98b', usedByUnusedOnly: '#e0b341', caution: '#e0654b', visibleAttribute: '#6b9bd2' };
+// A verdict is a status, so it keeps the status colours; the one that is not a warning (a visible field) takes a chart step.
+const VERDICT_COLOR: Record<string, string> = { safe: 'var(--sem-good)', usedByUnusedOnly: 'var(--sem-warn)', caution: 'var(--sem-bad)', visibleAttribute: 'var(--sem-series-2)' };
 
 // Edge styling for the current selection — emphasise the selected node's incident edges, dim the rest. Shared by the
 // layout build (so a rebuilt graph already reflects selection) and the decoration effect (so a click restyles without
@@ -436,8 +437,8 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
   );
   const sliceControls = (
     <>
-      <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the tree down to some of the tables" />
-      <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the tree down to certain measures or columns" />
+      <MultiSelect inline label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the tree down to some of the tables" />
+      <MultiSelect inline label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the tree down to certain measures or columns" />
       {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }} title="Show everything again">Clear</ToolBtn>}
     </>
   );
@@ -471,7 +472,7 @@ function LineageTreeInner({ graph, unusedItems, onOpenImpact, modeSwitch, counts
         <RowSep />
         {directionControls}
         <RowMenu label="Layout" title="Lay the tree out, and open or close all of it">{layoutControls}</RowMenu>
-        <RowMenu label="Filter" align="end" badge={(selTables.size + selFields.size + hiddenKinds.size) || undefined} title="Cut the tree down to part of the model">{sliceControls}{kindControls}</RowMenu>
+        <RowMenu label="Filter" align="end" wide badge={(selTables.size + selFields.size + hiddenKinds.size) || undefined} title="Cut the tree down to part of the model">{sliceControls}{kindControls}</RowMenu>
       </ToolRow>
 
       <div ref={canvasRef} className="xe-canvas" style={{ height: treeH, position: 'relative', ...canvasInsetStyle(paneBox.inset) }}>

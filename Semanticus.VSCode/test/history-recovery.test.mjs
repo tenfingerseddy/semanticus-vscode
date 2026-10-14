@@ -115,7 +115,9 @@ assert.match(history, /<span className=\{M\.doerClass\(who\)\}>\{M\.WHO_WORD\[wh
   'a row names its maker with the doer mark that matches the word it says');
 {
   const styles = read('webview/src/styles.css');
-  for (const who of ['engine', 'you', 'agent']) {
-    assert.match(styles, new RegExp(`\\.sem-doer-${who}\\s*\\{[^}]*color:\\s*var\\(--sem-doer-${who}\\)`), `.sem-doer-${who} is --sem-doer-${who}`);
+  for (const [who, actor] of [['engine', 'semanticus'], ['you', 'you'], ['agent', 'assistant']]) {
+    assert.match(styles, new RegExp(`\\.sem-doer-${who}\\s*\\{[^}]*color:\\s*var\\(--sem-actor-${actor}\\)`), `.sem-doer-${who} is --sem-actor-${actor}`);
   }
 }
+// An older kept copy is offered next, so the one-offer-per-session guard is cleared once an offer is settled.
+assert.match(read('src/extension.ts'), /resolveFileRecovery', info\.sessionId[^\n]*\n\s*offeredFileRecoverySession = undefined;/, 'a settled offer lets the next kept copy be offered');

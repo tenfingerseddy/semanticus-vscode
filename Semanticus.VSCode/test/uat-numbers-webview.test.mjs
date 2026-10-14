@@ -11,6 +11,11 @@ const React = req('react');
 const { renderToStaticMarkup } = req('react-dom/server');
 const readable = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim();
 
+// The motion folder (reached through the Reports page imports) reads the real bridge, which asks for a window and the VS Code API.
+globalThis.window ??= globalThis;
+globalThis.addEventListener ??= () => undefined;
+globalThis.removeEventListener ??= () => undefined;
+globalThis.acquireVsCodeApi ??= () => ({ postMessage() {}, getState: () => ({}), setState() {} });
 globalThis.document = { documentElement: { style: {} } };
 globalThis.getComputedStyle = () => ({ getPropertyValue: () => '' });
 

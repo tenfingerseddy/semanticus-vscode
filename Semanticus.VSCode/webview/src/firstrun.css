@@ -33,3 +33,5 @@
 }
 .first-run-acts { display: flex; justify-content: flex-end; align-items: center; gap: var(--sem-space-2); }
 .first-run-around { margin-right: auto; }
+/* The Link at welcome size (1.5). Its own box, so the card does not move as the dots do. */
+.first-run-link { display: grid; place-items: center; height: 200px; }

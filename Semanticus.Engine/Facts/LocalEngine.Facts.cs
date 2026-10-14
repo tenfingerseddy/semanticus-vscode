@@ -752,7 +752,7 @@ namespace Semanticus.Engine
             // The unused sweep and the report reading, taken on the same model read as the settings so the two can
             // never describe different revisions. Same three states as UnusedObjectsAsync (R1).
             ReportAnalysisResult analysis = null;
-            if (coverage.Parts.Count == 0) read.Unused = LineageGraph.Unused(m);
+            if (coverage.Parts.Count == 0) read.Unused = coverage.NoReports ? LineageGraph.UnusedNoReports(m) : LineageGraph.Unused(m);
             else
             {
                 analysis = LineageGraph.AnalyzeReports(m, coverage.Parts);
@@ -761,6 +761,7 @@ namespace Semanticus.Engine
             if (coverage.HasChoices && !coverage.Complete)
                 read.Unused = LineageGraph.WithMissingCoverage(read.Unused,
                     "A report chosen for this model has not been checked yet, so its use of this field is not known.", coverage.Caveat);
+            read.Unused = LineageGraph.WithoutTables(read.Unused);   // the Plan's cleanup row counts columns and measures; unused_objects lists tables too
             // "Used in reports" is a yes or no only when every chosen report was read at this revision and read in
             // full. A report that could not be read, a part that could not be parsed or a field that could not be
             // placed all leave "no" unproven, so those columns stay unknown. Reports that were read in full and use

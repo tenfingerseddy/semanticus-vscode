@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { firstRunClose, firstRunConnect, onFirstRunSay } from './bridge';
 import { firstRunOnce, markFirstRunClosed, returnsToCard } from './firstrun-gate';
 import { startTour, useLearn } from './studio/learn-state';
+import { LinkMark, type LinkState } from './personality/link';
 import './firstrun.css';
 
 // The first-run choice (1.4, direction decision 10). The host decides whether to show it (once per machine, and
@@ -14,6 +15,25 @@ export const FIRST_SAY = 'Build a model from my SQL endpoint and get it AI ready
 
 export type FirstRunStage = 'choose' | 'working' | 'done';
 export type FirstRunMode = 'assistant' | 'hand';
+
+/** The Link at full size on the welcome card (1.5): it breathes while you choose, works while the connect runs, links up when it is
+ *  done and then rests, and turns grey and still when the connect failed. */
+export function firstRunLinkState(stage: FirstRunStage, error: string | null, settled: boolean): LinkState {
+  if (stage === 'working') return 'working';
+  if (stage === 'done') return settled ? 'idle' : 'success';
+  return error ? 'error' : 'idle';
+}
+
+function FirstRunLink({ stage, error }: { stage: FirstRunStage; error: string | null }) {
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    setSettled(false);
+    if (stage !== 'done') return undefined;
+    const t = setTimeout(() => setSettled(true), 1900);
+    return () => clearTimeout(t);
+  }, [stage]);
+  return <div className="first-run-link"><LinkMark state={firstRunLinkState(stage, error, settled)} size={200} /></div>;
+}
 
 export function FirstRunCard({ stage, mode, onMode, onConnect, onClose, onAround, error, note }: {
   stage: FirstRunStage; mode: FirstRunMode; onMode: (m: FirstRunMode) => void; onConnect: () => void; onClose: () => void; onAround?: () => void;
@@ -28,6 +48,7 @@ export function FirstRunCard({ stage, mode, onMode, onConnect, onClose, onAround
   if (stage === 'done') {
     return <div className="first-run-scrim"><div className="first-run" role="dialog" aria-label="Ready for your assistant"
       onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose(); } }}>
+      <FirstRunLink stage={stage} error={error} />
       <h2 className="first-run-title">Ready for your assistant</h2>
       <p className="first-run-line">Open Claude Code in this folder and say:</p>
       <div className="first-run-say"><span>{FIRST_SAY}</span>
@@ -44,6 +65,7 @@ export function FirstRunCard({ stage, mode, onMode, onConnect, onClose, onAround
   const working = stage === 'working';
   return <div className="first-run-scrim"><div className="first-run" role="dialog" aria-label="How do you want to work?"
     onKeyDown={(e) => { if (e.key === 'Escape' && !working) { e.preventDefault(); onClose(); } }}>
+    <FirstRunLink stage={stage} error={error} />
     <h2 className="first-run-title">How do you want to work?</h2>
     <div className="first-run-choices" role="radiogroup" aria-label="How do you want to work?">
       {choices.map((c) => <button key={c.id} type="button" role="radio" aria-checked={mode === c.id} disabled={working}

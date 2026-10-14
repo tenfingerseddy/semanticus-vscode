@@ -54,7 +54,7 @@ const STUBS = {
 const TIER = { now: 'pro', unlocked: 0 };
 const cache = new Map();
 function load(file) {
-  const full = file.endsWith('.ts') || file.endsWith('.tsx') ? file
+  const full = file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.mjs') || file.endsWith('.js') ? file
     : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
   if (cache.has(full)) return cache.get(full);
   const js = ts.transpileModule(readFileSync(full, 'utf8'), {
@@ -431,7 +431,7 @@ assert.ok(!/\.overview-cols \{/.test(css) && !/\.overview-health \{/.test(css), 
     },
   };
   const loadShim = (file) => {
-    const full = file.endsWith('.ts') || file.endsWith('.tsx') ? file
+    const full = file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.mjs') || file.endsWith('.js') ? file
       : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
     if (shimCache.has(full)) return shimCache.get(full);
     const js = ts.transpileModule(readFileSync(full, 'utf8'), {

@@ -66,7 +66,7 @@ interface Sort { col: number; dir: 1 | -1 }
  * view-only — `rows` are never mutated, and nothing re-queries the engine. `filterable={false}` hides the
  * whole filter bar (and the funnels) — used for tiny embedded grids.
  */
-export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false, framed = true, friendly = false }: {
+export function ResultGrid({ columns, rows, height = 460, filterable = true, showTypeGlyph = false, onColumnMenu, menuCol, subHeader, onCellMenu, truncated = false, framed = true, friendly = false, countElsewhere = false }: {
   columns: GridColumn[]; rows: unknown[][]; height?: number | string; filterable?: boolean; truncated?: boolean;
   // A grid on the page is its own card: a hairline box whose first column starts one card padding in. Inside a
   // card that already frames it (DAX Lab's result, the Power Query preview) it draws no box of its own, because
@@ -76,6 +76,9 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
   // given, so a short result is not a strip on the left. Display only; sorting, filtering and onCellMenu still
   // read the raw values.
   friendly?: boolean;
+  // The caller already says how many rows there are (DAX Lab's result line), so the filter bar names a count only
+  // when the filter has cut the rows down.
+  countElsewhere?: boolean;
   // Opt-in header affordances (used by the M Code sample so its preview headers double as the column-op surface):
   showTypeGlyph?: boolean;                                            // a small type badge before each column name
   onColumnMenu?: (colIndex: number, anchor: HTMLElement) => void;     // ⌄ / right-click → open the caller's column-ops menu
@@ -202,10 +205,10 @@ export function ResultGrid({ columns, rows, height = 460, filterable = true, sho
           <div className="flex items-center gap-2 pb-2 shrink-0">
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter rows…" spellCheck={false} aria-label="Filter rows"
               className="sem-field sem-field-sm w-56" />
-            <span className="sem-text-meta sem-num">
+            {(!countElsewhere || view.length !== rows.length) && <span className="sem-text-meta sem-num">
               {view.length === rows.length ? `${rows.length.toLocaleString()} rows` : `${view.length.toLocaleString()} of ${rows.length.toLocaleString()}`}
               {truncated ? '. More rows exist.' : ''}
-            </span>
+            </span>}
             {dirty && (
               <button onClick={resetAll} className="sem-btn sem-btn-sm sem-btn-quiet">Reset</button>
             )}

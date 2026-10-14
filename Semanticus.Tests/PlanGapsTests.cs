@@ -75,8 +75,11 @@ namespace Semanticus.Tests
             var said = await f.Engine.CompleteAssistantRequestAsync(task.Id, claim.Request.ClaimToken, "Described them.");
             Assert.True(said.Ok, said.Message);
             var closed = await f.Engine.GetModelPlanAsync();
-            // Done, or checking while the other words on the row (names, synonyms) are still to be written.
-            Assert.Contains(Row(closed, task.Id).StateWord, new[] { PlanStateWords.Done, PlanStateWords.Checking });
+            // Done, or checking while the other words on the row (names, synonyms) are still to be written. A checking task is not listed beside
+            // its reopened row: the row is the one job (09b07890, 13 Oct), so the task's row is either Done or the origin row is back.
+            var finished = closed.Items.FirstOrDefault(i => i.Id == task.Id);
+            if (finished != null) Assert.Equal(PlanStateWords.Done, finished.StateWord);
+            else Assert.True(PlanStateWords.IsOpen(Row(closed, "words/model").StateWord));
 
         }
 
@@ -165,8 +168,9 @@ namespace Semanticus.Tests
             await LandSafeFixesAsync(f);
             await PlanHarmKit.CheckReportsAgainAsync(f);
             var plan = await f.Engine.GetModelPlanAsync();
-            var mine = plan.Items.First(i => !PlanTasks.IsTaskId(i.Id) && i.Doer == PlanDoers.You
-                                             && PlanStateWords.IsOpen(i.StateWord) && !i.Id.StartsWith("describe/", StringComparison.Ordinal));
+            // The assistant is the default doer of every row a tool can do (doer lane, 13 Oct), so the cleanup row is the assistant's before it is given.
+            var mine = Row(plan, "cleanup/model");
+            Assert.True(PlanStateWords.IsOpen(mine.StateWord));
 
             var after = await f.Engine.SetPlanItemDoerAsync(mine.Id, "assistant");
 

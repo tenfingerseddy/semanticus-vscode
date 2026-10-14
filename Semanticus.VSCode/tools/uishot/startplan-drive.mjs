@@ -854,6 +854,8 @@ await scene('built-then-undone-pro', {
     ...has(m.builtState !== 'yes', `the plan is not built any more: ${m.builtState}`),
     ...has(!/Built in one step|One undo takes it back/.test(m.said ?? '') && !/Built in one step/.test(m.allText), `the page does not still say it was built: "${m.said}"`),
     ...has(m.buttons.some((b) => /Approve/.test(b.text) && !b.disabled), `the plan can be approved again: ${JSON.stringify(m.buttons)}`),
+    // D7 (launch video, 12 Oct): the card says the model has no grade now, so the person sees the grade fall, and keeps the forecast named as one.
+    ...has(/No tables now/.test(m.grade) && /after the build/.test(m.grade), `the grade cell after an undo: "${m.grade}"`),
   ],
 });
 

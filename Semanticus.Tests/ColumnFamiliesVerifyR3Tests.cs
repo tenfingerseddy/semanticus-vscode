@@ -192,7 +192,9 @@ namespace Semanticus.Tests
             await AnswerAsync(f);
             var sales = Row(await SettledPlanAsync(f), SalesRow);
             Assert.Empty(MeasureLinesFor(sales, "Sales", "Unit Price"));
-            Assert.Contains(sales.ChangeSet.Refused, r => r.Target == "column:Sales/Unit Price" && r.Reason.StartsWith("Avg Price already gives", StringComparison.Ordinal));
+            // Since coverage-fix (13 Oct) the Plan does not ask about a column that already has a base measure, in another table or another spelling
+            // included, so there is no line to refuse and no refusal to read: the column is answered and left alone.
+            Assert.False(sales.ChangeSet.Refused != null && sales.ChangeSet.Refused.Any(r => r.Target == "column:Sales/Unit Price"));
         }
 
         // ---- 4 and 5. two tables, one column name ---------------------------------------------------------------

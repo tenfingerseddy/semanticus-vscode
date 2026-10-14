@@ -6,7 +6,10 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { ConnectionProvider } from './connection';
 import { ConnectionsStandalone } from './connectionshub';
+import { StudioMotion } from './personality/motion/studio';
 import './styles.css';
+// The Link (1.5). Loaded here with the other sheets, so a test can load link.tsx without a bundler.
+import './personality/link.css';
 import './studio/tour';   // Learn Semanticus (1.4): registers the chapters and the player before any page draws
 
 // The SAME bundle serves two hosts. When the host page sets window.__semanticusInitialView = 'connections' (the
@@ -45,7 +48,7 @@ const el = document.getElementById('root');
 if (el) createRoot(el).render(
   <StudioErrorBoundary>
     <ConnectionProvider>
-      {initialView === 'connections' ? <ConnectionsStandalone initialSection={initialSection} /> : <App />}
+      <StudioMotion>{initialView === 'connections' ? <ConnectionsStandalone initialSection={initialSection} /> : <App />}</StudioMotion>
     </ConnectionProvider>
   </StudioErrorBoundary>,
 );

@@ -5,7 +5,7 @@ import { restrictionFor, type WorkflowEditAction, type WorkflowEditBlank, type W
   type WorkflowEditOperation, type WorkflowEditQuestion, type WorkflowEditStep } from './workflowdraft.mjs';
 import {
   blankValue, checkValue, nextName, phaseOfCheck, questionValue, RUNS_WHEN, WHO_WORDS, type Performer,
-  checkName,
+  checkName, argWords, argSource,
 } from './workflow-v3model';
 
 // ===================================================================================================
@@ -119,13 +119,19 @@ export function V3StepFields({ model, step, apply }: { model: WorkflowEditModel;
     {who === 'assistant' && <span className="sem-wf-note">Your assistant changes the model here. This step is its own undo step.</span>}
 
     {who === 'semanticus' && action && <div className="sem-wf-v3list" data-testid="wf-action-args">
-      <span className="sem-wf-note">What it is given. A value may be a question's answer, written like {'{{questions.name}}'}, or a part to write, like {'{{blanks.formula}}'}.</span>
-      {action.args.map((a, i) => <div key={`${a.name}:${i}`} className="sem-wf-map-row">
-        <code>{a.name}</code>
-        <Plain value={a.values ? listText(a.values) : a.value} onChange={(v) => setAction({ ...action, args: action.args.map((x, j) => j === i
-          ? (x.values ? { ...x, value: null, values: textList(v) } : { ...x, value: v, values: null }) : x) })} />
-        <button type="button" onClick={() => setAction({ ...action, args: action.args.filter((_, j) => j !== i) })}>Remove</button>
-      </div>)}
+      <span className="sem-wf-note">What it is given. A value can come from one of your answers, or from a part your assistant writes.</span>
+      {action.args.map((a, i) => {
+        const chip = a.values ? null : argSource(a.value, { inputs: model.definition.inputs, questions: step.questions, blanks });
+        const change = (patch: { value: string | null; values: string[] | null }) => setAction({ ...action, args: action.args.map((x, j) => j === i ? { ...x, ...patch } : x) });
+        return <div key={`${a.name}:${i}`} className="sem-wf-map-row" data-testid={`wf-arg-${a.name}`}>
+          <span className="sem-wf-arg-label" title={a.name}>{argWords(a.name)}</span>
+          {chip
+            ? <span className={`sem-wf-chip sem-wf-chip-${chip.kind}`} data-testid="wf-arg-chip">{chip.text}
+                <button type="button" aria-label={`Type a value for ${argWords(a.name)} instead`} title="Type a value instead" onClick={() => change({ value: '', values: null })}>Change</button></span>
+            : <Plain value={a.values ? listText(a.values) : a.value} onChange={(v) => change(a.values ? { value: null, values: textList(v) } : { value: v, values: null })} />}
+          <button type="button" onClick={() => setAction({ ...action, args: action.args.filter((_, j) => j !== i) })}>Remove</button>
+        </div>;
+      })}
       <AddArgument onAdd={(name, value) => setAction({ ...action, args: [...action.args, { name, value, values: null }] })} />
     </div>}
 
@@ -190,8 +196,8 @@ function AddArgument({ onAdd }: { onAdd: (name: string, value: string) => void |
   const [name, setName] = useState('');
   const [value, setValue] = useState('');
   return <div className="sem-wf-map-row">
-    <input className="sem-wf-input tnum" value={name} placeholder="name" spellCheck={false} onChange={(e) => setName(e.target.value)} />
-    <input className="sem-wf-input" value={value} placeholder="value" spellCheck={false} onChange={(e) => setValue(e.target.value)} />
+    <input className="sem-wf-input tnum" value={name} placeholder="Setting" spellCheck={false} onChange={(e) => setName(e.target.value)} />
+    <input className="sem-wf-input" value={value} placeholder="Value" spellCheck={false} onChange={(e) => setValue(e.target.value)} />
     <button type="button" disabled={!name.trim()} onClick={() => { if (onAdd(name.trim(), value) === false) return; setName(''); setValue(''); }}>Add</button>
   </div>;
 }

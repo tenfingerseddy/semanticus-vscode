@@ -3,6 +3,8 @@ import { runHostCommand } from './bridge';
 import { EDIT_ACTION_COPY, SAFETY_CHECK_COPY } from './copy';
 import { requestPlanGuide, WHAT_CHANGED, WHAT_CHANGED_CARD_ID } from './plan-guide';
 import { learnChapters, startTour } from './studio/learn-state';
+import { setPersonality, setSound, usePersonalitySettings } from './personality/settings';
+import { play } from './personality/sound';
 
 // ===================================================================================================
 // Per-tab in-context help, the USER GUIDE (Studio v2). A '?' in the header opens a slide-over with
@@ -39,34 +41,35 @@ const HELP: Record<string, TabHelp> = {
     "title": "Plan",
     "lead": "One living plan for this model: what it should become, the gaps, and the next thing worth doing about it.",
     "start": [
-      "Start with the strip. Click a track to see its rows.",
-      "Next lists the rows Semanticus and your assistant can do. Rows only you can do sit last, in a fold.",
-      "Use a row's link to go where the work is done.",
+      "Start with the header: the grade, what is happening now, and Run the plan.",
+      "The tasks are grouped by who does them: your assistant, Semanticus and you. Press a group's name to fold it.",
+      "Point at a row for its own Run, or Ask your assistant. Open a row to see where the work is done.",
       "History has every change and who made it, with Undo to here and Restore."
     ],
     "sections": [
       {
-        "h": "The strip",
+        "h": "The header",
         "bullets": [
-          "Three tracks: Semanticus, you, and your assistant. Each block is one row of the plan.",
-          "Solid is done today. Striped is being done now. An outline is ready. A yellow outline needs you. Dashed is paused, or waits for another row.",
-          "Choose a track to see only its rows. Choose it again to see everything.",
-          "Latest names the newest change. Choose it to open History."
+          "The letter is the AI readiness grade. It flips when the model is read again.",
+          "The line beside it says what is happening now. While a run works it shows who works and how far it is. When it ends it says how many tasks ran, how long it took and how the grade moved, with Undo.",
+          "When nothing runs, it shows the next step your assistant can take, with its Ask your assistant button.",
+          "Your assistant drives or I drive says who moves the screen. I drive also pauses your assistant's tasks.",
+          "Work and History switch between the tasks and every change made."
         ]
       },
       {
-        "h": "Every row says three things",
+        "h": "Every row is one task",
         "bullets": [
-          "Where it came from: found by a rule, proposed by Jev (Pro), your words, sent from a page, a workflow, or a repeat.",
-          "Who does it: Semanticus, you, or your assistant. Press it to change who. The choices are Semanticus, Your assistant and Me.",
-          "Where it stands: Needs you, Ready, Waiting, On it, Applied and checking, or Done. While a run works on a row it says Working out, Applying or Checking.",
-          "Waits for names the row that has to finish first. When that row is done, this one turns Ready by itself."
+          "Its group and its colour say who does it. Open a row to change who: Semanticus, Your assistant or Me.",
+          "Where it stands: Needs you, Ready, Waiting, Not checked, On it, Applied and checking, or Done. While a run works on a row it says Working out, Applying or Checking.",
+          "A Semanticus task has its own Run. It runs that one task as one undo step. Your assistant's task has Ask your assistant, and a task of yours has Open.",
+          "Open a row to see why it is there, what it waits for and where the work is done."
         ]
       },
       {
-        "h": "Describe a task or an aim",
+        "h": "Add a task",
         "bullets": [
-          "Type what you want and press Enter. It becomes a row for your assistant. Press its doer and choose Me to keep it yourself.",
+          "Type what you want at the end of the list and press Enter. It becomes a row for your assistant. Press its doer and choose Me to keep it yourself.",
           "On Pro, the field also says which page does that work. It never takes you there unless you choose it."
         ]
       },
@@ -74,19 +77,19 @@ const HELP: Record<string, TabHelp> = {
         "h": "Run the plan",
         "bullets": [
           "Run the plan does every row Semanticus can do, including rows that only wait for another row of the same run. The number on the button is how many.",
-          "Each row shows its step: Working out, Applying, Checking, then Done. Finished rows move to Done just now.",
-          "When it ends, a line says how many rows ran and how many changes. Undo takes back the whole run. Save saves a model opened from files.",
+          "Each row shows its step: Working out, Applying, Checking, then Done. Finished rows stay in their group as Done.",
+          "When it ends, the header says how many tasks ran and how long it took. Undo takes back the whole run. Save saves a model opened from files.",
           "If the plan changed after you read it, nothing is applied and the page asks you to look again.",
-          "When only your assistant has rows left, the button becomes Tell your assistant. It copies a short ask to paste into your assistant."
+          "When only your assistant has rows left, the button becomes Copy request. It copies a short ask to paste into your assistant."
         ]
       },
       {
         "h": "Your assistant's tasks",
         "bullets": [
           "Your assistant sees its Ready tasks the next time it checks in. Nothing wakes it.",
-          "Paused stops new tasks being offered. A task it already took can still finish. Talking to it directly works either way.",
+          "I drive pauses its tasks: no new task is offered. A task it already took can still finish. Talking to it directly works either way.",
           "The dots on a row hold the rest: Move up for one of your assistant's tasks, Repeat, Draft steps, Set aside and Remove.",
-          "Open a row to leave one note and read its reply. To take a task yourself, press its doer and choose Me, then press Mark done when it is finished."
+          "Open a row to leave one note and read its reply. To take a task yourself, open it, choose Me under Who does it, then press Mark done when it is finished."
         ]
       },
       {
@@ -109,7 +112,7 @@ const HELP: Record<string, TabHelp> = {
         ]
       }
     ],
-    "pro": "Running the plan, with Jev's proposals, is a Semanticus Pro feature. Every row, the strip, your tasks, Move up, the switch and History are free.",
+    "pro": "Running the plan, with Jev's proposals, is a Semanticus Pro feature. Every row, your tasks, Move up, the switch and History are free.",
     "seeAlso": [
       { "label": "Model quality", "tab": "bpa" },
       { "label": "AI readiness", "tab": "readiness" },
@@ -1112,7 +1115,7 @@ function GettingStarted({ steps }: { steps: string[] }) {
 }
 
 /** One row of the Help menu. `section` starts a new named group directly above the row. */
-interface HelpItem { id: string; label: string; note?: string; section?: string; title?: string; keepOpen?: boolean; run: () => void; }
+interface HelpItem { id: string; label: string; note?: string; section?: string; title?: string; keepOpen?: boolean; pressed?: boolean; run: () => void; }
 
 // The Plan's tour and What changed card, back on request (Plan-heart contract 10). They head the Help menu on
 // every page; from another page they go to the Plan first, because the tour points at the Plan's own parts.
@@ -1160,6 +1163,7 @@ export function HelpButton({ tab, onGo, onShortcuts, onTextSize, onAllTools, zoo
 }) {
   const [guideOpen, setGuideOpen] = useState(false);
   const [open, setOpen] = useState(false);
+  const personality = usePersonalitySettings();
   const [highlight, setHighlight] = useState(0);
   const [view, setView] = useState<'tab' | 'where'>('tab');
   const h = HELP[tab];
@@ -1215,6 +1219,16 @@ export function HelpButton({ tab, onGo, onShortcuts, onTextSize, onAllTools, zoo
     items.push({ id: 'textsize-larger', label: 'Larger', keepOpen: true,
       title: 'Make everything in Studio a step bigger, up to 130%. Ctrl+scroll does the same.', run: () => onTextSize('larger') });
   }
+  // Personality and sounds (1.5): the same switches as the semanticus.personality and semanticus.sounds settings, stored for the person.
+  // Each is one row of two, like Text size, and the menu stays open so the person sees the switch take.
+  items.push({ id: 'personality-on', label: 'On', keepOpen: true, pressed: personality.personality === 'on',
+    title: 'Working verbs, a light line at the right moments, and drawn sparkles for big wins.', run: () => setPersonality('on') });
+  items.push({ id: 'personality-quiet', label: 'Quiet', keepOpen: true, pressed: personality.personality === 'quiet',
+    title: 'Plain words, no jokes, no sparkles, no sounds. Useful motion stays.', run: () => setPersonality('quiet') });
+  items.push({ id: 'sound-on', label: 'On', keepOpen: true, pressed: personality.sound,
+    title: 'Small sounds for a relationship made, a publish landing, grade A and long counts.', run: () => { setSound(true); play('pop'); } });
+  items.push({ id: 'sound-off', label: 'Off', keepOpen: true, pressed: !personality.sound,
+    title: 'No sounds. This is how Semanticus starts.', run: () => setSound(false) });
   items.push({ id: 'restart', label: 'Restart engine',
     title: 'Start the Semanticus engine again. It asks first if you have unsaved edits.',
     run: () => runHostCommand('semanticus.restartEngine') });
@@ -1245,7 +1259,14 @@ export function HelpButton({ tab, onGo, onShortcuts, onTextSize, onAllTools, zoo
             else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); const it = items[highlight]; if (it) pick(it, true); }
             else if (e.key === 'Tab') { setOpen(false); }
           }}>
-          {items.map((item, i) => item.id === 'textsize-reset' || item.id === 'textsize-larger' ? null
+          {items.map((item, i) => item.id === 'textsize-reset' || item.id === 'textsize-larger' || item.id === 'personality-quiet' || item.id === 'sound-off' ? null
+            : item.id === 'personality-on' || item.id === 'sound-on' ? <div key={item.id} className="studio-help-textsize studio-help-switch" role="group"
+              aria-label={item.id === 'sound-on' ? 'Sounds' : 'Personality'}>
+              <span>{item.id === 'sound-on' ? 'Sounds' : 'Personality'}</span>
+              {[items[i], items[i + 1]].map((control, k) => <button key={control.id} ref={(el) => { itemRefs.current[i + k] = el; }} role="menuitemradio" type="button"
+                title={control.title} aria-checked={!!control.pressed} className={`${i + k === highlight ? 'is-highlighted' : ''}${control.pressed ? ' is-on' : ''}`.trim() || undefined}
+                onMouseEnter={() => setHighlight(i + k)} onClick={() => pick(control, false)}>{control.label}</button>)}
+            </div>
             : item.id === 'textsize-smaller' ? <div key="textsize" className="studio-help-textsize" role="group" aria-label="Text size">
               <span>Text size</span>
               {[items[i], items[i + 1], items[i + 2]].map((control, k) => <button key={control.id} ref={(el) => { itemRefs.current[i + k] = el; }} role="menuitem" type="button"

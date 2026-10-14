@@ -331,9 +331,9 @@ namespace Semanticus.Tests
                 Assert.Equal(61, all.ChangeSet.Lines.Count(l => l.Op == "set_summarize_by"));
                 Assert.Equal(61, all.ChangeSet.Lines.Count(l => l.Op == "create_measure"));
                 // Every column asked exactly once over the two batches.
-                // Requests are per table chunk now (m11/jev-batch, ChunkSize 20): 61 columns are 20 + 20 + 20 (the first run's 60) and 1 (the second).
+                // Requests are per table chunk now (m11/jev-batch, ChunkSize 30): 61 columns are 30 + 30 (the first run's 60) and 1 (the second).
                 var sent = oracle.Seen.Where(r => r.PointName == Summarize).ToArray();
-                Assert.Equal(4, sent.Length);
+                Assert.Equal(3, sent.Length);
                 Assert.Equal(61, sent.SelectMany(BatchedColumnAnswers.Columns).Count());
                 Assert.Equal(61, sent.SelectMany(BatchedColumnAnswers.Columns).Distinct(StringComparer.Ordinal).Count());
             }

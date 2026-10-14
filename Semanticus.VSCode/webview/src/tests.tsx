@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
-import { rpc, onActivity, onAssistantCall, onDidChange, onProgress } from './bridge';
+import { rpc, rpcPressed, onActivity, onAssistantCall, onDidChange, onProgress } from './bridge';
 import { useClaudeReflection } from './activity';
-import { NO_ASSISTANT_RUN, personRan, runFinished, runLine, runStale, runStarted, type AssistantRun } from './studio/checks-run';
+import { NO_ASSISTANT_RUN, TOOL_NOTE_KINDS, personRan, runFinished, runLine, runStale, runStarted, toolNote, type AssistantRun, type ToolNote } from './studio/checks-run';
 import { EvidenceArtifactDialog, type EvidenceArtifactW, type EvidenceSaveResultW } from './artifactdialog';
 import { useConnection } from './connection';
 import { openSqlSources, listSqlSources, type SqlSourceRecord } from './connectionshub';
@@ -230,6 +230,8 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
   // The assistant's own run of checks (show-checks, 12 Oct): its call shows as running, its result becomes the run on screen.
   const [assistantRun, setAssistantRun] = useState<AssistantRun>(NO_ASSISTANT_RUN);
   const [recordNote, setRecordNote] = useState<string | null>(null);
+  // One sentence for the other tools the assistant ran here (a single check tried, a run recorded, ...), and the page reads again what they changed.
+  const [assistantNote, setAssistantNote] = useState<ToolNote | null>(null);
   const evidenceRevision = useRef(0);
   const [author, setAuthor] = useState<AuthorShape | null>(null);
   const [editing, setEditing] = useState<TestDefinitionW | null>(null);
@@ -329,6 +331,19 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
     if (next.phase === 'done' && next.run) { setErr(null); setRecordNote(null); adoptRun(next.run as TestRunW, evidenceRevision.current, !!next.run.persisted); }
   });
 
+  const takeToolEvent = (event: { seq?: number; kind?: string; ok?: boolean; label?: string; error?: string | null }) => {
+    const taken = toolNote(event);
+    if (!taken) return;
+    setAssistantNote(taken.note);
+    if (taken.reload.includes('suite')) announceTestSuiteChanged();
+    if (taken.reload.includes('history')) void loadHistory();
+    if (taken.reload.includes('sources')) void loadSources();
+    if (taken.reload.includes('mappings')) void loadMappings();
+  };
+  // TOOL_NOTE_KINDS is a fixed list, so the hooks run in the same order on every render.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  for (const kind of TOOL_NOTE_KINDS) useClaudeReflection(kind, takeToolEvent);
+
   const runSuite = (options: { only?: string[] | null; sections?: string[] | null; persist?: boolean }) => {
     const startedAt = evidenceRevision.current;
     const runId = `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -338,7 +353,8 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
     setErr(null);
     setRecordNote(null);
     setAssistantRun(personRan);
-    rpc<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null, runId)
+    setAssistantNote(null);
+    rpcPressed<TestRunW>('runTests', options.persist ?? false, 'human', options.only ?? null, options.sections ?? null, runId)
       .then((next) => adoptRun(next, startedAt, !!options.persist))
       .catch((error: unknown) => setErr(error instanceof Error ? error.message : String(error)))
       .finally(() => { ownRunId.current = null; setProgress(null); setBusy(false); });
@@ -410,6 +426,7 @@ export function TestsView({ navTarget, onNavConsumed, onOpenDaxLab, page = 'chec
         </div>
 
         {runLine(assistantRun) && <div data-assistant-run={assistantRun.phase}><Banner color={assistantRun.phase === 'failed' ? 'var(--sem-warn)' : 'var(--sem-ok)'}>{runLine(assistantRun)}</Banner></div>}
+        {assistantNote && <div data-assistant-note={assistantNote.kind}><Banner color={assistantNote.ok ? 'var(--sem-ok)' : 'var(--sem-warn)'}>{assistantNote.text}</Banner></div>}
         {err && <div><Banner color="var(--sem-bad)">{err}</Banner></div>}
         {recordNote && <div><Banner color="var(--sem-warn)">{recordNote}</Banner></div>}
         {refused && <div><Banner color="var(--sem-warn)">{run?.note ?? 'That run asked for nothing, so nothing ran.'}</Banner></div>}

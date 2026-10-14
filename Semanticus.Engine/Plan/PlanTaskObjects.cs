@@ -108,10 +108,23 @@ namespace Semanticus.Engine
             ITabularNamedObject o;
             try { o = ObjectRefs.Resolve(m, g.Ref); } catch { o = null; }
             if (o != null) return new PlanGroundNow(g.Ref);
+            // A relationship's name carries its arrow, so changing the filter direction renames it. Same two ends, same relationship.
+            if (g.Ref != null && g.Ref.StartsWith("relationship:", StringComparison.Ordinal))
+            {
+                var ends = RelationshipEnds(g.Ref.Substring("relationship:".Length));
+                var same = ends == null ? new List<SingleColumnRelationship>()
+                    : m.Relationships.OfType<SingleColumnRelationship>().Where(r => RelationshipEnds(r.Name) == ends).ToList();
+                if (same.Count == 1) return new PlanGroundNow(ObjectRefs.For(same[0]));
+            }
             if (g.Tag == null) return new PlanGroundNow(null);
             var renamed = Tagged(m).FirstOrDefault(x => string.Equals(TagOf(x), g.Tag, StringComparison.Ordinal));
             return new PlanGroundNow(renamed == null ? null : ObjectRefs.For(renamed));
         }
+
+        private static readonly Regex Arrow = new Regex(@"\s(<-->|-->|<--)\s", RegexOptions.CultureInvariant);
+
+        /// <summary>A relationship's name with its arrow taken out, or null when the name has none ("'A'[x] ~ 'B'[y]").</summary>
+        private static string RelationshipEnds(string name) => name != null && Arrow.IsMatch(name) ? Arrow.Replace(name, " ~ ") : null;
 
         private static IEnumerable<ITabularNamedObject> Tagged(Model m) =>
             m.Tables.Cast<ITabularNamedObject>()
@@ -231,6 +244,8 @@ namespace Semanticus.Engine
         internal static string[] GoneOfTask(PlanTask task, IReadOnlyDictionary<string, PlanGroundNow> now, IReadOnlyList<EditLedgerEntry> history)
         {
             if (task == null) return Array.Empty<string>();
+            // A task that was handed over to REMOVE its objects (the cleanup row) has them gone as its goal, not as a reason to hand it back (D2).
+            if (task.Claims is { Length: > 0 } && task.OriginLink?.Kind == PlanOriginKinds.Item) return Array.Empty<string>();
             var gone = GoneOf(task.Grounds, now).ToList();
             foreach (var r in UngroundedRefs(task))
                 if (now.TryGetValue(r, out var n) && n.Gone && PlanTaskObjects.DeletedSince(history, r, task.CreatedUtc))

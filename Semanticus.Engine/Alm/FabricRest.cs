@@ -619,7 +619,7 @@ namespace Semanticus.Engine
                         throw new InvalidOperationException($"The Fabric REST response exceeds the {FormatBytes(maxBytes)} safety limit.");
                     await destination.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                 }
-                try { return (StrictUtf8.GetString(destination.GetBuffer(), 0, checked((int)total)), total); }
+                try { return (StrictUtf8.GetString(destination.GetBuffer(), 0, checked((int)total)).TrimStart('\uFEFF'), total); }   // a leading byte-order mark is not JSON: JsonDocument refuses it, and a poll then read as "still running" for ever
                 catch (DecoderFallbackException)
                 { throw new InvalidOperationException("The Fabric REST response is not valid UTF-8 text."); }
             }
@@ -643,12 +643,19 @@ namespace Semanticus.Engine
         // degrades to a non-terminal "Running" rather than throwing an unscrubbed exception — so the poller keeps
         // going (bounded by maxPolls) instead of crashing, and never echoes the body.
         internal static FabricOperationState ParseOperationState(string body)
+            => TryParseOperationState(body, out var st) ? st : new FabricOperationState { Status = "Running", ErrorMessage = "The operation poll returned an unparseable body." };
+
+        /// <summary>False when the body is not the JSON of an operation (proxy page, empty, a byte-order mark), so a caller can tell
+        /// "still running" from "I cannot read what it says".</summary>
+        internal static bool TryParseOperationState(string body, out FabricOperationState st)
         {
+            st = null;
             try
             {
                 using var doc = JsonDocument.Parse(body);
                 var root = doc.RootElement;
-                var st = new FabricOperationState
+                if (root.ValueKind != JsonValueKind.Object) return false;
+                st = new FabricOperationState
                 {
                     Status = root.TryGetProperty("status", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : "Running",
                     PercentComplete = root.TryGetProperty("percentComplete", out var p) && p.TryGetInt32(out var pi) ? pi : 0,
@@ -658,9 +665,9 @@ namespace Semanticus.Engine
                     st.ErrorCode = err.TryGetProperty("errorCode", out var ec) && ec.ValueKind == JsonValueKind.String ? ec.GetString() : null;
                     st.ErrorMessage = err.TryGetProperty("message", out var em) && em.ValueKind == JsonValueKind.String ? Scrub(em.GetString()) : null;
                 }
-                return st;
+                return true;
             }
-            catch { return new FabricOperationState { Status = "Running", ErrorMessage = "The operation poll returned an unparseable body." }; }
+            catch { st = null; return false; }
         }
 
         // Branch on errorCode (the stable contract); message is human-readable but subject to change. requestId is
@@ -718,7 +725,7 @@ namespace Semanticus.Engine
 
         // We attach a Bearer header to every request, so only ever follow a continuation URL that stays on the
         // Fabric host (defense-in-depth against a tampered response redirecting the token off-origin).
-        private static bool IsFabricHost(string url)
+        internal static bool IsFabricHost(string url)
             => Uri.TryCreate(url, UriKind.Absolute, out var u)
                && string.Equals(u.Host, new Uri(BaseUrl).Host, StringComparison.OrdinalIgnoreCase);
 

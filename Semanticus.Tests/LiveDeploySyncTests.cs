@@ -27,6 +27,242 @@ namespace Semanticus.Tests
             return db.Model;
         }
 
+        // Kane, 13 Oct: publishing a model raised to 1701 with the Plan's calendar failed on the Date table, and nothing could push the level.
+        // The level goes up first and the calendar follows; a lower source level changes nothing.
+        private static TOM.Model WithCalendar(TOM.Model m, int level)
+        {
+            m.Database.CompatibilityLevel = level;
+            var t = m.Tables["Sales"];
+            var cal = new TOM.Calendar { Name = "Gregorian", LineageTag = "cal-1" };
+            cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Date) { PrimaryColumn = t.Columns["Amount"] });
+            t.Calendars.Add(cal);
+            return m;
+        }
+
+        [Fact]
+        public void A_higher_compatibility_level_and_its_calendar_reach_the_live_model_in_one_push()
+        {
+            var src = WithCalendar(NewModel(), 1701);
+            var live = NewModel();
+            var raised = new System.Collections.Generic.List<int>();
+            var dry = LiveDeploy.SyncAndApply(src, live, commit: false, "ep", "db", null, () => { }, _ => { }, raiseCompatibility: raised.Add);
+            Assert.Empty(raised);                                  // a preview raises nothing
+            Assert.Equal(1600, live.Database.CompatibilityLevel);
+            Assert.Contains("compatibility", dry.SyncedRefs);
+            Assert.Contains("table:Sales", dry.SyncedRefs);
+            Assert.Empty(dry.Unmatched);
+
+            var saved = 0;
+            var rep = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null, () => saved++, _ => { }, raiseCompatibility: n => { raised.Add(n); live.Database.CompatibilityLevel = n; });
+            Assert.Equal(new[] { 1701 }, raised);
+            Assert.Equal(1701, live.Database.CompatibilityLevel);
+            Assert.Null(rep.Error); Assert.True(rep.Committed); Assert.Equal(1, saved);
+            Assert.Contains("compatibility", rep.SyncedRefs);
+            Assert.Contains("table:Sales", rep.SyncedRefs);
+            Assert.Empty(rep.Unmatched);
+            Assert.Single(live.Tables["Sales"].Calendars);
+            Assert.Same(live.Tables["Sales"].Columns["Amount"], ((TOM.TimeUnitColumnAssociation)live.Tables["Sales"].Calendars["Gregorian"].CalendarColumnGroups[0]).PrimaryColumn);
+        }
+
+        [Fact]
+        public void A_refused_level_raise_writes_nothing_and_a_lower_source_level_never_lowers_the_live_one()
+        {
+            var src = NewModel(); var live = NewModel(); live.Database.CompatibilityLevel = 1701; src.Database.CompatibilityLevel = 1600;
+            var raised = new System.Collections.Generic.List<int>();
+            var lowered = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null, () => { }, _ => { }, raiseCompatibility: raised.Add);
+            Assert.Empty(raised); Assert.Equal(1701, live.Database.CompatibilityLevel); Assert.DoesNotContain("compatibility", lowered.SyncedRefs ?? System.Array.Empty<string>());
+
+            var up = WithCalendar(NewModel(), 1701); var low = NewModel();
+            var saved = 0;
+            var refused = LiveDeploy.SyncAndApply(up, low, commit: true, "ep", "db", null, () => saved++, _ => { }, raiseCompatibility: _ => throw new System.InvalidOperationException("not allowed"));
+            Assert.False(refused.Committed); Assert.Equal(0, saved);
+            Assert.Contains("compatibility level from 1600 to 1701", refused.Error);
+            // Nothing was sent (saved == 0). The in-memory copy keeps what the sync staged here because a detached model cannot undo; the attached model the person's push uses is undone.
+        }
+
+        // Verifier (v-publish-shell, 13 Oct): the level raise is its own live write and Power BI cannot undo it. When the model save
+        // that follows it fails, the report must not say nothing was written: the live model now sits at the higher level.
+        [Fact]
+        public void Verifier_a_raise_that_landed_is_reported_when_the_save_after_it_fails()
+        {
+            var src = WithCalendar(NewModel(), 1701); var live = NewModel();
+            var rep = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null,
+                () => throw new System.InvalidOperationException("boom"), _ => { },
+                raiseCompatibility: n => live.Database.CompatibilityLevel = n);
+            Assert.Equal(1701, live.Database.CompatibilityLevel);   // the raise is live
+            Assert.False(rep.Committed);
+            Assert.Contains("1701", rep.Error);                     // the person is told the level went up
+            Assert.DoesNotContain("Nothing was committed", rep.Error);
+        }
+
+        // A delete the push refuses stops it before anything is sent, so the level raise (which cannot be undone) is never sent.
+        [Fact]
+        public void A_refused_delete_stops_the_push_before_the_level_is_raised()
+        {
+            var src = WithCalendar(NewModel(), 1701); var live = NewModel();
+            live.Tables["Sales"].LineageTag = "tag-live";
+            var raised = new System.Collections.Generic.List<int>(); var saved = 0;
+            var impostor = new LiveDeleteTarget { Kind = "table", Ref = "table:Sales", Tag = "tag-gone", Name = "Sales" };
+            var rep = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", new[] { impostor }, () => saved++, _ => { }, raiseCompatibility: raised.Add);
+            Assert.False(rep.Committed); Assert.Equal(0, saved);
+            Assert.Contains("table:Sales", rep.DeletesRefused);
+            Assert.Empty(raised);                                  // the raise was never sent
+        }
+
+        // ---- roles: create, update (members, permission, RLS filter) now reach live like any other object ----
+        private static TOM.Model WithRole(TOM.Model m, string filter, TOM.ModelPermission perm, params string[] members)
+        {
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = perm };
+            foreach (var name in members) role.Members.Add(new TOM.ExternalModelRoleMember { MemberName = name, IdentityProvider = "AzureAD", MemberType = TOM.RoleMemberType.User });
+            if (filter != null) role.TablePermissions.Add(new TOM.TablePermission { Table = m.Tables["Sales"], FilterExpression = filter });
+            m.Roles.Add(role);
+            return m;
+        }
+
+        [Fact]
+        public void A_new_role_with_a_member_and_a_filter_is_created_on_commit()
+        {
+            var src = WithRole(NewModel(), "[Amount] > 0", TOM.ModelPermission.Read, "a@contoso.com");
+            var live = NewModel();
+            var dry = LiveDeploy.SyncModels(src, live, apply: false);
+            Assert.Equal(1, dry.Roles);
+            Assert.Equal(0, live.Roles.Count);   // dry-run writes nothing
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Equal(1, rep.Roles);
+            Assert.Contains("role:Readers", rep.SyncedRefs);
+            var role = live.Roles["Readers"];
+            Assert.Equal(TOM.ModelPermission.Read, role.ModelPermission);
+            Assert.Equal("a@contoso.com", Assert.Single(role.Members).MemberName);
+            Assert.Equal("[Amount] > 0", role.TablePermissions["Sales"].FilterExpression);
+        }
+
+        // hero17 P6: a renamed role is a create plus a ticked delete of the old name. The delete used to be skipped because a live-only
+        // role was never listed, so the old role stayed live. The dry run counts it, and the commit removes it.
+        [Fact]
+        public void A_ticked_delete_of_a_live_only_role_removes_it_and_the_preview_counts_it()
+        {
+            var src = NewModel();
+            src.Roles.Add(new TOM.ModelRole { Name = "US Stores", ModelPermission = TOM.ModelPermission.Read });
+            TOM.Model Live() { var l = NewModel(); l.Roles.Add(new TOM.ModelRole { Name = "Australia Stores", ModelPermission = TOM.ModelPermission.Read }); return l; }
+            var del = new[] { "role:Australia Stores" };
+
+            var dryLive = Live();
+            var dry = LiveDeploy.SyncAndApply(src, dryLive, commit: false, "ep", "db", null, () => { }, _ => { }, explicitDeleteRefs: del);
+            Assert.Equal(1, dry.Deleted);
+            Assert.Equal(2, dry.TotalChanges);   // the new role and the removal
+            Assert.NotNull(dryLive.Roles.Find("Australia Stores"));   // a preview writes nothing
+
+            var live = Live();
+            var rep = LiveDeploy.SyncAndApply(src, live, commit: true, "ep", "db", null, () => { }, _ => { }, explicitDeleteRefs: del);
+            Assert.Contains("role:Australia Stores", rep.DeletedRefs);
+            Assert.Null(live.Roles.Find("Australia Stores"));
+            Assert.NotNull(live.Roles.Find("US Stores"));
+        }
+
+        [Fact]
+        public void A_member_saved_with_the_default_provider_goes_live_as_AzureAD()
+        {
+            var src = NewModel();
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            role.Members.Add(new TOM.ExternalModelRoleMember { MemberName = "a@contoso.com", IdentityProvider = "default" });
+            src.Roles.Add(role);
+            var live = NewModel();
+            LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Equal("AzureAD", ((TOM.ExternalModelRoleMember)Assert.Single(live.Roles["Readers"].Members)).IdentityProvider);
+        }
+
+        [Fact]
+        public void A_changed_role_updates_members_permission_and_filter_in_place()
+        {
+            var src = WithRole(NewModel(), "[Amount] > 5", TOM.ModelPermission.ReadRefresh, "a@contoso.com", "c@contoso.com");
+            var live = WithRole(NewModel(), "[Amount] > 0", TOM.ModelPermission.Read, "a@contoso.com", "b@contoso.com");
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Equal(1, rep.Roles);
+            Assert.Contains("role:Readers", rep.SyncedRefs);
+            var role = live.Roles["Readers"];
+            Assert.Equal(TOM.ModelPermission.ReadRefresh, role.ModelPermission);
+            Assert.Equal(new[] { "a@contoso.com", "c@contoso.com" }, role.Members.Select(x => x.MemberName).OrderBy(x => x).ToArray());
+            Assert.Equal("[Amount] > 5", role.TablePermissions["Sales"].FilterExpression);
+        }
+
+        [Fact]
+        public void A_role_that_differs_only_by_a_server_member_id_is_no_change()
+        {
+            var src = WithRole(NewModel(), "[Amount] > 0", TOM.ModelPermission.Read, "a@contoso.com");
+            var live = NewModel();
+            var withId = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            withId.Members.Add(new TOM.ExternalModelRoleMember { MemberName = "a@contoso.com", IdentityProvider = "AzureAD", MemberType = TOM.RoleMemberType.User, MemberID = "11111111-1111-1111-1111-111111111111" });
+            withId.TablePermissions.Add(new TOM.TablePermission { Table = live.Tables["Sales"], FilterExpression = "[Amount] > 0" });
+            live.Roles.Add(withId);
+            var rep = LiveDeploy.SyncModels(src, live, apply: false);
+            Assert.Equal(0, rep.Roles);
+            Assert.Equal(0, rep.TotalChanges);
+        }
+
+        [Fact]
+        public void A_live_only_role_is_left_alone_unless_named_for_delete()
+        {
+            var src = NewModel();
+            var live = WithRole(NewModel(), null, TOM.ModelPermission.Read, "a@contoso.com");
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Equal(0, rep.Roles);
+            Assert.Equal(1, live.Roles.Count);
+        }
+
+        // VERIFIER (v-role-sync, 12 Oct): a role that HIDES a whole table (table-level object security) must go live
+        // hiding it. The sync copies the RLS filter and column permissions but not TablePermission.MetadataPermission,
+        // so the role is created with the table visible while the publish reports role:Readers as applied.
+        [Fact]
+        public void A_new_role_that_hides_a_table_goes_live_hiding_it()
+        {
+            var src = NewModel();
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            role.TablePermissions.Add(new TOM.TablePermission { Table = src.Tables["Sales"], MetadataPermission = TOM.MetadataPermission.None });
+            src.Roles.Add(role);
+            var live = NewModel();
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Contains("role:Readers", rep.SyncedRefs);
+            Assert.Equal(TOM.MetadataPermission.None, live.Roles["Readers"].TablePermissions["Sales"].MetadataPermission);
+        }
+
+        [Fact]
+        public void A_role_whose_column_permission_names_a_column_not_live_is_unmatched_and_not_written()
+        {
+            var src = NewModel();
+            // IsNullable = false is authored metadata the push cannot create, so the column is held back and is not live.
+            src.Tables["Sales"].Columns.Add(new TOM.DataColumn { Name = "Margin", DataType = TOM.DataType.Int64, LineageTag = "tag-margin", IsNullable = false });
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            var tp = new TOM.TablePermission { Table = src.Tables["Sales"] };
+            tp.ColumnPermissions.Add(new TOM.ColumnPermission { Column = src.Tables["Sales"].Columns["Margin"], MetadataPermission = TOM.MetadataPermission.None });
+            role.TablePermissions.Add(tp);
+            src.Roles.Add(role);
+            var live = NewModel();
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.Contains(rep.Unmatched, u => u.StartsWith("role:Readers") && u.Contains("Margin"));
+            Assert.DoesNotContain("role:Readers", rep.SyncedRefs);
+            Assert.Equal(0, live.Roles.Count);
+        }
+
+        // VERIFIER (v-fix-role-sync, 12 Oct): a column the same deploy creates must still carry the role's column permission.
+        [Fact]
+        public void A_role_whose_column_permission_names_a_column_created_by_the_same_deploy_goes_live()
+        {
+            var src = NewModel();
+            src.Tables["Sales"].Columns.Add(new TOM.DataColumn { Name = "Margin", DataType = TOM.DataType.Int64, LineageTag = "tag-margin" });
+            var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
+            var tp = new TOM.TablePermission { Table = src.Tables["Sales"] };
+            tp.ColumnPermissions.Add(new TOM.ColumnPermission { Column = src.Tables["Sales"].Columns["Margin"], MetadataPermission = TOM.MetadataPermission.None });
+            role.TablePermissions.Add(tp);
+            src.Roles.Add(role);
+            var dry = LiveDeploy.SyncModels(src, NewModel(), apply: false);
+            Assert.DoesNotContain(dry.Unmatched, u => u.StartsWith("role:Readers"));
+            var live = NewModel();
+            var rep = LiveDeploy.SyncModels(src, live, apply: true);
+            Assert.DoesNotContain(rep.Unmatched, u => u.StartsWith("role:Readers"));
+            Assert.Contains("role:Readers", rep.SyncedRefs);
+            Assert.Equal(TOM.MetadataPermission.None, live.Roles["Readers"].TablePermissions["Sales"].ColumnPermissions["Margin"].MetadataPermission);
+        }
+
         [Fact]
         public void Identical_models_report_zero_changes()
         {

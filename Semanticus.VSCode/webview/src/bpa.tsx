@@ -1,14 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { rpc, onAssistantCall, onDidChange } from './bridge';
+import { plainRuleName } from './rule-words';
 import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
 import { useFixState } from './hooks';
 import { GiveTheRest, GroupedFindings, WaiveControl, WaivedList, type FindingRow } from './findings';
 import { CustomRulesPanel } from './rulesauthor';
 import { GiveOrOnPlan, findingBuilder } from './sendtask';
 import { RagBars } from './ragbars';
+import { categoryDetail, fixAllLine } from './bpa-detail';
 import { gradeBand } from './readinessband.mjs';
+import { GradeFlip, BigWin } from './personality/motion';
 
-interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; noLongerFires?: boolean; waivedAsTwin?: boolean; coveredBy?: string; coveredReason?: string; wholeRuleRow?: boolean; }
+interface BpaViolation { ruleId: string; ruleName: string; category: string; severity: number; objectRef: string; objectName: string; message: string; canAutoFix: boolean; fixWithheld?: boolean; custom?: boolean; waived?: boolean; waiverReason?: string; waiverRuleLevel?: boolean; noLongerFires?: boolean; waivedAsTwin?: boolean; coveredBy?: string; coveredReason?: string; wholeRuleRow?: boolean; }
 interface BpaScorecard { ruleCount: number; violationCount: number; autoFixable: number; waivedCount: number; violations: BpaViolation[]; ruleErrors: string[]; bestPractice?: string | null; bestPracticeWhy?: string | null; bestPracticeScore?: number; categories?: BpaCategory[]; }
 // One category's score from the engine (0 to 100, the same bands as AI readiness) and the objects its rules checked.
 interface BpaCategory { category: string; errors: number; warnings: number; objectsChecked: number; score: number; }
@@ -21,6 +24,10 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [leftOver, setLeftOver] = useState<BpaUnfixed[]>([]);  // what the last press could not clear
+  const [pressLine, setPressLine] = useState<string | null>(null);   // what that press did, counted in the unit the button named, so the words never claim a clear it did not make
+  const [undoAt, setUndoAt] = useState<number | null>(null);   // the revision the press left, while nothing newer has changed the model: Undo takes the press back
+  const undoRef = useRef<number | null>(null);
+  undoRef.current = undoAt;
   const [waivedOpen, setWaivedOpen] = useState(false);
   const { state: work, keyOf, fix } = useFixState('bpaFix', 'bpaGetFixPrompt');
   const timer = useRef<number | undefined>(undefined);
@@ -31,20 +38,36 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   }
   useEffect(() => {
     void scan();
-    const off = onDidChange(() => { window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void scan(), 350); });
+    const off = onDidChange((n) => {
+      // A newer change (the person's, or an assistant's) means Undo would take back the wrong thing: it goes.
+      if (undoRef.current != null && (n?.revision ?? 0) > undoRef.current) setUndoAt(null);
+      window.clearTimeout(timer.current); timer.current = window.setTimeout(() => void scan(), 350);
+    });
     // The assistant's own scan (show-checks, 12 Oct): the page scans again so the person sees the result, not an older card.
     const offCall = onAssistantCall((call) => { if (SCAN_PAGE_OF_TOOL[call.tool] === 'bpa') void scan(); });
     return () => { off(); offCall(); window.clearTimeout(timer.current); };
   }, []);
+  async function undoFixAll() {
+    setBusy(true); setErr(null);
+    try { await rpc('undo', 'human'); setUndoAt(null); setLeftOver([]); setPressLine('Undone. The model is back as it was before Fix all.'); void scan(); }
+    catch (e) { setErr(String((e as Error).message ?? e)); }
+    finally { setBusy(false); }
+  }
   const fixOne = (v: BpaViolation) => fix(v.ruleId, v.objectRef, () => void scan());
   async function fixAll() {
     // Clear both messages BEFORE the attempt: an old refusal (or an old error) must not survive a press that
     // works. Only ever set them from what this press actually saw.
-    setBusy(true); setErr(null); setLeftOver([]);
+    const pressed = card?.autoFixable ?? 0;
+    setBusy(true); setErr(null); setLeftOver([]); setPressLine(null); setUndoAt(null);
     try {
-      const r = await rpc<{ scorecard: BpaScorecard; applied: number; unfixed?: BpaUnfixed[] }>('bpaFixAll');
+      const r = await rpc<{ scorecard: BpaScorecard; applied: number; revision?: number; unfixed?: BpaUnfixed[] }>('bpaFixAll');
       if (r?.scorecard) setCard(r.scorecard);
       setLeftOver(r?.unfixed ?? []);
+      // What the button still counts after the press (the new scorecard's auto-fixable), not every unfixed finding: unfixed also holds the
+      // findings whose fix is withheld (a Double to Decimal change, a second key), which the button never counted (verifier v-gaps20).
+      const left = r?.scorecard ? r.scorecard.autoFixable : (r?.unfixed?.length ?? 0);
+      setPressLine(fixAllLine(pressed, r?.applied ?? 0, left));
+      setUndoAt((r?.applied ?? 0) > 0 && r?.revision != null ? r.revision : null);
     }
     // Fixing every auto-fixable violation in one step is FREE from 2026-09-15 (Kane's feature line). There is
     // no entitlement refusal left to soften, so a failure here is a real failure and reads as one.
@@ -57,7 +80,7 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   const byRef = new Map(card.violations.map((v) => [v.objectRef + '|' + v.ruleId, v]));
   const toRow = (v: BpaViolation): FindingRow => ({
     // Provenance in the rule header: a violation from a model-embedded (user/org) rule says so.
-    ruleId: v.ruleId, ruleName: v.ruleName + (v.custom ? ' (custom rule)' : ''), category: v.category, severity: v.severity,
+    ruleId: v.ruleId, ruleName: plainRuleName(v.ruleName) + (v.custom ? ' (custom rule)' : ''), category: v.category, severity: v.severity,
     objectRef: v.objectRef, objectName: v.objectName, message: v.message,
     waived: v.waived && !v.waivedAsTwin, waiverReason: v.waiverReason, waiverRuleLevel: v.waiverRuleLevel, noLongerFires: v.noLongerFires, waivedAsTwin: v.waivedAsTwin, coveredBy: v.coveredBy, coveredReason: v.coveredReason, wholeRuleRow: v.wholeRuleRow,
   });
@@ -93,8 +116,8 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
   const ruleActions = (ruleId: string) => <WaiveControl subtle label="Accept for the whole model" title="Accept every instance of this rule across the model" onWaive={(reason) => waiveRule(ruleId, reason)} onUnwaive={() => void rpc('unwaiveFinding', 'bpa', ruleId, '*').then(scan).catch(fail)} />;
 
   // One bar per rule category, scored by the engine. The detail is the open findings in that category beside the objects its rules checked.
-  const openIn = (name: string) => card.violations.filter((v) => !accepted(v) && v.category === name).length;
-  const bars = (card.categories ?? []).map((c) => ({ name: c.category, score: c.score, detail: `${openIn(c.category)} of ${c.objectsChecked}` }));
+  const openIn = (name: string) => card.violations.filter((v) => !accepted(v) && v.category === name);
+  const bars = (card.categories ?? []).map((c) => ({ name: c.category, score: c.score, detail: categoryDetail(openIn(c.category), c.objectsChecked) }));
 
   return (
     <div className="sem-page">
@@ -104,11 +127,12 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3" data-testid="bpa-head">
           {/* The grade is the AI readiness grade: one big letter and the score beside it, in the band colour (readinessband.mjs). */}
           {card.bestPractice && <div className={`flex items-baseline gap-2 shrink-0 sem-rag-${gradeBand(card.bestPractice) ?? 'warn'}`} data-testid="bpa-grade" title={card.bestPracticeWhy ?? undefined}>
-            <span className="sem-rag-grade">{card.bestPractice}</span>
+            <span className="sem-rag-grade"><GradeFlip grade={card.bestPractice} /></span>
             {card.bestPracticeScore != null && <><span className="sem-num sem-rag-score">{card.bestPracticeScore}</span><span className="sem-text-meta">of 100</span></>}
           </div>}
           <div className="flex items-baseline gap-2 shrink-0">
-            <span className="sem-num text-(length:--sem-text-page) leading-(--sem-lh-page) font-semibold">{card.violationCount}</span>
+            <span className="sem-num text-(length:--sem-text-page) leading-(--sem-lh-page) font-semibold sem-motion-anchor">{card.violationCount}
+              <BigWin kind={card.violationCount === 0 && card.ruleErrors.length === 0 ? 'zero-findings' : undefined} eventKey={card.violationCount === 0} /></span>
             <span className="sem-text-meta">{card.violationCount === 1 ? 'issue' : 'issues'}</span>
           </div>
           <div className="flex-1 min-w-[120px]">
@@ -123,10 +147,16 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
               {busy ? 'Fixing…' : `Fix ${card.autoFixable}`}
             </Button>}
             {/* What the app cannot fix goes to the assistant in one press (D4). */}
-            <GiveTheRest system="bpa" items={active.filter((r) => !byRef.get(r.objectRef + '|' + r.ruleId)?.canAutoFix)} />
+            <GiveTheRest system="bpa" items={active.filter((r) => { const v = byRef.get(r.objectRef + '|' + r.ruleId); return !v?.canAutoFix || v.fixWithheld; })} />
             {onReviewAsPlan && card.violationCount > 0 && <button type="button" className="sem-btn sem-btn-quiet" onClick={onReviewAsPlan} title="Send these fixes to Pending changes, look at each one, then apply them together.">Review all fixes →</button>}
           </div>
         </div>
+        {pressLine && (
+          <div className="sem-text-meta mt-2 flex items-center gap-2" data-testid="bpa-fixall-result">
+            <span>{pressLine}</span>
+            {undoAt != null && <button type="button" className="sem-btn sem-btn-sm" disabled={busy} onClick={() => void undoFixAll()} data-testid="bpa-fixall-undo">Undo</button>}
+          </div>
+        )}
       </Panel>
 
       {bars.length > 0 && (
@@ -143,13 +173,13 @@ export function BpaView({ onReviewAsPlan }: { onReviewAsPlan?: () => void } = {}
             {leftOver.length === 1 ? 'One finding could not be fixed' : `${leftOver.length} findings could not be fixed`}
           </h2>
           <div className="sem-text-meta mt-1">
-            Fix all cleared the rest. These are still on the model, and each one says why it stayed. Fix them one at a time, or ask your assistant.
+            These are still on the model, and each one says why. Your assistant has them on the Plan, or you can fix them one at a time.
           </div>
           <ul className="mt-2 flex flex-col gap-2">
             {leftOver.map((u) => (
               <li key={u.ruleId + '|' + u.objectRef} className="text-(length:--sem-text-meta)">
                 <span className="font-medium">{u.objectName}</span>
-                <span style={{ color: 'var(--sem-muted)' }}> · {u.ruleName} · </span>
+                <span style={{ color: 'var(--sem-muted)' }}> · {plainRuleName(u.ruleName)} · </span>
                 <span>{u.reason}</span>
               </li>
             ))}

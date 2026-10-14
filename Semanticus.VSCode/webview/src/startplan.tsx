@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { copyText, runHostCommand, onEngineState, onReconnect, onStartPlanChange, pickWorkingCopyFolder, rpc, loadState, saveState } from './bridge';
+import { copyText, runHostCommand, onEngineState, onReconnect, onStartPlanChange, pickWorkingCopyFolder, rpc, rpcPressed, loadState, saveState } from './bridge';
 import { listSqlSources, openSqlSources, type SqlSourceRecord } from './connectionshub';
 import { useConnection } from './connection';
 import { openStartPlanConsentCard, START_CARD, type ConsentInfoW } from './consent';
@@ -600,12 +600,13 @@ export function StartPlanBody(p: BodyProps) {
         <span className="sp-cell-k">{M.COPY.gradeAI}</span>
         <span className="sp-cell-v sp-num">
           {grade.now != null && <><span className={bandClass(grade.now)} data-testid="sp-grade-now">{grade.now}</span><small>now</small></>}
+          {grade.undone && grade.now == null && <><span className="sp-after sp-provisional" data-testid="sp-grade-undone">{M.COPY.gradeUndone}</span>{grade.after != null && <small>to</small>}</>}
           {grade.now != null && grade.after != null && <small>to</small>}
           {grade.after != null && <><span className={grade.provisional ? 'sp-after sp-provisional' : `sp-after ${bandClass(grade.after)}`}>{grade.after}</span>
             <small>{grade.afterNumber != null && grade.afterNumber !== Number(grade.after) ? `${grade.afterNumber} ` : ''}{built ? M.COPY.gradeBuilt : M.COPY.gradeAfter}</small></>}
-          {grade.now == null && grade.after == null && <small>{M.COPY.gradeUnknown}</small>}</span>
+          {grade.now == null && grade.after == null && !grade.undone && <small>{M.COPY.gradeUnknown}</small>}</span>
         {grade.note && <span className="sp-grade-note" data-testid="sp-grade-provisional">{grade.note}</span>}
-        <span className="sp-keys"><span>{built ? M.COPY.gradeBuiltScored : view.grades?.now == null ? M.COPY.gradeNotScored : `${M.COPY.gradeNow} score ${view.grades.now}`}</span></span>
+        <span className="sp-keys"><span>{built ? M.COPY.gradeBuiltScored : grade.undone ? M.COPY.gradeUndoneKey : view.grades?.now == null ? M.COPY.gradeNotScored : `${M.COPY.gradeNow} score ${view.grades.now}`}</span></span>
       </div>
       {/* Best practice after the build. The count of findings that stay open is the one the preview's own best practice scan gives (the errors and
           warnings the letter weighs), never a count of the plan's own Best practice lines, which are not the scan (plan statement check 3, defect 3).
@@ -1077,7 +1078,7 @@ export function StartFromSql({ pro, onStarted, onAddOnConnections }: {
       if (mine !== run.current) return;
       if (s?.hasUnsavedChanges) { setNeedsDiscard(true); setBusy(false); return; }
     }
-    rpc<M.StartPlanView>('startModelFromSql', req, 'human').then(
+    rpcPressed<M.StartPlanView>('startModelFromSql', req, 'human').then(
       (v) => { if (mine !== run.current) return; setBusy(false); const o = M.startOutcome(v); if (o.view) { clearStartFormWords(); holdStartNotice(o.view); onStarted(o.view); } else setError(o.error); },
       (e: unknown) => { if (mine !== run.current) return; setBusy(false); setError(messageOf(e)); },
     );

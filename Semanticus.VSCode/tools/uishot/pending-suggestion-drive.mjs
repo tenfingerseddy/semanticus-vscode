@@ -27,7 +27,7 @@ const failures = [];
 try {
   const page = await browser.newPage();
   page.on('pageerror', (e) => failures.push('pageerror: ' + e.message));
-  await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 2 });
+  await page.setViewport({ width: Number(process.env.WIDTH) || 1280, height: 900, deviceScaleFactor: 2 });
   await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&live=1&tier=pro&tab=optimize`, { waitUntil: 'networkidle0', timeout: 30000 });
   await page.waitForSelector('nav button', { timeout: 15000 });
   await page.waitForFunction(() => (document.body.textContent || '').includes('Order Share'), { timeout: 15000 });
@@ -39,7 +39,7 @@ try {
       const rows = [...document.querySelectorAll('.border-b')].filter((r) => (r.textContent || '').includes('Order Share'));
       const row = rows[rows.length - 1];
       const chips = row ? [...row.querySelectorAll('span')].map((s) => (s.textContent || '').trim()) : [];
-      const summary = (document.body.textContent || '').match(/\d+ from Jev/)?.[0] ?? null;
+      const summary = ((document.body.textContent || '').match(/Jev (\d+)/)?.[1] ?? null) + ' from Jev';
       const box = note[0] ? document.querySelector('[data-testid^="pending-suggestion-note-"]').getBoundingClientRect() : null;
       return { note, chips, summary, noteVisible: !!box && box.width > 100 && box.height > 8 };
     });

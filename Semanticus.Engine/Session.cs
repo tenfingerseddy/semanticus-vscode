@@ -412,8 +412,23 @@ namespace Semanticus.Engine
         {
             var warm = _observers.OfType<IWarmableObserver>().ToArray();
             if (warm.Length == 0) return;
-            _ = RunAsync(() => { foreach (var w in warm) w.Warm(Model); return true; })
+            _ = WarmAfterFirstReadAsync(warm)
                 .ContinueWith(t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
+        // The first grade comes before the warm-up (reads-itself, 12 Oct): the warm-up is a 2 s job on the one dispatcher, so queued
+        // first it made the grade land at 2.1 s instead of 0.2 s. It now waits for the first readiness read, or WarmGrace if no
+        // one reads. An edit that arrives earlier still gets its baseline: BeforeCommit builds it first, and Warm is idempotent.
+        internal static readonly TimeSpan WarmGrace = TimeSpan.FromSeconds(10);
+        private readonly TaskCompletionSource<bool> _firstRead = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        /// <summary>The first readiness read of this session has finished: the warm-up may start now.</summary>
+        internal void NoteFirstReadDone() => _firstRead.TrySetResult(true);
+
+        private async Task WarmAfterFirstReadAsync(IWarmableObserver[] warm)
+        {
+            await Task.WhenAny(_firstRead.Task, Task.Delay(WarmGrace)).ConfigureAwait(false);
+            await RunAsync(() => { foreach (var w in warm) w.Warm(Model); return true; }).ConfigureAwait(false);
         }
 
         public void UnregisterObserver(ISessionObserver observer)

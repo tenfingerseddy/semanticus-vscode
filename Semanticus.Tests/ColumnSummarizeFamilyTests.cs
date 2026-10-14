@@ -77,7 +77,7 @@ namespace Semanticus.Tests
         private static async Task<Dictionary<string, string>> DigestsAsync(DecisionFixture f)
         {
             var point = DecisionRegistry.Require(Point);
-            var prepared = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null));
+            var prepared = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: true));
             return prepared.Asks.ToDictionary(
                 a => a.TableName + "/" + a.ColumnName,
                 a => a.Ref,   // the family asks a table's columns at once (m11/jev-batch): an entry is keyed by the column's ref
@@ -109,17 +109,18 @@ namespace Semanticus.Tests
         {
             await f.ConsentAsync();
             var d = await DigestsAsync(f);
+            // A column the model already has a base measure for is not asked about, so its answer is left out when it has no digest.
             var rows = new[]
             {
-                (d["Sales/Unit Price"], "average", 0.93),
-                (d["Sales/Fiscal Year"], "none", 0.9),
-                (d["Sales/CustomerKey"], "none", 0.97),
-                (d["Sales/Amount"], "sum", 0.95),
-                (d["Sales/Order Number"], "sum", 0.9),
-                (d["Sales/Quantity"], "sum", 0.5),
-                (d["Sales/Month Number"], "none", 0.6),
-                (d["Customer/CustomerKey"], "none", 0.6),
-            };
+                ("Sales/Unit Price", "average", 0.93),
+                ("Sales/Fiscal Year", "none", 0.9),
+                ("Sales/CustomerKey", "none", 0.97),
+                ("Sales/Amount", "sum", 0.95),
+                ("Sales/Order Number", "sum", 0.9),
+                ("Sales/Quantity", "sum", 0.5),
+                ("Sales/Month Number", "none", 0.6),
+                ("Customer/CustomerKey", "none", 0.6),
+            }.Where(r => d.ContainsKey(r.Item1)).Select(r => (d[r.Item1], r.Item2, r.Item3)).ToArray();
             if (renamedSales != null)
                 rows = rows.Concat(rows.Where(r => r.Item1.StartsWith("column:Sales/", StringComparison.Ordinal))
                                        .Select(r => ("column:" + renamedSales + "/" + r.Item1.Substring("column:Sales/".Length), r.Item2, r.Item3))).ToArray();
@@ -248,7 +249,10 @@ namespace Semanticus.Tests
             var refreshed = await f.Engine.RefreshPlanAsync();
             Assert.True(refreshed.Cleared > beforeRefresh.Items.Count(i => i.Status == ModelPlanStatuses.Done));
             Assert.Contains(refreshed.Plan.History.Last(h => h.Sentence?.StartsWith("Refreshed the plan:") == true).Detail, t => t == sales.Title);
-            Assert.Equal("Nothing new.", (await f.Engine.RefreshPlanAsync()).Sentence);
+            // Refresh plan asks Jev again for what it left (m15/jev-busy), so let that run land before the second Refresh reads the plan.
+            await f.Engine.JevSettledForTest();
+            var again = await f.Engine.RefreshPlanAsync();
+            Assert.True(again.Sentence == "Nothing new.", again.Sentence + " added: " + string.Join(", ", again.AddedIds));
 
             await f.Engine.UndoAsync("human");
             Assert.Equal("Default", await SummarizeOf(f, "column:Sales/Unit Price"));
@@ -286,13 +290,34 @@ namespace Semanticus.Tests
             var sales = (await SettledPlanAsync(f)).Items.Single(i => i.Id == "jev.column-summarize.table:Sales");
 
             Assert.DoesNotContain(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.After.StartsWith("SUM ( 'Sales'[Amount]", StringComparison.Ordinal));
-            Assert.Contains(sales.ChangeSet.Refused ?? Array.Empty<ModelPlanChangeRefusal>(),
-                r => r.Target == "column:Sales/Amount" && r.Reason.StartsWith("Amount Sum already gives the total of Amount", StringComparison.Ordinal));
+            // A column that already has a base measure is not asked about at all (Kane, 13 Oct 2026): no second offer, and no re-ask each time a
+            // measure is added. Its summarize setting is the readiness rule's.
+            var asked = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: true).Asks.Select(a => a.ColumnName).ToArray());
+            Assert.DoesNotContain("Amount", asked);
+            Assert.Contains("Quantity", asked);
             // The model names a total "<column> Sum", so the new totals do too.
             Assert.Contains(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.Target == "measure:Sales/Quantity Sum");
             Assert.Contains(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.Target == "measure:Sales/Order Number Sum");
             // Averages have no pattern in this model, so they keep the engine's name.
             Assert.Contains(sales.ChangeSet.Lines, l => l.Op == "create_measure" && l.Target == "measure:Sales/Average Unit Price");
+        }
+
+        // Kane, 13 Oct: after a start plan builds, the Plan's own Jev run asked column.summarize again for the columns the build set to None, in a smaller
+        // batch (a new digest), so Jev was asked twice. A column the start plan decided and set to None is answered on the Plan; the decide loop still asks it.
+        // A tidy column that was None before any start plan, with no base measure, is NOT answered: it still gets its measure row.
+        [Fact]
+        public async Task A_column_a_start_plan_set_not_to_add_up_is_answered_on_the_Plan_and_still_asked_by_the_decide_loop()
+        {
+            using var f = await ModelAsync("ColSumNone.bim");
+            await f.Engine.SetColumnMetadataAsync("column:Sales/Month Number", null, "None", null, null, "human");
+            var decided = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "column:Sales/Month Number" };
+            var plan = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: true, startDecided: decided).Asks.Select(a => a.ColumnName).ToArray());
+            var tidy = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: true).Asks.Select(a => a.ColumnName).ToArray());
+            var decide = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: false, startDecided: decided).Asks.Select(a => a.ColumnName).ToArray());
+            Assert.DoesNotContain("Month Number", plan);
+            Assert.Contains("Quantity", plan);
+            Assert.Contains("Month Number", tidy);
+            Assert.Contains("Month Number", decide);
         }
 
         // hero15 H13 (hero14 D12): the assistant set "jev.column-summarize.table:dim_product" aside, the table was renamed to
@@ -405,6 +430,27 @@ namespace Semanticus.Tests
                 using var entries = JsonDocument.Parse(JsonSerializer.Serialize(r.Snapshot["columns"]));
                 return entries.RootElement.EnumerateArray().Any(e => e.GetProperty("name").GetString() == "Note");
             });
+        }
+
+        // Verifier probe (v-summarize-narrow, 13 Oct): the columns a start plan decided must not follow the person to another model.
+        // The Plan's own column answers are bound to the session (TryKnownColumnAnswer); the start-decided set is engine-wide.
+        [Fact]
+        public async Task V_start_decided_columns_do_not_follow_the_person_to_another_model()
+        {
+            using var f = await ModelAsync("ColSumStale.bim");
+            var field = typeof(LocalEngine).GetField("_startSummarizeDecided", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var set = (System.Collections.Concurrent.ConcurrentDictionary<string, byte>)field.GetValue(f.Engine);
+            set["column:Sales/Month Number"] = 0;   // what the decide loop records for a column Jev heard on, in model A
+            // The person opens a different model with a tidy None column of the same name and no base measure.
+            await f.Engine.CreateModelAsync("Other", 1604, discardUnsaved: true);
+            await f.Engine.CreateTableAsync("Sales", "human");
+            await f.Engine.CreateColumnAsync("table:Sales", "Month Number", "Int64", null, "human");
+            await f.Engine.SetColumnMetadataAsync("column:Sales/Month Number", null, "None", null, null, "human");
+            var plan = typeof(LocalEngine).GetMethod("PlanJevTarget", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var target = plan.Invoke(f.Engine, new object[] { f.Sessions.Current });
+            var decided = ((Func<ISet<string>>)target.GetType().GetField("StartDecidedColumns").GetValue(target))();
+            var asks = await f.Sessions.Current.ReadAsync(m => ColumnSummarizeFamily.Prepare(m, null, null, skipAnswered: true, startDecided: decided).Asks.Select(a => a.ColumnName).ToArray());
+            Assert.Contains("Month Number", asks);
         }
     }
 }

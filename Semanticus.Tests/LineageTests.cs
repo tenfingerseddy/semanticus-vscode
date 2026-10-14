@@ -54,10 +54,25 @@ namespace Semanticus.Tests
         }
 
         [Fact]
+        public async Task Unused_keeps_an_orphan_measure_as_caution_until_the_reports_are_checked_or_declared_absent()
+        {
+            var msRef = await _engine.CreateMeasureAsync("table:" + _table, "Lin_NoReportChecked", "1", "agent");
+
+            // Nothing in the model uses it, but a report might (finish3, verifier note 4): with no report checked or declared absent it is kept, not "safe".
+            var item = (await _engine.UnusedObjectsAsync()).Items.Single(i => i.Ref == msRef);
+            Assert.Equal("caution", item.Verdict);
+            Assert.Contains("no report has been checked", item.Reason);
+
+            await _engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // the person says there are no reports
+            Assert.Equal("safe", (await _engine.UnusedObjectsAsync()).Items.Single(i => i.Ref == msRef).Verdict);
+        }
+
+        [Fact]
         public async Task Unused_flags_an_orphan_measure_as_safe()
         {
             var msRef = await _engine.CreateMeasureAsync("table:" + _table, "Lin_Orphan", "1", "agent");
 
+            await _engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
             var res = await _engine.UnusedObjectsAsync();
             var item = res.Items.FirstOrDefault(i => i.Ref == msRef);
             Assert.NotNull(item);

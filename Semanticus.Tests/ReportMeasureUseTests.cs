@@ -99,6 +99,9 @@ namespace Semanticus.Tests
                     await x.Engine.OpenAsync(x.Model);
                     var table = (await x.Engine.ListMeasuresAsync()).First().Table;
                     var ghost = await x.Engine.CreateMeasureAsync("table:" + table, "RM Ghost", "1", "human");
+                    // With no report checked or declared absent, an unused measure is "caution" (finish3); the person says there are no reports and it is "safe".
+                    Assert.Contains((await x.Engine.UnusedObjectsAsync()).Items, i => i.Ref == ghost && i.Verdict == "caution");
+                    await x.Engine.SetReportScopeAsync(System.Array.Empty<ReportScopeChoice>(), "human");
                     Assert.Contains((await x.Engine.UnusedObjectsAsync()).Items, i => i.Ref == ghost && i.Verdict == "safe");
 
                     var path = WriteReportWithMeasure(x.Root, "RmGhost", table, "RM Uses Ghost", "SUM ( 'No Such Table'[RM Ghost] )");

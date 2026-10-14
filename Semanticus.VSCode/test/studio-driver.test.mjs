@@ -13,6 +13,8 @@ function load(name) {
   const module = { exports: {} };
   new Function('require', 'module', 'exports', outputText)(
     (id) => id === './driver-store' ? storeModule : id === './learn-state' ? { useLearn: () => ({ runtime: { phase: 'idle' } }) }
+      // The Link (1.5) has its own test (personality-link.test.mjs); here it is a stand-in so the bar's words stay the subject.
+      : id === '../personality/link' ? { WorkLink: () => null }
       : id === './assistant-sign' ? load('assistant-sign.tsx') : id === './assistant-working' ? load('assistant-working.ts') : id.endsWith('.css') ? {} : require(id), module, module.exports);
   return module.exports;
 }
@@ -175,14 +177,17 @@ test('bar renders the three states, exact copy, token colours, and the selected 
   // Nobody has told the engine a name yet: the bar says Your assistant, and never claims it is Claude.
   assert.ok(html.includes('Your assistant is working. Click anything to take the wheel.'), html);
   assert.ok(!html.includes('Claude is driving'));
-  assert.ok(html.includes('var(--sem-doer-agent)'));
+  assert.ok(html.includes('var(--sem-actor-assistant)'));
   assert.ok(html.includes('aria-pressed="true"'));
   assert.ok(!html.includes('Let Claude drive') && !html.includes('Let your assistant drive'));
   assert.ok(html.includes('Your assistant drives'), 'no name yet: the button says so, and never Claude');
   s.notePersonInput(1000); html = draw();
-  assert.ok(html.includes('You have the wheel. Your next message to Your assistant gives it back.'));
-  assert.ok(html.includes('var(--sem-doer-you)'));
+  assert.ok(html.includes('You have the wheel. Your next message to your assistant gives it back.'));
+  assert.ok(html.includes('var(--sem-actor-you)'));
   assert.ok(html.includes('Let your assistant drive'));
+  // hero20 D13: with the wheel in the person's hands the switch does not show "Your assistant drives" pressed.
+  const pressed = [...html.matchAll(/aria-pressed="(true|false)"[^>]*>([^<]*)</g)].filter((m) => m[1] === 'true').map((m) => m[2]);
+  assert.deepEqual(pressed, ['I drive'], 'You have the wheel: only I drive is pressed');
   s.setMode('iDrive'); html = draw();
   assert.ok(html.includes('I drive. Your assistant works but does not move your screen.'));
   assert.ok(html.includes('var(--sem-muted)'));
@@ -275,7 +280,8 @@ function loadLayer(store, bridge, posts) {
     react: { useLayoutEffect: (fn) => { const off = fn(); if (off) cleanups.push(off); } },
     './driver-store': store,
     '../bridge': bridge,
-    './driver-wire': { postDriverMessage: (m) => posts.push(m), onPersonInput: () => () => {} },
+    './driver-wire': { postDriverMessage: (m) => posts.push(m), onPersonInput: () => () => {}, setDriveMode: (mode, queue) => { store.setMode(mode); posts.push({ type: 'setDriveMode', mode }); } },
+    '../plan-chrome': { usePlanChrome: () => ({ calm: false, notes: [] }) },
     './driver-bar': { DriverBar: () => null }, './note-strip': { NoteStrip: () => null }, './cursor': { StudioCursor: () => null }, './drive-edge': { DriveEdge: () => null },
     './answer-store': { setAssistantAnswer: () => {} },
   };
@@ -457,4 +463,14 @@ test('the Studio reads who is attached from the entitlement answer, on mount and
     assert.equal(calls.length, 2, 'asked again after a reconnect');
     layer.unmount();
   } finally { globalThis.document = saved; }
+});
+
+// plan-status (hero20 D3): the Plan header treats the assistant as busy through Claude's thinking gaps, not only 8 seconds.
+test('the assistant is active on the Plan for a minute after its latest call, and not when only a connection file exists', () => {
+  const s = createDriverStore('claudeDrives');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 5000), false);
+  s.noteAssistantCall(new Date(1000).toISOString(), { key: 'claude', name: 'Claude Code', initials: 'CC' });
+  assert.equal(assistantIsWorking(s.getSnapshot(), 1000 + QUIET_GAP_MS + 1), false, 'the sign still rests after the short gap');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + 40_000), true, 'a 40 s thinking gap is still the assistant at work');
+  assert.equal(storeModule.assistantIsActive(s.getSnapshot(), 1000 + storeModule.ASSISTANT_ACTIVE_MS), false, 'then the save step shows');
 });

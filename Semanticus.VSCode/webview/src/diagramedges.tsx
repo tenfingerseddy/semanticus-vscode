@@ -1,6 +1,9 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { BaseEdge, getSmoothStepPath, getBezierPath, Position, useStore, type EdgeProps, type ConnectionLineComponentProps, type ReactFlowState } from '@xyflow/react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { BaseEdge, getSmoothStepPath, getBezierPath, Position, useInternalNode, useStore, ViewportPortal, type EdgeProps, type ConnectionLineComponentProps, type ReactFlowState } from '@xyflow/react';
 import { routeAll, routeSteps, holdRoutes, pathOf, type RouteBox, type RouteEnd, type RouteResult } from './diagramroute.mjs';
+import { MATRIX_LANE, nearMarkPoints, tagPoint } from './diagramlayout.mjs';
+import { RelationshipSnap } from './personality/motion';
+import { useRelationshipMotion } from './personality/motion/relationships';
 
 // Custom relationship edge. ORTHOGONAL (right-angle) routing — the ER-diagram look. A line is a simple Z: two
 // straight runs out of the two handles + ONE crossbar between them. For a VERTICAL edge (the layered view: fact-top
@@ -166,11 +169,44 @@ export function BusRoutes({ on, hold = false, children }: { on: boolean; hold?: 
 
 export function SemRelEdge(props: EdgeProps) {
   const { id, source, target, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, style, data } = props;
-  const d = data as { offset?: number; lane?: number; fromMany?: boolean; toMany?: boolean; title?: string; dim?: boolean } | undefined;
+  const motionKey = useRelationshipMotion(id);
+  const d = data as { offset?: number; lane?: number; fromMany?: boolean; toMany?: boolean; title?: string; dim?: boolean; cell?: 'source' | 'target'; dx?: number; slots?: number; bracket?: { kind: 'left' | 'top'; near: boolean; from: number; to: number } } | undefined;
+  // The matrix: a fact's link to a lookup table is a dot where the fact's row meets the lookup table's column.
+  const factNode = useInternalNode(d?.cell === 'source' ? source : target);
+  const dimNode = useInternalNode(d?.cell === 'source' ? target : source);
   // Bus matrix: the route the Diagram's one routing pass found for this line (useBusRoutes), or its last route held
   // on its new ends until that pass lands (drawn faded). A line with no route yet (the Diagram just opened) waits for
   // the first pass. No route at all (a card walled in on every side) falls back to the step line below.
   const routes = useContext(RouteContext);
+  const srcNode = useInternalNode(source), dstNode = useInternalNode(target);
+  if (d?.bracket) {
+    // A link that is no dot (a header to its lines, two lookup tables that are not neighbours). The grid draws no long line for it:
+    // a short mark between two cards that sit one under the other, else a small tag on each card that names its partner on hover.
+    if (!srcNode?.measured?.width || !dstNode?.measured?.width) return null;
+    const box = (n: NonNullable<typeof srcNode>) => ({ x: n.internals.positionAbsolute.x, y: n.internals.positionAbsolute.y, w: n.measured.width ?? 0, h: n.measured.height ?? 0 });
+    const a = box(srcNode), b = box(dstNode);
+    const color = ((style as { stroke?: string } | undefined)?.stroke) ?? 'var(--sem-accent)';
+    const near = d.bracket.near ? nearMarkPoints(a, b) : null;
+    const fade = d.dim ? { opacity: 0.12, transition: 'opacity 120ms' } : { transition: 'opacity 120ms' };
+    if (near) {
+      const srcUp = a.y <= b.y;   // the upper card's end leaves its bottom, the lower card's end its top
+      return (
+        <g style={fade}>
+          <BaseEdge path={pathOf(near)} style={style} />
+          {endMarker(near[0].x, near[0].y, srcUp ? Position.Bottom : Position.Top, srcUp ? d.fromMany : d.toMany, color, 's')}
+          {endMarker(near[1].x, near[1].y, srcUp ? Position.Top : Position.Bottom, srcUp ? d.toMany : d.fromMany, color, 't')}
+          {d.title ? <title>{d.title}</title> : null}
+        </g>
+      );
+    }
+    return <LinkTags from={srcNode.id} to={dstNode.id} a={a} b={b} kind={d.bracket.kind} places={[d.bracket.from, d.bracket.to]} style={style as { stroke?: string; strokeDasharray?: string } | undefined} style2={fade} title={d.title} />;
+  }
+  if (d?.cell) {
+    const fw = factNode?.measured?.width, dw = dimNode?.measured?.width;
+    if (!factNode || !dimNode || !fw || !dw) return null;
+    return <MatrixDot id={id} slots={d.slots ?? 1} x={dimNode.internals.positionAbsolute.x + dw / 2 + (d.dx ?? 0)} y={factNode.internals.positionAbsolute.y + MATRIX_LANE}
+      style={style as { stroke?: string; strokeDasharray?: string } | undefined} dim={!!d.dim} title={d.title} />;
+  }
   const r = routes?.get(id);
   const fresh = !!r && Math.abs(r.src.x - sourceX) < 0.5 && Math.abs(r.src.y - sourceY) < 0.5 && Math.abs(r.dst.x - targetX) < 0.5 && Math.abs(r.dst.y - targetY) < 0.5;
   if (routes && source !== target && !fresh) return null;
@@ -201,11 +237,96 @@ export function SemRelEdge(props: EdgeProps) {
   // an opacity on the group made the software compositor take up to 1.9 s to draw one frame at 300 tables, with 278 lines held.
   return (
     <g style={d?.dim ? { opacity: 0.12, transition: 'opacity 120ms' } : r?.held ? { strokeOpacity: 0.4, fillOpacity: 0.4 } : { transition: 'opacity 120ms' }}>
-      <BaseEdge path={path} style={style} />
-      {endMarker(sourceX, sourceY, sourcePosition, d?.fromMany, color, 's')}
-      {endMarker(targetX, targetY, targetPosition, d?.toMany, color, 't')}
+      <RelationshipSnap eventKey={motionKey} enabled={motionKey > 0} labels={<>
+        {endMarker(sourceX, sourceY, sourcePosition, d?.fromMany, color, 's')}
+        {endMarker(targetX, targetY, targetPosition, d?.toMany, color, 't')}
+        {motionKey > 0 && <><text x={sourceX + 12} y={sourceY - 8} fill={color} fontSize="var(--sem-text-meta)">{d?.fromMany ? '*' : '1'}</text>
+          <text x={targetX - 16} y={targetY - 8} fill={color} fontSize="var(--sem-text-meta)">{d?.toMany ? '*' : '1'}</text></>}
+      </>}><BaseEdge path={path} style={style} /></RelationshipSnap>
       {d?.title ? <title>{d.title}</title> : null}
     </g>
+  );
+}
+
+// A link the grid does not draw as a line: a small tag on each of its two cards (a pair of rings, the sign of a link). Resting on the
+// edge of the card, so it never covers a dot. Pointing at one names the link and outlines the partner card, so the pair is plain.
+function LinkTags({ from, to, a, b, kind, places, style, style2, title }: { from: string; to: string; a: Box; b: Box; kind: 'left' | 'top'; places: [number, number]; style?: { stroke?: string; strokeDasharray?: string }; style2: CSSProperties; title?: string }) {
+  const [on, setOn] = useState(false);
+  const color = style?.stroke ?? 'var(--sem-accent)';
+  const off = !!style?.strokeDasharray;
+  const partner = (id: string, add: boolean) => { const el = document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`); if (el) el.classList.toggle('sem-link-partner', add); };
+  const hover = (add: boolean, other: string) => { setOn(add); partner(other, add); };
+  const tag = (box: Box, place: number, other: string, key: string) => {
+    const p = tagPoint(kind, box, place);
+    return (
+      <g key={key} data-link-tag={key} transform={`translate(${p.x},${p.y})`} style={{ cursor: 'pointer' }} onMouseEnter={() => hover(true, other)} onMouseLeave={() => hover(false, other)}>
+        <rect x={-9} y={-9} width={18} height={18} fill="transparent" stroke="none" style={{ pointerEvents: 'all' }} />
+        <rect x={-7} y={-5} width={14} height={10} rx={5} style={{ fill: on ? color : 'var(--sem-surface)', stroke: color, strokeWidth: 1.4, strokeDasharray: off ? '2 2' : undefined }} />
+        <circle cx={-2} cy={0} r={2.4} style={{ fill: 'none', stroke: on ? 'var(--sem-surface)' : color, strokeWidth: 1.2 }} />
+        <circle cx={2} cy={0} r={2.4} style={{ fill: 'none', stroke: on ? 'var(--sem-surface)' : color, strokeWidth: 1.2 }} />
+        {title ? <title>{title}</title> : null}
+      </g>
+    );
+  };
+  return <g style={style2}>{tag(a, places[0], to, 's')}{tag(b, places[1], from, 't')}</g>;
+}
+type Box = { x: number; y: number; w: number; h: number };
+
+/** Side by side, two links of one cell sit this far apart: the discs (r 6 and the both-ways ring r 9) must not touch. */
+export const DOT_SLOT = 20;
+
+// One cell of the matrix. A switched-off link is a ring, a link that filters both ways is a dot with a ring round it, and a
+// plain one-way link is a dot. The disc behind it is the click target, so a small dot is easy to hit.
+function MatrixDot({ id, x, y, style, dim, title, slots }: { id: string; slots: number; x: number; y: number; style?: { stroke?: string; strokeDasharray?: string }; dim: boolean; title?: string }) {
+  const color = style?.stroke ?? 'var(--sem-accent)';
+  const off = !!style?.strokeDasharray;
+  const both = color === 'var(--sem-warn)';
+  return (
+    // React Flow gives an edge pointer-events: visibleStroke, which a filled dot with no stroke would miss: the disc says "all".
+    <g data-matrix-dot={id} style={{ opacity: dim ? 0.12 : 1, transition: 'opacity 120ms', cursor: 'pointer' }}>
+      <circle cx={x} cy={y} r={slots > 1 ? DOT_SLOT / 2 : 13} fill="transparent" stroke="none" style={{ pointerEvents: 'all' }} />
+      {both && <circle cx={x} cy={y} r={9} fill="none" style={{ stroke: color, strokeWidth: 1.4 }} />}
+      <circle cx={x} cy={y} r={off ? 5.5 : 6} style={off ? { fill: 'var(--sem-surface)', stroke: color, strokeWidth: 1.6 } : { fill: color, stroke: 'var(--sem-surface)', strokeWidth: 1.25 }} />
+      {title ? <title>{title}</title> : null}
+    </g>
+  );
+}
+
+// The matrix's rows and columns, one quiet line each, drawn once for the whole diagram (a line per link would stack up
+// near the cards). A row runs from its fact's right edge to the last dot in it, a column from its lookup table's bottom
+// edge to the last dot in it.
+type Guide = { id: string; x1: number; y1: number; x2: number; y2: number };
+function guidesOf(s: ReactFlowState): number[] {
+  const rows = new Map<string, number[]>(), cols = new Map<string, number[]>();
+  for (const e of s.edges) {
+    const side = (e.data as { cell?: 'source' | 'target' } | undefined)?.cell;
+    if (!side || e.hidden) continue;
+    const fact = s.nodeLookup.get(side === 'source' ? e.source : e.target), dim = s.nodeLookup.get(side === 'source' ? e.target : e.source);
+    if (!fact || !dim || !fact.measured?.width || !dim.measured?.width) continue;
+    const fx = fact.internals.positionAbsolute.x, fy = fact.internals.positionAbsolute.y;
+    const dx = dim.internals.positionAbsolute.x, dy = dim.internals.positionAbsolute.y;
+    const colX = dx + dim.measured.width / 2, dotX = colX + ((e.data as { dx?: number }).dx ?? 0), dotY = fy + MATRIX_LANE;   // a column stays on the cell's middle; side by side dots sit round it
+    const row = rows.get(fact.id), col = cols.get(dim.id);
+    if (!row) rows.set(fact.id, [fx + fact.measured.width, dotY, dotX]); else row[2] = Math.max(row[2], dotX);
+    if (!col) cols.set(dim.id, [colX, dy + (dim.measured.height ?? 0), dotY]); else col[2] = Math.max(col[2], dotY);
+  }
+  const out: number[] = [];
+  for (const r of rows.values()) out.push(0, r[0], r[1], r[2], r[1]);
+  for (const c of cols.values()) out.push(1, c[0], c[1], c[0], c[2]);
+  return out;
+}
+const sameNumbers = (a: number[], b: number[]) => a === b || (a.length === b.length && a.every((v, i) => v === b[i]));
+export function MatrixGuides() {
+  const g = useStore(guidesOf, sameNumbers);
+  const lines: Guide[] = [];
+  for (let i = 0; i < g.length; i += 5) lines.push({ id: `${g[i]}:${i}`, x1: g[i + 1], y1: g[i + 2], x2: g[i + 3], y2: g[i + 4] });
+  if (!lines.length) return null;
+  return (
+    <ViewportPortal>
+      <svg width={1} height={1} style={{ position: 'absolute', overflow: 'visible', pointerEvents: 'none', zIndex: -1 }} aria-hidden data-matrix-guides="true">
+        {lines.map((l) => <line key={l.id} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} style={{ stroke: 'var(--sem-border)', strokeWidth: 1 }} />)}
+      </svg>
+    </ViewportPortal>
   );
 }
 

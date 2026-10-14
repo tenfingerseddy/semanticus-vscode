@@ -46,11 +46,28 @@ namespace Semanticus.Tests
             var (engine, sessions, _) = await OpenAsync("bulk-warm-baseline");
             using (engine)
             {
-                await sessions.Current.ReadAsync(_ => 0);   // queued behind the warm-up on the one writer thread
                 var probe = sessions.Current.Observers.OfType<HealthDeltaProbe>().Single();
+                await engine.AiReadinessScanAsync();   // the first grade releases the warm-up (it waits for it, reads-itself 12 Oct)
+                for (var i = 0; i < 100 && !probe.HasBaseline; i++) await Task.Delay(50);
+                await sessions.Current.ReadAsync(_ => 0);
                 Assert.True(probe.HasBaseline);
                 var result = await engine.WriteWordsAsync(new[] { new WordsWriteItem { ObjRef = "measure:Sales/Total", Synonyms = new[] { "sales amount" } } }, "agent");
                 Assert.Equal(1, result.Applied);
+            }
+        }
+
+        // reads-itself (12 Oct): the grade waited about 2 s behind the warm-up, which was queued on the one writer thread first. A read
+        // queued right after open now runs BEFORE the warm-up; the warm-up follows the first grade (or a 10 s grace) and an edit still
+        // gets its baseline from BeforeCommit.
+        [Fact]
+        public async Task The_first_read_runs_before_the_warm_up()
+        {
+            var (engine, sessions, _) = await OpenAsync("bulk-read-first");
+            using (engine)
+            {
+                var probe = sessions.Current.Observers.OfType<HealthDeltaProbe>().Single();
+                var baselineSeenByFirstRead = await sessions.Current.ReadAsync(_ => probe.HasBaseline);
+                Assert.False(baselineSeenByFirstRead);
             }
         }
 
@@ -418,7 +435,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 var task = await engine.AddPlanTaskAsync(new PlanTaskRequest { Words = "Write the sales notes." });
-                await engine.SetPlanTaskNoteAsync(task.ItemId, "Keep this note.");
+                await engine.SetPlanTaskNoteAsync(task.ItemId, "Keep this note.", "agent");   // the assistant's own note: the repeat below is a true no-op
                 sessions.Bus.HumanClientAttached = () => true;
                 engine.PlanRowBeforeControlForTest = async () =>
                 {
@@ -446,7 +463,7 @@ namespace Semanticus.Tests
             using (engine)
             {
                 var task = await engine.AddPlanTaskAsync(new PlanTaskRequest { Words = "Write the sales notes." });
-                await engine.SetPlanTaskNoteAsync(task.ItemId, "The old note.");
+                await engine.SetPlanTaskNoteAsync(task.ItemId, "The old note.", "agent");   // the assistant's own note (drive-finish keeps it beside the person's), so the repeat below is a true no-op
                 sessions.Bus.HumanClientAttached = () => true;
                 engine.PlanRowBeforeControlForTest = async () =>
                 {
@@ -464,7 +481,7 @@ namespace Semanticus.Tests
                     Assert.Equal(0, result.Applied);
                     Assert.Empty(result.Rejected);
                     Assert.Empty((await engine.GetStudioNotesAsync(null)).Notes);
-                    Assert.Equal("The old note.", result.Plan.Items.Single(i => i.Id == task.ItemId).Note);
+                    Assert.Equal("The old note.", result.Plan.Items.Single(i => i.Id == task.ItemId).AssistantNote);
                     Assert.Equal(PlanTaskStates.Done, engine.ReadPlanState(engine.BindPlanMemory()).FindTask(task.ItemId).State);
                 }
                 finally { engine.PlanRowBeforeControlForTest = null; }

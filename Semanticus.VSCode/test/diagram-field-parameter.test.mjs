@@ -17,7 +17,7 @@ assert.match(diagram, /export interface GraphTable \{[^}]*\bisFieldParameter:\s*
   'the Diagram GraphTable wire type must expose isFieldParameter (the engine detection flag)');
 
 // 2) A field parameter gets the purple accent, and — because it IS a calc table — is tested BEFORE the plain-calc
-//    branch, so it never falls through to the teal CALC colour.
+//    branch, so it never falls through to the calculated colour.
 assert.match(diagram, /const FIELD_PARAM_VIOLET\s*=/, 'the field-parameter accent colour must be a named constant');
 assert.match(diagram, /t\.isFieldParameter\s*\?\s*FIELD_PARAM_VIOLET\s*:\s*t\.isCalculated/,
   'the accent must colour a field parameter violet and be evaluated before the plain-calc branch');
@@ -117,11 +117,11 @@ const inOrder = (src, labels, what) => {
 // neither as a button of its own.
 inOrder(rowRegion(diagram, 'the Diagram tool row'), ['New', '<RowMenu label="Arrange"', '<RowMenu label="Show"'], 'the Diagram tool row');
 assert.doesNotMatch(rowRegion(diagram, 'the Diagram tool row'), />Fit<|>Snap</, 'Fit and Snap are not buttons on the row');
-assert.match(diagram, /<Controls showInteractive=\{false\} \/>/, 'the canvas keeps React Flow\'s own zoom stack, whose fit button replaces the row\'s Fit');
+assert.match(diagram, /<Controls showInteractive=\{false\}/, 'the canvas keeps React Flow\'s own zoom stack, whose fit button replaces the row\'s Fit');
 {
   const at = diagram.indexOf('const arrangeControls');
   assert.notEqual(at, -1, 'the arrange cluster must be a named group');
-  inOrder(diagram.slice(at, diagram.indexOf(');', at)), ['Vertical', 'Layered', 'Bus matrix', 'Expand all', 'Collapse all', 'Snap to grid'], 'the Diagram arrange cluster');
+  inOrder(diagram.slice(at, diagram.indexOf(');', at)), ['Vertical', 'Layered', 'Bus matrix', 'Dot grid', 'Expand all', 'Collapse all', 'Snap to grid'], 'the Diagram arrange cluster');
 }
 
 // 12) The counts and the legend move INSIDE the canvas as quiet chips, positioned clear of the canvas's own

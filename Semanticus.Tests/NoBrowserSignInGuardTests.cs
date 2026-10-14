@@ -424,6 +424,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Every_human_browser_sign_in_refuses_without_the_opt_in_and_reaches_no_launcher()
         {
+            using var press = SignInPress.Press();   // a person's press: the sign-in is the one that would open a window, so the opt-in is what refuses it
             var before = StubCalls().Length;
 
             // The first-sign-in capture (an empty store): where a browser used to open for the account picker.

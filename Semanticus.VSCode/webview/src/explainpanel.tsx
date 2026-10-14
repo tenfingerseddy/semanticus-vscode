@@ -181,7 +181,7 @@ export function ExplainPanel({ payload, onClose }: { payload: ExplainPayload; on
                   <div className="flex flex-col gap-1">
                     {payload.entries.map((e, i) => (
                       <div key={i} className="flex items-baseline gap-2 text-xs">
-                        <span style={{ color: '#9cdcfe', fontFamily: 'var(--mono, monospace)', fontSize: 'var(--sem-text-label)' }}>{e.field}</span>
+                        <span style={{ color: 'var(--sem-kind-column)', fontFamily: 'var(--mono, monospace)', fontSize: 'var(--sem-text-label)' }}>{e.field}</span>
                         <span style={{ color: 'var(--sem-muted)' }}>=</span>
                         <span className="font-semibold" style={{ color: 'var(--sem-fg)' }}>{plainValue(e.value)}</span>
                         <span className="ml-auto text-(length:--sem-text-label) px-2 rounded" style={{ color: 'var(--sem-muted)', background: 'var(--sem-surface-2)' }}>

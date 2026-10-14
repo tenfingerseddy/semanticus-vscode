@@ -90,6 +90,11 @@ namespace Semanticus.Engine
         /// <summary>When the plan last wrote this row down as open (carried unchanged while the plan did not move, so a read still
         /// writes nothing). The assistant's edits made since are the ones its row may be credited with. Null on an older file.</summary>
         public DateTimeOffset? SeenUtc { get; set; }
+
+        /// <summary>The "rule|object" keys of the findings the row held when it was last written down (ModelPlanItem.Claims). What lets the
+        /// plan tell a row the person declined (every one of them now waived) from a row that was worked (any one of them gone). Empty on an
+        /// older file or a row built from no findings.</summary>
+        public string[] Claims { get; set; } = Array.Empty<string>();
     }
 
     /// <summary>A session, and how many saves that wrote edits it had made at one moment. How "Save the changes you have
@@ -222,14 +227,27 @@ namespace Semanticus.Engine
         public string Doer { get; set; }
         public string[] Objects { get; set; } = Array.Empty<string>();
 
+        /// <summary>The findings (<c>rule|object</c>) or objects (a ref) the row this task came from listed when it was handed over (PlanTaskRequest.Claims).
+        /// The task is done when they are gone, and a finding that appears later is not the task's. Empty on a task that came from nowhere in particular.</summary>
+        public string[] Claims { get; set; } = Array.Empty<string>();
+
+        /// <summary>For a task given from a found row that lists objects (the words row): the objects the row listed at that moment. The row stays
+        /// hidden behind this task only while it lists nothing else; an object that joins it later shows the row again (D1).</summary>
+        public string[] Carried { get; set; } = Array.Empty<string>();
+
         /// <summary>One of <see cref="PlanDoneWhen"/>.</summary>
         public string DoneWhen { get; set; }
         public PlanOriginLink OriginLink { get; set; }
         /// <summary>For a has_words task: where the words go when it is not the objects' Description (PlanTaskRequest.Slot).</summary>
         public string Slot { get; set; }
         public string Note { get; set; }
+        /// <summary>The assistant's own note (set_plan_task_note from the agent door): its reason for leaving the row. It leads the row's state note
+        /// and never replaces the person's <see cref="Note"/>; both are kept.</summary>
+        public string AssistantNote { get; set; }
         public string Reply { get; set; }
         public string DeclineReason { get; set; }
+        /// <summary>Who handed it back: <see cref="PlanDoers.You"/> for the person's Could not; null for the assistant's decline_request.</summary>
+        public string DeclinedBy { get; set; }
 
         /// <summary>The honest line after an engine restart released an assistant's claim on this task (lane E3).
         /// Cleared when it is claimed again.</summary>
@@ -296,12 +314,13 @@ namespace Semanticus.Engine
         /// <summary>A doer the person chose over the row's own, or null for the row's own.</summary>
         public string Doer { get; set; }
         public string Note { get; set; }
+        public string AssistantNote { get; set; }
 
         /// <summary>How many composes in a row this id has been absent. Pruned at
         /// <see cref="PlanMemory.ResidueAbsentLimit"/>.</summary>
         public int Absent { get; set; }
 
-        internal bool IsEmpty => !Held && Doer == null && Note == null;
+        internal bool IsEmpty => !Held && Doer == null && Note == null && AssistantNote == null;
     }
 
     /// <summary>What is remembered about a model's plan between calls.</summary>
@@ -499,6 +518,7 @@ namespace Semanticus.Engine
                             Section = node["section"]?.GetValue<string>(),
                             Doer = ReadText(node["doer"]),
                             SeenUtc = ReadWhenOrNull(node["seen"]),
+                            Claims = (node["claims"] as JsonArray)?.Select(ReadText).Where(c => !string.IsNullOrWhiteSpace(c)).ToArray() ?? Array.Empty<string>(),
                         });
                     }
                 }
@@ -769,6 +789,7 @@ namespace Semanticus.Engine
                             ["doer"] = i.Doer,
                         };
                         if (i.SeenUtc.HasValue) node["seen"] = i.SeenUtc.Value.ToString("o", CultureInfo.InvariantCulture);
+                        if (i.Claims is { Length: > 0 }) node["claims"] = new JsonArray(i.Claims.Select(c => (JsonNode)JsonValue.Create(c)).ToArray());
                         return (JsonNode)node;
                     }).ToArray()),
                     ["done"] = new JsonArray(state.Done.Select(d =>

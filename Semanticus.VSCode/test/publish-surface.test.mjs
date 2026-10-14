@@ -53,7 +53,7 @@ test('B2 the Data agent page signs in only when the person asks', () => {
   assert.equal(sharedCopy.mayStartSignIn('interactive', 'interactive|', 'interactive|tenant-b'), false, 'a new tenant is a new sign-in');
   assert.equal(sharedCopy.mayStartSignIn('azcli', '', 'azcli|'), true, 'the command line never opens a window');
   assert.equal(sharedCopy.mayStartSignIn('serviceprincipal', '', 'serviceprincipal|'), true);
-  const effect = dataagent.slice(dataagent.indexOf("rpc<FabricWorkspace[]>('listWorkspaces'") - 400, dataagent.indexOf("rpc<FabricWorkspace[]>('listWorkspaces'"));
+  const effect = dataagent.slice(dataagent.indexOf("rpcPressed<FabricWorkspace[]>('listWorkspaces'") - 400, dataagent.indexOf("rpcPressed<FabricWorkspace[]>('listWorkspaces'"));
   assert.match(effect, /mayStartSignIn\(/, 'the workspace listing must wait for the person when the sign-in opens a window');
   assert.match(dataagent, /data-testid="dataagent-sign-in"/, 'the page must offer a Sign in button for those modes');
 });
@@ -142,6 +142,13 @@ test('ticks change the count: removals count apart, and a row that needs an unti
   const reasons = copy.failureReasons([table.ref, `${margin.ref} (merged locally but the live deploy did not carry it: a metadata deploy doesn't push this object type)`], rows);
   assert.match(reasons.get(table.ref), /different object with this name/);
   assert.match(reasons.get(margin.ref), /does not take this kind of change/);
+  // Kane, 13 Oct: no engine words reach the person, and the compatibility level is one plain row
+  const engineWords = copy.failureReasons([`table:Date (table 'Date' carries authored shell metadata this apply path cannot copy yet; deploy it through TMDL/XMLA instead)`], [{ ref: 'table:Date', objectType: 'Table', name: 'Date', action: 'Update' }]).get('table:Date');
+  assert.doesNotMatch(engineWords, /TMDL|XMLA|shell|metadata|apply path/);
+  assert.equal(engineWords, 'This change stays in your copy for now. Semanticus cannot send it to Power BI yet.');
+  const level = { ref: 'compatibility', objectType: 'CompatibilityLevel', name: 'Compatibility level', table: null, action: 'Update', leftText: '1701', rightText: '1600' };
+  assert.equal(copy.rowNote(level, 'Contoso'), 'raise it from 1600 to 1701. Power BI cannot lower it again');
+  assert.deepEqual(copy.groupRows([margin, level]).map((g) => g.label), ['Sales', 'Model'], 'the level sits in the Model group, after the tables');
   // the line that names what stayed in the person's copy: up to two names, then a count, one plain sentence
   assert.equal(copy.couldNotGoLine(new Map([[margin.ref, 'x']]), rows), '1 change could not go (Margin %).');
   assert.equal(copy.couldNotGoLine(reasons, rows), '2 changes could not go (Returns, Margin %).');
@@ -185,7 +192,8 @@ test('D-044 Ctrl+S in Properties applies the focused field and never publishes',
 });
 
 test('the one button says what it will do in the words of the person', () => {
-  assert.match(copy.nothingToPublishCopy('V2'), /Nothing to publish/);
+  assert.doesNotMatch(copy.nothingToPublishCopy('V2'), /Nothing to publish/, 'the button says it; the line says why');
+  assert.match(copy.nothingToPublishCopy('V2'), /V2 already has everything in your copy/);
   assert.match(copy.unreachableCopy('V2'), /^Could not reach V2\./);
   assert.equal(copy.publishedLine(5, 'Contoso Sales'), 'Published 5 changes to Contoso Sales. Your copy did not change.');
   assert.equal(copy.publishedLine(1, 'Contoso Sales'), 'Published 1 change to Contoso Sales. Your copy did not change.');
@@ -275,7 +283,7 @@ test('Promote: picking both stages runs the check by itself, and one button send
 });
 
 test('UX12 a refused write compares again by itself and shows the engine\'s plain sentence, never a reason box', () => {
-  assert.match(changes, /if \(r\.error\) setLine\(\{ tone: 'bad', text: r\.error \}\)/, 'the engine\'s sentence is shown as it comes');
+  assert.match(changes, /if \(r\.error\) setLine\(\{ tone: 'bad', text: plainPublishError\(r\.error\) \}\)/, 'the engine\'s sentence goes through the plain-words filter');
   assert.match(changes, /await read\(\);   \/\/ a refused write usually means the destination moved/, 'the list is read again after every press');
   assert.doesNotMatch(changes, /overrideReason|Why publish/, 'no reason is ever typed');
   assert.match(changes, /data-testid="publish-undo"/);
@@ -358,7 +366,7 @@ test('T??? Promote no longer names a sign-in mode for the person', () => {
     const line = deploy.split('\n').find((l) => l.includes(`'${call}'`) && l.includes("'azcli'"));
     assert.equal(line, undefined, `${call} still passes the Azure command line as a literal: ${line}`);
   }
-  assert.match(deploy, /rpc<DeploymentPipeline\[\]>\('listDeploymentPipelines', mode/, 'the pipeline read takes the picked mode');
+  assert.match(deploy, /rpcPressed<DeploymentPipeline\[\]>\('listDeploymentPipelines', mode/, 'the pipeline read takes the picked mode');
 });
 
 test('T??? the starting mode prefers the account the publish destination was opened with', () => {
@@ -467,6 +475,20 @@ test('J3 a change that differs only by an annotation the publish never carries i
   assert.deepEqual(copy.publishCounts(copy.publishableRows(rows), new Set(rows.map((r) => r.ref))), { changes: 0, removals: 0 });
 });
 
+test('hero21 N8: right after a create no lone Model row that cannot go, and a new date table is named with its calendar and hierarchy', () => {
+  const model = (action, l, r) => ({ ref: 'model', objectType: 'Model', name: 'Hero', table: null, action, leftText: JSON.stringify(l), rightText: JSON.stringify(r) });
+  assert.equal(copy.isUnpublishable(model('Update', { name: 'Hero', defaultPowerBIDataSourceVersion: 'powerBI_V3' }, { name: 'Hero' })), true, 'the default data source version alone never goes from here');
+  for (const [what, l, r] of [['a description', { name: 'Hero', description: 'Sales' }, { name: 'Hero' }], ['a culture', { name: 'Hero', culture: 'en-US' }, { name: 'Hero', culture: 'en-AU' }], ['implicit measures', { name: 'Hero', discourageImplicitMeasures: true }, { name: 'Hero' }]]) {
+    assert.equal(copy.isUnpublishable(model('Update', { ...l, defaultPowerBIDataSourceVersion: 'powerBI_V3' }, r)), false, what + ' changed on the model stays listed');
+  }
+  assert.equal(copy.isUnpublishable(model('Update', { name: 'Hero', annotations: [{ name: 'Semanticus_Waivers', value: '[]' }] }, { name: 'Hero' })), false, 'a carried annotation does go');
+  const table = (action, l, r) => ({ ref: 'table:Date', objectType: 'Table', name: 'Date', table: null, action, leftText: JSON.stringify(l), rightText: r ? JSON.stringify(r) : null });
+  assert.equal(copy.rowNote(table('Create', { name: 'Date', calendars: [{ name: 'Gregorian' }], hierarchies: [{ name: 'Calendar' }] }, null), 'Hero'), 'new table, with a calendar and a hierarchy');
+  assert.equal(copy.rowNote(table('Create', { name: 'Date', hierarchies: [{ name: 'Calendar' }] }, null), 'Hero'), 'new table, with a hierarchy');
+  assert.equal(copy.rowNote(table('Create', { name: 'Date' }, null), 'Hero'), 'new table');
+  assert.equal(copy.rowNote(table('Update', { name: 'Date', calendars: [{ name: 'Gregorian' }] }, { name: 'Date' }), 'Hero'), 'calendar changed');
+});
+
 test('role-diff: a role member is shown in words, and a role change that cannot go is named before the press', () => {
   const guid = '22222222-2222-2222-2222-222222222222';
   const group = { memberName: `obj:${guid}@contoso`, identityProvider: 'AzureAD', memberType: 'group' };
@@ -489,19 +511,10 @@ test('role-diff: a role member is shown in words, and a role change that cannot 
   for (const text of [...lines.added, ...lines.removed]) assert.doesNotMatch(text, /[{}\[\]"]|obj:|[0-9a-f]{8}-[0-9a-f]{4}/, 'words only');
 
   // The row says what it is, and the engine's reason reads as a plain line. Neither mentions JSON.
-  assert.equal(copy.rowNote(row('Update', role([person, group]), role([group])), 'Contoso Sales'), 'change role members in Power BI');
-  assert.equal(copy.rowNote(row('Update', role([group], { modelPermission: 'none' }), role([group])), 'Contoso Sales'), 'change this role in Power BI');
-  assert.equal(copy.rowNote(row('Create', role([group]), null), 'Contoso Sales'), 'new role, add it in Power BI');
+  assert.equal(copy.rowNote(row('Update', role([person, group]), role([group])), 'Contoso Sales'), 'role members changed');
+  assert.equal(copy.rowNote(row('Create', role([group]), null), 'Contoso Sales'), 'new role');
   assert.equal(copy.rowNote(row('Delete', null, role([group])), 'Contoso Sales'), 'only on Contoso Sales. Tick to remove it there', 'a role removal still goes');
-  const reason = 'role:Readers (live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.)';
-  assert.equal(copy.plainFailure('live deploy did not carry it: Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.'), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.');
-  const failed = copy.failureReasons([reason], [row('Update', role([person]), role([group]))]);
-  assert.equal(failed.get('role:Readers'), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.');
-  assert.doesNotMatch(copy.plainFailure('x role changes yet y'), /\u2014/);
-  assert.equal(copy.heldReason(row('Update', role([person]), role([group]))), 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.', 'known before any press');
-  assert.equal(copy.heldReason(row('Create', role([group]), null)), copy.heldReason(row('Update', role([person]), role([group]))));
-  assert.equal(copy.heldReason(row('Delete', null, role([group]))), null, 'a role removal can go');
-  assert.equal(copy.heldReason({ ...row('Update', '{}', '{}'), objectType: 'Measure' }), null);
+  assert.equal(copy.heldReason, undefined, 'no role row is held back any more: a role goes like any other change');
 });
 
 test('newmodel: with no destination, the Publish page publishes the model as a new model in a workspace', () => {
@@ -523,7 +536,48 @@ test('newmodel: with no destination, the Publish page publishes the model as a n
   assert.match(read('../Semanticus.Engine/LocalEngine.NewModel.cs'), /if \(outcome\.Loaded\)\s+try \{ await ConnectXmlaAsync\(endpoint, name, authMode/, 'the engine attaches Tests to a loaded new model, for both doors');
 });
 
-console.log(`publish surface tests passed (${passed})`);
+// hero17 P9: an import model has no data until its source sign-in is set, so the new-model card must not promise one.
+test('newmodel: the card does not promise that the data loads', () => {
+  assert.doesNotMatch(changes, /Publishes the whole model and loads its data/, 'the card says what the press does, not what the data does');
+  assert.match(changes, /Publishes the whole model\. Later publishes update it\./);
+});
+
+// hero17 P7: the assistant's compare publish gets the same Undo publish as the person's press, and Earlier versions reads the new restore point.
+test('publish: the assistant\'s compare publish offers Undo publish and refreshes Earlier versions', () => {
+  const done = { kind: 'apply_model_diff', origin: 'agent', result: { applied: true, count: 2, restorePointId: 'rp-1' } };
+  assert.deepEqual(copy.assistantPublishUndo(done), { id: 'rp-1', count: 2 });
+  assert.equal(copy.assistantPublishUndo({ ...done, origin: 'human' }), null, 'the person\'s own press already shows its Undo');
+  assert.equal(copy.assistantPublishUndo({ ...done, result: { ...done.result, applied: false } }), null, 'nothing was written');
+  assert.equal(copy.assistantPublishUndo({ ...done, result: { applied: true, count: 2 } }), null, 'no restore point, no Undo');
+  assert.equal(copy.assistantPublishUndo({ ...done, kind: 'deploy_gate' }), null);
+  assert.match(changes, /assistantPublishUndo\(e\)/, 'the Changes tab listens for it');
+  assert.match(changes, /onWrote\?\.\(\)/, 'and asks the page to read the restore points again');
+});
+
+// D6: while the assistant publishes, the new-model card shows where it publishes, from the engine's start and end.
+test('newmodel: the card shows the target the assistant is publishing to, and lets go at the end', () => {
+  const start = { kind: 'publish_target', origin: 'agent', result: { phase: 'start', workspace: 'Semanticus Demo', name: 'launch-video-test' } };
+  assert.deepEqual(copy.assistantPublish(start), { phase: 'start', workspace: 'Semanticus Demo', name: 'launch-video-test' });
+  assert.equal(copy.assistantPublish({ ...start, result: { ...start.result, phase: 'end' } }).phase, 'end');
+  assert.equal(copy.assistantPublish({ ...start, kind: 'publish_new_model' }), null, 'only the target event counts');
+  assert.equal(copy.assistantPublish({ ...start, origin: 'human' }), null, 'the person own press already holds its target in the form');
+  assert.equal(copy.assistantPublish({ ...start, result: { phase: 'start' } }), null, 'no workspace, no target');
+  assert.equal(copy.assistantPublishLine({ workspace: 'Semanticus Demo', name: 'launch-video-test' }), 'Your assistant is publishing launch-video-test to Semanticus Demo.');
+  assert.match(changes, /onActivity\(\(e\) => \{\s*const t = assistantPublish\(e\)/, 'the card listens for the target');
+  assert.match(changes, /data-testid="publish-assistant-target"/, 'and says it on the page');
+  assert.match(changes, /disabled=\{busy \|\| !!target\}/, 'the name is held while the assistant publishes');
+  assert.match(changes, /target \? <span className="sem-field" data-testid="publish-new-ws-target">\{target\.workspace\}<\/span>/, 'and the workspace shows the assistant\'s target');
+  assert.match(read('webview/src/personality/link-state.ts'), /e\.kind === 'publish_target'\) return/, 'the target line never ends the Link call');
+});
+
+// hero19 D13: after a good publish the list and the button clear at once, before the page compares again.
+test('what a publish sent leaves the list at once; a refused row stays', () => {
+  const rows = [{ ref: 'measure:Sales/A' }, { ref: 'measure:Sales/B' }, { ref: 'measure:Sales/C' }];
+  assert.deepEqual(copy.leftAfterPublish(rows, ['measure:Sales/A', 'measure:Sales/B'], []).map((r) => r.ref), ['measure:Sales/C']);
+  assert.deepEqual(copy.leftAfterPublish(rows, ['measure:Sales/A', 'measure:Sales/B'], ['measure:Sales/B (merged locally but the live deploy did not carry it)']).map((r) => r.ref), ['measure:Sales/B', 'measure:Sales/C']);
+  assert.deepEqual(copy.leftAfterPublish(rows, null, null), rows, 'nothing named, nothing removed');
+  assert.ok(changes.includes('leftAfterPublish(d.items, r.appliedRefs, r.failedRefs)'), 'the page clears the list when the write lands');
+});
 
 async function loadTypeScriptModule(file) {
   const source = readFileSync(file, 'utf8');
@@ -533,3 +587,32 @@ async function loadTypeScriptModule(file) {
   }).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
 }
+
+test('a level raise that landed says so, and a refused raise shows no engine words', () => {
+  assert.equal(copy.plainPublishError('The compatibility level is now 1701. Nothing else was published. The XMLA request failed.'),
+    'The compatibility level is now 1701. Nothing else was published. This change stays in your copy for now. Semanticus cannot send it to Power BI yet.');
+  assert.equal(copy.plainPublishError('The compatibility level is now 1701. Nothing else was published. The service is busy.'),
+    'The compatibility level is now 1701. Nothing else was published. The service is busy.');
+  const refused = copy.plainPublishError('Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published: Cannot change metadata via XMLA. Technical Details: RootActivityId: abc');
+  assert.doesNotMatch(refused, /xmla|metadata|Technical Details|RootActivityId/i);
+  assert.match(refused, /^Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published\./);
+  assert.equal(copy.plainPublishError('Something plain.'), 'Something plain.');
+});
+
+test('a refused level raise shows the person\'s sentence and only the service\'s first sentence, with no code, activity id or technical details', () => {
+  const head = 'Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published.';
+  // the verifier probe (v-publish-shell, item 1): a plain first sentence stays, and nothing after it
+  const probe = copy.plainPublishError('Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published: The database compatibility level 1701 is not supported on this capacity. Error code: 0xC1120001. RootActivityId: 4f2c-11');
+  assert.equal(probe, head + ' The database compatibility level 1701 is not supported on this capacity.');
+  // technical details and everything after them go, even on the first sentence's line
+  assert.equal(copy.plainPublishError(head + ' This capacity cannot do that. Technical Details: RootActivityId: abc; Date (UTC): 2026-10-13'),
+    head + ' This capacity cannot do that.');
+  // a first sentence that holds an error code or an engine word is not shown at all
+  assert.equal(copy.plainPublishError(head + ' Failed with 0xC1120001 on the service.'), head);
+  assert.equal(copy.plainPublishError(head + ' Cannot change metadata via XMLA.'), head);
+  // nothing after the head: the head alone
+  assert.equal(copy.plainPublishError(head), head);
+  assert.equal(copy.plainPublishError('Power BI would not raise the compatibility level from 1600 to 1701, so nothing was published:'), head);
+});
+
+console.log(`publish surface tests passed (${passed})`);

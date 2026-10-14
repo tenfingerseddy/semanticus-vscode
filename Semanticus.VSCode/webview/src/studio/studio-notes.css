@@ -1,14 +1,15 @@
-/* The note strip, What I did and the suggestion line (1.4, lane notes). Tokens only: the assistant is --sem-doer-agent,
+/* The note strip, What I did and the suggestion line (1.4, lane notes). Tokens only: the assistant is --sem-actor-assistant,
    text is --sem-fg and --sem-muted, gaps are the space steps. No new hue, no animation: a note that moves the screen is
    enough movement for one moment. */
 .sn { display: block; }
 .sn-note {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--sem-space-3);
   padding: var(--sem-space-2) var(--sem-page-margin);
-  background: var(--sem-tint-agent);
-  border-left: var(--sem-space-1) solid var(--sem-doer-agent);
+  background: var(--sem-tint-assistant);
+  border-left: var(--sem-space-1) solid var(--sem-actor-assistant);
   border-bottom: var(--sem-hairline) solid var(--sem-rule);
 }
+.sn-note[data-by="person"] { background: var(--sem-tint-you); border-left-color: var(--sem-actor-you); }
 .sn-say { margin: 0; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); color: var(--sem-fg); overflow-wrap: anywhere; }
 .sn-how { margin: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); overflow-wrap: anywhere; }
 .sn-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: var(--sem-space-2); }
@@ -17,6 +18,9 @@
 
 .sn-list { padding: var(--sem-space-2) var(--sem-page-margin) var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
 .sn-list-head { display: flex; justify-content: space-between; align-items: center; gap: var(--sem-space-3); }
+.sn-list-head .sn-line-one { flex: 1 1 0; min-width: 0; width: auto; }
+.sn-list-actions { display: flex; align-items: center; gap: var(--sem-space-2); margin-left: auto; flex: none; }
+.sn-line-clip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sn-list-title { margin: 0; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); color: var(--sem-fg); }
 .sn-lines { list-style: none; margin: var(--sem-space-2) 0 0; padding: 0; max-height: calc(var(--sem-row) * 6); overflow-y: auto; }
 .sn-line {
@@ -28,9 +32,13 @@
 .sn-line:hover { background: var(--sem-hover); }
 .sn-line-time { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sn-line-say { overflow-wrap: anywhere; }
-.sn-dot { width: var(--sem-space-2); height: var(--sem-space-2); border-radius: 9999px; background: var(--sem-doer-agent); align-self: center; }
+.sn-dot { width: var(--sem-space-2); height: var(--sem-space-2); border-radius: 9999px; background: var(--sem-actor-assistant); align-self: center; }
 
 .sn-suggest { padding: var(--sem-space-2) var(--sem-page-margin) var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); display: grid; gap: var(--sem-space-2); }
 .sn-steps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
 .sn-added { display: inline-flex; align-items: center; min-height: var(--sem-control-h-sm); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
 .sn-failed { margin: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-bad); }
+
+/* What a press of the suggested step leaves in place (the Plan header's slot, plan-head.tsx). */
+.nx-done { color: var(--sem-good); font-weight: var(--sem-weight-strong); white-space: nowrap; }
+.nx-failed { color: var(--sem-bad); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }

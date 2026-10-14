@@ -69,8 +69,10 @@ assert.ok(offered({ dims: [d('Brand', 3), d('Month', 6, true)], measures: 1, row
 assert.deepEqual(twoSplitAxes([d('Brand', 3), d('Month', 6, true)], 1, 'line'), { axis: 1, series: 0 }, 'the date runs along the axis and each brand is a line');
 assert.deepEqual(twoSplitAxes([d('Month', 6, true), d('Brand', 3)], 1, 'line'), { axis: 0, series: 1 }, 'the date is first: it stays the axis');
 assert.deepEqual(twoSplitAxes([d('Year', 3, true), d('Month', 12, true)], 1, 'line'), { axis: 1, series: 0 }, 'two dates: months along the axis, a line for each year');
-assert.deepEqual(twoSplitAxes([d('Brand', 3), d('Region', 4)], 1, 'bar'), { axis: 0, series: 1 }, 'two categories: clustered bars');
-assert.equal(twoSplitAxes([d('Brand', 3), d('Store', 40)], 1, 'bar'), null, 'too many series: the joined labels stay');
+assert.deepEqual(twoSplitAxes([d('Brand', 3), d('Region', 4)], 1, 'bar'), { axis: 1, series: 0 }, 'two categories: clustered bars, the field with more values along the axis');
+assert.deepEqual(twoSplitAxes([d('Brand', 3), d('Region', 4)], 1, 'bar', true), { axis: 0, series: 1 }, 'two categories placed by the person: their order stays');
+assert.deepEqual(twoSplitAxes([d('Brand', 3), d('Store', 40)], 1, 'bar'), { axis: 1, series: 0 }, 'the 40 stores run along the axis, so only 3 series');
+assert.equal(twoSplitAxes([d('Brand', 20), d('Store', 40)], 1, 'bar'), null, 'too many series either way: the joined labels stay');
 assert.equal(twoSplitAxes([d('Brand', 3), d('Region', 4)], 2, 'bar'), null, 'two measures: the measures are the series');
 assert.equal(twoSplitAxes([d('Brand', 3)], 1, 'bar'), null, 'one split: nothing to fold');
 // A scatter plots one measure against the other, one point per row.

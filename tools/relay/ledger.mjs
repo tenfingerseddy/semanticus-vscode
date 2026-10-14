@@ -56,6 +56,16 @@ export const LEDGER_STATES = ['reserved', 'forwarded', 'settled', 'released', 's
 const OPEN_STATES = new Set(['reserved', 'forwarded', 'stuck']);
 const IN_FLIGHT_STATES = new Set(['reserved', 'forwarded']);
 
+/** Whether an entry can still be a call that is really running. The worker cuts its vendor call at
+ *  upstreamTimeoutMs, so an entry older than that plus a short grace belongs to a worker that crashed or
+ *  went away without settling it. Counting it as running locked a licence for the hour until the sweep. It
+ *  is not "running" for concurrency, but it is still OPEN, so it keeps holding its estimate for the budget. */
+function isRunning(entry, nowMs) {
+    if (!IN_FLIGHT_STATES.has(entry.state)) return false;
+    const since = entry.forwardedAt || entry.createdAt || 0;
+    return nowMs - since < LIMITS.upstreamTimeoutMs + LIMITS.inFlightGraceMs;
+}
+
 /** The month window on the SERVER clock, never the client's. */
 export function windowKey(nowMs) {
     const d = new Date(nowMs);
@@ -119,7 +129,7 @@ export class LicenceLedger {
         let inFlight = 0;
         for (const entry of open) {
             if (OPEN_STATES.has(entry.state)) held += entry.estimate;
-            if (IN_FLIGHT_STATES.has(entry.state)) inFlight++;
+            if (isRunning(entry, nowMs)) inFlight++;
         }
         return { meta, held, inFlight, used: meta.settled + held };
     }
@@ -165,7 +175,7 @@ export class LicenceLedger {
 
             if (record.live) {
                 const live = await this.state.storage.get('e:' + record.live);
-                if (live && IN_FLIGHT_STATES.has(live.state)) return { ok: false, error: 'in_flight', ...shared };
+                if (live && isRunning(live, now)) return { ok: false, error: 'in_flight', ...shared };
             }
         }
 

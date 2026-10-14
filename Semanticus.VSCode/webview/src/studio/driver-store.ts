@@ -35,6 +35,15 @@ export function assistantIsWorking(s: DriverSnapshot, now: number): boolean {
   return s.lastAssistantCall !== null && now - s.lastAssistantCall < QUIET_GAP_MS;
 }
 
+/** How long an assistant counts as busy on the Plan page after its latest call. Claude's gaps between calls (thinking, a long write) run far past the 8 s quiet gap,
+ *  and the page told the person "Save your changes / Do it" in the middle of a drive (hero20 D3). The sign keeps the short gap; the Plan header uses this. */
+export const ASSISTANT_ACTIVE_MS = 60_000;
+export function assistantIsActive(s: DriverSnapshot, now: number): boolean {
+  if (!s.assistantWorking) return false;
+  if (s.state === 'claudeDriving') return true;
+  return s.lastAssistantCall !== null && now - s.lastAssistantCall < ASSISTANT_ACTIVE_MS;
+}
+
 const whoOf = (raw: unknown): AssistantWho | null => {
   const w = raw as Partial<AssistantWho> | null | undefined;
   return w && typeof w.key === 'string' && typeof w.name === 'string' && w.name

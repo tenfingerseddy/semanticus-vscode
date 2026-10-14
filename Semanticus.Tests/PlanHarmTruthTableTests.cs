@@ -673,7 +673,7 @@ namespace Semanticus.Tests
             // OFFERED means TICKED. Every column the sweep calls unused is a line, and each says why.
             var offered = new HashSet<string>(lines.Where(l => l.Kept).Select(l => l.Target ?? ""), StringComparer.OrdinalIgnoreCase);
             var listed = new HashSet<string>(lines.Select(l => l.Target ?? ""), StringComparer.OrdinalIgnoreCase);
-            var sweepColumns = (await f.Engine.UnusedObjectsAsync()).Items.Where(i => (i.Verdict == "safe" || i.Verdict == "visibleAttribute") && i.Kind != "measure").Select(i => i.Ref)
+            var sweepColumns = (await f.Engine.UnusedObjectsCoreAsync(keepVisibleUntilReportsChecked: false)).Items.Where(i => (i.Verdict == "safe" || i.Verdict == "visibleAttribute") && i.Kind != "measure").Select(i => i.Ref)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             string Describe(string r) => r + "  <-  " + (about.TryGetValue(r, out var d) ? d : "not in any cell");

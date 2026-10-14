@@ -64,7 +64,7 @@ namespace Semanticus.Engine
 
             // External I/O / lifecycle. run_interview executes live DAX + records its outcome — run it directly.
             Add(IoReason, "save_model", "open_model", "open_local", "open_live", "create_model", "connect_xmla",
-                "connect_local", "disconnect", "refresh_partition", "export_vpax", "clear_cache", "evaluate_and_log",
+                "connect_local", "connect_assistant", "disconnect", "refresh_partition", "export_vpax", "clear_cache", "evaluate_and_log",
                 "run_interview");
             // Cloud/network reads not caught by a prefix.
             Add(CloudReason, "analyze_cloud_reports", "list_workspaces", "list_workspace_models", "list_workspace_sql_endpoints", "autogenerate_spec_from_fabric");

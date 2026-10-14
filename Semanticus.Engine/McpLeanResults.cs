@@ -31,6 +31,10 @@ namespace Semanticus.Engine
     internal static class McpLeanResults
     {
         internal const int Cap = 7000; // Leave room for the MCP health and change lines.
+        // A start plan caller that names a max above the default of 40 asked for a bigger page: it gets one, up to the size a whole plan read may be (hero17 P10).
+        // Only the start plan pages ask for it; the AI-ready pages keep Cap.
+        internal const int AskedForMoreCap = PlanReadShape.WholePlanChars;
+        internal static int StartBudget(int max) => max > 40 ? AskedForMoreCap : Cap;
         private static readonly JsonSerializerOptions Json = ModelContextProtocol.McpJsonUtilities.DefaultOptions;
         internal static int Chars(object value) => JsonSerializer.Serialize(value, Json).Length;
 
@@ -93,7 +97,7 @@ namespace Semanticus.Engine
                         ?? throw new ArgumentException("Unknown start-plan item. Use a section id, columns, needs_you, edges or knock_ons.");
                     rows = section.Groups.SelectMany(g => g.Lines.Select(l => (object)new { g.Table, Line = l }));
                 }
-                Page(result.Summary, rows, item, offset, max, result);
+                Page(result.Summary, rows, item, offset, max, result, StartBudget(max));
             }
             else
             {
@@ -168,7 +172,7 @@ namespace Semanticus.Engine
         }
 
         private static void Page(LeanResultSummary summary, IEnumerable<object> rows, string item,
-            int offset, int max, object result)
+            int offset, int max, object result, int budget = Cap)
         {
             var all = rows.ToArray();
             offset = Math.Max(0, offset); max = Math.Clamp(max, 1, 100);
@@ -177,7 +181,7 @@ namespace Semanticus.Engine
             foreach (var row in all.Skip(offset).Take(max))
             {
                 values.Add(row); page.Items = values.ToArray();
-                if (Chars(result) > Cap)
+                if (Chars(result) > budget)
                 {
                     if (values.Count == 1)
                         page.Note = "This one item exceeds the page budget. It is returned whole so no detail is lost.";

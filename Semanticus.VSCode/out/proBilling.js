@@ -304,7 +304,7 @@ async function collectProToken(options) {
     const now = options.now ?? Date.now;
     const intervalMs = options.intervalMs ?? exports.COLLECT_INTERVAL_MS;
     const deadline = now() + (options.timeoutMs ?? exports.COLLECT_TIMEOUT_MS);
-    const url = billingEndpoint(options.base, '/stripe/collect', { nonce: options.nonce });
+    const url = billingEndpoint(options.base, options.path ?? '/stripe/collect', { nonce: options.nonce });
     let sawPending = false;
     let consecutiveFailures = 0;
     for (;;) {

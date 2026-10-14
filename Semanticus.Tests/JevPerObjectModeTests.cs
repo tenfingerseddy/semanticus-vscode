@@ -113,9 +113,9 @@ namespace Semanticus.Tests
             var one = await PlayAsync(batched: false);
             var table = await PlayAsync(batched: true);
 
-            // One request per object: 3 measures to tidy, 3 columns to format, 5 number columns to summarize, and every eligible object (3 tables,
+            // One request per object: 3 measures to tidy, 3 columns to format, 4 number columns to summarize (the fifth already has a base measure, so the Plan does not ask about it again), and every eligible object (3 tables,
             // 6 columns, 4 measures) for what Copilot sees. One request per table: the tables that hold any of them.
-            Assert.Equal((3, 3, 5, 13), (one.Requests["measure.folder_and_format"], one.Requests["column.format"], one.Requests["column.summarize"], one.Requests["ai.schema"]));
+            Assert.Equal((3, 3, 4, 13), (one.Requests["measure.folder_and_format"], one.Requests["column.format"], one.Requests["column.summarize"], one.Requests["ai.schema"]));
             Assert.Equal((2, 2, 3, 3), (table.Requests["measure.folder_and_format"], table.Requests["column.format"], table.Requests["column.summarize"], table.Requests["ai.schema"]));
         }
     }

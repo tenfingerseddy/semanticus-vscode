@@ -544,7 +544,7 @@ assert.match(src('hooks.ts'), /if \(held\.key !== key\)/, 'usePersistedState rea
   // K17 (Kane, 8 and 9 Oct): the history has no scroll bar of its own. The latest 8 questions show and "Show all" opens the
   // rest in place, so the page scrolls.
   assert.equal(P.HISTORY_SHOWN, 8, 'the list shows the latest 8 questions');
-  const history = page.slice(page.indexOf('aria-label="Asked before"'), page.indexOf('aria-label="Your question"'));
+  const history = page.slice(page.indexOf('aria-label="Asked before"'), page.indexOf('</aside>', page.indexOf('aria-label="Asked before"')));
   assert.doesNotMatch(history, /overflow-auto|overflow-y|inset-0|askdata-history-frame/, 'the history card holds no scroll area of its own');
   assert.match(history, /mergedHistory\.length > HISTORY_SHOWN/, 'the link shows only when there is more than the 8');
   assert.match(history, /showAllHistory \? 'Show fewer' : 'Show all'/, 'Show all opens the list in place, and Show fewer closes it');

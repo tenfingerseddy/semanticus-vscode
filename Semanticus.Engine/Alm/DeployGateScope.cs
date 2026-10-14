@@ -101,6 +101,9 @@ namespace Semanticus.Engine
             return false;
         }
 
+        internal static bool ReadinessGateMatches(string gatedBy, string ruleId) =>
+            ruleId != null && string.Equals(RuleIdForGate(gatedBy), ruleId, StringComparison.OrdinalIgnoreCase);
+
         private static string RuleIdForGate(string gatedBy)
         {
             if (gatedBy.IndexOf("undescribed", StringComparison.OrdinalIgnoreCase) >= 0) return "DESC-MEASURE";
@@ -114,6 +117,9 @@ namespace Semanticus.Engine
             if (token.IndexOf("Table", StringComparison.OrdinalIgnoreCase) >= 0) return "table";
             return token.ToLowerInvariant();
         }
+
+        internal static bool IsParentOrSame(string edited, string objectRef) =>
+            string.Equals(edited, objectRef, StringComparison.Ordinal) || IsParentRef(edited, objectRef);
 
         private static bool IsParentRef(string parent, string child)
         {

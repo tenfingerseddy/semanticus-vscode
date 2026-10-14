@@ -34,7 +34,7 @@ interface RecallResult { candidates: RecallCandidate[]; fingerprint: ModelFinger
 interface PurgeResult { scope: string; liveCount: number; purged: boolean; note?: string }
 
 const SECTIONS = ['Overview', 'Business context', 'Gotchas', 'Patterns', 'Known issues', 'History'];
-const KIND_TINT: Record<string, string> = { insight: 'var(--sem-accent)', 'post-mortem': 'var(--sem-bad)' };
+const KIND_TINT: Record<string, string> = { insight: 'var(--sem-series-1)', 'post-mortem': 'var(--sem-series-3)' };
 const errMsg = (e: unknown) => String((e as Error).message ?? e);
 const fmtWhen = (iso?: string | null) => {
   if (!iso) return '';

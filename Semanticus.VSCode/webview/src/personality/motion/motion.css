@@ -1,0 +1,45 @@
+.sem-motion-flap {
+  display: inline-block; position: relative; flex: none;
+  width: var(--sem-lh-grade); height: calc(var(--sem-lh-grade) * 1.4);
+  font: var(--sem-weight-strong) var(--sem-text-grade)/1 var(--sem-font-ui);
+  perspective: calc(var(--sem-lh-grade) * 7);
+}
+.sem-motion-half { position: absolute; left: 0; right: 0; height: 50%; overflow: hidden; background: var(--sem-surface-2); color: var(--sem-fg); backface-visibility: hidden; }
+.sem-motion-half > span { display: flex; align-items: center; justify-content: center; height: calc(var(--sem-lh-grade) * 1.4); }
+.sem-motion-top { top: 0; border-radius: var(--sem-radius-card) var(--sem-radius-card) 0 0; transform-origin: center bottom; }
+.sem-motion-bottom { bottom: 0; border-radius: 0 0 var(--sem-radius-card) var(--sem-radius-card); transform-origin: center top; }
+.sem-motion-bottom > span { transform: translateY(-50%); }
+.sem-motion-turn { opacity: 0; }
+.sem-motion-flap::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; border-top: var(--sem-hairline) solid var(--sem-border); }
+.sem-motion-flap[data-grade='A'] .sem-motion-half { background: var(--sem-accent); color: var(--sem-on-accent); }
+.sem-motion-bulk { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.sem-motion-count { font: var(--sem-weight-strong) var(--sem-text-grade)/var(--sem-lh-grade) var(--sem-font-num); font-variant-numeric: tabular-nums; }
+.sem-motion-bar { display: block; height: var(--sem-space-1); background: var(--sem-border); border-radius: var(--sem-radius-inner); overflow: hidden; }
+.sem-motion-bar i, .sem-motion-meter i { display: block; height: 100%; width: 100%; background: var(--sem-accent); transform-origin: left center; }
+.sem-motion-rel-line { transform-box: fill-box; transform-origin: center; }
+.sem-motion-publish { display: flex; align-items: center; gap: var(--sem-space-4); }
+.sem-motion-publish-mark { position: relative; display: inline-block; flex: none; width: calc(var(--sem-row-2) * 2); }
+.sem-motion-publish-mark > svg:first-child { display: block; width: 100%; overflow: visible; fill: none; stroke: var(--sem-fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.sem-motion-publish-mark .sem-motion-ghost { stroke: var(--sem-border); }
+.sem-motion-publish-mark .sem-motion-jade { stroke: var(--sem-accent); }
+.sem-motion-publish-mark .sem-motion-dot { fill: var(--sem-accent); stroke: none; }
+.sem-motion-end { transform-origin: 5px 18.5px; }
+.sem-motion-publish-error .sem-motion-publish-mark > svg:first-child { stroke: var(--sem-muted); }
+.sem-motion-publish-error .sem-motion-jade, .sem-motion-publish-error .sem-motion-dot { stroke: var(--sem-muted); fill: var(--sem-muted); }
+.sem-motion-sparkle { position: absolute; width: 160%; height: 160%; left: -30%; top: -30%; pointer-events: none; overflow: visible; fill: var(--sem-accent); stroke: none; }
+.sem-motion-sparkle path { opacity: 0; }
+.sem-motion-undo { display: flex; flex-direction: column; gap: var(--sem-space-2); }
+.sem-motion-undo ul { list-style: none; padding: 0; margin: 0; }
+.sem-motion-undo li { min-height: var(--sem-row); display: flex; align-items: center; padding: 0 var(--sem-space-2); border-bottom: var(--sem-hairline) solid var(--sem-border); }
+.sem-motion-remove li { opacity: 0; }
+.sem-motion-undo[data-complete='true'] .sem-motion-remove { display: none; }
+.sem-motion-choices { list-style: none; padding: 0; margin: 0; }
+.sem-motion-choices li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; gap: var(--sem-space-3); height: var(--sem-row-2); border-bottom: var(--sem-hairline) solid var(--sem-border); }
+.sem-motion-choices li[data-chosen] { color: var(--sem-fg); }
+.sem-motion-choice-name { display: flex; flex-direction: column; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sem-motion-choice-name small { font-size: var(--sem-text-meta); color: var(--sem-muted); }
+.sem-motion-meter { display: block; height: var(--sem-space-1); background: var(--sem-border); overflow: hidden; }
+.sem-motion-next { display: flex; align-items: center; gap: var(--sem-space-3); }
+.sem-motion-small { display: inline-flex; transform-origin: left center; }
+.sem-motion-anchor { display: inline-block; position: relative; }
+.sem-motion-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }

@@ -61,10 +61,10 @@ assert.match(registry, /"measure_formula_facts"/, 'the measure point does not de
 // ---- the version bumped, so a person who agreed to the old card sees it once more -----------------
 const version = /public const int ConsentSchemaVersion = (\d+);/.exec(registry);
 assert.ok(version, 'the engine consent version could not be read');
-assert.equal(Number(version[1]), 5, 'the consent version must be 5: the one release bump of the M11 join (30 Sep), after the card and the field list changed');
+assert.equal(Number(version[1]), 6, 'the consent version must be 6: next.step joined in 1.5 (the Next line, 11 Oct) after version 5 shipped');
 
 // The driver fakes the engine, so its version has to be the engine's or it proves the old card.
-assert.match(driver, /setConsentVersion !== 5/, 'the consent driver does not check that OK sends version 5');
+assert.match(driver, /setConsentVersion !== 6/, 'the consent driver does not check that OK sends version 6');
 assert.doesNotMatch(driver, /schemaVersionInForce: [23]\b/, 'the consent driver still fakes an old version as the version in force');
 assert.match(driver, /the questions you type into the ask box/, 'the consent driver does not check the new card line');
 

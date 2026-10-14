@@ -407,18 +407,72 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task An_explicit_show_wins_for_ten_seconds_and_then_the_engine_narrates_again()
+        public async Task An_explicit_show_wins_for_ten_seconds_on_its_own_place_and_then_the_engine_narrates_again()
         {
             var (f, c, heard) = await FollowAsync();
             using var _f = f;
             await McpTools.ShowInStudio(f.Engine, "plan", "I will start with the plan.");
             Assert.Single(heard);
             c.Advance(9.9);
-            await f.Engine.NoteAgentCallAsync("set_description", "measure:Sales/Net Sales");
-            Assert.Single(heard);                                   // 9.9 s after a show: the show is still speaking
+            await f.Engine.NoteAgentCallAsync("get_model_plan");
+            Assert.Single(heard);                                   // 9.9 s after a show on the plan: the show is still speaking for it
             c.Advance(0.2);
             await f.Engine.NoteAgentCallAsync("set_description", "measure:Sales/Net Sales");
             Assert.Equal(2, heard.Count);                           // 10.1 s: the engine takes over
+        }
+
+        // Drive follow (Kane, 13 Oct: "it will be checking BPA but stay on AI readiness"). A show speaks for ITS place only. A tool that
+        // works on another place inside the ten seconds is the assistant moving on, and the screen must go with it.
+        [Fact]
+        public async Task A_show_on_one_place_does_not_keep_the_screen_there_when_the_next_tool_works_on_another()
+        {
+            var (f, c, heard) = await FollowAsync();
+            using var _f = f;
+            await McpTools.ShowInStudio(f.Engine, "review/ai-readiness", "Checking how ready the model is for AI.");
+            c.Advance(2);
+            await f.Engine.NoteAgentCallAsync("bpa_scan");
+            Assert.Equal(new[] { "review/ai-readiness", "review/model-quality" }, heard.Select(n => n.Place).ToArray());
+            Assert.Contains("best practice", heard.Last().Say);
+        }
+
+        [Fact]
+        public async Task A_scripted_assistant_calling_readiness_then_best_practice_then_the_plan_gets_one_note_for_each_home()
+        {
+            var (f, c, heard) = await FollowAsync();
+            using var _f = f;
+            foreach (var tool in new[] { "ai_readiness_scan", "bpa_scan", "get_model_plan" })
+            {
+                await f.Engine.NoteAgentCallAsync(tool);
+                c.Advance(1);                                       // faster than the three-second spacing: a scan always gets its note
+            }
+            Assert.Equal(new[] { "review/ai-readiness", "review/model-quality", "plan" }, heard.Select(n => n.Place).ToArray());
+            Assert.Contains("ready the model is for AI", heard.ElementAt(0).Say);
+            Assert.Contains("best practice", heard.ElementAt(1).Say);
+        }
+
+        // The class, not the case: every tool in the MCP registry either has a home the Studio goes to, narrates itself after it commits
+        // (and says where), or is listed as one that stays where the screen is, on purpose. A new tool with none of the three fails here.
+        [Fact]
+        public void Every_MCP_tool_has_a_home_or_stays_where_it_is_on_purpose()
+        {
+            var map = JObject.Parse(File.ReadAllText(RepoFile("Semanticus.VSCode/webview/src/studio/places.json")));
+            var homes = ((JArray)map["places"]).SelectMany(p => ((JArray)p["tools"] ?? new JArray()).Select(t => (string)t)).ToList();
+            var elsewhere = ((JObject)map["narratesItself"] ?? new JObject()).Properties().Select(x => x.Name).ToList();
+            var stays = ((JObject)map["staysWhereItIs"] ?? new JObject()).Properties().Select(x => x.Name).ToList();
+            var tools = typeof(McpTools).Assembly.GetTypes()
+                .Where(t => t.IsAbstract && t.IsSealed && t.Name.StartsWith("McpTools", StringComparison.Ordinal))
+                .SelectMany(t => t.GetMethods(BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly))
+                .SelectMany(m => m.GetCustomAttributes(true).Where(a => a.GetType().Name == "McpServerToolAttribute"))
+                .Select(a => (string)a.GetType().GetProperty("Name").GetValue(a)).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+            Assert.True(tools.Count > 300, "the registry was read: " + tools.Count + " tools");
+            var all = homes.Concat(elsewhere).Concat(stays).ToList();
+            Assert.Empty(all.GroupBy(x => x).Where(g => g.Count() > 1).Select(g => g.Key + " is listed twice"));
+            Assert.Empty(all.Except(tools).Select(x => x + " is listed but is not an MCP tool"));
+            Assert.Empty(tools.Except(all).Select(x => x + " has no home: add it to a place's tools (with a toolSays sentence), to narratesItself, or to staysWhereItIs"));
+            foreach (var kv in ((JObject)map["narratesItself"] ?? new JObject()).Properties())
+                Assert.True(StudioMaps.FindPlace((string)kv.Value) != null, kv.Name + " names a place the map does not have");
+            foreach (var kv in ((JObject)map["staysWhereItIs"] ?? new JObject()).Properties())
+                Assert.False(string.IsNullOrWhiteSpace((string)kv.Value), kv.Name + " stays on purpose, so it says why");
         }
 
         [Fact]
@@ -459,19 +513,19 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task A_change_of_place_inside_three_seconds_adds_no_note_and_after_three_seconds_adds_one()
+        public async Task A_change_of_place_inside_three_seconds_still_adds_a_note_for_the_new_place()
         {
             var (f, c, heard) = await FollowAsync();
             using var _f = f;
             await f.Engine.NoteAgentCallAsync("set_description", "measure:Sales/Net Sales");
-            c.Advance(2.9);
+            c.Advance(0.5);
             await f.Engine.NoteAgentCallAsync("preview_table");
-            Assert.Single(heard);
-            c.Advance(0.2);
-            await f.Engine.NoteAgentCallAsync("preview_table");
-            Assert.Equal(2, heard.Count);
+            Assert.Equal(2, heard.Count);                           // the screen follows the tool; the Studio paces the moves, not the engine
             Assert.Equal("explore/data", heard.Last().Place);
             Assert.Equal("Your assistant is looking at the data in a table.", heard.Last().Say);
+            await f.Engine.NoteAgentCallAsync("preview_table");
+            Assert.True(heard.Last().Update);                       // the same place again only counts on the note it has
+            Assert.Equal(2, (await f.Engine.GetStudioNotesAsync(null)).Notes.Count());
         }
 
         [Fact]
@@ -522,6 +576,23 @@ namespace Semanticus.Tests
             c.Advance(5);
             await f.Engine.NoteAgentCallAsync("get_lineage");
             Assert.Equal("Your assistant is tracing what depends on a field.", heard.Last().Say);   // a panel, not a button: the tool's own words
+        }
+
+        // h17 P8: What I did listed "Your assistant pressed Publish" for every preview. A preview is named as a preview and presses nothing;
+        // the one publish is listed once.
+        [Fact]
+        public async Task A_publish_preview_is_named_as_a_preview_and_the_one_publish_is_listed_once()
+        {
+            var (f, c, heard) = await FollowAsync();
+            using var _f = f;
+            for (var i = 0; i < 4; i++) { await f.Engine.NoteAgentCallAsync("deploy_live", commit: false); c.Advance(4); }
+            await f.Engine.NoteAgentCallAsync("deploy_live", commit: true);
+            var notes = (await f.Engine.GetStudioNotesAsync(null)).Notes;
+            Assert.Equal(2, notes.Length);
+            Assert.Equal("Your assistant previewed the publish.", notes[0].Say);
+            Assert.Null(notes[0].Press);
+            Assert.Equal("Your assistant pressed Publish.", notes[1].Say);
+            Assert.Equal("publish", notes[1].Press);
         }
 
         [Fact]

@@ -203,6 +203,33 @@ call:
             finally { Directory.Delete(ws, true); }
         }
 
+        private sealed class Switchable : IEntitlement
+        {
+            public bool On = true;
+            public bool IsPro => On;
+            public EntitlementInfo Info => new EntitlementInfo { Tier = On ? "pro" : "free" };
+        }
+
+        [Fact]
+        public async Task A_run_that_was_active_when_Pro_ended_can_still_be_stopped()
+        {
+            var tier = new Switchable();
+            var (e, _, ws) = Make(tier);
+            try
+            {
+                var run = await e.StartWorkflowAsync("advice", "human");
+                tier.On = false;   // a trial or Pro ends while the run is active
+                await Assert.ThrowsAsync<EntitlementException>(() => e.StartWorkflowAsync("advice", "human"));
+                var aborted = await e.AbortWorkflowAsync(run.RunId, "Pro ended", "human");
+                Assert.Equal("aborted", aborted.Status);
+                // The door names agree: Stop is free on the engine, the Studio call and the assistant tool.
+                Assert.True(FeatureMap.FreeEngineMethods.Contains("AbortWorkflowAsync"));
+                Assert.True(FeatureMap.FreeRpcMethods.Contains("abortWorkflow"));
+                Assert.True(FeatureMap.FreeOperations.Contains("abort_workflow"));
+            }
+            finally { Directory.Delete(ws, true); }
+        }
+
         [Fact]
         public async Task Abort_records_the_partial_run_and_get_run_requires_one()
         {

@@ -177,7 +177,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanSources.Words, row.Source);
             Assert.Equal(PlanDoers.Assistant, row.Doer);         // Kane, 24 Sep: a typed task's doer
             Assert.Equal(PlanStateWords.Ready, row.StateWord);
-            Assert.Equal(PlanTasks.OnNextCallNote, row.StateNote);
+            Assert.Equal(PlanTasks.AskAssistantNote, row.StateNote);   // no assistant is connected, so the offer says to ask it (hands-off D16, 13 Oct)
             Assert.Equal(PlanDoneWhen.AssistantSays, row.DoneWhen);
             Assert.Equal(1, row.Order);
 

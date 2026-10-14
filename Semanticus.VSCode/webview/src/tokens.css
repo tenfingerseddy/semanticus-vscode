@@ -24,14 +24,14 @@
 .said-line > span { flex: 1; }
 .sem-flash:is([data-object-ref], [data-ref]) { animation: sem-assistant-flash 3s ease-out; }
 @keyframes sem-assistant-flash {
-  0%, 25% { box-shadow: inset 0 0 0 2px var(--sem-doer-agent); }
+  0%, 25% { box-shadow: inset 0 0 0 2px var(--sem-actor-assistant); }
   100% { box-shadow: inset 0 0 0 2px transparent; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sem-flash:is([data-object-ref], [data-ref]) { animation: none; outline: 2px solid var(--sem-doer-agent); outline-offset: -2px; }
+  .sem-flash:is([data-object-ref], [data-ref]) { animation: none; outline: 2px solid var(--sem-actor-assistant); outline-offset: -2px; }
 }
 body.vscode-reduce-motion .sem-flash:is([data-object-ref], [data-ref]) {
-  animation: none; outline: 2px solid var(--sem-doer-agent); outline-offset: -2px;
+  animation: none; outline: 2px solid var(--sem-actor-assistant); outline-offset: -2px;
 }
 :root {
   /* spacing scale: the only lengths allowed for padding, margin and gap */
@@ -137,13 +137,13 @@ body.vscode-reduce-motion .sem-flash:is([data-object-ref], [data-ref]) {
   --sem-on-accent: #04241A;
   --sem-accent-soft: color-mix(in srgb, var(--sem-accent) 16%, transparent);
   --sem-mark: var(--sem-accent);
-  /* Colour level B (Kane, 24 September 2026): colour carries meaning only. Status is green, yellow and red; who
-     does a step is blue for Semanticus, orange for you and purple for your assistant. Each hue is a VS Code chart
-     colour mixed toward the text colour by --sem-hue-mix, so it follows the theme and stays readable as text:
-     the theme's own warning yellow measured 3.1:1 on Light Modern's white, and the mix lifts it past 4.5:1.
-     test/token-contrast.test.mjs checks every hue on the page, the inset and every tint in each theme.
-     charts.orange is VS Code's find-match highlight, which ships see-through (#EA5C0055) and is unset in high
-     contrast, so its alpha is dropped before the mix and the fallback covers the themes that leave it unset. */
+  /* Colour level B (Kane, 24 September 2026): colour carries meaning only. Status is green, yellow and red. Who does a
+     step is one colour per actor, everywhere in the Studio (Kane, 12 October 2026: "one colour per actor"): Semanticus is
+     the app's jade, you are blue, and your assistant, whichever it is, is purple. Orange belongs to no actor; amber and
+     red stay for real warnings and errors. Blue and purple are VS Code chart colours mixed toward the text colour by
+     --sem-hue-mix, so they follow the theme and stay readable as text: the theme's own warning yellow measured 3.1:1 on
+     Light Modern's white, and the mix lifts it past 4.5:1. test/token-contrast.test.mjs checks every hue on the page,
+     the inset and every tint in each theme. */
   /* Dark knobs: the design's 80% hue and 11% tint put red and orange text on a tint at 4.2:1 on Dark Modern, so
      the hues sit a little nearer the text colour (70%) and the tints are a little softer (9%). */
   --sem-hue-mix: 70%;
@@ -155,22 +155,42 @@ body.vscode-reduce-motion .sem-flash:is([data-object-ref], [data-ref]) {
   --sem-good-step: 0;
   --sem-warn-step: 0;
   --sem-bad-step: 0;
-  --sem-engine-step: 0;
   --sem-you-step: 0;
-  --sem-agent-step: 0;
-  --sem-you-src: rgb(from var(--vscode-charts-orange, #D18616) r g b / 1);
+  --sem-assistant-step: 0;
+  --sem-semanticus-step: 0;
   --sem-good: oklab(from color-mix(in srgb, var(--vscode-charts-green, #89D185) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-good-step)) a b);
   --sem-warn: oklab(from color-mix(in srgb, var(--vscode-charts-yellow, #CCA700) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-warn-step)) a b);
   --sem-bad: oklab(from color-mix(in srgb, var(--vscode-charts-red, #F14C4C) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-bad-step)) a b);
-  --sem-doer-engine: oklab(from color-mix(in srgb, var(--vscode-charts-blue, #59A4F9) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-engine-step)) a b);
-  --sem-doer-you: oklab(from color-mix(in srgb, var(--sem-you-src) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-you-step)) a b);
-  --sem-doer-agent: oklab(from color-mix(in srgb, var(--vscode-charts-purple, #B180D7) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-agent-step)) a b);
-  /* Soft tints: behind each strip track (one per doer), behind the Needs you band, and behind a selected row.
+  /* One token per actor. Every surface that says who did or does a thing reads these three, and nothing else. */
+  --sem-actor-semanticus: oklab(from var(--sem-accent) calc(l + var(--sem-semanticus-step)) a b);
+  --sem-actor-you: oklab(from color-mix(in srgb, var(--vscode-charts-blue, #59A4F9) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-you-step)) a b);
+  --sem-actor-assistant: oklab(from color-mix(in srgb, var(--vscode-charts-purple, #B180D7) var(--sem-hue-mix), var(--sem-fg)) calc(l + var(--sem-assistant-step)) a b);
+  /* The chart palette (Kane, 12 October 2026: "align colours to the green blue and purple scheme"). Anything that shows
+     several colours at once and is not a warning (a storage chart, a node kind, a role dot, a query series) draws from
+     these six steps, and nothing else. Steps 1 to 3 are the three actor hues; steps 4 to 6 are the same hues one step
+     further from the page (lighter on a dark theme, darker on a light one, so each still reads as text). The shift is 0.17
+     of oklab lightness in the dark themes and 0.15 in the light ones, so a step and its base are 0.13 or more apart after the
+     colour is clamped to what a screen can show. Neighbours differ in hue, and a series also differs by its place and its label,
+     never by colour alone. Where a colour means an actor it stays that actor's colour. Amber and red stay for real warnings and errors, and a neutral grey is
+     for "other" and "unused". test/token-contrast.test.mjs checks every step as text on the page and every tint, and
+     that every pair of the six is distinguishable, in every theme; it also fails if an old palette token comes back. */
+  --sem-series-shift: 0.17;
+  --sem-series-1: var(--sem-actor-semanticus);
+  --sem-series-2: var(--sem-actor-you);
+  --sem-series-3: var(--sem-actor-assistant);
+  --sem-series-4: oklab(from var(--sem-series-1) calc(l + var(--sem-series-shift)) a b);
+  --sem-series-5: oklab(from var(--sem-series-2) calc(l + var(--sem-series-shift)) a b);
+  --sem-series-6: oklab(from var(--sem-series-3) calc(l + var(--sem-series-shift)) a b);
+  /* Jev (1.5): Semanticus jade one step lighter. Jev is part of Semanticus Pro and never does a task, so it is not a fourth actor hue. */
+  --sem-jev: var(--sem-series-4);
+  --sem-on-series: var(--sem-bg);
+  --sem-series-neutral: color-mix(in srgb, var(--sem-fg) 70%, var(--sem-bg));
+  /* Soft tints: behind each strip track (one per actor), behind the Needs you band (the person's blue), and behind a selected row.
      --sem-tint-mix sets their strength; high contrast turns them off and draws an outline instead. */
   --sem-tint-mix: 9%;
-  --sem-tint-engine: color-mix(in srgb, var(--sem-doer-engine) var(--sem-tint-mix), var(--sem-bg));
-  --sem-tint-you: color-mix(in srgb, var(--sem-doer-you) var(--sem-tint-mix), var(--sem-bg));
-  --sem-tint-agent: color-mix(in srgb, var(--sem-doer-agent) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-semanticus: color-mix(in srgb, var(--sem-actor-semanticus) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-you: color-mix(in srgb, var(--sem-actor-you) var(--sem-tint-mix), var(--sem-bg));
+  --sem-tint-assistant: color-mix(in srgb, var(--sem-actor-assistant) var(--sem-tint-mix), var(--sem-bg));
   --sem-tint-warn: color-mix(in srgb, var(--sem-warn) var(--sem-tint-mix), var(--sem-bg));
   --sem-tint-good: color-mix(in srgb, var(--sem-good) var(--sem-tint-mix), var(--sem-bg));
   --sem-tint-select: color-mix(in srgb, var(--vscode-focusBorder, #0078D4) var(--sem-tint-mix), var(--sem-bg));
@@ -184,14 +204,14 @@ body.vscode-reduce-motion .sem-flash:is([data-object-ref], [data-ref]) {
   --sem-wash-good: color-mix(in srgb, var(--sem-good) var(--sem-wash-good-mix), transparent);
   --sem-focus: var(--vscode-focusBorder, #0078D4);
   --sem-link: var(--vscode-textLink-foreground, #4DAAFC);
-  /* Field kinds (Kane, 8 October 2026): a measure, a column and a table each take VS Code's own editor colour for that
-     kind of name (function, name, type), so a field looks in the wells the way its name looks in the DAX view. Dark
-     Modern's values here; light themes darken them (below) so each glyph holds 4.5:1 on its own wash, and high
-     contrast hands them back to the text colour (the glyph, fx or a box, still says the kind). --sem-kind-mix is the
-     wash under a chip and --sem-kind-edge its edge. test/token-contrast.test.mjs checks the three as text. */
-  --sem-kind-measure: #DCDCAA;
-  --sem-kind-column: #9CDCFE;
-  --sem-kind-table: #4EC9B0;
+  /* Field kinds: a measure, a column and a table each take a step of the chart palette above (Kane, 12 October 2026, which
+     replaced the 8 October rule that borrowed the editor's own function, name and type colours): measure green, column
+     blue, table light purple. High contrast hands them back to the text colour (the glyph, fx or a box, still says the
+     kind). --sem-kind-mix is the wash under a chip and --sem-kind-edge its edge. test/token-contrast.test.mjs checks the
+     three as text. */
+  --sem-kind-measure: var(--sem-series-1);
+  --sem-kind-column: var(--sem-series-2);
+  --sem-kind-table: var(--sem-series-6);
   --sem-kind-mix: 16%;
   --sem-kind-edge: 55%;
   --sem-strong-border: var(--sem-border);
@@ -207,13 +227,11 @@ body.vscode-light, body.vscode-high-contrast-light {
   /* Light themes mix the hues further toward the text colour, and the tints are softer. */
   --sem-hue-mix: 55%;
   --sem-tint-mix: 7%;
-  --sem-kind-measure: #795E26;
-  --sem-kind-column: #005FB8;
-  --sem-kind-table: #1A6478;
   --sem-kind-mix: 10%;
   --sem-kind-edge: 45%;
   /* A card is darker than the page here, so stepping back toward the page is stepping lighter. */
   --sem-recess: 0.03;
+  --sem-series-shift: -0.15;
   /* A lighter menu shadow: under the dark one, muted text measured 4.46:1 on a Light Modern card beside a menu's
      edge (#E9E9E9). */
   --sem-shadow-pop-alpha: .10;
@@ -234,6 +252,7 @@ body.vscode-high-contrast, body.vscode-high-contrast-light {
   --sem-on-accent: var(--sem-bg);
   --sem-accent-soft: transparent;
   --sem-mark: var(--sem-fg);
+  --sem-actor-semanticus: color-mix(in srgb, var(--vscode-charts-green, #89D185) var(--sem-hue-mix), var(--sem-fg));
   --sem-strong-border: var(--vscode-contrastActiveBorder, #F38518);
   /* High contrast chart colours are already strong enough to read as they are, and tints hand back to the
      theme: a Needs you band or a selected row is outlined instead, and the Optimize chips' washes go too (their
@@ -265,7 +284,7 @@ body:not(.vscode-high-contrast) :where(
   .area-tabs-create-menu, .studio-chip-menu, .sem-rowmenu-pop, .sem-canvas-chip, .hub-menu, .hub-job-opts, .hub-pop,
   .pw-toast, .sem-wf-author-head, .sem-wf-canvas-stage, .sem-wf-canvas-idchip, .sem-wf-drawer, .sem-wf-outline,
   .sem-wf-form-card, .sem-wf-preview, .sem-wf-new, .sem-wf-draft-host, .sem-wf-side, .sem-wf-toast, .sem-wf-ab,
-  .pw-list, .pw-starts, .ph-rows, .sem-wf-list, .xe-grid-framed, .xe-edge-box, .plan-wc,
+  .pw-list, .pw-starts, .ph-rows, .sem-wf-list, .xe-grid-framed, .xe-edge-box, .plan-wc, .rc,
   [style*="background: var(--sem-surface)"], [style*="background-color: var(--sem-surface)"]
 ) > * {
   --sem-ground: var(--sem-surface);
@@ -295,17 +314,15 @@ body:is([data-vscode-theme-id="Light+"], [data-vscode-theme-id="Visual Studio Li
 /* Hue steps (coordinator, 27 September 2026): where a theme's own chart colour, mixed at --sem-hue-mix, falls
    under 4.55:1 on its page, a card, a mark, a hover or a tint, that hue steps its lightness away from the page
    (darker in a light theme, lighter in a dark one) by the smallest half step that holds everywhere, plus one
-   half step of margin. Quiet Light's charts.orange is its find highlight, a pink (#EDC9D8), so its doer orange
-   starts from VS Code's default find-match orange, the one every other light theme uses. Abyss's is a grey
-   (#eeeeee44), which mixes to a grey and leaves the You track with no hue at all, so it starts from the same
-   default; token-contrast.test.mjs measures every doer's oklab chroma to catch the next theme that does this. */
-body:is([data-vscode-theme-id="Light+"], [data-vscode-theme-id="Visual Studio Light"]) { --sem-warn-step: -0.045; --sem-you-step: -0.02; }
-body[data-vscode-theme-id="Solarized Light"] { --sem-good-step: -0.015; --sem-warn-step: -0.065; --sem-you-step: -0.035; }
-body[data-vscode-theme-id="Quiet Light"] { --sem-good-step: -0.02; --sem-warn-step: -0.065; --sem-you-step: -0.04; --sem-you-src: #EA5C00; }
-body[data-vscode-theme-id="Solarized Dark"] { --sem-bad-step: 0.02; --sem-you-step: 0.015; }
-body[data-vscode-theme-id="Abyss"] { --sem-you-src: #EA5C00; }
-body[data-vscode-theme-id="Monokai"] { --sem-bad-step: 0.025; --sem-you-step: 0.02; }
-body[data-vscode-theme-id="Tomorrow Night Blue"] { --sem-bad-step: 0.03; --sem-you-step: 0.02; }
+   half step of margin. Blue and purple held in every theme at step 0; Semanticus is the jade, which holds by itself
+   except on a tint in Solarized Light and Quiet Light, where it steps a little darker. token-contrast.test.mjs measures every actor's oklab chroma, so a theme whose chart
+   colour has no hue (Abyss's orange was a grey) is caught the day it is used. */
+body:is([data-vscode-theme-id="Light+"], [data-vscode-theme-id="Visual Studio Light"]) { --sem-warn-step: -0.045; }
+body[data-vscode-theme-id="Solarized Light"] { --sem-good-step: -0.015; --sem-warn-step: -0.065; --sem-semanticus-step: -0.015; }
+body[data-vscode-theme-id="Quiet Light"] { --sem-good-step: -0.02; --sem-warn-step: -0.065; --sem-semanticus-step: -0.02; }
+body[data-vscode-theme-id="Solarized Dark"] { --sem-bad-step: 0.02; }
+body[data-vscode-theme-id="Monokai"] { --sem-bad-step: 0.025; }
+body[data-vscode-theme-id="Tomorrow Night Blue"] { --sem-bad-step: 0.03; }
 /* Wash steps: a wash darkens a light card, and in the two themes whose own text colour is already pale (#616161)
    that took the Optimize chips' plain text under 4.5:1. At 12% and 14% they measured 4.45 and 4.42:1 on the card
    in token-contrast.test.mjs and 4.28 and 4.27:1 off the pixels in tools/uishot/verify-surface-r2-drive.mjs. 10%

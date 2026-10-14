@@ -62,8 +62,10 @@ namespace Semanticus.Engine
             // The Studio wire (1.4): the assistant says something, suggests a next step, or starts a call.
             _sessions.Bus.StudioShow += OnStudioShow;
             _sessions.Bus.StudioSuggest += OnStudioSuggest;
+            _sessions.Bus.StudioNextStep += OnStudioNextStep;
             _sessions.Bus.StudioAnswer += OnStudioAnswer;
             _sessions.Bus.AgentCall += OnAgentCall;
+            _sessions.Bus.EntitlementChanged += OnEntitlementChanged;
             _sessions.Bus.HumanClientAttached = () => { lock (_gate) return _clients.Count > _agentClients.Count; };
         }
 
@@ -85,8 +87,11 @@ namespace Semanticus.Engine
         private void OnActivity(ActivityEvent e) => Broadcast("model/activity", e);
         private void OnStudioShow(StudioNote n) => Broadcast("studio/show", n);
         private void OnStudioSuggest(StudioSuggestion v) => Broadcast("studio/suggest", v);
+        private void OnStudioNextStep(NextStepView v) => Broadcast("studio/nextStep", v);
         private void OnStudioAnswer(StudioAnswer v) => Broadcast("studio/answer", v);
         private void OnAgentCall(AgentCallEvent v) => Broadcast("assistant/call", v);
+        // A licence applied, removed, or past its end (the free Pro month ending while a window is open).
+        private void OnEntitlementChanged(Entitlement.EntitlementInfo v) => Broadcast("entitlement/didChange", v);
         private void OnLayoutChanged(LayoutChange v) => Broadcast("layout/didChange", v);
         private void OnWorkflowChanged(WorkflowRunView v) => Broadcast("workflow/didChange", v);
         private void OnWorkflowLibraryChanged(WorkflowInfo[] v) => Broadcast("workflow/libraryDidChange", v);
@@ -158,7 +163,7 @@ namespace Semanticus.Engine
                 // F-246: every request on this connection is stamped with its id, so a commit knows who sent it, and
                 // an agent connection is a reader of the change journal from this moment on (its own commits excluded).
                 connectionId = "rpc:" + Interlocked.Increment(ref _nextConnection);
-                rpc = new WriterStampedJsonRpc(CreateHandler(pipe), connectionId, _engine);
+                rpc = new WriterStampedJsonRpc(CreateHandler(pipe), connectionId, _engine, role == RpcConnectionRole.Human);
                 var reader = role == RpcConnectionRole.Human ? null : connectionId;
                 if (reader != null) _sessions.Changes.Register(reader);
                 rpc.AddLocalRpcTarget(new EngineRpcTarget(_engine, role == RpcConnectionRole.Human ? "human" : "agent", reader));
@@ -197,8 +202,11 @@ namespace Semanticus.Engine
         {
             private readonly string _writer;
             private readonly IEngine _engine;
-            public WriterStampedJsonRpc(IJsonRpcMessageHandler handler, string writer, IEngine engine = null) : base(handler)
+            private readonly bool _human;
+
+            public WriterStampedJsonRpc(IJsonRpcMessageHandler handler, string writer, IEngine engine = null, bool human = true) : base(handler)
             {
+                _human = human;
                 _writer = writer;
                 _engine = engine;
             }
@@ -215,7 +223,10 @@ namespace Semanticus.Engine
                 request.TryGetTopLevelProperty<string>(RequestModelIdentity.WireName, out var named);
                 // Round 3: the extension's own writer says it names a model on EVERY request. One that says so and names none could not tell which model it meant.
                 request.TryGetTopLevelProperty<bool>(RequestModelIdentity.StrictWireName, out var strict);
+                // A page's button says so on the request (SignInPress): only then may a sign-in window open for it.
+                request.TryGetTopLevelProperty<bool>(SignInPress.WireName, out var pressed);
                 using (RequestModelIdentity.Begin(named, strict))
+                using (pressed && _human ? SignInPress.Press() : null)   // only a person's connection can press: an assistant's "pressed" is ignored
                 using (ChangeWriter.Begin(_writer))
                 using (McpHealthAppender.TaskCause(_engine, _writer))
                     return await base.DispatchRequestAsync(request, targetMethod, cancellationToken).ConfigureAwait(false);
@@ -263,8 +274,10 @@ namespace Semanticus.Engine
             _sessions.Bus.SessionChanged -= OnSessionChanged;
             _sessions.Bus.StudioShow -= OnStudioShow;
             _sessions.Bus.StudioSuggest -= OnStudioSuggest;
+            _sessions.Bus.StudioNextStep -= OnStudioNextStep;
             _sessions.Bus.StudioAnswer -= OnStudioAnswer;
             _sessions.Bus.AgentCall -= OnAgentCall;
+            _sessions.Bus.EntitlementChanged -= OnEntitlementChanged;
             _sessions.Bus.HumanClientAttached = null;
             JsonRpc[] snapshot;
             lock (_gate) { snapshot = _clients.ToArray(); _clients.Clear(); _agentClients.Clear(); }

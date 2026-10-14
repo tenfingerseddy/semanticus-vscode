@@ -456,7 +456,7 @@ namespace Semanticus.Engine
 
                 // Count the committed result, before the slower plan refresh.
                 NoteProFixes(s.Id, item, (report.Items ?? Array.Empty<ChangeItem>()).Count(i =>
-                    string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase)));
+                    string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase)), origin: origin);
                 // The automatic format lines this approval left out (never written), named with their own reason.
                 var leftOut = (report.Items ?? Array.Empty<ChangeItem>())
                     .Where(i => string.Equals(i.Status, "skipped", StringComparison.OrdinalIgnoreCase) && IsAutomaticFormatWrite(i)).ToList();
@@ -876,6 +876,8 @@ namespace Semanticus.Engine
                     // Nothing for Semanticus to run is still a press: the assistant's rows go on its queue (verifier, 11 Oct: Kane's model
                     // had only assistant rows left, and the press said "nothing is ready" and queued nothing). A refusal hands nothing over.
                     if (run.NothingToRun) await QueueAssistantRowsAfterRunAsync(bound, first).ConfigureAwait(false);
+                    if (run.WentBack.Count > 0)
+                        first.Sentence = ((first.Sentence ?? "").Trim() + " " + WentBackSentence(run.WentBack.Select(w => w.Title).Distinct(StringComparer.Ordinal).ToList())).Trim();
                     return first;
                 }
 
@@ -900,7 +902,13 @@ namespace Semanticus.Engine
                     foreach (var skip in next.Skipped.Where(x => x.What == null && x.ItemId != null)) attempted.Add(skip.ItemId);
                     merged = MergeWaves(merged, next, run, bound, stopped: false);
                 }
-                merged.Unsaved = s.HasUnsavedEdits;
+                // A row whose earlier Jev answer no longer fit the model left the plan and went back to Jev. One true sentence names it.
+                if (run.WentBack.Count > 0)
+                {
+                    var names = run.WentBack.Select(w => w.Title).Distinct(StringComparer.Ordinal).ToList();
+                    merged.Sentence = ((merged.Sentence ?? "").Trim() + " " + WentBackSentence(names)).Trim();
+                }
+                merged.Unsaved = await UnsavedOnWriterAsync(s).ConfigureAwait(false);
                 merged.CanSave = merged.Unsaved;   // the result line offers Save on every model; on a live one the window's Save writes to the service (D9). Run never saves by itself.
                 await QueueAssistantRowsAfterRunAsync(bound, merged).ConfigureAwait(false);
                 return merged;
@@ -910,7 +918,7 @@ namespace Semanticus.Engine
 
         /// <summary>The most a press waits for Jev to look again at the rows the last batch changed. Jev answers a table in a few seconds; this only
         /// bounds a Jev that never answers, and then the row is left out and named as before.</summary>
-        internal static TimeSpan JevLookAgainWait = TimeSpan.FromSeconds(120);
+        internal static TimeSpan JevLookAgainWait = TimeSpan.FromSeconds(15);
 
         /// <summary>When the Semanticus rows are done, the assistant's rows go on its queue (Kane, 11 Oct: he had to switch to Claude Code
         /// and type an instruction for 8 rows). A found row becomes a task linked to it, and the receipt says so. The queue switch is left as
@@ -929,7 +937,7 @@ namespace Semanticus.Engine
             {
                 if (!PlanMemoryStillOpen(bound)) return;
                 // The press already wrote: a row that finished or moved since the read is simply not queued, never a failed press.
-                try { await GiveRowToAssistantAsync(row.Id).ConfigureAwait(false); }
+                try { await GiveRowToAssistantAsync(row.Id, "semanticus").ConfigureAwait(false); }
                 catch (ArgumentException) { }
             }
             if (!PlanMemoryStillOpen(bound)) return;
@@ -962,23 +970,69 @@ namespace Semanticus.Engine
             // The batch before can make measures that have no row yet (Kane, 11 Oct: the Tidy rows for the press's own new measures
             // came only after it ended). So Jev is started for this revision whether or not a Ready row looks stale, the press follows
             // a partial run to its end, and only the plan read after Jev settled decides that the press is done. Bounded by the wait.
+            // A Jev that does not answer in that time is not waited for again in the same press (Kane's 10 rows would each wait 120 s):
+            // Semanticus stands in for it with Jev's earlier answers, checked against the model as it is (StandInForSilentJevAsync).
             var clock = System.Diagnostics.Stopwatch.StartNew();
             var waited = false;
-            while (PlanMemoryStillOpen(bound))
+            while (PlanMemoryStillOpen(bound) && !run.JevSilent)
             {
                 var state = await KickJevFamiliesAsync(bound).ConfigureAwait(false);
                 if (!state.Live && !waited) return plan;   // no Jev in this session: nothing to wait for, and no second read
-                if (!state.Pending) return await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
-                foreach (var row in PlanReadySet.JevRowsLookingAgain(plan.Items, leftOut))
-                    PublishRun(run, wave, PlanRunPhases.Work, new[] { row.Id });
+                if (!state.Pending) { plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan; break; }
+                var looking = PlanReadySet.JevRowsLookingAgain(plan.Items, leftOut).Select(r => r.Id).ToArray();
                 var left = JevLookAgainWait - clock.Elapsed;
                 waited = true;
-                if (left <= TimeSpan.Zero || !await JevSettledAsync(left).ConfigureAwait(false))
-                    return await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+                if (left <= TimeSpan.Zero || !await WaitForJevAsync(run, wave, looking, left, clock).ConfigureAwait(false))
+                {
+                    run.JevSilent = true;
+                    plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+                    break;
+                }
                 plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
             }
+            if (!PlanMemoryStillOpen(bound)) return plan;
+            var stale = PlanReadySet.StaleJevRows(plan.Items, leftOut);
+            var before = run.WentBack.Count;
+            if (stale.Count > 0 && await StandInForSilentJevAsync(s, bound, stale, run.WentBack).ConfigureAwait(false))
+                plan = await ComposeBoundAsync(bound, null).ConfigureAwait(false) ?? plan;
+            // A row that went back to Jev is told to the window at once, so it never sits on "Waiting for Jev" until the receipt.
+            foreach (var (id, _) in run.WentBack.Skip(before))
+                PublishRun(run, wave, PlanRunPhases.Skipped, new[] { id }, reason: "Jev is looking at this again, because its earlier answer no longer fits the model.");
             return plan;
         }
+
+        /// <summary>Waits for Jev to settle, at most <paramref name="left"/>, and tells the window every second how long it has waited
+        /// ("Waiting for Jev, 0:08"). True when Jev settled in time.</summary>
+        private async Task<bool> WaitForJevAsync(RunClock run, int wave, string[] looking, TimeSpan left, System.Diagnostics.Stopwatch clock)
+        {
+            var settled = JevSettledAsync(left);
+            while (true)
+            {
+                if (looking.Length > 0)
+                    _sessions.Bus.PublishRunProgress(new PlanRunProgress
+                    {
+                        RunId = run.Id, ItemIds = looking, Phase = PlanRunPhases.WaitJev, Wave = wave, WaitedSeconds = (int)clock.Elapsed.TotalSeconds, Ms = run.Watch.ElapsedMilliseconds,
+                    });
+                if (settled.IsCompleted) break;
+                await Task.WhenAny(settled, Task.Delay(1000)).ConfigureAwait(false);
+            }
+            return await settled.ConfigureAwait(false);
+        }
+
+        /// <summary>Whether the model has unsaved edits, read where the model's writers run. The undo stack is a plain stack: read from a
+        /// background thread while another writer pushes to it, it threw "Collection was modified" and a finished press ended in an error
+        /// (measured twice on the Yoga, 13 Oct). A read that still fails says there is something to save, which only offers Save.</summary>
+        private static async Task<bool> UnsavedOnWriterAsync(Session s)
+        {
+            try { return await s.ReadAsync(_ => s.HasUnsavedEdits).ConfigureAwait(false); }
+            catch (InvalidOperationException) { return true; }
+        }
+
+        /// <summary>Jev is still looking at the rows that went back to it, and runs them when it answers.</summary>
+        internal static string WentBackSentence(IReadOnlyList<string> names) =>
+            "Jev is still looking at " + names.Count + ": " + string.Join("; ", names.Take(3).Select(Lower))
+            + (names.Count > 3 ? "; and " + (names.Count - 3) + " more" : "")
+            + ". Its earlier answer no longer fits the model, so " + (names.Count == 1 ? "it runs" : "they run") + " when Jev answers.";
 
         /// <summary>One press's clock and name. Every event of the press carries the same run id and the milliseconds since the press began.</summary>
         private sealed class RunClock
@@ -988,6 +1042,10 @@ namespace Semanticus.Engine
             public System.Diagnostics.Stopwatch Watch { get; }
             /// <summary>The first batch found nothing to write (no row Ready, or every Ready row left out), as opposed to a refusal.</summary>
             public bool NothingToRun { get; set; }
+            /// <summary>Jev did not settle in the wait this press allowed, so the press does not wait for it again.</summary>
+            public bool JevSilent { get; set; }
+            /// <summary>The rows whose earlier Jev answer no longer fit the model, so they left the plan and went back to Jev.</summary>
+            public List<(string Id, string Title)> WentBack { get; } = new List<(string Id, string Title)>();
         }
 
         private void PublishRun(RunClock run, int wave, string phase, string[] itemIds, int? changes = null, string reason = null) =>
@@ -1053,6 +1111,13 @@ namespace Semanticus.Engine
                 if (!IsPersonOrigin(origin) && !string.Equals(plan.ReadyDigest ?? "", quoted, StringComparison.OrdinalIgnoreCase))
                     return await BulkRefusedAsync(bound, null, null, s.Revision, origin, PlanMovedSentence).ConfigureAwait(false);
                 readAt = plan.Revision;
+                // A Ready Jev row already stale at the start (the model changed after Jev looked) gets the same wait and the same stand-in
+                // a later batch gets, so the first press runs it instead of leaving it out (Kane, 13 Oct: "does nothing").
+                if (wave == 1 && PlanReadySet.StaleJevRows(plan.Items, leftOut).Any(PlanReadySet.IsReady))
+                {
+                    plan = await LetJevLookAgainAsync(s, bound, run, wave, plan, leftOut).ConfigureAwait(false);
+                    readAt = plan.Revision;
+                }
             }
             else if (s.Revision != composed.Revision)
             {
@@ -1243,6 +1308,9 @@ namespace Semanticus.Engine
         {
             if (skipped == null || skipped.Count == 0) return "";
             var rows = skipped.Where(x => x.What == null).ToList();
+            // A row Jev is still looking at is not a failure: it runs when Jev answers, and the press says so in one plain line.
+            var jevLooking = rows.Where(x => (x.Reason ?? "").StartsWith(JevStillLookingReason, StringComparison.Ordinal)).ToList();
+            rows = rows.Except(jevLooking).ToList();
             // A line the person's acceptance left out at apply (accepted after the row was worked out) is named as that, not as a removal.
             var accepted = skipped.Where(x => x.What != null && (x.Reason == WaivedAfterPlannedNote || x.Reason == DeclinedChangeNote)).ToList();
             var fixes = skipped.Where(x => x.What != null && !accepted.Contains(x) && x.IsFix).ToList();
@@ -1252,6 +1320,8 @@ namespace Semanticus.Engine
             if (accepted.Count > 0)
                 parts.Add(CountOf(accepted.Count, "change was", "changes were") + " left out because you accepted "
                           + (accepted.Count == 1 ? "it" : "them") + ": " + string.Join(", ", accepted.Select(l => l.What)) + ".");
+            if (jevLooking.Count > 0)
+                parts.Add("Jev is still looking at " + jevLooking.Count + "; " + (jevLooking.Count == 1 ? "it runs" : "they run") + " when Jev answers.");
             if (rows.Count > 0)
                 parts.Add(CountOf(rows.Count, "task was", "tasks were") + " left out: "
                           + string.Join("; ", rows.Take(5).Select(r => Lower(r.Title) + " (" + r.Reason.TrimEnd('.') + ")"))
@@ -1394,7 +1464,7 @@ namespace Semanticus.Engine
                 .Where(i => string.Equals(i.Status, "applied", StringComparison.OrdinalIgnoreCase)).Select(i => i.Id),
                 StringComparer.OrdinalIgnoreCase);
             foreach (var (item, kept) in stillReady)
-                NoteProFixes(s.Id, item, kept.Count(l => landedIds.Contains(l.PlanItemId)));
+                NoteProFixes(s.Id, item, kept.Count(l => landedIds.Contains(l.PlanItemId)), origin: origin);
             // The receipt names what was written: a line the batch left out (in use, or a fix the row refuses) is not in it.
             var leftOutLines = new HashSet<string>(
                 (report.Items ?? Array.Empty<ChangeItem>())
@@ -1437,19 +1507,21 @@ namespace Semanticus.Engine
             // As in approve: the batch has committed, so a model exchanged after it does not make the
             // changes untrue. The sentence says what happened and the plan is left null.
             var left = SkippedSentence(skipped);
+            var unsaved = await UnsavedOnWriterAsync(s).ConfigureAwait(false);
             return new ApplyPlanItemsResult
             {
                 Performed = total > 0,
                 Applied = total,
-                ItemIds = stillReady.Select(r => r.Item.Id).ToArray(),
+                // Only the rows where something landed: "2 tasks" must not count a row whose every line was left out (Kane, 13 Oct 2026).
+                ItemIds = stillReady.Where(r => r.Kept.Length == 0 || r.Kept.Any(l => !leftOutLines.Contains(l.PlanItemId ?? ""))).Select(r => r.Item.Id).ToArray(),
                 Skipped = skipped.ToArray(),
                 Revision = report.Revision,
                 EntryId = entryId,
                 EntryIds = entryId == null ? Array.Empty<string>() : new[] { entryId },
                 Waves = total > 0 ? 1 : 0,
                 AlreadyIn = alreadyIn,
-                Unsaved = s.HasUnsavedEdits,
-                CanSave = s.HasUnsavedEdits,
+                Unsaved = unsaved,
+                CanSave = unsaved,
                 Plan = applied,
                 Sentence = "Applied " + CountOf(total, "change", "changes") + " as one step you can undo."
                          + (alreadyIn == 0 ? ""
@@ -1464,9 +1536,11 @@ namespace Semanticus.Engine
         /// again by Jev itself, on the next read of the plan: the press that just wrote moved the model, so Jev looks again. Telling the person to
         /// "work them out again" sent them to cancel it, which drops Jev's lines and leaves the row empty until Jev answers again (M11 join part 4,
         /// E2, measured on the 15-table model with Jev live). Any other row is worked out again by the person, as before.</summary>
+        internal const string JevStillLookingReason = "Jev is still looking at what the last step changed, and this task runs when Jev answers.";
+
         internal static string StaleRowSentence(ModelPlanItem item) =>
             item != null && item.Id != null && item.Id.StartsWith("jev.", StringComparison.Ordinal)
-                ? "Jev did not finish looking at what the last step changed during this run. Open this task on the Plan to see what remains."
+                ? JevStillLookingReason + " Open this task on the Plan to see what remains."
                 : "The model changed after these changes were worked out. Open the task again to get new changes, then press Run the plan.";
 
         /// <summary>"Nothing was changed, because of this item", then the item's own reason.</summary>
@@ -1633,7 +1707,7 @@ namespace Semanticus.Engine
             // (Plan/LocalEngine.PlanBestPractice.cs). Worked out on the model as it is now.
             if (IsBpaFixItem(item.Id))
             {
-                var (bpaLines, bpaRefused) = BpaPlanLines(m, BpaAnalyzer.Analyze(m, GetBpaRules(m)), ReadinessSafeLines(m, card));
+                var (bpaLines, bpaRefused) = BpaPlanLines(m, BpaAnalyzer.Analyze(m, GetBpaRules(m)), ReadinessSafeLines(m, card, JevDecidedFinding));
                 seeds.AddRange(bpaLines);
                 refused.AddRange(bpaRefused);
                 return (seeds, refused);

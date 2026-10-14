@@ -23,6 +23,7 @@ import { useFeature, useLockedTools, ProBadge, PENDING_ACCESS } from './pro';
 import { featureOfTool } from './features';
 import { ProPreview } from './propreview';
 import { ProChip, ProPage } from './propage';
+import { TrialEndingLine } from './trialline';
 import { DaxModelProvider } from './daxeditor';
 import { DaxLabTabStateProvider, DaxLabView, useDaxLabBusy } from './daxlab';
 import { AskDataView } from './askdata';
@@ -42,6 +43,13 @@ import { WorkflowsView, type WorkflowRunView } from './workflows';
 import { emptyRuns, reduceRuns, liveRuns, mostRecentLive, runById, isRunNotFound, type RunMapState, type FoldOpts } from './workflowruns.mjs';
 import { anchorOf, normalizeStorageMode, snapKey, scanMatchesAnchor, scanUsableDuringTransition, storageEvidenceLevel, relationshipAllowsStorageEdits, relationshipAllowsReverifiedDeletePlan, compareDecision, shouldStoreAsLast, resolvedClaimAllowed, introducedClaimAllowed, refIsAmbiguous, type StorageMode, type StorageEvidenceLevel } from './storagecalc.mjs';
 import { busyAffordance } from './tabbusy.mjs';
+import { linkWork } from './personality/link-state';
+import { wirePersonality } from './personality/link';
+import { onPlanRunProgress, onProgress, postToHost } from './bridge';
+import { plainRuleName } from './rule-words';
+
+// The personality (1.5): The Link hears the real work, and the Personality and Sounds switches write through the host.
+wirePersonality({ onAssistantCall, onActivity, onProgress, onPlanRunProgress, postToHost });
 import { AiInstructionsPage, type InstructionsTab } from './instructions';
 import { PermissionsView, permissionPresetDescription, publishPermissionDescription, type AgentPolicy } from './permissions';
 import { CustomRulesPanel } from './rulesauthor';
@@ -57,6 +65,7 @@ import { ProDecisionsHost } from './decisions-settings';
 import { findBoxFor, namesOfTarget } from './search-names';
 import { band } from './readinessband.mjs';
 import { SCAN_PAGE_OF_TOOL } from './studio/checks-run';
+import { GradeFlip, BigWin } from './personality/motion';
 import { RagBars } from './ragbars';
 import { AREA_ALIASES, DESTINATION_OF_TOOL, PLAN_START_TARGET, SQL_DRAFT_TARGET, areaHomeTool, landingOf, objectLabel, objectToRef, refToObject, tableOfObject, type Area, type Route, type Seed, type ToolId } from './route';
 
@@ -766,6 +775,7 @@ export function App() {
         }} /> : null}>
       <ToolErrorBoundary resetKey={tab}>
       <>
+      <TrialEndingLine hidden={tab === 'pro'} />
       {/* A test run can carry substantial cell evidence, so keep the view alive across Studio navigation instead
           of copying it into persisted webview state. The session key still discards it when a different model opens. */}
       {session?.sessionId && <div className={tab === 'tests' || tab === 'evidence' ? 'h-full' : 'hidden'}><TestsView key={session.sessionId} navTarget={testTarget} onNavConsumed={consumeRouteSeed}
@@ -798,7 +808,7 @@ export function App() {
         // tied together rather than integrated", so the shared chrome went and the real merge is the
         // Fix milestone's.
         <PlanView sessionId={session.sessionId} revision={session.revision} changeNonce={modelChangeNonce}
-          modelName={session.modelName} hostSession={session} compatibilityLevel={session.compatibilityLevel}
+          modelName={session.modelName} hostSession={session}
           focus={tab === 'optimize' ? 'changes' : tab === 'spec' ? 'draft' : undefined}
           focusNonce={route.nonce + planSeed}
           draftStartSql={draftStartSql} onDraftStartTaken={() => consumeRouteSeed(draftStartSql)}
@@ -1173,6 +1183,9 @@ function Shell({ route, onTab, onGroup, onDone, onShortcuts, unseen, pendingAppr
     if (storageBusy) surfaces.push('stats');
     return busyAffordance(surfaces, tab, activeGroup, TAB_TO_GROUP);
   }, [lineageBusy, daxLabBusy, storageBusy, tab, activeGroup]);
+  // The Link in the status line works while the person's own job runs (1.5).
+  useEffect(() => { linkWork.setBusySurfaces([lineageBusy && 'lineage', daxLabBusy && 'daxlab', storageBusy && 'stats'].filter(Boolean) as string[]); },
+    [lineageBusy, daxLabBusy, storageBusy]);
   const source = shellSession?.source ? shellSession.source.replace(/[\\/]+$/, '').split(/[\\/]/).pop() : undefined;
   const publishing = context?.publishing;
   const publishTarget = publishing?.available ? (publishing.modelName || publishing.database || 'linked model') : null;
@@ -1503,14 +1516,15 @@ function Hero({ card, trend, busy, onSafe }: { card: Scorecard; trend: number[];
     <ReadyPanel>
       <div className="flex items-center gap-6">
         <div className={`flex items-baseline gap-2 shrink-0 sem-rag-${band(card.overall)}`} title={`Grade ${card.grade}. This is the AI readiness score: how well this model explains itself to AI.`}>
-          <span className="sem-rag-grade" data-testid="readiness-grade">{card.grade}</span>
+          <span className="sem-rag-grade" data-testid="readiness-grade"><GradeFlip grade={card.grade} /></span>
           <span className="sem-num sem-rag-score">{card.overall.toFixed(0)}</span>
           <span className="sem-text-meta">of 100</span>
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="sem-card-title">AI readiness</h2>
           <div className="sem-text-meta mt-1">
-            {card.findings.filter((f) => !f.waived || f.waivedAsTwin).length} findings
+            <span className="sem-motion-anchor">{card.findings.filter((f) => !f.waived || f.waivedAsTwin).length} findings
+              <BigWin kind={card.findings.length === 0 ? 'zero-findings' : undefined} eventKey={card.findings.length === 0} /></span>
           </div>
           {trend.length >= 2 && (
             <div className="mt-1" style={{ maxWidth: 320 }}><Sparkline values={trend} /></div>
@@ -1563,7 +1577,7 @@ function Findings({ card, onRescan }: { card: Scorecard; onRescan: () => void })
   const byKey = new Map(card.findings.map((f) => [f.objectRef + '|' + f.ruleId, f]));
   const toRow = (f: Finding): FindingRow => ({
     // Provenance in the rule header: a finding from a model-embedded (user-authored) rule says so.
-    ruleId: f.ruleId, ruleName: f.ruleTitle + (f.custom ? ' (custom rule)' : ''), category: f.category, severity: sevNum(f.severity),
+    ruleId: f.ruleId, ruleName: plainRuleName(f.ruleTitle) + (f.custom ? ' (custom rule)' : ''), category: f.category, severity: sevNum(f.severity),
     // Prefer the analyst rendering (agent-only op hint removed server-side); fall back to the raw message when absent
     // OR blank (defence in depth: a blank displayMessage must never render as an empty finding).
     objectRef: f.objectRef, objectName: f.objectName, message: f.displayMessage?.trim() ? f.displayMessage : f.message,
@@ -1801,7 +1815,7 @@ interface Opp {
 interface StorageFacts { revision: number; storageOpportunities?: Opp[] }
 
 function oppToRow(o: Opp): FindingRow {
-  return { ruleId: o.ruleId, ruleName: o.ruleName, category: o.group, severity: o.severity, objectRef: o.ref, objectName: o.name, message: o.message };
+  return { ruleId: o.ruleId, ruleName: plainRuleName(o.ruleName), category: o.group, severity: o.severity, objectRef: o.ref, objectName: o.name, message: o.message };
 }
 
 function snapOf(scan: ScanState, comp: { known: number; data: number; dict: number; hash: number; attributed: number }, opps: Opp[]): StorageSnap {
@@ -2552,8 +2566,8 @@ function ChangedSince({ changed, label }: { changed: { introduced: Opp[]; newlyO
       </button>
       {open && (
         <div className="mt-1 flex flex-col gap-1 pl-4">
-          {changed.introduced.map((o) => <div key={'i' + o.ruleId + o.ref} className="text-xs"><span className="xe-dot xe-dot-warn">Introduced</span> · {o.name} · {o.ruleName}</div>)}
-          {changed.newlyObserved.map((o) => <div key={'n' + o.ruleId + o.ref} className="text-xs"><span style={{ color: 'var(--sem-muted)' }}>Newly observed</span> · {o.name} · {o.ruleName}</div>)}
+          {changed.introduced.map((o) => <div key={'i' + o.ruleId + o.ref} className="text-xs"><span className="xe-dot xe-dot-warn">Introduced</span> · {o.name} · {plainRuleName(o.ruleName)}</div>)}
+          {changed.newlyObserved.map((o) => <div key={'n' + o.ruleId + o.ref} className="text-xs"><span style={{ color: 'var(--sem-muted)' }}>Newly observed</span> · {o.name} · {plainRuleName(o.ruleName)}</div>)}
           {changed.newlyObserved.length > 0 && (
             <div className="text-xs" style={{ color: 'var(--sem-muted)' }}>
               The previous scan covered only its top columns, so these cannot be confirmed as introduced since; a full-coverage scan on both sides would tell them apart.

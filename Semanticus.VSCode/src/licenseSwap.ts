@@ -6,6 +6,10 @@
 // window that had adopted an engine it did not start could only ask for a reload, so Remove license on the Pro
 // page looked like it did nothing. The restart survives only as the fallback for an engine that cannot swap.
 
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
 /// The engine's entitlement as the wire carries it (camelCased EntitlementInfo).
 export interface SwapEntitlement { tier?: string; licensedTo?: string; expiry?: number; reason?: string; features?: string[]; }
 /// Mirrors Semanticus.Engine.Entitlement.LicenseSwapResult.
@@ -53,4 +57,13 @@ export async function precheckLicense(door: LicenseSwapDoor | undefined, token: 
     } catch {
         return {};
     }
+}
+
+/// The restart fallback for a REMOVAL: a restarted engine given no token reads the user licence file that Connect
+/// another assistant wrote (SEMANTICUS_HOME, else ~/.semanticus), so it would come back on Pro. The engine does the
+/// same delete itself when it can swap; this is the same step for an engine that cannot. Only a file that is there
+/// is touched, and a file that cannot be removed is left (the restart then reports what it reads).
+export function removeMirroredLicenceFile(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): void {
+    const root = (env.SEMANTICUS_HOME || '').trim() || path.join(home, '.semanticus');
+    try { fs.rmSync(path.join(root, 'license'), { force: true }); } catch { /* read as before: the next start reports the licence it holds */ }
 }

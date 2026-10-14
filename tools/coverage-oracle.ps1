@@ -19,7 +19,7 @@ function Get-Family([string]$operation) {
         '^(edit_objects|write_words)$' { return 'metadata-and-properties' }
         '^set_object_permissions$' { return 'model-security' }
         '^plan_rows$' { return 'living-plan' }
-        '^(open_|create_model|save_model|session_info|resolve_file_recovery|get_entitlement|undo_change|redo_change|list_local_instances|list_workspace_models|list_workspace_sql_endpoints|connect_local|connect_xmla|disconnect|connection_status)' { return 'session-and-lifecycle' }
+        '^(open_|create_model|save_model|session_info|resolve_file_recovery|get_entitlement|get_trial_tally|undo_change|redo_change|list_local_instances|list_workspace_models|list_workspace_sql_endpoints|connect_assistant|connect_local|connect_xmla|disconnect|connection_status)' { return 'session-and-lifecycle' }
         '^(model_overview|get_model_summary|get_orientation|get_model_facts|get_model_fingerprint|get_model_objects|list_objects|get_object|list_measures|list_columns|get_model_graph|search_model|get_dependencies|get_dependents|script_objects)' { return 'orientation-and-model-reads' }
         '^(create_(?!linguistic_schema)|delete_object|duplicate_object|rename_object|apply_dax_script|apply_tmdl|set_compatibility_level)' { return 'object-authoring' }
         '^(get_properties|set_property|set_properties|set_description|set_display_folder|rename_display_folder|set_measure_format|set_measure_format_expression|set_column_|set_sort_by_column|set_data_category|set_summarize_by|set_relationship_|get_named_expression|list_named_expressions|update_named_expression|get_partition_m|set_partition_m|list_partitions|list_calculation_groups|list_format_templates|get_perspectives|set_perspective_member|set_calc_group_precedence|set_calc_item_format_string)' { return 'metadata-and-properties' }
@@ -27,7 +27,7 @@ function Get-Family([string]$operation) {
         '^(get_source_schema|diff_schema|apply_schema_update|preview_m|profile_m|get_source_sql|set_source_sql|get_incremental_refresh_policy|set_incremental_refresh_policy|remove_incremental_refresh_policy|list_refresh_types)' { return 'source-and-m' }
         '^(list_calendars|define_calendar|delete_calendar|tag_calendar_column|define_calendar_from_template|generate_date_table|mark_date_table|generate_time_intelligence)' { return 'calendars' }
         '^(create_role|delete_role|list_roles|set_role_|set_table_permission|set_table_ols|set_column_ols)' { return 'model-security' }
-        '^(ai_readiness_|make_model_ai_ready|apply_safe_fixes|apply_fix|get_fix_prompt|get_grounding|load_rules|reset_rules|get_custom_rules|validate_rule|create_linguistic_schema|set_synonyms|set_ai_|get_ai_instructions)' { return 'ai-readiness' }
+        '^(ai_readiness_|reading_card|fix_them|make_model_ai_ready|apply_safe_fixes|apply_fix|get_fix_prompt|get_grounding|load_rules|reset_rules|get_custom_rules|validate_rule|create_linguistic_schema|set_synonyms|set_ai_|get_ai_instructions)' { return 'ai-readiness' }
         '^(bpa_|list_waivers|waive_finding|unwaive_finding)' { return 'bpa-and-waivers' }
         '^(get_lineage|impact_assessment|unused_objects|remove_safe_objects|analyze_reports|analyze_cloud_reports|list_reports|list_report_scope|set_report_scope|check_reports)' { return 'lineage-and-impact' }
         '^(model_diff|apply_model_diff|cherry_pick|get_reference_tree|git_|create_history_checkpoint|list_history_checkpoints|restore_history_checkpoint)' { return 'compare-and-source-control' }
@@ -44,7 +44,7 @@ function Get-Family([string]$operation) {
         '^(get_layout|save_layout|export_vpax|dry_run|search_model_ex|propose_replace|replace_in_object|harness_report)' { return 'cross-cutting-tools' }
         '^(get_decision_points|set_decision_point_enabled|get_consent|set_consent|withdraw_consent|get_decision_budget|propose_measure_defaults)' { return 'typed-decisions' }
         '^(get_model_plan|get_words_queue|skip_model_plan_item|unskip_model_plan_item|model_plan_action|get_next_actions|route_ask|add_plan_target|remove_plan_target|add_plan_task|pause_plan_item|set_plan_doer|move_plan_task_up|set_assistant_queue|set_plan_task_note|remove_plan_row|restore_plan_row|refresh_plan|add_plan_repeat|set_plan_repeat|delete_plan_repeat|list_assistant_requests|claim_request|complete_request|decline_request)$' { return 'living-plan' }
-        '^(show_in_studio|suggest_next)$' { return 'studio' }
+        '^(show_in_studio|suggest_next|get_next_step|set_next_step)$' { return 'studio' }
         default { return 'unclassified' }
     }
 }

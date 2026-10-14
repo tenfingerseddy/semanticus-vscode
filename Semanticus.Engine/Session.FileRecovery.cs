@@ -104,17 +104,28 @@ namespace Semanticus.Engine
             return json.ToString();
         }
 
-        private static bool SensitiveKey(string key) => new[] { "password", "pwd", "secret", "key", "access token", "accesstoken" }
-            .Contains(key, StringComparer.OrdinalIgnoreCase);
+        // The one compound-key-aware credential classifier (AccountKey, SharedAccessSignature, ClientSecret, ApiKey, access token ...).
+        private static bool SensitiveKey(string key) => XmlaAuthHint.IsSecretKeyName(key);
 
-        internal void ClearFileRecoveryAfterSave()
+        internal void ClearFileRecoveryAfterSave(bool onlyIfPathMoved = false)
         {
+            // A save runs this twice (once when the file is marked clean, once after the path is rebased). On the same path
+            // the second run must not settle the older copy the first one just offered.
+            if (onlyIfPathMoved && SourcePath == _recoverySource) return;
             _fileRecovery = null;
             _ownsRecovery = false;
             try
             {
-                RestorePointStore.DeleteUnsaved(_recoverySource);
-                if (SourcePath != _recoverySource) RestorePointStore.DeleteUnsaved(SourcePath);
+                // A save settles the set that was offered. A parked older copy of the same file is offered next.
+                // On Save As the first run (before the path moved) already settled the old file's set and promoted its older copy.
+                // This run leaves that old file alone: nobody saw the promoted copy, and the old file offers it when it opens again.
+                var same = SourcePath == _recoverySource;
+                if (same)
+                {
+                    RestorePointStore.DeleteUnsaved(_recoverySource, keepOlder: true);
+                    _fileRecovery = RestorePointStore.PromoteOlder(_recoverySource);
+                }
+                else RestorePointStore.DeleteUnsaved(SourcePath);
             }
             catch (Exception ex) { RecoveryFailed(ex); }
             _recoverySource = SourcePath;
@@ -145,9 +156,11 @@ namespace Semanticus.Engine
                 {
                     if (!RecoveryEligible) return false;
                     if (_fileRecovery == null && !HasUnsavedEdits) return false;
-                    RestorePointStore.DeleteUnsaved(SourcePath);
-                    if (_fileRecovery == null) _discardRecovery = true;
-                    _fileRecovery = null;
+                    var hadOffer = _fileRecovery != null;
+                    RestorePointStore.DeleteUnsaved(SourcePath, keepOlder: hadOffer);
+                    if (!hadOffer) _discardRecovery = true;
+                    // Dismissing the newer set shows the older kept copy next.
+                    _fileRecovery = hadOffer ? RestorePointStore.PromoteOlder(SourcePath) : null;
                     _ownsRecovery = false;
                     return true;
                 }).ConfigureAwait(false);
@@ -162,8 +175,16 @@ namespace Semanticus.Engine
                     ModelRecovery.Apply(Model, _fileRecovery.BimJson);
                     RecordDelta(new ChangeDelta { Ref = "model", Kind = "structure", Props = new[] { "Recovery" } });
                     _model.EndUpdate();
-                    _fileRecovery = null;
                     _ownsRecovery = true;
+                    // The older kept copy is offered next. The restored work goes beside it first, so it is on disk
+                    // before the copy it came from is replaced.
+                    _fileRecovery = RestorePointStore.PeekOlder(SourcePath);
+                    if (_fileRecovery != null)
+                    {
+                        _discardRecovery = false;
+                        WriteFileRecovery();
+                        _fileRecovery = RestorePointStore.PromoteOlder(SourcePath);
+                    }
                 }
                 catch { RollBackTo(depth); throw; }
             })).ConfigureAwait(false);

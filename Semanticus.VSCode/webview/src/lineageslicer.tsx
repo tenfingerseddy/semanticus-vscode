@@ -5,13 +5,16 @@ import { KIND_COLOR, KIND_GLYPH, resolveColor, type FacetOption } from './lineag
 // badge, opening a searchable checkbox list with Select-all / Clear. Shared by the graph AND tree lineage views so a
 // builder can scope the picture to a SUBSET of tables or fields — the single search box only picks one node.
 // Closes on outside-click / Escape. Options render only while open (a 300-measure list stays cheap until needed).
-export function MultiSelect({ label, options, selected, onChange, width = 240, title }: {
+export function MultiSelect({ label, options, selected, onChange, width = 240, title, inline }: {
   label: string;
   options: FacetOption[];
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
   width?: number;
   title?: string;
+  /** Open the list in the flow, right under the button, as wide as its parent. For use inside a menu (RowMenu), whose
+   *  box clips anything that floats out of it: the floating list was cut at the menu's left edge and gave it scrollbars. */
+  inline?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
@@ -38,7 +41,7 @@ export function MultiSelect({ label, options, selected, onChange, width = 240, t
 
   const btnActive = count > 0;
   return (
-    <div ref={wrap} className="relative">
+    <div ref={wrap} className={inline ? 'w-full' : 'relative'}>
       {/* On the shared dense control scale: this button sits on a tool row beside plain buttons and segments,
           so it takes its height and padding from the scale rather than picking its own. */}
       <button className="sem-btn sem-btn-sm" onClick={() => setOpen((o) => !o)} aria-expanded={open} aria-haspopup="menu"
@@ -48,17 +51,17 @@ export function MultiSelect({ label, options, selected, onChange, width = 240, t
         <span aria-hidden style={{ opacity: 0.7 }}>▾</span>
       </button>
       {open && (
-        <div className="absolute z-20 mt-1 rounded-(--sem-radius-control) overflow-hidden" style={{ width, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>
+        <div className={(inline ? 'mt-1' : 'absolute z-20 mt-1') + ' rounded-(--sem-radius-control) overflow-hidden'} style={{ width: inline ? '100%' : width, background: 'var(--sem-surface)', border: '1px solid var(--sem-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.45)' }}>
           <div className="p-2 border-b" style={{ borderColor: 'var(--sem-border)' }}>
             <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Filter ${label.toLowerCase()}…`} spellCheck={false}
               className="w-full text-xs px-2 py-1 rounded outline-none" style={{ background: 'var(--sem-ground)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
-            <div className="flex items-center justify-between mt-1 px-1">
+            <div className="flex items-center justify-between gap-2 mt-1 px-1 whitespace-nowrap">
               <button onMouseDown={(e) => { e.preventDefault(); selectAllFiltered(); }} className="sem-btn sem-btn-sm sem-btn-quiet">Select all{ql ? ' shown' : ''}</button>
-              <span className="text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>{count} selected</span>
+              <span className="text-(length:--sem-text-label) tnum shrink-0" style={{ color: 'var(--sem-muted)' }}>{count} selected</span>
               <button onMouseDown={(e) => { e.preventDefault(); onChange(new Set()); }} className="text-(length:--sem-text-label) hover:underline" style={{ color: 'var(--sem-muted)' }}>Clear</button>
             </div>
           </div>
-          <div className="overflow-auto" style={{ maxHeight: 260 }}>
+          <div className="overflow-y-auto overflow-x-hidden" style={{ maxHeight: inline ? 200 : 260 }}>
             {filtered.length === 0 && <div className="text-(length:--sem-text-label) px-2 py-3 text-center" style={{ color: 'var(--sem-muted)' }}>No matches</div>}
             {filtered.map((o) => {
               const on = selected.has(o.value);

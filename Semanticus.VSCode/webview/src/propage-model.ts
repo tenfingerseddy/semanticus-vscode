@@ -13,7 +13,9 @@ export interface ProPageState {
   message?: string;
   key?: { result: KeyResult; licensedTo?: string };
   account?: ProAccount;
+  trial?: TrialStartState;
 }
+export interface TrialStartState { step: 'sending' | 'waiting' | 'used' | 'error' | 'on'; email?: string; message?: string }
 
 /** The header chip. Nothing at all until the entitlement has answered: a paying customer must not see
  *  Get Pro for a frame, and a free one must not see Pro. */
@@ -106,3 +108,67 @@ export const PLAN_PRICE: Record<BillingPlan, { name: string; price: string; per:
   monthly: { name: 'Monthly', price: 'USD 10', per: 'a month', note: 'Stop at the end of any month.', short: 'Monthly, USD 10' },
   yearly: { name: 'Yearly', price: 'USD 100', per: 'a year', note: 'The same as 10 months at the monthly price.', short: 'Yearly, USD 100' },
 };
+
+// ---- the free Pro month (option B, 11 Oct 2026) --------------------------------------------------------
+
+/** get_entitlement's trial fields (contract section C), camelCased. */
+export interface TrialW { tier?: string; licensedTo?: string; isTrial?: boolean; trialEndsAt?: number; trialDaysLeft?: number; trialEnded?: boolean }
+/** get_trial_tally: counted on this computer from the trial token's start. Zeros or null when not a trial. */
+export interface TallyW { startedAt?: number; changesApplied?: number; steps?: number; jevChoices?: number; workflowsRun?: number }
+
+export const TRIAL_ENDING_DAYS = 3;
+
+/** Which trial view the Pro page draws.
+ *    offer    free, never had the month: the sheet with the email field
+ *    waiting  the email went out; the page waits for the link
+ *    used     this email had its month (or the end card was put away): plain words and Buy Pro
+ *    month    a trial is on: "Your Pro month" with the tally
+ *    end      the trial ended: the same page, finished, with what is different now
+ *    none     paid Pro, or nothing known yet */
+export type TrialView = 'offer' | 'waiting' | 'used' | 'month' | 'end' | 'none';
+
+export function trialViewOf(tier: string, info: TrialW | null | undefined, start: TrialStartState | undefined, endPutAway: boolean): TrialView {
+  if (tier === 'pro') return info?.isTrial ? 'month' : 'none';
+  if (tier !== 'free') return 'none';
+  if (start?.step === 'waiting' || start?.step === 'sending') return 'waiting';
+  if (start?.step === 'used') return 'used';
+  if (info?.trialEnded) return endPutAway ? 'used' : 'end';
+  return 'offer';
+}
+
+/** The plain line for the last three days, or null before them. */
+export function trialEndingLine(info: TrialW | null | undefined): string | null {
+  if (!info?.isTrial || info.tier !== 'pro') return null;
+  const left = info.trialDaysLeft ?? 0;
+  if (left > TRIAL_ENDING_DAYS) return null;
+  if (left <= 0) return 'Pro trial ends today.';
+  return left === 1 ? 'Pro trial ends tomorrow.' : `Pro trial ends in ${left} days.`;
+}
+
+/** 1240 reads as "1,240". */
+export function countWords(n: number | undefined): string {
+  return Math.max(0, Math.floor(n ?? 0)).toLocaleString('en-US');
+}
+
+/** "11 October to 10 November 2026", or with both years when they differ. */
+export function trialSpan(startedAt: number | undefined, endsAt: number | undefined): string | null {
+  if (!startedAt || !endsAt) return null;
+  const a = longDate(startedAt), b = longDate(endsAt);
+  const ay = a.slice(-4), by = b.slice(-4);
+  return `${ay === by ? a.slice(0, -5) : a} to ${b}`;
+}
+
+export interface FirstWeekItem { key: 'apply' | 'jev' | 'workflow'; title: string; hint?: string; done: boolean }
+
+/** The first-week list: three things Pro does, each ticked from the tally. It shows for the first seven days
+ *  of the month and leaves once all three are done. Null when it should not show. */
+export function firstWeekOf(tally: TallyW | null | undefined, nowSeconds: number): FirstWeekItem[] | null {
+  if (!tally?.startedAt) return null;
+  if (nowSeconds - tally.startedAt > 7 * 86400) return null;
+  const items: FirstWeekItem[] = [
+    { key: 'apply', title: 'Apply many changes at once', hint: 'Run the plan on the Plan page. One undo takes it all back.', done: (tally.changesApplied ?? 0) > (tally.steps ?? 0) && (tally.steps ?? 0) > 0 },
+    { key: 'jev', title: 'Ask Jev to tidy your measures', hint: 'Jev picks what to fix. You keep or drop each change.', done: (tally.jevChoices ?? 0) > 0 },
+    { key: 'workflow', title: 'Run a workflow', hint: 'Work you repeat becomes steps the app checks as you go.', done: (tally.workflowsRun ?? 0) > 0 },
+  ];
+  return items.every((i) => i.done) ? null : items;
+}

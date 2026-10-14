@@ -238,8 +238,11 @@ namespace Semanticus.Tests
             var refused = await f.Engine.ModelPlanActionAsync(row.Id, "approve", "human", row.ChangeSet.Digest);
             Assert.Equal(ModelPlanChangeStates.RolledBack, refused.Plan.Items.Single(i => i.Id == row.Id).ChangeSet.State);
             var ran = await f.Engine.ApplyPlanItemsAsync(null, "human", refused.Plan.ReadyDigest);
+            // Every line dropped: Semanticus has nothing to run, so the row is the assistant's to ask about, never a Needs you beside a dead
+            // Approve (Kane, 13 Oct 2026). It still names the real reason.
             var needsYou = ran.Plan.Items.Single(i => i.Id == row.Id);
-            Assert.Equal(PlanStateWords.NeedsYou, needsYou.StateWord);
+            Assert.Equal(PlanDoers.Assistant, needsYou.Doer);
+            Assert.NotEqual(PlanStateWords.NeedsYou, needsYou.StateWord);
             Assert.Contains("NotAnAggregate", needsYou.StateNote);
             Assert.Contains("Open this task on the Plan", needsYou.StateNote);
             Assert.DoesNotContain("Pending changes", ran.Sentence);
@@ -253,52 +256,43 @@ namespace Semanticus.Tests
             Assert.Single(PlanReadySet.JevRowsLookingAgain(new[] { waiting }, new HashSet<string>()));
         }
 
+        // Kane, 13 Oct 2026: "folders and formats" rows came back after Run the plan, because a measure the summarize row made had a format
+        // and a description but no folder, so the next Jev run asked about it. The measure now arrives in its table's folder, in the same
+        // line, and Jev has nothing left to tidy. (The press still waits for Jev when a new measure has no folder to take: LetJevLookAgainAsync.)
         [Fact]
-        public async Task The_press_waits_when_its_two_new_measures_have_no_Tidy_row_yet()
+        public async Task The_two_new_measures_arrive_with_their_folder_so_there_is_no_Tidy_row_for_the_press_to_wait_for()
         {
             using var f = await ModelAsync("NewMeasures.bim");
             var oracle = new NewMeasuresOracle();
             await SummarizePlanAsync(f, oracle);
             var plan = await f.Engine.SkipModelPlanItemAsync("jev.column-summarize.table:Customer", "Outside this test.", "human");
-            var press = f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
-            try
-            {
-                var started = await Task.WhenAny(oracle.Asked.Task, press, Task.Delay(10000));
-                Assert.Same(oracle.Asked.Task, started);
-                Assert.False(ReferenceEquals(await Task.WhenAny(press, Task.Delay(100)), press),
-                    "The press ended while Jev was answering about two measures it just created.");
-            }
-            finally { oracle.Release.TrySetResult(true); }
-            var ran = await press.WaitAsync(TimeSpan.FromSeconds(20));
-            Assert.Contains("jev.measures.table:Sales", ran.ItemIds);
+            var ran = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest).WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.Contains("jev.column-summarize.table:Sales", ran.ItemIds);
             foreach (var name in new[] { "Total Sales Amount", "Total Quantity" })
                 Assert.Equal("Volume", (await f.Engine.GetObjectAsync("measure:Sales/" + name)).Properties["displayFolder"]);
+            Assert.False(oracle.Asked.Task.IsCompleted, "Jev was asked about a measure that already had its folder.");
+            Assert.DoesNotContain((await f.Engine.GetModelPlanAsync()).Items, i => i.Id.StartsWith("jev.measures.", StringComparison.Ordinal) && PlanStateWords.IsOpen(i.StateWord));
         }
 
         [Fact]
-        public async Task One_press_waits_for_new_measure_answers_and_finishes_Kanes_hidden_Sales_and_Tidy_rows()
+        public async Task One_press_finishes_Kanes_hidden_Sales_row_and_leaves_no_Tidy_row_behind()
         {
             using var f = await ModelAsync("Kane.bim");
             var oracle = new NewMeasuresOracle();
             var plan = await SummarizePlanAsync(f, oracle);
             Assert.Contains(plan.Items, i => i.Id == "jev.column-summarize.table:Sales");
             Assert.DoesNotContain(plan.Items, i => i.Id.StartsWith("jev.measures.", StringComparison.Ordinal));
-            var press = f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
-            try
-            {
-                await oracle.Asked.Task.WaitAsync(TimeSpan.FromSeconds(10));
-                var finished = await Task.WhenAny(press, Task.Delay(100));
-                Assert.False(ReferenceEquals(finished, press), "The press finished while Jev was answering about its new measures.");
-            }
-            finally { oracle.Release.TrySetResult(true); }
-            var ran = await press.WaitAsync(TimeSpan.FromSeconds(20));
+            var ran = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest).WaitAsync(TimeSpan.FromSeconds(30));
             Assert.True(ran.Performed, ran.Sentence);
-            Assert.Contains("jev.measures.table:Sales", ran.ItemIds);
-            Assert.Contains("jev.measures.table:Customer", ran.ItemIds);
+            Assert.Contains("jev.column-summarize.table:Sales", ran.ItemIds);
             var after = await f.Engine.GetModelPlanAsync();
             Assert.Empty(PlanReadySet.Rows(after.Items));
-            foreach (var table in new[] { "Sales", "Customer" })
-                Assert.Equal("Volume", (await f.Engine.GetObjectAsync("measure:" + table + "/Total " + table + " Amount")).Properties["displayFolder"]);
+            // Every measure on the model, the ones the press made too, is in the folder: nothing is left for a Tidy row.
+            var unfiled = await f.Sessions.Current.ReadAsync(m => m.AllMeasures.Where(x => string.IsNullOrWhiteSpace(x.DisplayFolder)).Select(x => x.Table.Name + "/" + x.Name).ToArray());
+            Assert.Empty(unfiled);
+            Assert.True(await f.Sessions.Current.ReadAsync(m => m.AllMeasures.Count()) >= 5, "the press made its base measures");
+            // No row comes back for the measures it made.
+            Assert.DoesNotContain(after.Items, i => i.Id.StartsWith("jev.measures.", StringComparison.Ordinal) && PlanStateWords.IsOpen(i.StateWord));
         }
 
         [Fact]
@@ -338,7 +332,8 @@ namespace Semanticus.Tests
             var ran = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
             Assert.True(ran.Performed, ran.Sentence);
             // The person paused the queue on purpose: the press queues the task but never turns the queue back on (verifier 5b).
-            Assert.Contains("1 task is queued for your assistant. The queue is paused, so it waits until you turn it on.", ran.Sentence);
+            // Two: the person's task, and saving the run's changes (the save row is the assistant's since 13 Oct).
+            Assert.Contains("2 tasks are queued for your assistant. The queue is paused, so they wait until you turn it on.", ran.Sentence);
             var queue = await f.Engine.ListAssistantRequestsAsync();
             Assert.Equal(PlanAssistantQueue.Paused, queue.Switch);
             Assert.Equal(PlanAssistantQueue.Paused, ran.Plan.AssistantQueue);

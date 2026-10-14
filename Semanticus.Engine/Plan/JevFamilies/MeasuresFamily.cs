@@ -48,8 +48,8 @@ namespace Semanticus.Engine
         /// True, as shipped: ON (Kane, 1 Oct: "the batching is the best mitigation not caps"). The comparison run of 30 September missed its fixed bar (docs/redesign/jev-batch-comparison-result.md: the unsure middle moves, sure answers stay), and Kane accepted that an unsure answer can move and arrive ticked or unticked in the reviewed Plan. JevPerObjectModeTests still proves both modes give the same plan lines. False: one request per object (the test seam JevBatchedForTest sets it).</summary>
         internal const bool Batched = true;
 
-        /// <summary>How many measures one batched request asks about (two questions each at most).</summary>
-        internal const int ChunkSize = 12;
+        /// <summary>How many measures one batched request asks about (two questions each at most: thirty questions, the most a request carries).</summary>
+        internal const int ChunkSize = 15;
 
         /// <summary>One measure the family will ask about, with everything Map needs to turn an answer into
         /// lines without reading the model again.</summary>

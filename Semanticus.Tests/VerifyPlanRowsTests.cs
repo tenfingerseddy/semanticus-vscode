@@ -137,6 +137,8 @@ namespace Semanticus.Tests
             await PressUntilQuietAsync(f.Engine);
             var given = await f.Engine.SetPlanItemDoerAsync(LocalEngine.WordsItemId, "assistant");
             var task = Assert.Single(given.Items.Where(i => i.OriginLink?.Ref == LocalEngine.WordsItemId && i.Id.StartsWith("pt-", StringComparison.Ordinal)));
+            // Every row is the assistant's task now (doer lane, 13 Oct), and the words task goes after a task that hides the same field: set that one aside so this one is ready.
+            foreach (var w in task.WaitsFor ?? Array.Empty<PlanWaitRef>()) await f.Engine.SkipModelPlanItemAsync(w.Id, "Not now", "human");
             var claim = await f.Engine.ClaimAssistantRequestAsync(task.Id);
             Assert.True(claim.Ok, claim.Message);
             var packet = (claim.Request?.Need ?? "") + "\n" + (claim.Request?.Brief ?? "") + "\n" + (claim.Request?.FullText ?? "");

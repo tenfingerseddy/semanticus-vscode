@@ -822,10 +822,12 @@ their notice is carried here.
 - Path: `System.Data.OleDb`
 - Path: `System.Security.Permissions`
 - Path: `System.Management`
+- Path: `System.Security.Cryptography.Pkcs`
 - License: **MIT**
 - Author: .NET Foundation and Contributors
 - Version: **8.0.1** (`Microsoft.Extensions.Hosting`)
 - Version: **8.0.0** (`System.CodeDom`, `System.Data.OleDb`, `System.Security.Permissions`, `System.Management`)
+- Version: **8.0.2** (`System.Security.Cryptography.Pkcs`)
 - Source: <https://github.com/dotnet/runtime>
 
 Every one of the five packages carries its own `LICENSE.TXT` inside the `.nupkg`, and all five are
@@ -857,6 +859,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+`System.Security.Cryptography.Pkcs` 8.0.2 is a sixth package of the same kind. It was a transitive dependency of
+`Microsoft.Data.SqlClient` at 8.0.1 and is now pinned directly at 8.0.2 for two security advisories. Its own `LICENSE.TXT`
+is the same MIT text (SHA-256 `d7a68596ab69b06f...`, 1,139 bytes), so the reproduction above covers it. Its own
+`THIRD-PARTY-NOTICES.TXT` is not reproduced here.
 
 Each of the five also ships its own `THIRD-PARTY-NOTICES.TXT` describing material `dotnet/runtime` itself
 incorporates. Its own opening states the notices "are provided for information only". It is not reproduced

@@ -312,7 +312,8 @@ export function diagramSvg(graph: ModelGraph, opts?: { aspect?: number }): { svg
   const node = cards.map((c) => {
     const t = c.t;
     const role = t.isDateTable ? 'date' : t.isFieldParameter ? 'FP' : t.isCalculated ? 'calculated' : '';
-    const dot = t.isDateTable ? 'var(--sem-warn)' : t.isCalculated && !t.isFieldParameter ? 'var(--sem-muted)' : '';
+    // The same chart steps as the Diagram tab (tokens.css): field parameter purple, calculated light green, date light blue.
+    const dot = t.isDateTable ? 'var(--sem-series-5)' : t.isFieldParameter ? 'var(--sem-series-3)' : t.isCalculated ? 'var(--sem-series-4)' : '';
     const words = [t.isHidden ? 'hidden' : '', role].filter(Boolean);
     let rx = c.w - 12, tags = '';
     for (const word of words.reverse()) {
@@ -567,7 +568,7 @@ const FONT_URI = /^data:font\/woff2?;base64,[A-Za-z0-9+/=]+$/;
 
 // Light tokens sit on :root. Dark follows the reader's setting (screen only, so a printed page is always light),
 // unless the page is pinned to light. data-theme="dark" is what the Docs tab preview passes from the editor theme.
-const DARK_TOKENS = 'color-scheme:dark;--sem-bg:#1F1F1F;--sem-fg:#CCCCCC;--sem-fg-strong:#E8E8E8;--sem-accent:#3CC08F;--sem-link:#4DAAFC;--sem-chart-green:#89D185;--sem-chart-yellow:#CCA700;--sem-chart-red:#F14C4C;--sem-hue-mix:70%';
+const DARK_TOKENS = 'color-scheme:dark;--sem-bg:#1F1F1F;--sem-fg:#CCCCCC;--sem-fg-strong:#E8E8E8;--sem-accent:#3CC08F;--sem-link:#4DAAFC;--sem-chart-green:#89D185;--sem-chart-yellow:#CCA700;--sem-chart-red:#F14C4C;--sem-chart-blue:#59A4F9;--sem-chart-purple:#B180D7;--sem-series-shift:.13;--sem-hue-mix:70%';
 
 function css(fonts?: DocFonts): string {
   const face = (family: string, uri: string | undefined, weight: string) => (uri && FONT_URI.test(uri)
@@ -575,7 +576,7 @@ function css(fonts?: DocFonts): string {
   return `
 ${face('Instrument Sans', fonts?.sans, '400 700')}${face('JetBrains Mono', fonts?.mono, '400')}
 :root{color-scheme:light;--sem-bg:#FFFFFF;--sem-fg:#3B3B3B;--sem-fg-strong:#1F1F1F;--sem-accent:#0A7A55;--sem-link:#005FB8;
-  --sem-chart-green:#388A34;--sem-chart-yellow:#BF8803;--sem-chart-red:#E51400;--sem-hue-mix:55%;
+  --sem-chart-green:#388A34;--sem-chart-yellow:#BF8803;--sem-chart-red:#E51400;--sem-chart-blue:#0063D3;--sem-chart-purple:#652D90;--sem-series-shift:-.13;--sem-hue-mix:55%;
   --doc-font:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--doc-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;
   --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s6:24px;--s8:32px;--s12:48px;--s16:64px}
 @media screen and (prefers-color-scheme: dark){:root:not([data-theme="light"]){${DARK_TOKENS}}}
@@ -583,7 +584,10 @@ ${face('Instrument Sans', fonts?.sans, '400 700')}${face('JetBrains Mono', fonts
 :root{--sem-surface:color-mix(in srgb,var(--sem-fg) 8%,var(--sem-bg));--sem-muted:color-mix(in srgb,var(--sem-fg) 74%,var(--sem-surface));
   --sem-border:color-mix(in srgb,var(--sem-fg) 16%,var(--sem-bg));--sem-rule:color-mix(in srgb,var(--sem-fg) 11%,var(--sem-bg));
   --sem-good:color-mix(in srgb,var(--sem-chart-green) var(--sem-hue-mix),var(--sem-fg));--sem-warn:color-mix(in srgb,var(--sem-chart-yellow) var(--sem-hue-mix),var(--sem-fg));
-  --sem-bad:color-mix(in srgb,var(--sem-chart-red) var(--sem-hue-mix),var(--sem-fg))}
+  --sem-bad:color-mix(in srgb,var(--sem-chart-red) var(--sem-hue-mix),var(--sem-fg));
+  --sem-series-3:color-mix(in srgb,var(--sem-chart-purple) var(--sem-hue-mix),var(--sem-fg));
+  --sem-series-4:oklab(from var(--sem-accent) calc(l + var(--sem-series-shift)) a b);
+  --sem-series-5:oklab(from color-mix(in srgb,var(--sem-chart-blue) var(--sem-hue-mix),var(--sem-fg)) calc(l + var(--sem-series-shift)) a b)}
 *{box-sizing:border-box}
 html{background:var(--sem-bg)}
 body{margin:0;background:var(--sem-bg);color:var(--sem-fg);font:400 14px/20px var(--doc-font);-webkit-font-smoothing:antialiased}

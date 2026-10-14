@@ -1,0 +1,29 @@
+/* Connect another assistant (connect-assistants.tsx). Tokens only, inside the header's assistant popover. */
+.connect-any { width: 22rem; max-width: calc(100vw - 2 * var(--sem-space-4)); color: var(--sem-fg); }
+.connect-any-head {
+  display: flex; align-items: center; gap: var(--sem-space-2); padding: var(--sem-space-2) var(--sem-space-3);
+  font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); font-weight: var(--sem-weight-strong); color: var(--sem-muted);
+  border-bottom: var(--sem-hairline) solid var(--sem-border);
+}
+.connect-any-lead, .connect-any-note {
+  margin: 0; padding: var(--sem-space-2) var(--sem-space-3);
+  font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted);
+}
+.connect-any-list { list-style: none; margin: 0; padding: 0; }
+.connect-any-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: var(--sem-space-3);
+  padding: var(--sem-space-2) var(--sem-space-3); border-top: var(--sem-hairline) solid var(--sem-border);
+}
+.connect-any-main { display: grid; min-width: 0; }
+.connect-any-name { font-size: var(--sem-text-body); line-height: var(--sem-lh-body); font-weight: var(--sem-weight-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.connect-any-status { font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
+.connect-any-status[data-muted] { opacity: .8; }
+.connect-any-row[data-state="connected"] .connect-any-status { color: var(--sem-accent); }
+.connect-any-result {
+  grid-column: 1 / -1; margin-top: var(--sem-space-2); padding-left: var(--sem-space-2);
+  font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); box-shadow: inset 2px 0 0 var(--sem-warn);
+}
+.connect-any-result[data-ok] { box-shadow: inset 2px 0 0 var(--sem-accent); }
+.connect-any-result p { margin: 0; }
+.connect-any-result p + p { color: var(--sem-muted); }
+.connect-any [aria-disabled="true"] { opacity: .6; cursor: default; }

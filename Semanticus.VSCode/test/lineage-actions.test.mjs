@@ -173,8 +173,8 @@ for (const [what, src, labels] of [
 ]) for (const label of labels)
   assert.match(src, new RegExp('>[^<>]*' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '<'), `${what} must keep its ${label} control`);
 for (const [what, src] of [['the tree', tree], ['the graph', graphView]]) {
-  assert.match(src, /<MultiSelect label="Tables"/, `${what} must keep its Tables slicer`);
-  assert.match(src, /<MultiSelect label="Fields"/, `${what} must keep its Fields slicer`);
+  assert.match(src, /<MultiSelect (inline )?label="Tables"/, `${what} must keep its Tables slicer`);
+  assert.match(src, /<MultiSelect (inline )?label="Fields"/, `${what} must keep its Fields slicer`);
 }
 
 // Minimalism pass (8 Oct): each row is the view switcher, the search, one switch, and two menus. The layout buttons fold

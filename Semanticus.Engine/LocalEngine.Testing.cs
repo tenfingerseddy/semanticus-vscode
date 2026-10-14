@@ -114,7 +114,7 @@ namespace Semanticus.Engine
         /// here would apply the model's endpoint to a pinned check and query a different place than the run reported.
         /// A direct reconcile_measure call passes null and is resolved here, once.</summary>
         private async Task<ReconcileRunResult> ReconcileMeasureCoreAsync(ReconcileRequest req, string origin, SqlSourceResolution resolvedSource, ReconcileBinding bound = null,
-            Dictionary<string, string> sqlTokens = null)
+            SqlTokenCache sqlTokens = null)
         {
             if (req == null)
                 return ReconcileRunResult.Fail("No request supplied.", ReconcileStatus.InputError);
@@ -405,11 +405,21 @@ namespace Semanticus.Engine
         /// label said.</summary>
         internal Func<string, string, string, ResultSet> ReconcileSqlForTests;
 
-        private Task<ResultSet> ReconcileSqlAsync(string server, string database, string token, string sql, int maxRows)
+        /// <summary>The source queries of a run go through here, at most three at a time. A run starts the SQL of several
+        /// checks and table counts side by side (it is another server, so it does not wait for the DAX lane), and this keeps
+        /// the source from being asked for more than three things at once.</summary>
+        private readonly SemaphoreSlim _sqlLane = new SemaphoreSlim(3);
+
+        private async Task<ResultSet> ReconcileSqlAsync(string server, string database, string token, string sql, int maxRows)
         {
-            var seam = ReconcileSqlForTests;
-            if (seam != null) return Task.FromResult(seam(server, database, sql) ?? new ResultSet());
-            return FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, CancellationToken.None);
+            await _sqlLane.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var seam = ReconcileSqlForTests;
+                if (seam != null) return seam(server, database, sql) ?? new ResultSet();
+                return await FabricSqlQuery.ExecuteAsync(server, database, token, sql, maxRows, 120, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally { _sqlLane.Release(); }
         }
 
         /// <summary>A ground-truth SQL that has been started: when it started, and the query still running.</summary>

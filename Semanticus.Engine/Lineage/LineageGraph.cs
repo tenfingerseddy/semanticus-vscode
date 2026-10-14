@@ -224,6 +224,32 @@ namespace Semanticus.Engine.Lineage
 
         public static UnusedResult Unused(Model m) => Unused(m, null, ModelOnlyCaveat);
 
+        /// <summary>The caveat when the model has no reports at all (none found locally or published): the sweep is report-aware over an empty set.</summary>
+        public const string NoReportsCaveat =
+            "This model has no reports (none found locally or published), so only the model itself was checked.";
+
+        /// <summary>The sweep over a model with no reports: report-aware with an empty set, and it says so.</summary>
+        public static UnusedResult UnusedNoReports(Model m) => Unused(m, new HashSet<string>(StringComparer.OrdinalIgnoreCase), NoReportsCaveat);
+
+        /// <summary>Model-only, as the assistant's route reads it: a visible attribute is not deletable until the reports are checked, so it is
+        /// kept ("caution") with the reason. The Plan's own cleanup list reads the plain sweep instead (a person reviews and approves that one).</summary>
+        internal static UnusedResult KeepVisibleUntilReportsChecked(UnusedResult r)
+        {
+            foreach (var i in r.Items)
+                if (i.Verdict == "visibleAttribute")
+                {
+                    i.Verdict = "caution";
+                    i.Reason = "Visible attribute, and no report has been checked. A report may use it. Hide it and say why on the row, or find the reports and check them first.";
+                }
+                // The same gate for a measure: one that only a report uses has no reference in the model, so with no report checked it looks unused.
+                else if (i.Kind == "measure" && i.Verdict == "safe")
+                {
+                    i.Verdict = "caution";
+                    i.Reason = "Nothing in the model uses this measure, and no report has been checked. A report may use it. Find the reports and check them first, or hide it.";
+                }
+            return Recount(r);
+        }
+
         // reportUsedRefs (optional): model object refs that published/local reports use — any candidate in this set is
         // excluded (a report uses it), closing the model-only blind spot for descriptive columns no measure references.
         public static UnusedResult Unused(Model m, ISet<string> reportUsedRefs, string caveat)
@@ -278,6 +304,8 @@ namespace Semanticus.Engine.Lineage
                     }
                     if (v != null) items.Add(v);
                 }
+                var tv = EvaluateTable(m, t, reportUsedRefs);
+                if (tv != null) items.Add(tv);
             }
 
             var ordered = items
@@ -304,6 +332,36 @@ namespace Semanticus.Engine.Lineage
         /// safety check that had not failed.</summary>
         internal const string VisibleAttributeReason =
             "Visible attribute, no model reference. People filter and group by columns like this in reports, Q&A and Copilot, so Semanticus never removes it on its own. Ask the people who use the model, or hide it first. If you decide it should go, propose its removal and approve that change.";
+
+        /// <summary>A table nothing uses (hero run 21, N3): no relationship, no measure, column or role refers to anything in it from
+        /// outside, and no checked report shows it. The assistant removes it, then says so; Undo takes it back. A table something uses
+        /// is never a candidate, so it is not listed at all. Kind is "table" so the Plan's column cleanup can leave it out.</summary>
+        private static UnusedItem EvaluateTable(Model m, Table t, ISet<string> reportUsedRefs)
+        {
+            if (t is CalculationGroupTable || !t.CanDelete() || AddedOnPurpose(t) != null) return null;
+            if (LocalEngine.KindOf(t) == ModelPlanTableKinds.DateTable) return null;
+            if (m.Relationships.OfType<SingleColumnRelationship>().Any(r => r.FromTable == t || r.ToTable == t)) return null;
+            if (reportUsedRefs != null && (reportUsedRefs.Contains(ObjectRefs.For(t))
+                || t.Columns.Any(c => reportUsedRefs.Contains(ObjectRefs.For(c))) || t.Measures.Any(x => reportUsedRefs.Contains(ObjectRefs.For(x))))) return null;
+            if (m.Roles.Any(r => r.TablePermissions.Any(tp => tp.Table == t))) return null;
+            if (t.Columns.Any(c => c.AlternateOf != null || HasObjectLevelSecurity(c))) return null;
+            bool Outside(ReferencedByList rb) => rb.OfType<ITabularObject>().Any(o => !ReferenceEquals((o as ITabularTableObject)?.Table, t) && !ReferenceEquals(o, t));
+            if (Outside(t.ReferencedBy) || t.Columns.Any(c => Outside(c.ReferencedBy)) || t.Measures.Any(x => Outside(x.ReferencedBy))) return null;
+            return new UnusedItem
+            {
+                Ref = ObjectRefs.For(t), Name = t.Name, Kind = "table", Table = t.Name, IsHidden = t.IsHidden,
+                // A table is "safe" only when the sweep is report-aware. With no report checked a report may use it, so the sweep skips it.
+                Verdict = reportUsedRefs != null ? "safe" : "caution", RefCount = 0,
+                Reason = reportUsedRefs != null
+                    ? "No relationship, measure or role uses this table, and it was not found in the reports that were checked."
+                    : "No relationship, measure or role uses this table. No report has been checked, and a report may show it. Check the reports first.",
+            };
+        }
+
+        /// <summary>The same sweep without its table lines: the Plan's Facts and cleanup row count columns and measures only.</summary>
+        internal static UnusedResult WithoutTables(UnusedResult r) =>
+            r?.Items == null || !r.Items.Any(i => i.Kind == "table") ? r
+                : Recount(new UnusedResult { Items = r.Items.Where(i => i.Kind != "table").ToArray(), Caveat = r.Caveat });
 
         private static UnusedItem EvaluateMeasure(Measure ms, ISet<string> reportUsedRefs)
         {

@@ -54,6 +54,9 @@ namespace Semanticus.Engine.StartPlan
                 Built = parkedBecause == null && doc.BuiltUtc != null && builtNow,
                 Grades = GradesOf(doc, digest),
             };
+            // D7 (launch video, 12 Oct): a plan whose build was undone is a plan again, and its forecast must not read as the grade of the model. The model has no
+            // tables to grade now, and the page says so beside the forecast, so the person sees the grade fall.
+            view.Grades.NowUndone = parkedBecause == null && doc.BuiltUtc != null && !builtNow;
 
             foreach (var id in StartSectionId.All)
                 view.Sections.Add(new StartSection { Id = id, Title = TitleOf(id) });

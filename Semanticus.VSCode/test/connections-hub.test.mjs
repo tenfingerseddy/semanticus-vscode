@@ -103,7 +103,7 @@ assert.match(hub, /data-testid="hub-env-select"/, 'the env-label editor (a selec
 const listView = slice('function ListView', 'function HistoryView');
 assert.match(listView, /data-testid="hub-add-file" onClick=\{\(\) => openLocalModel\(\)\}/, 'Open file or folder uses the native picker');
 assert.match(listView, /data-testid="hub-add-desktop"[\s\S]{0,120}setView\('desktop'\)/, 'Power BI Desktop opens the instance picker');
-assert.match(listView, /data-testid="hub-add-workspace"[\s\S]{0,120}setView\('workspace'\)/, 'Workspace model opens the workspace then model picker');
+assert.match(listView, /data-testid="hub-add-workspace"[\s\S]{0,120}openPicker\(\)/, 'Workspace model opens the workspace then model picker');
 assert.match(listView, /data-testid="hub-add-blank" onClick=\{\(\) => openCreate\(\)\}/, 'New blank model is a quiet link to the guarded create');
 // Since the M11 wiring step From a SQL source opens the start plan's own form, with no blank-model name step first
 // (test/startplan-wiring.test.mjs holds the rest).
@@ -420,7 +420,7 @@ assert.match(hub, /res\.message \|\| 'That model could not be connected for test
 // (B2) the account menu is never a dead end: Sign in another account routes to where a sign-in happens (the live
 // model's account choice, else the workspace picker), and Other ways to sign in opens the address form.
 assert.match(hub, /const signedInAccount = currentAccount/, 'the hub draws one signed-in identity from the live session or the saved profiles, never a second guess');
-assert.match(hub, /data-testid="hub-sign-in-another-top"[\s\S]{0,140}if \(switchable\) signInAnother\(switchable\); else setView\('workspace'\)/, 'Sign in another account always leads to a sign-in');
+assert.match(hub, /data-testid="hub-sign-in-another-top"[\s\S]{0,140}if \(switchable\) signInAnother\(switchable\); else openPicker\(\)/, 'Sign in another account always leads to a sign-in');
 assert.match(hub, /data-testid="hub-other-sign-in" onClick=\{\(\) => openAddView\(\)\}/, 'Other ways to sign in opens the address form with its setup check');
 // openAddView resets the method + clears any stale tenant, so a browser Sign in never lands on a prior advanced method (MED, sol).
 assert.match(hub, /const openAddView = \(mode: string = 'interactive'\) => \{ setAuthMode\(mode\); setNewTenant\(''\);[\s\S]{0,40}setView\('add'\); \}/, 'openAddView resets the sign-in method and clears the tenant');

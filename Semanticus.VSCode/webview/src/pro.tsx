@@ -6,9 +6,26 @@ import { FEATURE_OF_TOOL, PRO_FEATURES, featureOfTool, isRetiredFeature, type Pr
  *  the in-app Pro design on 23 September 2026). It used to start the host's quick pick and then the browser,
  *  and the upsell notice went to the website. The page is where the plan is chosen now, and the host still
  *  runs the whole checkout from it, which is what keeps a webview out of a payment path. */
-export function upgradeToPro(): void {
+export function upgradeToPro(pending?: unknown): void {
+  // Called straight from onClick too, where the argument is a click event: only a real PendingRun is kept.
+  const p = pending as PendingRun | undefined;
+  pendingRun = p && typeof p === 'object' && typeof p.run === 'function' && typeof p.label === 'string' ? p : null;
   navigateInStudio('pro');
 }
+
+/** The thing a person pressed on a Pro-locked button (trial option C's borrowing): it runs once, as soon as
+ *  Pro is on, and Studio goes back to the page it was pressed on. A buy or the free month both count. */
+export interface PendingRun { label: string; tab?: string; run: () => void }
+let pendingRun: PendingRun | null = null;
+export function peekPendingRun(): PendingRun | null { return pendingRun; }
+/** Take it, so it runs exactly once. */
+export function takePendingRun(): PendingRun | null { const p = pendingRun; pendingRun = null; return p; }
+export function clearPendingRun(): void { pendingRun = null; }
+
+/** Keep Pro from the trial line opens the Pro page with the plans showing. Read once by the page. */
+let keepAsked = false;
+export function openKeepPro(): void { keepAsked = true; pendingRun = null; navigateInStudio('pro'); }
+export function takeKeepAsked(): boolean { const k = keepAsked; keepAsked = false; return k; }
 
 // ===================================================================================================
 // The shared Free/Pro presentation kit. Two jobs now.

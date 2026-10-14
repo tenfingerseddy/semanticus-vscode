@@ -654,6 +654,14 @@
   "publish-changes.tsx::NewModel::input::name": {
    "class": "outage-deferred",
    "why": "the new model's name: plain useState in the card, prefilled from the open model's name and kept once typed (the outage, restart and licence class C4, deferred by Kane's decision)"
+  },
+  "plan.tsx::PlanView::input::filterText": {
+   "class": "search",
+   "why": "a search or filter box: a typed query is not work to keep"
+  },
+  "propage.tsx::TrialOffer::input::p.trialEmail ?? ''": {
+   "class": "parent",
+   "why": "the value is a prop: the parent owns the words"
   }
  },
  "scopes": {

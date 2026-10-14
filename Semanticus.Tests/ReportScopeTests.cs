@@ -331,6 +331,7 @@ namespace Semanticus.Tests
                     var path = WriteReport(x.Root, "Displayed", table, "Scope Displayed");
 
                     // Model-only, the measure looks safe: nothing in the model references it.
+                    await x.Engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
                     Assert.Contains((await x.Engine.UnusedObjectsAsync()).Items, i => i.Ref == shown && i.Verdict == "safe");
 
                     await x.Engine.SetReportScopeAsync(new[] { new ReportScopeChoice { Kind = "local", Name = "Displayed", Path = path } }, "human");

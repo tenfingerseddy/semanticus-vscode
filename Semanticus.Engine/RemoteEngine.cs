@@ -277,6 +277,7 @@ namespace Semanticus.Engine
         public Task<ModelSqlEndpointResult> SetModelSqlEndpointAsync(string sqlSourceId, string connectionId = null, string origin = "agent") => _rpc.InvokeAsync<ModelSqlEndpointResult>("setModelSqlEndpoint", sqlSourceId, connectionId, origin);
         public Task<ModelSqlEndpointList> ListModelSqlEndpointsAsync() => _rpc.InvokeAsync<ModelSqlEndpointList>("listModelSqlEndpoints");
         public Task<Entitlement.EntitlementInfo> GetEntitlementAsync() => _rpc.InvokeAsync<Entitlement.EntitlementInfo>("getEntitlement");
+        public Task<Entitlement.TrialTally> GetTrialTallyAsync() => _rpc.InvokeAsync<Entitlement.TrialTally>("getTrialTally");
         public Task<VerifiedModeState> GetVerifiedModeAsync() => _rpc.InvokeAsync<VerifiedModeState>("getVerifiedMode");
         public Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin) => _rpc.InvokeAsync<VerifiedModeState>("setVerifiedMode", on, origin);
         public Task<ModelGraph> GetModelGraphAsync() => _rpc.InvokeAsync<ModelGraph>("getModelGraph");
@@ -312,6 +313,8 @@ namespace Semanticus.Engine
         public Task<Scorecard> AiReadinessScanAsync() => _rpc.InvokeAsync<Scorecard>("aiReadinessScan");
         public Task<Scorecard> AiReadinessScanLiveAsync() => _rpc.InvokeAsync<Scorecard>("aiReadinessScanLive");
         public Task<SafeFixResult> ApplySafeFixesAsync(string origin) => _rpc.InvokeAsync<SafeFixResult>("applySafeFixes", origin);
+        public Task<ReadingCardView> ReadingCardAsync(bool withAfter = true) => _rpc.InvokeAsync<ReadingCardView>("readingCard", withAfter);
+        public Task<FixThemResult> FixThemAsync(string origin) => _rpc.InvokeAsync<FixThemResult>("fixThem", origin);
         public Task<SetResult> ApplyFixAsync(string ruleId, string objRef, string origin) => _rpc.InvokeAsync<SetResult>("applyFix", ruleId, objRef, origin);
         public Task<FixPrompt> GetFixPromptAsync(string ruleId, string objRef) => _rpc.InvokeAsync<FixPrompt>("getFixPrompt", ruleId, objRef);
         public Task<GroundingBundle> GetGroundingAsync(string objRef) => _rpc.InvokeAsync<GroundingBundle>("getGrounding", objRef);
@@ -590,6 +593,8 @@ namespace Semanticus.Engine
         public Task<AuthPrerequisites> ProbeAuthPrerequisitesAsync(string mode, string tenantId = null) => _rpc.InvokeAsync<AuthPrerequisites>("probeAuthPrerequisites", mode, tenantId);
         public Task<AccountProfile[]> ListAccountProfilesAsync() => _rpc.InvokeAsync<AccountProfile[]>("listAccountProfiles");
         public Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human") => _rpc.InvokeAsync<AccountProfile[]>("setDefaultAccountProfile", profileId, origin);
+        public Task<ConnectableAssistant[]> ListAssistantsAsync() => _rpc.InvokeAsync<ConnectableAssistant[]>("listAssistants");
+        public Task<AssistantConnectResult> ConnectAssistantAsync(string assistant, string origin = "human") => _rpc.InvokeAsync<AssistantConnectResult>("connectAssistant", assistant, origin);
         public Task<ModelConnectionRecord> LabelConnectionAsync(string id, string label, string origin = "agent") => _rpc.InvokeAsync<ModelConnectionRecord>("labelConnection", id, label, origin);
         public Task<ModelConnectionRecord> SetConnectionWorkingFolderAsync(string id, string folder) => _rpc.InvokeAsync<ModelConnectionRecord>("setConnectionWorkingFolder", id, folder);
         public Task<bool> ForgetConnectionAsync(string id, string origin = "agent") => _rpc.InvokeAsync<bool>("forgetConnection", id, origin);
@@ -658,7 +663,7 @@ namespace Semanticus.Engine
         public Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer, string origin = "human") => _rpc.InvokeAsync<ModelPlanView>("setPlanItemDoer", id, doer, origin);
         public Task<ModelPlanView> MovePlanTaskUpAsync(string id) => _rpc.InvokeAsync<ModelPlanView>("movePlanTaskUp", id);
         public Task<ModelPlanView> SetAssistantQueueAsync(string state) => _rpc.InvokeAsync<ModelPlanView>("setAssistantQueue", state);
-        public Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text) => _rpc.InvokeAsync<ModelPlanView>("setPlanTaskNote", id, text);
+        public Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text, string origin = "human") => _rpc.InvokeAsync<ModelPlanView>("setPlanTaskNote", id, text);
         // Repeat cards (lane RP): person-only, so refused by the owner with method-not-found, as the six above are.
         public Task<ModelPlanActionResult> AddPlanRepeatAsync(PlanRepeatRequest request) => _rpc.InvokeAsync<ModelPlanActionResult>("addPlanRepeat", request);
         public Task<ModelPlanView> SetPlanRepeatAsync(string id, PlanRepeatRequest request) => _rpc.InvokeAsync<ModelPlanView>("setPlanRepeat", id, request);
@@ -709,8 +714,10 @@ namespace Semanticus.Engine
         public Task<StudioShowResult> ShowInStudioAsync(StudioShowRequest request) => _rpc.InvokeAsync<StudioShowResult>("showInStudio", request, HealthCorrelation.CurrentId);
         public Task<StudioSuggestResult> SuggestNextAsync(StudioSuggestRequest request) => _rpc.InvokeAsync<StudioSuggestResult>("suggestNext", request, HealthCorrelation.CurrentId);
         public Task<StudioNotesView> GetStudioNotesAsync(string sessionId) => _rpc.InvokeAsync<StudioNotesView>("getStudioNotes", sessionId);
+        public Task<NextStepView> GetNextStepAsync() => _rpc.InvokeAsync<NextStepView>("getNextStep");
+        public Task<NextStepView> SetNextStepAsync(string action, string arg) => _rpc.InvokeAsync<NextStepView>("setNextStep", action, arg);
         public Task SetStudioDriverAsync(string mode, string state) => _rpc.InvokeAsync("setStudioDriver", mode, state);
-        public Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null) => _rpc.InvokeAsync("noteAgentCall", tool, HealthCorrelation.CurrentId, focus, client, clientVersion);
+        public Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null, bool? commit = null) => _rpc.InvokeAsync("noteAgentCall", tool, HealthCorrelation.CurrentId, focus, client, clientVersion, commit);
 
         public void Dispose() => _rpc.Dispose();
     }

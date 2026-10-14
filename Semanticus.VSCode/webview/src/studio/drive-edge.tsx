@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { useAssistantWorking } from './assistant-working';
 import { useDriver, type DriverSnapshot } from './driver-store';
 
-/** The thin jade line round the Studio while the assistant works and drives: the state the driver bar and its tile show, never a timer of its own. */
+/** The 2px purple line round the Studio while the assistant works and drives: the state the driver bar and its tile show, never a timer of its own. */
 export function edgeIsOn(driver: DriverSnapshot, working: boolean): boolean {
   return working && driver.assistantConnected && driver.mode === 'claudeDrives' && driver.state !== 'personHasWheel';
 }

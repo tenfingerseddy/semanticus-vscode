@@ -70,7 +70,7 @@ try {
   for (const theme of THEME_LIST) {
     const page = await browser.newPage();
     page.on('pageerror', (e) => failures.push(`${theme}: pageerror ${e.message}`));
-    await page.setViewport({ width: 1280, height: 760, deviceScaleFactor: 2 });
+    await page.setViewport({ width: Number(process.env.WIDTH) || 1280, height: 760, deviceScaleFactor: 2 });
     await page.goto(`http://127.0.0.1:${port}/tools/uishot/harness.html?conn=1&tier=pro&tab=plan`, { waitUntil: 'networkidle0', timeout: 30000 });
     await page.waitForSelector('[data-testid="plan-page"]', { timeout: 20000 });
     await applyTheme(page, theme);
@@ -109,6 +109,11 @@ try {
     await wait(300);
     await page.click('[data-testid="note-what-i-did"]');
     await page.waitForSelector('[data-testid="what-i-did"]', { timeout: 5000 });
+    // It opens as one calm line (copy21); the list is one press away.
+    if (await page.$('[data-testid="what-i-did-line"]')) failures.push(`${theme}: What I did opens as a list, not one line`);
+    await shot('3a-what-i-did-one-line');
+    await page.click('[data-testid="what-i-did-all"]');
+    await page.waitForSelector('[data-testid="what-i-did-line"]', { timeout: 5000 });
     const lines = await text(page, '[data-testid="what-i-did-line"] .sn-line-say');
     if (lines.length !== 4) failures.push(`${theme}: What I did lists ${lines.length} lines, expected 4`);
     const unread = (await page.$$('[data-testid="what-i-did-unread"]')).length;

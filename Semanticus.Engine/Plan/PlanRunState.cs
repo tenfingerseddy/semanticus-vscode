@@ -47,8 +47,15 @@ namespace Semanticus.Engine
         /// (LocalEngine.PlanVerbs.cs, RunReadySetAsync), so one press runs every row. <paramref name="leftOut"/> holds the rows this press already left out.</summary>
         public static List<ModelPlanItem> JevRowsLookingAgain(IEnumerable<ModelPlanItem> items, ISet<string> leftOut) =>
             (items ?? Array.Empty<ModelPlanItem>()).Where(r => r != null && string.Equals(r.Doer, PlanDoers.Semanticus, StringComparison.Ordinal)
-                && !r.Held && (leftOut == null || !leftOut.Contains(r.Id)) && JevFamily.IsJevItem(r.Id)
+                && !r.Held && (leftOut == null || !leftOut.Contains(r.Id)) && JevFamily.IsJevItem(r.Id) && !PlanTasks.WaitsOnJev(r)
                 && ((IsReady(r) && r.ChangeSet?.Stale == true) || string.Equals(r.StateWord, PlanStateWords.Waiting, StringComparison.Ordinal)))
+                .ToList();
+
+        /// <summary>The Jev rows Semanticus runs whose worked-out lines predate the model's last change, Ready or Waiting behind another row.</summary>
+        public static List<ModelPlanItem> StaleJevRows(IEnumerable<ModelPlanItem> items, ISet<string> leftOut) =>
+            (items ?? Array.Empty<ModelPlanItem>()).Where(r => r != null && string.Equals(r.Doer, PlanDoers.Semanticus, StringComparison.Ordinal)
+                && !r.Held && (leftOut == null || !leftOut.Contains(r.Id)) && JevFamily.IsJevItem(r.Id) && !PlanTasks.WaitsOnJev(r)
+                && r.ChangeSet?.Stale == true && string.Equals(r.ChangeSet.State, ModelPlanChangeStates.Proposed, StringComparison.Ordinal))
                 .ToList();
 
         /// <summary>SHA-256, lowercase hex, over the Ready rows sorted by id and the revision.</summary>
@@ -76,6 +83,9 @@ namespace Semanticus.Engine
 
         /// <summary>The newest ledger entry, or null when there is none (or no ledger yet).</summary>
         public PlanStripLatest Latest;
+
+        /// <summary>The ids of tasks the Plan knows finished that may no longer be rows: its done records and the ones Refresh plan cleared.</summary>
+        public IEnumerable<string> DoneIds = Array.Empty<string>();
 
         /// <summary>True only when Jev ran on this revision of a Pro session: it re-ranked the plan or its
         /// families' answer for this revision is in. Never true on free (Jev never runs there).</summary>
@@ -122,8 +132,25 @@ namespace Semanticus.Engine
                 }
             }
 
+            // Plan done (1.5): every task that is done, in the rows or kept in History, over those and every open task.
+            var openIds = new HashSet<string>(StringComparer.Ordinal);
+            var doneIds = new HashSet<string>(StringComparer.Ordinal);
+            var asideIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var i in items ?? Array.Empty<ModelPlanItem>())
+            {
+                if (i?.Id == null) continue;
+                if (i.StateWord == PlanStateWords.Done) doneIds.Add(i.Id);
+                else if (i.StateWord == PlanStateWords.SetAside) asideIds.Add(i.Id);
+                else openIds.Add(i.Id);
+            }
+            foreach (var id in x.DoneIds ?? Array.Empty<string>()) if (!string.IsNullOrWhiteSpace(id)) doneIds.Add(id);
+            doneIds.ExceptWith(openIds); doneIds.ExceptWith(asideIds);   // a row that came back is open again; a set-aside row is not a task to do
+
             return new PlanStrip
             {
+                TasksDone = doneIds.Count,
+                TasksAll = doneIds.Count + openIds.Count,
+                BestPracticeScore = x.Bpa?.BestPractice == null ? (int?)null : x.Bpa.BestPracticeScore,
                 GradeNow = worth?.From,
                 GradeAfter = worth?.To,
                 BestPractice = x.Bpa?.BestPractice,

@@ -40,6 +40,24 @@ namespace Semanticus.Engine
             }
         }
 
+
+        /// <summary>One plain sentence on the Validation page for a tool the assistant ran there (a single check, a saved or deleted check, a
+        /// recorded run, unmatched rows). The page shows the sentence and reads again what the tool changed. Nothing here holds a value from the
+        /// model beyond the check's own words. A broadcast that fails never fails the tool.</summary>
+        internal static void Note(IEngine engine, string kind, string label, bool ok, string error, System.Diagnostics.Stopwatch clock)
+            => McpTools.Emit(engine, new ActivityEvent { Kind = kind, Origin = "agent", Label = label, Ok = ok, Error = error, ElapsedMs = clock?.ElapsedMilliseconds });
+
+        private static string Name(string text) => string.IsNullOrWhiteSpace(text) ? "a check" : text.Trim();
+
+        /// <summary>"Tried a check: Total Sales. The measure matched the number you trust." The outcome's own words, cut to one sentence of sane length.</summary>
+        internal static string TryLabel(TestDefinition def, ReconcileOutcome o)
+        {
+            if (o == null) return "Tried a check, but it gave no answer.";
+            var words = string.IsNullOrWhiteSpace(o.Message) ? "" : " " + o.Message.Trim();
+            if (words.Length > 240) words = words.Substring(0, 237).TrimEnd() + "...";
+            return "Tried a check: " + Name(o.Title ?? def?.Title) + "." + words;
+        }
+
         /// <summary>One plain sentence for the page's line above the results.</summary>
         internal static string RunLabel(TestSuiteRunResult run, string failure = null)
         {
@@ -54,9 +72,14 @@ namespace Semanticus.Engine
         }
 
         [McpServerTool(Name = "try_test"), Description("TESTS: run one unsaved test definition once and return its outcome. Writes nothing to the suite. kind='measureValue' checks a measure against a trusted number; kind='measureReconcile' is the SQL-vs-DAX reconciliation. Offline the outcome is NotVerifiable. To see one measure's values across many contexts without a pass or fail, use probe_measure.")]
-        public static Task<ReconcileOutcome> TryTest(IEngine engine,
+        public static async Task<ReconcileOutcome> TryTest(IEngine engine,
             [Description("The unsaved definition: {kind, title, targetRef?, paramsJson?}.")] TestDefinition def)
-            => engine.TryTestAsync(def, "agent");
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var o = await engine.TryTestAsync(def, "agent");
+            Note(engine, "try_test", TryLabel(def, o), o != null, null, clock);
+            return o;
+        }
 
         [McpServerTool(Name = "list_tests"), Description("TESTS: the saved test definitions (.semanticus/tests/suite.jsonl beside the model): id, kind ('measureReconcile', 'measureValue', or 'rowLevelAssertion', which is stored but not run yet), title, target binding and enabled state. Definitions bind by LineageTag when present, or by a stable tests-sidecar identity for a valid tagless object. A vanished or ambiguous target reports MISSING on the next run, never a silent pass. Ambient checks are not listed here because they derive from the model on every run_tests. Unreadable lines are counted, never thrown. Read-only. list_sql_source_usage shows which checks use each SQL source.")]
         public static Task<TestSuiteInfo> ListTests(IEngine engine) => engine.ListTestDefinitionsAsync();
@@ -80,14 +103,22 @@ namespace Semanticus.Engine
         }
 
         [McpServerTool(Name = "save_test"), Description("TESTS: create or update a saved test definition (upsert by id; omit id to create). kind='measureReconcile': paramsJson carries the ReconcileRequest (sql, groupBy, required blankPolicy, tolerances; see reconcile_measure, which is the same runner one-off), and filterDax narrows the DAX side the way the visual that produced it was narrowed (the SQL is never rewritten: narrow it yourself). kind='measureValue': paramsJson carries the MeasureValueRequest, where filterDax narrows the measure and expressionDax tests DAX the model does not hold yet (a scalar expression, or a complete EVALUATE query run verbatim) instead of the bound measure's own formula. Pass targetRef; the engine binds by LineageTag when present and otherwise creates a stable tests-sidecar identity so valid tagless measures follow renames. The returned bindingWarning is non-null if a name fallback was unavoidable. GROUND TRUTH IS AI-DRAFTED, HUMAN-ACCEPTED: show the user the SQL and get acceptance before saving. A saved test is the user's suite, not the assistant's guess.")]
-        public static Task<TestDefinition> SaveTest(IEngine engine,
+        public static async Task<TestDefinition> SaveTest(IEngine engine,
             [Description("The definition: {id?, kind, title, targetTag?, targetIdentity?, targetRef?, paramsJson?, enabled?, authoredAgainst?, authoredAgainstLabel?}. Prefer targetRef and let the engine choose the durable binding. authoredAgainst/authoredAgainstLabel RECORD which Tests-and-queries connection the check was agreed against and are stamped from the live connection when you omit them; they never pin where the test runs.")] TestDefinition def)
-            => engine.SaveTestDefinitionAsync(def, "agent");
+        {
+            var saved = await engine.SaveTestDefinitionAsync(def, "agent");
+            Note(engine, "save_test", "Saved a check: " + Name(saved?.Title ?? def?.Title) + ".", saved != null, null, null);
+            return saved;
+        }
 
         [McpServerTool(Name = "delete_test"), Description("TESTS: delete a saved test definition by id (list_tests shows ids). Returns false when the id wasn't present. Ambient checks cannot be deleted: they derive from the model; to clear a failing integrity check, fix the data it measured.")]
-        public static Task<bool> DeleteTest(IEngine engine,
+        public static async Task<bool> DeleteTest(IEngine engine,
             [Description("The definition id to remove.")] string id)
-            => engine.DeleteTestDefinitionAsync(id, "agent");
+        {
+            var gone = await engine.DeleteTestDefinitionAsync(id, "agent");
+            Note(engine, "delete_test", gone ? "Deleted a check." : "No check had that id.", gone, null, null);
+            return gone;
+        }
 
         [McpServerTool(Name = "list_test_runs"), Description("TESTS: the persisted run history for this model (chronological, fingerprint-filtered): each run's health only (grade + coverage together, verdict tallies, root-failure count), never the per-check detail, which get_test_run returns for one run at a time. The drift-trend substrate: compare health across runs to see a suite degrade before a user does. Read-only.")]
         public static Task<TestHistoryInfo> ListTestRuns(IEngine engine,
@@ -100,15 +131,26 @@ namespace Semanticus.Engine
             => engine.GetTestRunAsync(runId);
 
         [McpServerTool(Name = "record_test_run"), Description("TESTS: record a run that has ALREADY finished, exactly as it finished. Nothing is executed: this writes the snapshot of the run named by runId (its health, every check's outcome with expected/actual/difference, its model, environment, scope and duration) to the run history, and get_test_run opens it later. This is the operation to use for \"save the run I am looking at\": run_tests(persist=true) also records, but it records the run IT just executed, which is a different run against data that may have moved. Only a FULL run can be recorded, so the stored history compares like with like; a partial run is refused with a plain note. Recording the same run twice keeps one snapshot. Runs are remembered for the last few of this session, so record the one you just ran. Read-only with respect to the model.")]
-        public static Task<TestRunRecordResult> RecordTestRun(IEngine engine,
+        public static async Task<TestRunRecordResult> RecordTestRun(IEngine engine,
             [Description("The id of a run this session already finished, as returned by run_tests.")] string runId)
-            => engine.RecordTestRunAsync(runId, "agent");
+        {
+            var r = await engine.RecordTestRunAsync(runId, "agent");
+            Note(engine, "record_test_run", r.Recorded ? "Saved the run to history." : (r.Note ?? "The run was not saved."), r.Recorded, r.Recorded ? null : r.Note, null);
+            return r;
+        }
 
         [McpServerTool(Name = "get_unmatched_rows"), Description("TESTS: the unmatched key values behind a relationship's orphan count. A relationship check reports HOW MANY fact rows point at a missing lookup key; this answers WHICH ones. Returns one row per distinct many-side key value the one-side table does not have, with how many many-side rows carry it, biggest first, capped at 200 (the cap is disclosed when it hides more). The question asked is character-for-character the one the check counts, so the list and the count can never disagree. It READS CURRENT DATA through the live model, so run after a recorded check and the data may have moved since that check was measured; the note says so. Needs a live connection. Agent calls pass the standard QueryData permission gate, because this is the same row-returning query path. Read-only.")]
-        public static Task<UnmatchedRowsResult> GetUnmatchedRows(IEngine engine,
+        public static async Task<UnmatchedRowsResult> GetUnmatchedRows(IEngine engine,
             [Description("The relationship's name exactly as a run reported it, e.g. 'Sales[CustomerKey] -> Customer[CustomerKey]'.")] string relationship,
             [Description("How many key values to return, capped at 200 (default 200).")] int limit = 200)
-            => engine.GetUnmatchedRowsAsync(relationship, limit, "agent");
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var r = await engine.GetUnmatchedRowsAsync(relationship, limit, "agent");
+            Note(engine, "get_unmatched_rows", r.Error != null ? r.Error
+                : "Looked at the unmatched rows of " + Name(relationship) + ": " + r.RowsReturned.ToString(System.Globalization.CultureInfo.InvariantCulture) + (r.RowsReturned == 1 ? " key." : " keys."),
+                r.Error == null, r.Error, clock);
+            return r;
+        }
 
         [McpServerTool(Name = "export_test_report"), Description("TESTS: export the latest successful run as portable Markdown plus one sealed evidence artifact in canonical JSON and self-contained HTML. Returns {markdown, json, html, contentHash, note, error}; JSON is the record of truth, HTML is its deterministic human view, and contentHash detects any later change. The report includes model and environment context, grade WITH coverage, hard gates, root causes before detailed evidence, measure reconciliation rows only for failing measures, time-intelligence variant evidence, and relationship counts and rates. It never exports a run from a different model: if no current-model run exists, call run_tests and retry. Read-only.")]
         public static async Task<TestReportResult> ExportTestReport(IEngine engine)

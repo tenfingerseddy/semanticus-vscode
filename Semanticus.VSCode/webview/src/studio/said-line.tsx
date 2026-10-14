@@ -1,4 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { canVoiceReceipt, receiptVoice, setVoiceReceiptBusy, subscribeReceiptVoice } from '../personality/message-line';
+import type { VoiceLine } from '../personality/messages';
+import { usePersonalitySettings } from '../personality/settings';
 import { rpc, onActivity, type ChangeNotification } from '../bridge';
 import { useActivity } from '../activity';
 import type { HistoryView } from '../plan-history-model';
@@ -19,6 +22,20 @@ export function SaidLine({ onHistory }: { onHistory: (entry: string | undefined,
   const alive = useRef(true);
   const shown = useRef<SaidGroup | null>(null);
   const archived = useRef(new Map<string, number>());
+  const personality = usePersonalitySettings();
+  const [voice, setVoice] = useState<VoiceLine | null>(null);
+  const allowedVoice = useSyncExternalStore(subscribeReceiptVoice, canVoiceReceipt, canVoiceReceipt);
+  const voicedGroup = useRef<string | null>(null);
+  const previousVoice = useRef<VoiceLine | null>(null);
+  useLayoutEffect(() => { setVoiceReceiptBusy(!!line); return () => setVoiceReceiptBusy(false); }, [line]);
+  useEffect(() => {
+    if (!line || line.words?.verb !== 'added synonyms to' || line.words.noun !== 'fields' || line.words.count < 10) {
+      setVoice(null); previousVoice.current = null; voicedGroup.current = null; return;
+    }
+    const next = receiptVoice(line.words.count, saidCopy(line), voicedGroup.current === line.id ? previousVoice.current : null);
+    previousVoice.current = next; setVoice(next);
+    voicedGroup.current = line.id;
+  }, [line]);
   useEffect(() => {
     alive.current = true;
     const model = new SaidModel();
@@ -104,7 +121,7 @@ export function SaidLine({ onHistory }: { onHistory: (entry: string | undefined,
   };
   if (!line) return null;
   return <div className="said-line" data-testid="said-line">
-    <span role="status">{error || saidCopy(line)}</span>
+    <span role="status">{error || (voice && allowedVoice ? personality.personality === 'quiet' ? voice.plain : voice.text : saidCopy(line))}</span>
     {!line.saved && <button type="button" className="sem-btn sem-btn-sm sem-btn-quiet" data-testid="said-undo"
       disabled={busy} onClick={() => void undo()}>Undo</button>}
   </div>;

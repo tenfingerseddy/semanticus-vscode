@@ -335,7 +335,7 @@ namespace Semanticus.Tests
 
         private static object[] RpcArgs(string tool) => tool switch
         {
-            "start_model_from_sql" => new object[] { new StartModelRequest { Server = "x.datawarehouse.fabric.microsoft.com", Database = "SalesWh", Folder = "/work/Sales", Name = "Sales", StorageMode = "import", AuthMode = "azcli" }, "human" },
+            "start_model_from_sql" => new object[] { new StartModelRequest { Server = "x.datawarehouse.fabric.microsoft.com", Database = "SalesWh", Folder = "/work/Sales", Name = "Sales", StorageMode = "import" }, "human" },
             "edit_start_plan" => new object[] { new StartPlanEdit { Op = "rename", Target = "table:Sales", Value = "Orders" }, "human" },
             "grant_start_disclosure" => new object[] { "d1ge57-aaaaaaaa", "human" },
             "get_start_words" => new object[] { 25, 5 },

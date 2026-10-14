@@ -40,6 +40,8 @@ namespace Semanticus.Engine
             // Power BI gives a model with no culture en-US. Saying so here, and on the local copy after the publish, keeps
             // the Changes list from showing a Model row that Power BI never takes.
             if (string.IsNullOrWhiteSpace(db.Model.Culture)) db.Model.Culture = DefaultCulture;
+            // Fabric's create takes a model.bim only when it is marked V3 ("Import from JSON supported for V3 models only").
+            db.Model.DefaultPowerBIDataSourceVersion = TOM.PowerBIDataSourceVersion.PowerBI_V3;
             var used = db.Model.Tables.SelectMany(t => t.Partitions)
                 .Select(p => p.Source).OfType<TOM.QueryPartitionSource>()
                 .Select(q => q.DataSource?.Name).Where(n => n != null).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -60,6 +62,9 @@ namespace Semanticus.Engine
         }
 
         internal sealed class Outcome { public string ModelId; public bool Loaded; public string LoadError; public bool SignInNeeded; public bool DirectLake; public string Server; public string DirectLakeEndpoint; }
+
+        /// <summary>What the assistant tells the person when no sign-in is saved: one plain line, no command to type.</summary>
+        internal const string NoSignInSaved = "No sign-in is saved yet. Press Connect in Studio, then ask again.";
 
         internal const string SignInStep = "Set the data source sign-in in the Power BI service, then refresh.";
 
@@ -93,8 +98,9 @@ namespace Semanticus.Engine
             return hit == null ? null : $"A model called {hit.DisplayName} is already in {workspaceName}. Pick another name.";
         }
 
-        internal static async Task<Outcome> CreateAndLoadAsync(TOM.Database db, string workspaceId, string fabricToken, string powerBiToken, CancellationToken ct, string workspaceName = null)
+        internal static async Task<Outcome> CreateAndLoadAsync(TOM.Database db, string workspaceId, string fabricToken, string powerBiToken, CancellationToken ct, string workspaceName = null, Action<string> step = null)
         {
+            step?.Invoke("Checking the name");
             var existing = await FabricRest.ListSemanticModelsAsync(workspaceId, fabricToken, ct).ConfigureAwait(false);
             var taken = TakenNameProblem(db.Name, string.IsNullOrWhiteSpace(workspaceName) ? "this workspace" : workspaceName, existing);
             if (taken != null) throw new InvalidOperationException(taken);
@@ -108,21 +114,13 @@ namespace Semanticus.Engine
                 if (ToDirectLake(db, server, endpoint)) directLake = endpoint;
             }
 
-            using (var http = FabricRest.NewClient(fabricToken))
-            {
-                var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/semanticModels";
-                var r = await FabricRest.SendAsync(http, HttpMethod.Post, url, CreateBody(db), ct).ConfigureAwait(false);
-                if (r.Status == 202)
-                {
-                    var st = await FabricRest.PollFrom202Async(http, r, ct).ConfigureAwait(false);
-                    if (st.Status != "Succeeded") throw new InvalidOperationException("Power BI did not create the model: " + (st.ErrorMessage ?? st.Status));
-                }
-                else if (!r.Ok) throw FabricRest.NonSuccessHttp(r);
-            }
+            step?.Invoke("Creating the model in Power BI");
+            await CreateModelAsync(db, workspaceId, fabricToken, ct).ConfigureAwait(false);
             var created = (await FabricRest.ListSemanticModelsAsync(workspaceId, fabricToken, ct).ConfigureAwait(false))
                 .FirstOrDefault(m => string.Equals(m.DisplayName, db.Name, StringComparison.OrdinalIgnoreCase))
                 ?? throw new InvalidOperationException("Power BI said the model was created, but it is not in the workspace yet. Look again in a minute.");
 
+            step?.Invoke("Loading its data");
             var outcome = new Outcome { ModelId = created.Id, Server = server, DirectLakeEndpoint = directLake, DirectLake = IsDirectLake(db) };
             try { await RefreshAsync(workspaceId, created.Id, powerBiToken, ct).ConfigureAwait(false); outcome.Loaded = true; }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -131,6 +129,68 @@ namespace Semanticus.Engine
                 outcome.LoadError = outcome.SignInNeeded ? SignInStep : FabricRest.Scrub(ex.Message);
             }
             return outcome;
+        }
+
+        // ---- the create and its wait (hero20 D7: 2 x 8 minutes of nothing, then "did not reach a terminal state") ----
+
+        /// <summary>How long the create may take before the person is told, and the clock and pause it uses (tests replace both).</summary>
+        internal static TimeSpan CreateBudget = TimeSpan.FromMinutes(4);
+        internal static Func<long> NowMs = () => Environment.TickCount64;
+        internal static Func<int, CancellationToken, Task> Pause = (seconds, ct) => Task.Delay(TimeSpan.FromSeconds(seconds), ct);
+
+        internal const string UnreadableText = "Power BI sent back an answer Semanticus could not read, so it cannot tell if the model was created. Look in the workspace, then try again.";
+        internal static string StillCreatingText(TimeSpan waited) =>
+            $"Power BI had not finished creating the model after {Math.Max(1, (int)Math.Round(waited.TotalMinutes))} minutes. Look in the workspace before you try again.";
+
+        /// <summary>POST the model, then follow the operation Power BI returns until it ends. The poll uses the address the 202 gave,
+        /// waits as long as Retry-After says (1 to 10 seconds), stops at once on an answer it cannot read (three in a row), and
+        /// looks in the workspace now and then: a model that is listed was created, whatever the operation says. It never waits
+        /// longer than <see cref="CreateBudget"/>.</summary>
+        internal static async Task CreateModelAsync(TOM.Database db, string workspaceId, string fabricToken, CancellationToken ct)
+        {
+            using var http = FabricRest.NewClient(fabricToken);
+            var url = "workspaces/" + Uri.EscapeDataString(workspaceId) + "/semanticModels";
+            var r = await FabricRest.SendAsync(http, HttpMethod.Post, url, CreateBody(db), ct).ConfigureAwait(false);
+            if (r.Status != 202)
+            {
+                if (!r.Ok) throw FabricRest.NonSuccessHttp(r);
+                return;
+            }
+            var opUrl = !string.IsNullOrEmpty(r.Location) && FabricRest.IsFabricHost(r.Location) ? r.Location
+                : !string.IsNullOrEmpty(r.OperationId) ? "operations/" + Uri.EscapeDataString(r.OperationId)
+                : throw new InvalidOperationException("Power BI accepted the model but did not say where to follow it. Look in the workspace, then try again.");
+            var started = NowMs();
+            var wait = Math.Clamp(r.RetryAfter ?? 1, 1, 10);
+            int unreadable = 0, polls = 0;
+            while (true)
+            {
+                await Pause(wait, ct).ConfigureAwait(false);
+                var p = await FabricRest.SendAsync(http, HttpMethod.Get, opUrl, ct).ConfigureAwait(false);
+                if (!p.Ok) throw FabricRest.NonSuccessHttp(p);
+                if (FabricRest.TryParseOperationState(p.Body, out var st))
+                {
+                    unreadable = 0;
+                    if (st.Status == "Succeeded") return;
+                    if (st.Status == "Failed") throw new InvalidOperationException("Power BI did not create the model: " + (st.ErrorMessage ?? "it gave no reason."));
+                }
+                else if (++unreadable >= 3)
+                {
+                    if (await ListedAsync(db.Name, workspaceId, fabricToken, ct).ConfigureAwait(false)) return;
+                    throw new InvalidOperationException(UnreadableText);
+                }
+                polls++;
+                var waited = TimeSpan.FromMilliseconds(NowMs() - started);
+                var over = waited >= CreateBudget;
+                if ((over || polls % 3 == 0) && await ListedAsync(db.Name, workspaceId, fabricToken, ct).ConfigureAwait(false)) return;
+                if (over) throw new InvalidOperationException(StillCreatingText(waited));
+                wait = Math.Clamp(p.RetryAfter ?? 2, 1, 10);
+            }
+        }
+
+        private static async Task<bool> ListedAsync(string name, string workspaceId, string fabricToken, CancellationToken ct)
+        {
+            try { return (await FabricRest.ListSemanticModelsAsync(workspaceId, fabricToken, ct).ConfigureAwait(false)).Any(m => string.Equals(m.DisplayName, name, StringComparison.OrdinalIgnoreCase)); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return false; }   // a failed look is not a verdict; the poll goes on
         }
 
         /// <summary>An M navigation to one table of a shared source: #"Source", Data = Source{[Schema="dbo",Item="x"]}[Data].</summary>

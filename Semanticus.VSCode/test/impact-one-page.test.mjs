@@ -32,13 +32,13 @@ const STUBS = {
 };
 const cache = new Map();
 function load(file) {
-  const full = file.endsWith('.ts') || file.endsWith('.tsx') ? file
+  const full = file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.mjs') || file.endsWith('.js') ? file
     : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
   if (cache.has(full)) return cache.get(full);
   const source = readFileSync(full, 'utf8');
   const js = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },
-    fileName: full,
+    fileName: full.endsWith('.mjs') ? `${full.slice(0, -4)}.ts` : full,   // an .mjs is ESM to the compiler; as .ts it becomes CommonJS
   }).outputText;
   const module = { exports: {} };
   cache.set(full, module.exports);

@@ -168,6 +168,10 @@ namespace Semanticus.Analysis
         /// counted in <see cref="WaivedCount"/>, never suppressing a finding, never auto-deleted.</summary>
         public WaiverRecord[] OrphanedWaivers { get; set; } = Array.Empty<WaiverRecord>();
         public int OrphanedWaiverCount { get; set; }
+        /// <summary>The ids of the rules that SCORE on this model: they found something to check (Applicable above zero) and are not
+        /// gate-only. A finding of any other rule costs no points, so the Plan's coverage step leaves it out. Engine-side only: never
+        /// on the wire.</summary>
+        internal HashSet<string> ScoredRuleIds { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>Live per-column statistics (distinct-value cardinality, from COLUMNSTATISTICS / DMVs) that the

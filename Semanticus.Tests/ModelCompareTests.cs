@@ -926,6 +926,113 @@ namespace Semanticus.Tests
             Assert.Empty(ModelCompare.Diff(left, right, "src", "tgt").Items);
         }
 
+        // Kane, 13 Oct: Publish > Changes refused a ticked Date table ("carries authored shell metadata this apply path cannot copy yet").
+        // The residual was the table's raw-TOM calendar list (the Plan's calendar step): Table.Calendars. It copies losslessly.
+        private static TOM.Table DateWithCalendar(TOM.Model m, bool withCalendar)
+        {
+            var t = Table(m, "Date", "t-date");
+            t.DataCategory = "Time";
+            var d = new TOM.DataColumn { Name = "Date", DataType = TOM.DataType.DateTime, LineageTag = "c-date", IsKey = true };
+            var y = new TOM.DataColumn { Name = "Year", DataType = TOM.DataType.Int64, LineageTag = "c-year" };
+            t.Columns.Add(d); t.Columns.Add(y);
+            if (withCalendar)
+            {
+                var cal = new TOM.Calendar { Name = "Gregorian", LineageTag = "cal-1", Description = "Calendar year" };
+                cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Date) { PrimaryColumn = d });
+                cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Year) { PrimaryColumn = y });
+                t.Calendars.Add(cal);
+            }
+            return t;
+        }
+
+        [Fact]
+        public void Apply_copies_a_date_tables_calendars_instead_of_refusing_the_table()
+        {
+            var left = new TOM.Model(); DateWithCalendar(left, true);
+            var right = new TOM.Model(); DateWithCalendar(right, false);
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var update = Assert.Single(diff.Items, i => i.ObjectType == "Table" && i.Action == "Update");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
+
+            Assert.Empty(outcome.Failed);
+            var cal = Assert.Single(right.Tables["Date"].Calendars);
+            Assert.Equal("Gregorian", cal.Name);
+            Assert.Equal("cal-1", cal.LineageTag);
+            Assert.Equal(2, cal.CalendarColumnGroups.Count);
+            // the copied calendar must point at the TARGET's columns, never at the source model's
+            var assoc = Assert.IsType<TOM.TimeUnitColumnAssociation>(cal.CalendarColumnGroups[0]);
+            Assert.Same(right.Tables["Date"].Columns["Date"], assoc.PrimaryColumn);
+            Assert.Empty(ModelCompare.Diff(left, right, "src", "tgt").Items);
+        }
+
+        [Fact]
+        public void Apply_removes_a_calendar_the_source_no_longer_has()
+        {
+            var left = new TOM.Model(); DateWithCalendar(left, false);
+            var right = new TOM.Model(); DateWithCalendar(right, true);
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var update = Assert.Single(diff.Items, i => i.ObjectType == "Table" && i.Action == "Update");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
+
+            Assert.Empty(outcome.Failed);
+            Assert.Empty(right.Tables["Date"].Calendars);
+        }
+
+        [Fact]
+        public void Apply_creates_a_whole_date_table_with_its_calendar()
+        {
+            var left = new TOM.Model(); DateWithCalendar(left, true);
+            var right = new TOM.Model();
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string>(diff.Items.Select(i => i.Ref)));
+
+            Assert.Empty(outcome.Failed);
+            var cal = Assert.Single(right.Tables["Date"].Calendars);
+            var assoc = Assert.IsType<TOM.TimeUnitColumnAssociation>(cal.CalendarColumnGroups[0]);
+            Assert.Same(right.Tables["Date"].Columns["Date"], assoc.PrimaryColumn);
+        }
+
+        [Fact]
+        public void A_calendar_that_needs_a_column_not_ticked_fails_its_own_table_change_only()
+        {
+            var left = new TOM.Model(); DateWithCalendar(left, true); Table(left, "Other", "t-o").Description = "new words";
+            var right = new TOM.Model(); var rd = DateWithCalendar(right, false); Table(right, "Other", "t-o");
+            rd.Columns.Remove("Year");   // the calendar maps Year, which the target lacks and the person did not tick
+
+            var diff = ModelCompare.Diff(left, right, "src", "tgt");
+            var dateRow = Assert.Single(diff.Items, i => i.ObjectType == "Table" && i.Name == "Date");
+            var otherRow = Assert.Single(diff.Items, i => i.ObjectType == "Table" && i.Name == "Other");
+            var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { dateRow.Ref, otherRow.Ref });
+
+            Assert.Contains(otherRow.Ref, outcome.Applied);
+            Assert.DoesNotContain(dateRow.Ref, outcome.Applied);
+            var failure = Assert.Single(outcome.Failed, f => f.Ref == dateRow.Ref);
+            Assert.Contains("Year column", failure.Reason);
+            Assert.DoesNotContain("TMDL", failure.Reason);
+            Assert.Empty(right.Tables["Date"].Calendars);   // nothing half-applied
+        }
+
+        [Fact]
+        public void A_higher_compatibility_level_is_one_change_and_applies_up_only()
+        {
+            var left = new TOM.Database("a") { CompatibilityLevel = 1701, Model = new TOM.Model() };
+            var right = new TOM.Database("b") { CompatibilityLevel = 1600, Model = new TOM.Model() };
+
+            var diff = ModelCompare.Diff(left.Model, right.Model, "src", "tgt");
+            var level = Assert.Single(diff.Items, i => i.ObjectType == "CompatibilityLevel");
+            Assert.Equal("1701", level.LeftText); Assert.Equal("1600", level.RightText);
+            var outcome = ModelCompare.Apply(left.Model, right.Model, diff, new HashSet<string> { level.Ref });
+            Assert.Empty(outcome.Failed);
+            Assert.Equal(1701, right.CompatibilityLevel);
+
+            // never lowered: a lower level on your copy is not a change at all
+            Assert.DoesNotContain(ModelCompare.Diff(right.Model, left.Model, "src", "tgt").Items, i => i.ObjectType == "CompatibilityLevel");
+            Assert.DoesNotContain(ModelCompare.Diff(left.Model, left.Model, "src", "tgt").Items, i => i.ObjectType == "CompatibilityLevel");
+        }
+
         [Fact]
         public void Unsupported_model_shell_metadata_is_refused_before_mutation()   // #135
         {
@@ -940,7 +1047,7 @@ namespace Semanticus.Tests
             var outcome = ModelCompare.Apply(left, right, diff, new HashSet<string> { update.Ref });
 
             Assert.Empty(outcome.Applied);
-            Assert.Contains(outcome.Failed, f => f.Ref == update.Ref && f.Reason.Contains("cannot copy yet"));
+            Assert.Contains(outcome.Failed, f => f.Ref == update.Ref && f.Reason.Contains("cannot send to Power BI yet") && !f.Reason.Contains("TMDL"));
             Assert.Equal(originalTargetValue, property.GetValue(right));
             Assert.Single(ModelCompare.Diff(left, right, "src", "tgt").Items, i => i.ObjectType == "Model");
         }

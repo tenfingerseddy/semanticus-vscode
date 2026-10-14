@@ -15,8 +15,10 @@ const ts = req('typescript');
 export function makeLoader(stubs = {}, reactImpl = null) {
   const cache = new Map();
   const load = (file) => {
+    // A folder import (`./personality/motion`) resolves to its index, as the bundler does.
     const full = file.endsWith('.ts') || file.endsWith('.tsx') || file.endsWith('.mjs') ? file
-      : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
+      : existsSync(file + '.tsx') ? file + '.tsx' : existsSync(file + '.ts') ? file + '.ts'
+        : existsSync(join(file, 'index.tsx')) ? join(file, 'index.tsx') : existsSync(join(file, 'index.ts')) ? join(file, 'index.ts') : file + '.ts';
     if (cache.has(full)) return cache.get(full);
     const js = ts.transpileModule(readFileSync(full, 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true, allowJs: true },

@@ -1,7 +1,8 @@
 // An assistant's model swap updates the window quietly (coordinator decision, 27 Sep, on the verifier's A3 for lane
 // m11/create-model-ui). The swap reaches the tree, Properties and the status bar, and an open Studio follows it. It
-// does NOT reopen a Studio the person closed, and it never raises the "Let Pro decide for this model?" card (the
-// coordinator's 26 Sep ruling on the verifier's r2 O1: only the person's own actions may).
+// does NOT reopen a Studio the person closed. It DOES raise the "Let Pro decide for this model?" card for a model nobody has
+// decided about (hero 20 D10, 13 Oct: the old 26 Sep rule kept Jev silent until the person found Pro > Turn on). The card only
+// asks; the person's press is the only thing that turns permission on.
 // A closed Studio shows the new model the next time the person opens it.
 //
 // Three kinds of check. The permission card's rules (the webview's card and the host's memory behind it, verifier r2
@@ -60,24 +61,23 @@ function slice(source, start, end, what) {
     './pro': { useTier: () => 'pro' },
   });
   const edit = (sessionId) => didChange.forEach((fn) => fn({ sessionId, revision: 1, deltas: [] }));
-  const swap = (by) => { host.noteSwap(by); reconnect.forEach((fn) => fn(by)); };
+  const swap = (by) => { reconnect.forEach((fn) => fn(by)); };
   const needs = (model) => ({ granted: false, current: false, appliesTo: model });
   let C = studio();
 
-  // O1 (coordinator, 26 Sep): the assistant's actions never raise the card. Run A shot A05: in a Studio that had never
-  // asked, the first ask came straight after the assistant opened a model.
+  // D10 (hero 20): the assistant opening a model asks like any other open, once for that model.
   swap('otherDoor');
   edit('s1');
-  assert.equal(await C.raiseConsentCardFor(needs('A')), false, 'the assistant creating a model never brings up the card, even the first time');
+  assert.equal(await C.raiseConsentCardFor(needs('A')), true, 'the assistant opening A brings up the card, once');
+  assert.equal(await C.raiseConsentCardFor(needs('A')), false, 'and not again for A');
   swap('otherDoor');
   edit('s2');
-  assert.equal(await C.raiseConsentCardFor(needs('B')), false, 'nor does the assistant opening another model');
+  assert.equal(await C.raiseConsentCardFor(needs('B')), true, 'the assistant opening B asks about B');
 
-  // Only the person's own action may: their own open asks, once.
+  // The person's own open of a model already asked about does not ask again.
   swap('person');
   edit('s3');
-  assert.equal(await C.raiseConsentCardFor(needs('A')), true, 'the person\'s own open of A asks');
-  assert.equal(await C.raiseConsentCardFor(needs('A')), false, 'and not again for A');
+  assert.equal(await C.raiseConsentCardFor(needs('A')), false, 'the person\'s own open of A does not ask again');
 
   // O2: "Not now" holds for the window's run. Run B shot B24: the person closed Studio and opened it again, and the
   // fresh Studio asked about the model they had just said Not now to.
@@ -92,17 +92,46 @@ function slice(source, start, end, what) {
   // The person's own History restore reopens the same model: not a fresh occasion, and not their own open either.
   swap('restore');
   edit('s4b');
-  assert.equal(await C.raiseConsentCardFor(needs('C')), false, 'the person\'s restore after the assistant\'s swap does not ask');
+  assert.equal(await C.raiseConsentCardFor(needs('C')), true, 'a model not yet asked about asks, whoever opened it');
 
   // The person's own open of a model not yet asked about asks; reopening A still does not, in this window's run.
   swap('person');
   edit('s5');
   assert.equal(await C.raiseConsentCardFor(needs('A')), false, 'the person reopening A does not undo their Not now');
-  assert.equal(await C.raiseConsentCardFor(needs('B')), true, 'the person\'s own open of B asks about B');
+  assert.equal(await C.raiseConsentCardFor(needs('B')), false, 'B was asked about when the assistant opened it');
   assert.equal(await C.raiseConsentCardFor({ current: true, appliesTo: 'D' }), false, 'permission already current never asks');
   assert.equal(await C.raiseConsentCardFor({ current: false, appliesTo: '' }), false, 'a never-saved model never asks');
   assert.equal(host.claim(undefined), false, 'the host answers no to a message with no model named');
   assert.equal(host.claim('E'), true, 'and yes, once, to one that names a model not yet asked about');
+}
+
+// ---- 1b. The model open now, asked about at once (hero 20 D10) ------------------------------------------
+// Nobody has decided about Jev for the model the assistant opened, and no page is waiting on a Pro answer: the card comes
+// anyway. Someone who turned permission off has decided, so they are not asked. Nothing is turned on by the check itself.
+{
+  const { ConsentAsks } = load(join(root, 'src', 'consentAsks.ts'), {});
+  const host = new ConsentAsks();
+  let reply = null;
+  const calls = [];
+  const C = load(join(webview, 'src', 'consent.tsx'), {
+    './bridge': {
+      rpc: async (name) => { calls.push(name); return reply; },
+      claimConsentAsk: async (scope) => host.claim(scope),
+      onDidChange: () => () => {},
+      onReconnect: () => () => {},
+    },
+    './pro': { useTier: () => 'pro' },
+  });
+  reply = { granted: false, current: false, appliesTo: 'M1' };
+  assert.equal(await C.raiseConsentCardForOpenModel(), true, 'an undecided model the assistant opened brings up the card');
+  assert.equal(await C.raiseConsentCardForOpenModel(), false, 'once');
+  reply = { granted: false, current: false, appliesTo: 'M2', withdrawnUtc: '2026-10-01T00:00:00Z' };
+  assert.equal(await C.raiseConsentCardForOpenModel(), false, 'permission the person turned off is a decision: no card');
+  reply = { granted: true, current: true, appliesTo: 'M3' };
+  assert.equal(await C.raiseConsentCardForOpenModel(), false, 'permission already given: no card');
+  reply = { granted: false, current: false, appliesTo: '' };
+  assert.equal(await C.raiseConsentCardForOpenModel(), false, 'a model with no saved place has nothing to keep permission under');
+  assert.ok(!calls.some((c) => /^setConsent$/.test(c)), 'the check never gives permission itself');
 }
 
 // ---- 2. The bridge carries who swapped, executed ------------------------------------------------------
@@ -167,13 +196,9 @@ function slice(source, start, end, what) {
     'the relay tells Studio a restore is a restore');
   assert.match(extension, /postToPanels\(\{ type: 'reconnected', by: swapBy \}\)/, 'and passes that word on to both panels');
 
-  // The card's memory is the host's, for the window's run (O1, O2): told of every swap before the panels hear of it,
-  // and asked by every panel through one message.
-  const note = handler.indexOf("consentAsks.noteSwap('otherDoor')");
-  assert.ok(note >= 0 && note < bind, 'another door\'s swap reaches the card\'s memory before bindGridAndTree awaits anything');
-  assert.match(bindBody, /^[^\n]*\n\s*consentAsks\.noteSwap\(by\);/, 'bindGridAndTree tells the card\'s memory whose swap it was, first');
-  const relay = slice(extension, 'const swapBy = ', "postToPanels({ type: 'reconnected', by: swapBy })", 'the Studio relay');
-  assert.match(relay, /if \(modelSwapped\) \{\s*consentAsks\.noteSwap\(swapBy\);/, 'a swap Studio made reaches the card\'s memory before its result goes back');
+  // The card's memory is the host's, for the window's run, and asked by every panel through one message. A swap is not told to it:
+  // the assistant's open asks like any other.
+  assert.doesNotMatch(extension, /noteSwap/, 'no swap is told to the card\'s memory any more: it never stays silent after the assistant\'s open');
   assert.match(extension, /msg\?\.type === 'claimConsentAsk'[\s\S]{0,200}?type: 'consentAsk', id: msg\.id, ask: consentAsks\.claim\(msg\.scope\)/,
     'the panels ask the host whether the card may ask');
   assert.equal((extension.match(/new ConsentAsks\(\)/g) ?? []).length, 1, 'one memory for the window, shared by every panel');

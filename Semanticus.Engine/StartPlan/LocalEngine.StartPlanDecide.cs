@@ -63,6 +63,11 @@ namespace Semanticus.Engine
         /// rebuilt every round does not start it empty and the Plan's own memory is never touched.</summary>
         private readonly JevProgressMemory _startDecideMemory = new JevProgressMemory();
 
+        /// <summary>The columns a start plan heard Jev on for column.summarize. The build sets the ones Jev said none for to None; the Plan reads this so it does not ask them again.</summary>
+        private readonly ConcurrentDictionary<string, byte> _startSummarizeDecided = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>The session the set above was heard in. It is read only for that session, like _jevDecisionsSession: a column decided in one model never follows the person to another.</summary>
+        private string _startSummarizeSession;
+
         private readonly object _startDecideGate = new object();
         private CancellationTokenSource _startDecideCts;
         private Task _startDecideTask = Task.CompletedTask;
@@ -482,7 +487,7 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Forget what the loop heard (the plan was discarded, or permission was withdrawn).</summary>
-        internal void ForgetStartDecideAnswers() { _startDecideAnswers.Clear(); _startDecideMemory.Reset(); }
+        internal void ForgetStartDecideAnswers() { _startDecideAnswers.Clear(); _startDecideMemory.Reset(); _startSummarizeDecided.Clear(); _startSummarizeSession = null; }
 
         /// <summary>THE LOOP. Mutates <paramref name="doc"/> in place (state, round, lines, base measures, word counts) and calls
         /// <paramref name="persist"/> after every round. Returns false when it was cancelled part way (the document then holds the last
@@ -613,6 +618,10 @@ namespace Semanticus.Engine
                         return true;
                     }
                     last = run;
+                    // The loop runs over a hidden scratch, so the model the answers belong to is the OPEN one (the Plan reads them for its own session).
+                    var openId = _sessions.Current?.Id;
+                    if (!string.Equals(_startSummarizeSession, openId, StringComparison.Ordinal)) { _startSummarizeDecided.Clear(); _startSummarizeSession = openId; }
+                    foreach (var pick in run.SummarizePicks) _startSummarizeDecided[pick.ColumnRef] = 0;
 
                     var ruleLines = await RuleLinesAsync(s).ConfigureAwait(false);
                     var resolved = await ResolvedRefsAsync(s, doc).ConfigureAwait(false);

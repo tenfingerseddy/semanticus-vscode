@@ -30,6 +30,7 @@ test('A8: a refused Accept write preserves the reason through a redraw', async (
     './hooks': { useFixState: () => ({ state: {}, keyOf: (r, o) => r + o, fix() {} }) },
     './ui': { Caret: () => null },
     './rulesauthor': { CustomRulesPanel: () => null },
+    './personality/motion': { GradeFlip: () => null, BigWin: () => null },
     './sendtask': { GiveToAssistant: () => null, findingBuilder: () => ({}) },
   }, MODEL);
   pg.React.createContext = (value) => ({ current: value, Provider: ({ children }) => children });

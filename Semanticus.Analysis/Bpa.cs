@@ -60,6 +60,10 @@ namespace Semanticus.Analysis
         public string ObjectName { get; set; }
         public string Message { get; set; }
         public bool CanAutoFix { get; set; }            // deterministic FixExpression that we can apply
+        /// <summary>True when the finding has a fix of its own that Fix all and the Plan's fix row leave out on purpose
+        /// (<see cref="BpaAnalyzer.BulkFixWithheld"/>: a data type change, a second key). The finding's own Fix still works. The page counts
+        /// Fix N without these, so no button refuses, and the Plan hands them to the assistant.</summary>
+        public bool FixWithheld { get; set; }
         /// <summary>A format finding whose fix the format fill rule withholds (<see cref="BpaAnalyzer.IsFormatAdvice"/>):
         /// advice for a person or their assistant to decide, not a fault, so the deploy gate skips it (<see cref="IsAdviceTheGateSkips"/>).</summary>
         public bool Advice { get; set; }
@@ -67,6 +71,8 @@ namespace Semanticus.Analysis
         /// words (its fix is still withheld, so the assistant is told to ask the person), but it is an error the model wrote for itself
         /// and it keeps blocking (Sol 4.3). Only a bundled rule, or the model's own below severity 3, is advice the gate skips.</summary>
         public bool IsAdviceTheGateSkips() => Advice && !(Custom && Severity >= 3);
+        /// <summary>A Maintenance finding (descriptions and the like) is tidying, never a reason to hold a publish (hero17 P5). A model's own severity 3 rule still blocks.</summary>
+        public bool IsMaintenanceOnly() => string.Equals(Category, "Maintenance", StringComparison.OrdinalIgnoreCase) && !(Custom && Severity >= 3);
         public bool Waived { get; set; }                // an accepted finding: surfaced but excluded from ViolationCount
         public string WaiverReason { get; set; }        // why it was accepted (null unless Waived); on a related finding, the words that say so
         public bool WaiverRuleLevel { get; set; }        // true when waived by a rule-level (model-wide) waiver, not a per-instance one
@@ -390,6 +396,7 @@ namespace Semanticus.Analysis
                             ObjectName = (obj as IDaxObject)?.DaxObjectFullName ?? obj.Name,
                             Message = Describe(rule, obj),
                             CanAutoFix = CanAutoFix(rule, obj),   // per-object: a fix that cannot convert here is not fixable here
+                            FixWithheld = FixWithheldFor(rule, obj),
                             Advice = IsFormatAdvice(rule, obj),
                             Custom = rule.FromModelAnnotation,
                             Waived = teIgnored,
@@ -552,7 +559,7 @@ namespace Semanticus.Analysis
             {
                 RuleCount = rules.Count,
                 ViolationCount = deduped.Count(v => !v.IsAccepted()),
-                AutoFixable = deduped.Count(v => !v.Waived && v.CanAutoFix),
+                AutoFixable = deduped.Count(v => !v.Waived && v.CanAutoFix && !v.FixWithheld),
                 WaivedCount = deduped.Count(v => v.IsAccepted()),
                 Violations = deduped.ToArray(),
                 RuleErrors = ruleErrors.Distinct().ToArray(),
@@ -783,6 +790,14 @@ namespace Semanticus.Analysis
                          + $"the key away from {holder.Name}. It was left as it is. Change the key yourself if {c.Name} is the right one.";
             }
             return null;
+        }
+
+        /// <summary>True when the rule's fix on this object is one a bulk pass withholds (<see cref="BulkFixWithheld"/>). False when the rule has no fix here.</summary>
+        internal static bool FixWithheldFor(BpaRule rule, ITabularNamedObject obj)
+        {
+            if (!CanAutoFix(rule, obj)) return false;
+            var (prop, _, after) = PreviewFix(rule, obj);
+            return prop != null && BulkFixWithheld(obj, prop, after) != null;
         }
 
         /// <summary>Preview a deterministic FixExpression without applying it: the target property, its

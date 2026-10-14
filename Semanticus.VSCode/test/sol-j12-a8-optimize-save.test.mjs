@@ -30,6 +30,7 @@ test('A8: an Optimize save reply keeps the newer description typed before it arr
       } },
     './sendtask': { GiveToAssistant: () => null, slotTask: () => ({}) },
     './copy': { uiLabel: (s) => s },
+    './personality/motion': { BulkCount: () => null },
   }, MODEL);
   const O = pg.load('optimize.tsx');
   const view = pg.mount(() => O.OptimizeView({}));

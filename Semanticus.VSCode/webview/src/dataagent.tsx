@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, copyText } from './bridge';
+import { rpc, rpcPressed, copyText } from './bridge';
 import { usePersistedState } from './hooks';
 import { Button } from './workflows';
 import { useTier, isEntitlementError, ProBadge, UpsellNotice } from './pro';
@@ -87,7 +87,8 @@ export function DataAgentView() {
     setWorkspaces(null); setWorkspaceId('');
     const seq = ++wsSeq.current;
     if (!mayList) { setWsErr(null); return; }
-    rpc<FabricWorkspace[]>('listWorkspaces', authMode, tenant)
+    // mayList says the person asked to sign in
+    rpcPressed<FabricWorkspace[]>('listWorkspaces', authMode, tenant)
       .then((w) => { if (seq === wsSeq.current) { setWorkspaces(w ?? []); setWsErr(null); } })
       .catch((e) => { if (seq === wsSeq.current) setWsErr(errMsg(e)); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -104,7 +105,7 @@ export function DataAgentView() {
     const seq = ++listSeq.current;   // bump BEFORE the early-return too, so clearing the workspace invalidates any in-flight list
     if (!workspaceId) { setList(null); setListErr(null); return; }   // no workspace ⇒ no list — drop the stale one, don't keep rendering it
     setList(null); setListErr(null);
-    rpc<DataAgentList>('listDataAgents', workspaceId, authMode, tenant)
+    rpcPressed<DataAgentList>('listDataAgents', workspaceId, authMode, tenant)
       .then((l) => { if (seq === listSeq.current) setList(l); })
       .catch((e) => { if (seq === listSeq.current) setListErr(errMsg(e)); });
   };

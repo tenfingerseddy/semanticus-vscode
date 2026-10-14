@@ -24,6 +24,11 @@ namespace Semanticus.Engine.Entitlement
         [JsonPropertyName("iat")] public long Iat { get; set; }           // issued-at (unix seconds)
         [JsonPropertyName("exp")] public long Exp { get; set; }           // expiry (unix seconds; 0 = perpetual)
         [JsonPropertyName("features")] public string[] Features { get; set; }
+
+        /// <summary>The free Pro month (Kane, 11 Oct 2026). A trial token is the normal Pro token with this set, and it gets
+        /// no grace: it is Free the second after <see cref="Exp"/>. Left OUT of the signed payload when false, so every
+        /// token minted before trials existed, and every paid token since, stays byte-identical.</summary>
+        [JsonPropertyName("trial"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] public bool Trial { get; set; }
     }
 
     /// <summary>Offline license tokens. ECDSA P-256 over a compact JSON payload (.NET 8 has no native Ed25519; P-256

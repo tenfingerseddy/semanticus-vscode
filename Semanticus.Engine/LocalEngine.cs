@@ -89,7 +89,9 @@ namespace Semanticus.Engine
         // The Pro entitlement (offline-verified license). Consulted at the feature gate below and nowhere else.
         // Injected for tests/smokes; defaults to the ambient license. NOT readonly since F-242: a person's licence
         // change swaps it in place (ApplyLicense), so every reader takes it fresh per call and none may cache it.
-        private volatile Entitlement.IEntitlement _entitlement;
+        // Read through the _entitlement property (LocalEngine.Trial.cs), never directly: the property moves a licence
+        // past its end (a free Pro month, a lapsed paid licence) at the instant it ends.
+        private volatile Entitlement.IEntitlement _heldEntitlement;
 
         /// <summary>The feature gate. Called as the FIRST statement of every Pro operation, so a refusal happens
         /// before any protected computation, network call or side effect: a free run_tests must not open a SQL
@@ -120,9 +122,11 @@ namespace Semanticus.Engine
         public LocalEngine(SessionManager sessions, Entitlement.IEntitlement entitlement = null, string workspaceDir = null)
         {
             _sessions = sessions;
+            sessions.SessionReplaced += () => DropHeldLive("the model was replaced");
             _entitlement = entitlement ?? Entitlement.LicenseEntitlement.FromEnvironment();
             _workspaceDir = string.IsNullOrWhiteSpace(workspaceDir) ? null : workspaceDir;
             StartPlanHost = new StartPlanHostOverStore(this);
+            WireNextStep();   // 1.5: the Next line counts unsaved objects and repeats from the first commit
             // Health delta (feature #4): PRO with a SOFT gate (Kane's locked call 2026-07-07) — the probe is
             // installed on EVERY session and reads the entitlement LAZILY per commit, so free edits stay plain
             // "rev N" at the cost of one bool check and a mid-session (headless) license activation starts
@@ -138,6 +142,7 @@ namespace Semanticus.Engine
                 refuse: RefuseCommitWithoutTicket);
             AttachDeployGateTracking();
             AttachEditLedger();
+            AttachTrialTally();
         }
 
         // Agent-health mailbox: ENGINE-level (not session-level) so a model swap mid-call can neither lose a
@@ -180,6 +185,7 @@ namespace Semanticus.Engine
                 old = _sessions.CurrentContext.ExchangeLive(null);
             }
             SafeDispose(old);
+            DropHeldLive("the engine closed");
             StopStartPlanWork();
             ReleaseSnapshotDir();
             StopModelFacts();
@@ -187,6 +193,7 @@ namespace Semanticus.Engine
             try { _sessions.Ledger.FlushAsync().Wait(TimeSpan.FromSeconds(2)); } catch { }
             // This run is over: another engine on the model may now release the claims its assistant held.
             EngineRunLiveness.Release(EngineRunId);
+            StopTrialWork();
         }
 
         /// <summary>Adopt the temp dir backing a just-opened live/local snapshot, so it is deleted when this session is
@@ -251,7 +258,7 @@ namespace Semanticus.Engine
         public Task<Entitlement.EntitlementInfo> GetEntitlementAsync()
         {
             var e = _entitlement;   // one read: a licence swap between two reads would stamp one tier with another's grants
-            var info = Entitlement.FeatureGrants.Stamp(e.Info, e);
+            var info = StampedInfo(e);   // the trial's days left at this engine's now (LocalEngine.Trial.cs)
             if (info == null) return Task.FromResult(info);
             var assistant = CurrentAssistant;
             var inactive = _decisions?.Oracle is Semanticus.Engine.Decisions.JevDecisionOracle { SubscriptionInactive: true } && Entitlement.FeatureGrants.IsProTier(e);
@@ -261,6 +268,7 @@ namespace Semanticus.Engine
             {
                 Tier = info.Tier, LicensedTo = info.LicensedTo, Expiry = info.Expiry, Reason = info.Reason,
                 ManageUrl = info.ManageUrl, Features = info.Features, PlanInactive = inactive || info.PlanInactive, Assistant = assistant,
+                IsTrial = info.IsTrial, TrialEndsAt = info.TrialEndsAt, TrialDaysLeft = info.TrialDaysLeft, TrialEnded = info.TrialEnded,
             });
         }
 
@@ -3219,10 +3227,20 @@ namespace Semanticus.Engine
             return swapped;
         }
 
+        // hero17 P19: no sign-in named means the one that is ready, the same pick as the SQL listing and the start from SQL (D1): the saved sign-in,
+        // then a ready service principal, and az only when nothing else is ready. A sign-in the caller names, a token or a saved account is theirs.
+        internal (string Mode, string Tenant) PickOpenLiveSignIn(string authMode, string tenantId, string rawToken, string accountProfileId)
+        {
+            if (!string.IsNullOrWhiteSpace(authMode) || !string.IsNullOrWhiteSpace(rawToken) || !string.IsNullOrWhiteSpace(accountProfileId)) return (authMode, tenantId);
+            var (mode, tenant) = ResolveSqlListSignIn(null, tenantId);
+            return mode == null ? (authMode, tenantId) : (mode, tenant);
+        }
+
         public async Task<OpenResult> OpenLiveAsync(string endpoint, string database, string authMode, string rawToken, string tenantId, bool forceReauth = false,
             string accountProfileId = null, bool? makeDefault = null, string loginHint = null, string origin = "human", bool discardUnsaved = false, bool silentOnly = false)
         {
             RefuseUnheldDiscard(discardUnsaved, "open the published model " + (string.IsNullOrWhiteSpace(database) ? endpoint : database));
+            (authMode, tenantId) = PickOpenLiveSignIn(authMode, tenantId, rawToken, accountProfileId);
             // Wire-compat (item 4): a NULL makeDefault is a LEGACY caller (older extension / Phase 1) — a forced re-sign
             // still repoints the tenant default, as it always did. An EXPLICIT false is the Phase 2 "add a profile without
             // repointing"; explicit true is make-default. One rule covers all three (RepointDefaultRule).
@@ -3402,7 +3420,9 @@ namespace Semanticus.Engine
             open.LiveConnected = await TryBindLiveAsync("xmla", endpoint, liveCs, liveTicket, session, account,
                 accessToken: tok, silentCredential: SilentQueryCredential(cred, prepared, mode, tenant));
             await SafeRebroadcastWorkflowLibraryAsync();   // model + connection.* now exist — re-curate the menu (§10.6)
-            return PublishSessionSwap(open, "open_live");
+            var swapped = PublishSessionSwap(open, "open_live");
+            await ExtendWindowConsentAsync(origin).ConfigureAwait(false);   // the person's OK in this window carries to the live model the assistant opened (hero19 D11)
+            return swapped;
         }
 
         public async Task<OpenResult> OpenLocalAsync(string dataSource, string database, bool discardUnsaved = false)
@@ -4399,6 +4419,11 @@ namespace Semanticus.Engine
             var replacingOpen = string.IsNullOrEmpty(path) || SameSavePath(target, s.SourcePath)
                 || (!string.IsNullOrEmpty(s.SourcePath) && SameSavePath(target, PathWitness.Real(s.SourcePath)));   // an open model reached through a link is the same file once the link is followed
             var oldSource = s.SourcePath;
+            // The assistant saving to another place while the model has a home is making a copy (a backup before a risky change). A copy is
+            // written and left; the session keeps following the person's file, so the next plain save writes THAT file, not the backup
+            // (hero run 20: the backup became the model's home and the later save wrote over it). The person's own Save As still moves the model.
+            var asCopy = string.Equals(origin, "agent", StringComparison.Ordinal) && !string.IsNullOrEmpty(path)
+                         && !string.IsNullOrEmpty(oldSource) && !replacingOpen;
             var folderSave = fmt == SaveFormat.TMDL || fmt == SaveFormat.TabularEditorFolder;
             string tempDir = null;
             // Whether this save wrote anybody's unsaved edits, read in the SAME dispatcher turn as the serialize, and the
@@ -4433,7 +4458,7 @@ namespace Semanticus.Engine
                         PreserveUntouchedFiles(target, tempDir, fmt);
                         SwapFolderSave(target, tempDir);
                         tempDir = null;
-                        marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
+                        if (!asCopy) marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
                     }
                     else
                     {
@@ -4458,7 +4483,7 @@ namespace Semanticus.Engine
                                 return true;
                             });
                             File.Move(staged, target, overwrite: true);
-                            marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
+                            if (!asCopy) marked = await s.RunAsync(() => { s.MarkSavedToDisk(wroteEdits); savedSteps = s.UndoStateNow().Steps; savedRevision = s.Revision; return (s.SaveCount, s.PlanSawUnsaved); });
                         }
                         finally
                         {
@@ -4467,15 +4492,19 @@ namespace Semanticus.Engine
                     }
                     // Each model keeps its switches under What Pro decides in a file named for it, so a save that moves a
                     // model (a first save, or a save as) reads them where they were kept and writes them where it lands.
-                    var switchesBefore = !string.IsNullOrEmpty(path) && !ExperienceStore.IsEphemeralAnchor(target)
+                    if (asCopy) wroteEdits = false;
+                    var switchesBefore = !asCopy && !string.IsNullOrEmpty(path) && !ExperienceStore.IsEphemeralAnchor(target)
                                          ? DecisionSwitchesBefore(s) : null;
                     // Anchor a created (path-less) session to its first explicit save target, so a later save with no
                     // path overwrites the same file (matching file-opened session semantics).
                     // The model's name moves with its path: keep the one it had, so a page that was showing it before this Save As still names it (drafts-sol round 3).
-                    if (!string.IsNullOrEmpty(path)) { s.AddFormerIdentity(ModelIdentityOf(s)); s.SourcePath = target; }
-                    await s.RebaseSidecarsAsync(CarrySidecars(oldSource, target));
-                    switchesNotKept = CarryDecisionSwitches(s, switchesBefore);
-                    await s.RunAsync(() => { s.ClearFileRecoveryAfterSave(); s.StartFileRecovery(); return true; });
+                    if (!asCopy)
+                    {
+                        if (!string.IsNullOrEmpty(path)) { s.AddFormerIdentity(ModelIdentityOf(s)); s.SourcePath = target; }
+                        await s.RebaseSidecarsAsync(CarrySidecars(oldSource, target));
+                        switchesNotKept = CarryDecisionSwitches(s, switchesBefore);
+                        await s.RunAsync(() => { s.ClearFileRecoveryAfterSave(onlyIfPathMoved: true); s.StartFileRecovery(); return true; });
+                    }
                 }
                 finally
                 {
@@ -4484,6 +4513,12 @@ namespace Semanticus.Engine
             }
             // A model saved for the first time now has somewhere to keep its History: file and write the entries made
             // before this save, so closing straight after it loses none of them (Codex on pull request 393).
+            if (asCopy)
+            {
+                var copyCount = Directory.Exists(target) ? Directory.EnumerateFiles(target, "*.tmdl", SearchOption.AllDirectories).Count() : 0;
+                return new SaveResult { Revision = s.Revision, Path = target, Format = fmt.ToString(), FileCount = copyCount,
+                    Note = "Saved a copy. The open model still saves to " + oldSource + "." };
+            }
             _sessions.Ledger.EnsureLoaded(s.Id);
             // After the move: the History's file is found where the model now lives, never at the place a save-as just left (it is written from here on).
             if (savedRevision >= 0) _sessions.Ledger.StampSaved(s.Id, savedSteps, savedRevision);
@@ -7743,7 +7778,7 @@ namespace Semanticus.Engine
                 // identityStrict: the restore point IS a snapshot of this same target, so a non-empty tag that no longer
                 // resolves means the object was republished under us — refuse rather than mutate a same-named impostor.
                 var deleteTargets = removeItems.Select(LiveDeleteTarget.FromDiffItem).ToArray();
-                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets, DeployGuard.IsAgent(origin), refTenant);   // reuse the snapshot's effective mode (P2-5); tenant threaded (HIGH 6); non-interactive for an agent (round-3)
+                var rep = await PushWorkspaceAsync(bim, rp.Endpoint, rp.Database, effectiveMode, deleteTargets, DeployGuard.IsAgent(origin), refTenant, (await SavedSignInForAsync(rp.Endpoint, rp.Database, authMode, refTenant)).Saved);   // reuse the snapshot's effective mode (P2-5); tenant threaded (HIGH 6); non-interactive for an agent (round-3)
 
                 if (rep?.Committed != true)
                     return new RollbackResult { RestorePointId = rp.Id, Target = tlabel, FailedRefs = failed.ToArray(),
@@ -7790,10 +7825,10 @@ namespace Semanticus.Engine
 
         // Snapshot the live target's metadata to raw TOM. Test seam: WorkspaceSnapshotHook returns an in-memory
         // snapshot (A then B on successive calls) so offline tests never touch a real endpoint.
-        private async Task<(RawTom.Database db, string mode)> SnapshotWorkspaceAsync(string endpoint, string database, string authMode, System.Collections.Generic.List<Action> cleanups, string origin, string tenantId = null)
+        private async Task<(RawTom.Database db, string mode)> SnapshotWorkspaceAsync(string endpoint, string database, string authMode, System.Collections.Generic.List<Action> cleanups, string origin, string tenantId = null, bool savedDestination = false)
         {
             if (WorkspaceSnapshotHook != null) return (await WorkspaceSnapshotHook(), XmlaAuthHint.SafeMode(authMode));
-            var (snap, effectiveMode) = await SnapshotWorkspaceMetadataAsync(endpoint, database, authMode, origin, tenantId);
+            var (snap, effectiveMode) = await SnapshotWorkspaceMetadataAsync(endpoint, database, authMode, origin, tenantId, savedDestination);
             var dir = System.IO.Path.GetDirectoryName(snap.BimPath);
             cleanups.Add(() => { try { System.IO.Directory.Delete(dir, true); } catch { } });   // a load failure must not orphan the snapshot dir
             try { return (ModelCompare.LoadRawModelDb(snap.BimPath), effectiveMode); }
@@ -7805,6 +7840,8 @@ namespace Semanticus.Engine
         // run in a test). Receives the auth MODE actually attempted (so a test can reject 'azcli' but accept
         // 'interactive', proving the fallback fires); null in production -> the real acquire+export path runs.
         internal Func<string, Task<LiveModelExport.Snapshot>> WorkspaceTokenExportForTests;
+        // Test-only observer of whether each snapshot attempt may open a window (false) or never can (true): the window guard of a saved destination.
+        internal Action<bool> SnapshotDisableInteractiveForTests;
 
         // Single-flight guard for the INTERACTIVE sign-in: two concurrent cold compares must not open two browser
         // prompts or race the shared on-disk AuthenticationRecord. The first flow signs in + persists the record; a
@@ -7819,8 +7856,10 @@ namespace Semanticus.Engine
         // — it gets a teaching refusal telling it to ask the user to Connect. Every auth failure is rewritten to teach
         // the fix; only sanitized values (mode label, tenant label, scrubbed endpoint) reach the message, never a token.
         // Returns the auth MODE that actually succeeded, so a subsequent WRITE reuses the credential the snapshot proved.
-        private async Task<(LiveModelExport.Snapshot snap, string mode)> SnapshotWorkspaceMetadataAsync(string endpoint, string database, string authMode, string origin, string tenantId = null)
+        private async Task<(LiveModelExport.Snapshot snap, string mode)> SnapshotWorkspaceMetadataAsync(string endpoint, string database, string authMode, string origin, string tenantId = null, bool savedDestination = false)
         {
+            // A caller that named no sign-in (compare, the working copy) gets the one saved for this destination, as publishing does (hero21 N1/N2).
+            if (!savedDestination) (authMode, tenantId, savedDestination) = await SavedSignInForAsync(endpoint, database, authMode, tenantId);
             var mode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode.Trim().ToLowerInvariant();
             var tenant = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim().ToLowerInvariant();
             var ct = System.Threading.CancellationToken.None;
@@ -7837,7 +7876,7 @@ namespace Semanticus.Engine
             // acquisition is non-interactive: a missing/stale cache throws (routing to the AgentRefusal below), never prompts.
             try
             {
-                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct, DeployGuard.IsAgent(origin), tenant, ticket), mode);
+                return (await AcquireAndExportWorkspaceAsync(mode, endpoint, database, ct, DeployGuard.IsAgent(origin) || savedDestination, tenant, ticket), mode);   // a saved destination is never answered with a window (hero21 N2)
             }
             catch (SignInException)
             {
@@ -7862,6 +7901,9 @@ namespace Semanticus.Engine
                 // endpoint accepts) and retry once. serviceprincipal / caller-token modes have no interactive stand-in,
                 // so they teach immediately WITHOUT claiming a sign-in was attempted.
                 var fbMode = XmlaAuthHint.InteractiveFallbackMode(mode);
+                // A destination the app already holds a sign-in for never opens a window on its own (hero21 N2): the person presses Connect to sign in again.
+                if (savedDestination && fbMode != null)
+                    throw new InvalidOperationException("The saved sign-in for " + XmlaAuthHint.SafeEndpoint(endpoint) + " did not work this time. Press Sign in to sign in again, then try again.");
                 if (fbMode == null)
                     throw new InvalidOperationException(XmlaAuthHint.TeachingErrorNoInteractive(endpoint, mode, XmlaAuthHint.DefaultTenantLabel(mode)));
 
@@ -7895,6 +7937,7 @@ namespace Semanticus.Engine
         // shape that let prepare_working_copy attach with human authority. Every caller must state which driver it is.
         private async Task<LiveModelExport.Snapshot> AcquireAndExportWorkspaceAsync(string mode, string endpoint, string database, System.Threading.CancellationToken ct, bool disableInteractive, string tenantId = null, long ticket = 0)
         {
+            SnapshotDisableInteractiveForTests?.Invoke(disableInteractive);
             if (WorkspaceTokenExportForTests != null) return await WorkspaceTokenExportForTests(mode);
             // Thread the tenant (HIGH 4): a remembered cross-tenant reference/workspace must target ITS tenant, not the
             // default one the current az login happens to be home to. Defer persisting any first-sign-in record until
@@ -7930,20 +7973,27 @@ namespace Semanticus.Engine
         // later AcquireAsync("interactive") reuses the saved account instead of prompting again. The write still uses
         // the RIGHT mode (never the rejected azcli).
         // disableInteractive is REQUIRED, never defaulted (T163 round 3) — see AcquireAndExportWorkspaceAsync.
-        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets, bool disableInteractive, string tenantId = null)
+        private async Task<DeployReport> PushWorkspaceAsync(string bimPath, string endpoint, string database, string authMode, System.Collections.Generic.IReadOnlyCollection<LiveDeleteTarget> deleteTargets, bool disableInteractive, string tenantId = null, bool savedDestination = false)
         {
             PushAuthModeForTests?.Invoke(authMode);
-            PushDisableInteractiveForTests?.Invoke(disableInteractive);
+            // A destination the app holds a sign-in for is tried with that sign-in first, and never answered with a window on that try.
+            PushDisableInteractiveForTests?.Invoke(disableInteractive || savedDestination);
             if (WorkspacePushHook != null) return WorkspacePushHook(bimPath, deleteTargets);
             // Thread the tenant into the WRITE token too (HIGH 6): the pre-push snapshot read tenant-B, so the push must
             // acquire against tenant-B as well — a default-tenant token here would read one model's diff but write with a
             // different account/tenant. A null tenant falls back to the current az login exactly as before. disableInteractive
             // (agent origin, round-3): the reacquisition can NEVER pop a prompt — a stale cache throws AuthenticationRequiredException.
-            var token = await EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId, disableInteractive);
-            // identityStrict: TRUE for the selective push — src is snapshot B (the live target seconds ago), so a
-            // non-empty tag miss means the object was republished/retagged under us and must NOT be name-mutated.
-            // deploy_live (whole-model) leaves it FALSE (its src is an arbitrary session, often untagged).
+            var token = await AcquireSavedFirstAsync(noWindow => EntraToken.AcquireAsync(authMode, null, System.Threading.CancellationToken.None, tenantId, noWindow), disableInteractive, savedDestination);
             return await Task.Run(() => LiveDeploy.SyncSessionToLive(bimPath, endpoint, database, token, System.DateTimeOffset.UtcNow.AddMinutes(50), commit: true, explicitDeleteTargets: deleteTargets, identityStrict: true));
+        }
+
+        /// <summary>The write's sign-in. A saved destination is tried without a window first; only when that fails and the caller is a
+        /// person (not an assistant) is it tried again with a window, as the person pressed the button.</summary>
+        internal static async Task<T> AcquireSavedFirstAsync<T>(Func<bool, Task<T>> acquire, bool disableInteractive, bool savedDestination)
+        {
+            if (!savedDestination || disableInteractive) return await acquire(disableInteractive);
+            try { return await acquire(true); }
+            catch (Azure.Identity.AuthenticationRequiredException) { return await acquire(false); }
         }
 
         private static string PreviewDelete(Model m, string kind, string table, string name)
@@ -8296,6 +8346,19 @@ namespace Semanticus.Engine
         // so a test can prove a renewal never silently switches to the tenant default.
         internal Action<string> LiveCredentialAccountForTests;
 
+        internal const string NoSignInForAssistant = "Semanticus has no Power BI sign-in saved yet. Ask the person to open Connections in Semanticus and press Sign in, then ask again.";
+
+        // No sign-in named: the assistant never lands on az. It gets the saved sign-in, then a ready service principal (the same pick as
+        // PickOpenLiveSignIn), and with neither a plain line. A person's own call with no mode keeps the old fallback.
+        private (string Mode, string Tenant) PickSignInWhenUnnamed(string authMode, string tenantId, string origin)
+        {
+            if (!string.IsNullOrWhiteSpace(authMode)) return (authMode, tenantId);
+            var (mode, tenant) = ResolveSqlListSignIn(null, tenantId);
+            if (mode != null) return (mode, tenant);
+            if (DeployGuard.IsAgent(origin)) throw new InvalidOperationException(NoSignInForAssistant);
+            return (authMode, tenantId);
+        }
+
         // The ONE place the ALM / Fabric-Git / cicd lane mints a Fabric-audience token. Centralised so the agent
         // non-interactive rule cannot be forgotten at one of the fourteen call sites: an agent origin (DeployGuard's
         // fail-closed test — anything not exactly "human") gets DisableAutomaticAuthentication, so a stale cache
@@ -8306,6 +8369,7 @@ namespace Semanticus.Engine
         {
             var nonInteractive = DeployGuard.IsAgent(origin);
             laneObserver?.Invoke(nonInteractive);
+            if (EntraToken.FabricTokenForTests == null) (authMode, tenantId) = PickSignInWhenUnnamed(authMode, tenantId, origin);
             return EntraToken.AcquireFabricAsync(authMode, null, cancellationToken, tenantId, nonInteractive);
         }
 
@@ -8314,6 +8378,7 @@ namespace Semanticus.Engine
         // that could silently drop it, and only the reachable ones could be tested.
         private Task<string> AcquireXmlaTokenAsync(string authMode, string tenantId, string origin, System.Threading.CancellationToken cancellationToken)
         {
+            (authMode, tenantId) = PickSignInWhenUnnamed(authMode, tenantId, origin);
             return EntraToken.AcquireAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
         }
 
@@ -8332,6 +8397,7 @@ namespace Semanticus.Engine
         {
             var seam = SqlTokenFetchForTests;
             if (seam != null) return Task.FromResult(seam(authMode, tenantId, origin));
+            (authMode, tenantId) = PickSignInWhenUnnamed(authMode, tenantId, origin);
             return EntraToken.AcquireSqlAsync(authMode, null, cancellationToken, tenantId, DeployGuard.IsAgent(origin));
         }
 
@@ -8363,7 +8429,8 @@ namespace Semanticus.Engine
             if (!string.IsNullOrWhiteSpace(authMode)) return (authMode.Trim(), tenantId);
             StartSource source;
             lock (_startPlanLock) source = _startPlan?.Source;
-            // start_model_from_sql still defaults to azcli, so a start plan's azcli is that default and not the person's choice.
+            // start_model_from_sql with no mode named picks the ready sign-in (this method) and falls back to azcli only when none is ready,
+            // so a start plan's azcli is that last-choice fallback and not the person's pick; a ready sign-in below is better.
             if (!string.IsNullOrWhiteSpace(source?.AuthMode) && !string.Equals(source.AuthMode, "azcli", StringComparison.OrdinalIgnoreCase))
                 return (source.AuthMode, tenantId ?? source.TenantId);
             var profile = EntraToken.ListProfiles().Where(p => p.SignedIn).OrderByDescending(p => p.IsDefault).FirstOrDefault();
@@ -9379,7 +9446,10 @@ namespace Semanticus.Engine
                     + "calculation and how the picks are sorted. Taking it out would leave the group with nothing to "
                     + "pick from, so it is never deleted on its own. Delete the whole calculation group "
                     + $"'{cgTable.Name}' instead, which removes it and its calculations together and undoes in one step.");
+            var owner = (obj as Column)?.Table;
             obj.Delete();
+            // The validator keeps no history: say that this table lost its last column, so a formula over that column is still refused.
+            if (owner != null && !owner.Columns.Any(c => c.Type != ColumnType.RowNumber)) DaxValidator.NoteEmptied(owner);
         }
 
         public async Task<string> DuplicateObjectAsync(string objRef, string newName, string targetRef, string origin)
@@ -9492,7 +9562,12 @@ namespace Semanticus.Engine
         /// Conservative + tri-state (safe / used-only-by-an-unused-object / caution). It reads the model's OWN report
         /// scope, so it is report-aware exactly when reports have been checked, and says so in the caveat rather than
         /// leaving the caller to work out which basis the list carries.</summary>
-        public async Task<UnusedResult> UnusedObjectsAsync()
+        public Task<UnusedResult> UnusedObjectsAsync() => UnusedObjectsCoreAsync(keepVisibleUntilReportsChecked: true);
+
+        /// <summary>The sweep. <paramref name="keepVisibleUntilReportsChecked"/> is the assistant's route (unused_objects): with no report
+        /// chosen and none declared absent, a visible attribute is kept (hide it), never listed for delete_object. The Plan's own cleanup
+        /// list passes false: a person reviews and approves it.</summary>
+        internal async Task<UnusedResult> UnusedObjectsCoreAsync(bool keepVisibleUntilReportsChecked)
         {
             var s = _sessions.Require();
             var coverage = CheckedCoverageFor(s);
@@ -9500,8 +9575,10 @@ namespace Semanticus.Engine
             // Every chosen report read is a report-aware sweep. A report CHOSEN BUT NOT READ is neither: the
             // protection was asked for and has not been established, so nothing here may be called unused yet.
             var result = coverage.Parts.Count == 0
-                ? await s.ReadAsync(Lineage.LineageGraph.Unused)
+                ? await s.ReadAsync(coverage.NoReports ? Lineage.LineageGraph.UnusedNoReports : (Func<Model, UnusedResult>)Lineage.LineageGraph.Unused)
                 : await s.ReadAsync(m => Lineage.LineageGraph.AnalyzeReports(m, coverage.Parts).Unused);
+            if (keepVisibleUntilReportsChecked && coverage.Parts.Count == 0 && !coverage.NoReports && !coverage.HasChoices)
+                result = Lineage.LineageGraph.KeepVisibleUntilReportsChecked(result);
             if (!coverage.HasChoices || coverage.Complete) return result;
             return Lineage.LineageGraph.WithMissingCoverage(result,
                 "A report chosen for this model has not been checked yet, so its use of this field is not known.",
@@ -11233,6 +11310,7 @@ namespace Semanticus.Engine
             var context = _sessions.CurrentContext;
             var s = context.RequireSession();
             var card = await s.ReadAsync(m => new ReadinessAnalyzer().Analyze(m));
+            s.NoteFirstReadDone();   // the open-time warm-up was waiting for this grade (Session.WarmObservers)
             var hook = System.Threading.Interlocked.Exchange(ref ReadinessReadyForTest, null);
             if (hook != null) await hook();
             SetReadinessGrade(context, card.Grade, "AI Readiness scan");   // cache for the model.readinessGrade activation fact (D2)
@@ -11623,7 +11701,8 @@ namespace Semanticus.Engine
             var rev = await s.MutateAsync(origin, "BPA: apply all auto-fixes", m =>
             {
                 var rules = GetBpaRules(m);
-                // A FIX CAN CREATE A FINDING, so applying one snapshot is not "fix all". Hiding a foreign-key
+                // A FIX CAN CREATE A FINDING, so applying one snapshot is not "fix all". One press finishes what it opens (hero19 D9): the follow-on fix is made in the same press, so no second Fix button is left behind.
+                // (Kane, 13 Oct: friction, not harm. Undo takes the whole press back.) Hiding a foreign-key
                 // column is exactly what makes that same column qualify for ISAVAILABLEINMDX_FALSE_NONATTRIBUTE_COLUMNS,
                 // and the scan taken before the first write could not have listed it. Sweep to a FIXED POINT
                 // instead: re-scan after each pass and keep going while the pass changed the model.
@@ -11653,7 +11732,10 @@ namespace Semanticus.Engine
                         if (BpaAnalyzer.BulkFixWithheld(obj, fixProp, fixAfter) is { } withheld) { reasons[key] = withheld; continue; }
                         try
                         {
-                            if (BpaAnalyzer.ApplyFix(m, rule, obj)) { applied++; changed++; }
+                            if (BpaAnalyzer.ApplyFix(m, rule, obj))
+                            {
+                                applied++; changed++;
+                            }
                             else reasons[key] = "this rule has no fix that can be applied to this object.";
                         }
                         catch (Exception ex) { reasons[key] = ex.Message; }   // recorded, never swallowed: the finding is named below
@@ -12601,7 +12683,7 @@ namespace Semanticus.Engine
                 {
                     // External members are gated by PowerBI governance (V3Restricted) unlike the role/filter itself —
                     // re-wrap the raw "Cannot create..." into actionable guidance instead of leaking TOM internals.
-                    try { role.AddExternalMember(identity); }
+                    try { TabularEditor.TOMWrapper.ExternalModelRoleMember.CreateNew(role, identity, "AzureAD", null); }   // not AddExternalMember: its 3-argument call puts "AzureAD" in memberId and leaves the provider "default", which Power BI refuses
                     catch (InvalidOperationException ex)
                     {
                         throw new InvalidOperationException(

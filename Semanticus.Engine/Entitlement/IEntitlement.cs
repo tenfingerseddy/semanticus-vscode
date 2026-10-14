@@ -41,6 +41,21 @@ namespace Semanticus.Engine.Entitlement
         /// <summary>The assistant attached to this session, from its MCP clientInfo (read once by the engine, AssistantIdentity). Null until an
         /// assistant has made a call. Not part of the licence: LocalEngine stamps it on a copy, on both doors.</summary>
         public Semanticus.Engine.AssistantInfo Assistant { get; set; }
+
+        /// <summary>The licence is a free Pro month that is still running. False for a paid licence, for Free, and once
+        /// the month is over (then <see cref="TrialEnded"/> is true).</summary>
+        public bool IsTrial { get; set; }
+
+        /// <summary>When the free Pro month ends (unix seconds). Set whenever the licence is a trial token, running or
+        /// ended, so the end card can name the day; 0 for every other licence.</summary>
+        public long TrialEndsAt { get; set; }
+
+        /// <summary>Whole days left in the free Pro month, rounded UP (one second left is 1 day). 0 when it is not a
+        /// trial or the trial is over.</summary>
+        public int TrialDaysLeft { get; set; }
+
+        /// <summary>Free because a free Pro month has passed its end. A trial gets no grace.</summary>
+        public bool TrialEnded { get; set; }
     }
 
     /// <summary>Thrown when a Pro feature is reached on the free tier. Carries a user-facing, actionable message;

@@ -120,6 +120,13 @@ namespace Semanticus.Engine
             if (!JsonSemanticEqual(leftModelShell, rightModelShell))
                 items.Add(Mk("model", "Model", left.Name ?? "Model", null, "Update", leftModelShell, rightModelShell, false));
 
+            // Kane, 13 Oct: a model raised to a newer compatibility level (the Plan's calendar step needs 1701) could not
+            // reach a live copy still on the older one. The level is one change on the list. It only ever goes UP: a
+            // lower or equal level on your copy is not a change, because Power BI cannot lower a level again.
+            var leftLevel = left.Database?.CompatibilityLevel ?? 0; var rightLevel = right.Database?.CompatibilityLevel ?? 0;
+            if (leftLevel > 0 && rightLevel > 0 && leftLevel > rightLevel)
+                items.Add(Mk("compatibility", "CompatibilityLevel", "Compatibility level", null, "Update", leftLevel.ToString(), rightLevel.ToString(), false));
+
             var rtList = right.Tables.Cast<TOM.Table>().ToList();
             var rightTablesByTag = ByTag(rtList, t => t.LineageTag);
             var dupTableTags = DuplicateTags(rtList, t => t.LineageTag);
@@ -483,14 +490,26 @@ namespace Semanticus.Engine
                 .Where(it => (it.Action == "Create" || it.Action == "Update" || it.Action == "Delete")
                              && (selected == null || selected.Contains(it.Ref)))
                 .OrderBy(ApplyRank).ToList();
+            var calendarsLater = new List<(string Ref, TOM.Table Source, TOM.Table Target)>();
             foreach (var it in todo)
             {
                 try
                 {
-                    if (ApplyOne(left, right, it)) outcome.Applied.Add(it.Ref);
+                    if (ApplyOne(left, right, it, calendarsLater)) outcome.Applied.Add(it.Ref);
                     else outcome.Failed.Add((it.Ref, "target object not found (e.g. an unsupported table rename, or a parent that wasn't applied)"));
                 }
                 catch (Exception ex) { outcome.Failed.Add((it.Ref, ex.Message)); }
+            }
+            // A table's calendars name its columns, so they copy after every column change has landed. One that cannot be
+            // copied whole fails its own table change only; the rest of the push goes on.
+            foreach (var (tableRef, source, target) in calendarsLater)
+            {
+                try { CopyCalendars(source, target); }
+                catch (Exception ex)
+                {
+                    outcome.Applied.Remove(tableRef);
+                    outcome.Failed.Add((tableRef, ex.Message));
+                }
             }
             return outcome;
         }
@@ -502,16 +521,21 @@ namespace Semanticus.Engine
             return rel ? 2 : 1;                               // add/update relationships after their tables/columns
         }
 
-        private static bool ApplyOne(TOM.Model left, TOM.Model right, ModelDiffItem it)
+        private static bool ApplyOne(TOM.Model left, TOM.Model right, ModelDiffItem it, List<(string Ref, TOM.Table Source, TOM.Table Target)> calendarsLater = null)
         {
             switch (it.ObjectType)
             {
+                case "CompatibilityLevel":
+                    // Up only, and only when the target database is known; the live write itself raises the level first.
+                    if (left.Database == null || right.Database == null) return false;
+                    if (left.Database.CompatibilityLevel > right.Database.CompatibilityLevel) right.Database.CompatibilityLevel = left.Database.CompatibilityLevel;
+                    return true;
                 case "Model":
                     // Preflight BEFORE mutating: shell serialization deliberately detects every authored property,
                     // but this carrier supports a bounded set. If an unsupported residual differs, refuse the whole
                     // item honestly instead of half-applying it and reporting success.
                     if (!JsonSemanticEqual(UnsupportedModelShell(left), UnsupportedModelShell(right)))
-                        throw new InvalidOperationException("the model carries authored shell metadata this apply path cannot copy yet; deploy the model through TMDL/XMLA instead");
+                        throw new InvalidOperationException("The model has a setting Semanticus cannot send to Power BI yet, so this change stays in your copy.");
                     CopyModelShell(left, right);
                     return true;
                 case "Table":
@@ -545,7 +569,9 @@ namespace Semanticus.Engine
                     if ((ltT.CalculationGroup == null) != (rtT.CalculationGroup == null))
                         throw new InvalidOperationException($"table '{rtT.Name}' changed kind (plain table ↔ calculation group): recreate it rather than updating it in place");
                     if (!JsonSemanticEqual(UnsupportedTableShell(ltT), UnsupportedTableShell(rtT)))
-                        throw new InvalidOperationException($"table '{rtT.Name}' carries authored shell metadata this apply path cannot copy yet; deploy it through TMDL/XMLA instead");
+                        throw new InvalidOperationException($"The {rtT.Name} table has a setting Semanticus cannot send to Power BI yet, so this change stays in your copy.");
+                    // Calendars point at the table's columns, so they copy last (see Apply), once every column change has landed.
+                    if (!CalendarsEqual(ltT, rtT)) calendarsLater?.Add((it.Ref, ltT, rtT));
                     rtT.Description = ltT.Description; rtT.IsHidden = ltT.IsHidden; rtT.DataCategory = ltT.DataCategory;
                     if (rtT.Name != ltT.Name) rtT.Name = ltT.Name;
                     // Precedence (calc-group evaluation order) and RefreshPolicy (incremental refresh) are authored table
@@ -860,6 +886,11 @@ namespace Semanticus.Engine
                     // the default values on their exact root types: non-zero ordering remains an authored change.
                     if (rootObject is TOM.CalculationItem && (int?)root["ordinal"] == 0) root.Remove("ordinal");
                     if (rootObject is TOM.ModelRole) NormalizeRoleMembers(root);
+                    // A calculated table's columns are made by the service from the table's formula: it hands back neither our lineage tag nor
+                    // a data type, so neither is an authored difference. Without this the table shows a changed key column after every publish.
+                    if (rootObject is TOM.CalculatedTableColumn) { root.Remove("dataType"); root.Remove("lineageTag"); }
+                    // Import is the default mode: a partition that says so and one that says nothing are the same partition.
+                    if (rootObject is TOM.Partition && string.Equals((string)root["mode"], "import", StringComparison.OrdinalIgnoreCase)) root.Remove("mode");
                     if (rootObject is TOM.NamedExpression
                         && string.Equals((string)root["kind"], "m", StringComparison.OrdinalIgnoreCase)) root.Remove("kind");
                 }
@@ -916,6 +947,7 @@ namespace Semanticus.Engine
         {
             var root = ParseObject(Ser(table));
             Remove(root, "columns", "measures", "partitions", "hierarchies", "lineageTag", "changedProperties");
+            DropRepeatedSortByAssociations(Get(root, "calendars"), table);
             if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
                 Remove(group, "calculationItems");
             CanonicalizeNamedArrays(root);
@@ -926,6 +958,9 @@ namespace Semanticus.Engine
         {
             var root = ParseObject(Ser(model));
             Remove(root, "tables", "relationships", "roles", "perspectives", "cultures", "dataSources", "expressions");
+            // Power BI stamps this on every model it creates, and a local copy made before the model existed never carries it. It is the
+            // service's own default, so it is no change of yours: a lone "Model changed" row that can never go helped nobody (hero 21 N8).
+            Remove(root, "defaultPowerBIDataSourceVersion");
             // The accountable audit chain is a deploy ride-along, not semantic model behaviour. Comparing it would
             // make an audit append recursively demand another deploy and would break compare-to-self.
             RemoveAuditAnnotations(root);
@@ -939,13 +974,89 @@ namespace Semanticus.Engine
             Remove(root, "name", "description", "isHidden", "dataCategory", "refreshPolicy",
                 "defaultDetailRowsDefinition", "isPrivate", "showAsVariationsOnly", "excludeFromModelRefresh",
                 "excludeFromAutomaticAggregations", "alternateSourcePrecedence", "directLakeIndexingBehavior",
-                "sourceLineageTag", "annotations");
+                "sourceLineageTag", "annotations", "calendars");
             if (Get(root, "calculationGroup") is Newtonsoft.Json.Linq.JObject group)
             {
                 Remove(group, "precedence", "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");
                 if (!group.HasValues) Remove(root, "calculationGroup");
             }
             return root.ToString(Newtonsoft.Json.Formatting.None);
+        }
+
+        // The table's calendars (raw TOM; the Plan's calendar step writes them), as one comparable document.
+        private static string CalendarsJson(TOM.Table t)
+        {
+            var root = ParseObject(TableShell(t));
+            return Get(root, "calendars")?.ToString(Newtonsoft.Json.Formatting.None) ?? "[]";
+        }
+
+        // Power BI refuses a calendar that lists a primary column's sort-by column again as an associated column ("already been
+        // associated in the calendar", found live 14 Oct): the sort-by column is part of the primary column already. The two
+        // spellings are the same calendar, so the table shell reads them the same (compare and send alike) and the send
+        // leaves the repeat out (BuildCalendars).
+        private static void DropRepeatedSortByAssociations(Newtonsoft.Json.Linq.JToken calendars, TOM.Table t)
+        {
+            if (!(calendars is Newtonsoft.Json.Linq.JArray list)) return;
+            foreach (var cal in list.OfType<Newtonsoft.Json.Linq.JObject>())
+                if (Get(cal, "calendarColumnGroups") is Newtonsoft.Json.Linq.JArray groups)
+                    foreach (var g in groups.OfType<Newtonsoft.Json.Linq.JObject>())
+                    {
+                        var sortKey = t.Columns.Find((string)Get(g, "primaryColumn") ?? "")?.SortByColumn?.Name;
+                        if (sortKey == null || !(Get(g, "associatedColumns") is Newtonsoft.Json.Linq.JArray assoc)) continue;
+                        foreach (var x in assoc.Where(v => string.Equals((string)v, sortKey, StringComparison.Ordinal)).ToList()) x.Remove();
+                        if (!assoc.HasValues) Remove(g, "associatedColumns");
+                    }
+        }
+
+        internal static bool CalendarsEqual(TOM.Table a, TOM.Table b) => JsonSemanticEqual(CalendarsJson(a), CalendarsJson(b));
+
+        /// <summary>Make the target table's calendars match the source's, losslessly. Each calendar and each column group is
+        /// rebuilt on the TARGET, bound to the target's own columns by name. The copy is rehearsed on a clone of the target
+        /// first and read back, so a property it cannot carry refuses this table change alone and never half-applies.</summary>
+        internal static void CopyCalendars(TOM.Table source, TOM.Table target)
+        {
+            if (CalendarsEqual(source, target)) return;
+            var level = target.Model?.Database?.CompatibilityLevel ?? 0;
+            if (source.Calendars.Count > 0 && level > 0 && level < 1701)
+                throw new InvalidOperationException($"The {target.Name} table has a calendar, and Power BI needs its compatibility level raised first. Tick the compatibility level change too.");
+            var rehearsal = (TOM.Table)target.Clone();
+            BuildCalendars(source, rehearsal);
+            if (!JsonSemanticEqual(CalendarsJson(source), CalendarsJson(rehearsal)))
+                throw new InvalidOperationException($"The {target.Name} table has a calendar setting Semanticus cannot send to Power BI yet, so this change stays in your copy.");
+            BuildCalendars(source, target);
+        }
+
+        private static void BuildCalendars(TOM.Table source, TOM.Table target)
+        {
+            TOM.Column Col(TOM.Column c) => target.Columns.Find(c.Name)
+                ?? throw new InvalidOperationException($"The {target.Name} table has a calendar that uses the {c.Name} column, and Power BI does not have that column yet. Tick the column change too.");
+            var built = new List<TOM.Calendar>();
+            foreach (var sc in source.Calendars)
+            {
+                var c = new TOM.Calendar { Name = sc.Name, Description = sc.Description, LineageTag = sc.LineageTag };
+                if (!string.IsNullOrEmpty(sc.SourceLineageTag)) c.SourceLineageTag = sc.SourceLineageTag;
+                foreach (var g in sc.CalendarColumnGroups)
+                {
+                    if (g is TOM.TimeUnitColumnAssociation a)
+                    {
+                        var na = new TOM.TimeUnitColumnAssociation(a.TimeUnit);
+                        if (a.PrimaryColumn != null) na.PrimaryColumn = Col(a.PrimaryColumn);
+                        foreach (var ac in a.AssociatedColumns)
+                            if (!string.Equals(a.PrimaryColumn?.SortByColumn?.Name, ac.Name, StringComparison.Ordinal)) na.AssociatedColumns.Add(Col(ac));   // already part of the primary column through its sort-by
+                        c.CalendarColumnGroups.Add(na);
+                    }
+                    else if (g is TOM.TimeRelatedColumnGroup r)
+                    {
+                        var nr = new TOM.TimeRelatedColumnGroup();
+                        foreach (var rc in r.Columns) nr.Columns.Add(Col(rc));
+                        c.CalendarColumnGroups.Add(nr);
+                    }
+                    else throw new InvalidOperationException($"The {target.Name} table has a calendar setting Semanticus cannot send to Power BI yet, so this change stays in your copy.");
+                }
+                built.Add(c);
+            }
+            target.Calendars.Clear();
+            foreach (var c in built) target.Calendars.Add(c);
         }
 
         internal static string UnsupportedModelShell(TOM.Model model)
@@ -1003,7 +1114,7 @@ namespace Semanticus.Engine
             }
         }
 
-        internal static (string Supplement, string Residual) LiveTableState(TOM.Table table)
+        internal static (string Supplement, string Residual) LiveTableState(TOM.Table table, bool carryCalendars = true)
         {
             var root = ParseObject(TableShell(table));
             // Annotations are DELIBERATELY absent from the deploy supplement: owned annotations (waivers + BPA ignore
@@ -1018,6 +1129,8 @@ namespace Semanticus.Engine
             }
             var residual = (Newtonsoft.Json.Linq.JObject)root.DeepClone();
             Remove(residual, "name", "description", "isHidden", "dataCategory", "refreshPolicy", "defaultDetailRowsDefinition", "annotations");
+            // A matched table's calendars go through CopyCalendars. A NEW table cannot take them (its columns do not exist live yet), so it keeps them in the residual.
+            if (carryCalendars) Remove(residual, "calendars");
             if (Get(residual, "calculationGroup") is Newtonsoft.Json.Linq.JObject residualGroup)
             {
                 Remove(residualGroup, "precedence", "description", "noSelectionExpression", "multipleOrEmptySelectionExpression", "annotations");

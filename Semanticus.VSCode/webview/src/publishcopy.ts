@@ -37,9 +37,9 @@ export const isRemoval = (row: ChangeRow): boolean => row.action === 'Delete';
 const KIND_WORD: Record<string, string> = {
   Table: 'table', Column: 'column', Measure: 'measure', Hierarchy: 'hierarchy', Partition: 'partition',
   Relationship: 'relationship', Role: 'role', Perspective: 'perspective', Culture: 'language',
-  DataSource: 'data source', Expression: 'shared expression',
+  DataSource: 'data source', Expression: 'shared expression', CompatibilityLevel: 'compatibility level',
 };
-const KIND_ORDER = ['Table', 'Column', 'Measure', 'Hierarchy', 'Partition', 'Relationship', 'Role', 'Perspective', 'Culture', 'DataSource', 'Expression'];
+const KIND_ORDER = ['CompatibilityLevel', 'Table', 'Column', 'Measure', 'Hierarchy', 'Partition', 'Relationship', 'Role', 'Perspective', 'Culture', 'DataSource', 'Expression'];
 const kindWord = (row: ChangeRow) => KIND_WORD[row.objectType] ?? row.objectType.toLowerCase();
 
 function parseObject(text?: string | null): Record<string, unknown> | null {
@@ -77,6 +77,14 @@ export function isUnpublishable(row: ChangeRow): boolean {
   if (!l || !r) return false;
   const keys = new Set([...Object.keys(l), ...Object.keys(r)]);
   const changed = [...keys].filter((k) => JSON.stringify(l[k]) !== JSON.stringify(r[k]));
+  // Right after a new model is created the copy and the live model differ in one setting that never goes from here: the default
+  // data source version. A row that differs only in that is a lone row that can never go, so the page does not list it (hero 21, N8).
+  // Any other change to the model (its description, language, implicit measures) can go and stays listed.
+  if (row.objectType === 'Model') {
+    const rest = changed.filter((k) => k !== 'defaultPowerBIDataSourceVersion');
+    if (rest.length === 0) return true;
+    if (!(rest.length === 1 && rest[0] === 'annotations')) return false;
+  }
   if (changed.length !== 1 || changed[0] !== 'annotations') return false;
   const la = annotationMap(l), ra = annotationMap(r);
   const names = [...new Set([...la.keys(), ...ra.keys()])].filter((n) => la.get(n) !== ra.get(n));
@@ -125,21 +133,34 @@ export function roleMemberLines(leftText?: string | null, rightText?: string | n
   return { added: only(lc, rc), removed: only(rc, lc) };
 }
 
-const HELD_ROLE_LINE = 'Semanticus cannot publish role changes yet. Change roles in Power BI Desktop or with your XMLA tool.';
+const hasItems = (v: unknown) => Array.isArray(v) && v.length > 0;
 
-/** The plain line for a row Power BI takes no part of from here (a role added or changed), known before any press. Else null. */
-export function heldReason(row: ChangeRow): string | null {
-  return row.objectType === 'Role' && (row.action === 'Create' || row.action === 'Update')
-    ? HELD_ROLE_LINE : null;
+/** "a calendar and a hierarchy" for a table that carries them, else null. */
+function tableExtras(row: ChangeRow): string | null {
+  const o = parseObject(row.leftText);
+  if (!o) return null;
+  const parts: string[] = [];
+  if (hasItems(o.calendars)) parts.push('a calendar');
+  if (hasItems(o.hierarchies)) parts.push('a hierarchy');
+  return parts.length ? parts.join(' and ') : null;
 }
 
 /** The few words beside a row: what kind of object it is and what happens to it. */
 export function rowNote(row: ChangeRow, destination: string): string {
-  // Power BI takes no role change from here, so the row says where to make it.
-  if (row.objectType === 'Role' && row.action === 'Create') return 'new role, add it in Power BI';
+  // The compatibility level is one change on the list. Your copy holds the higher level (left), the destination the lower (right).
+  if (row.objectType === 'CompatibilityLevel') return `raise it from ${row.rightText ?? 'the current level'} to ${row.leftText ?? 'the new level'}. Power BI cannot lower it again`;
   if (row.objectType === 'Role' && row.action === 'Update') {
     const lines = roleMemberLines(row.leftText, row.rightText);
-    return lines && (lines.added.length > 0 || lines.removed.length > 0) ? 'change role members in Power BI' : 'change this role in Power BI';
+    if (lines && (lines.added.length > 0 || lines.removed.length > 0)) return 'role members changed';
+  }
+  // A new table is told with what comes with it, so a date table reads as the date table, its calendar and its hierarchy.
+  if (row.objectType === 'Table') {
+    const withIt = tableExtras(row);
+    if (row.action === 'Create') return withIt ? `new table, with ${withIt}` : 'new table';
+    if (row.action === 'Update') {
+      const l = parseObject(row.leftText), r = parseObject(row.rightText);
+      if (l && r && JSON.stringify(l.calendars ?? null) !== JSON.stringify(r.calendars ?? null)) return 'calendar changed';
+    }
   }
   if (row.action === 'Create') return `new ${kindWord(row)}`;
   if (row.action === 'Delete') return `only on ${destination || 'the destination'}. Tick to remove it there`;
@@ -204,10 +225,39 @@ export function failureReasons(failed: readonly string[] | null | undefined, row
 export function plainFailure(reason: string): string {
   const r = (reason || '').toLowerCase();
   if (!r || r.includes('republish')) return 'Power BI has a different object with this name, so this change cannot replace it.';
-  if (r.includes('role changes yet')) return HELD_ROLE_LINE;
   if (r.includes('did not carry it') || r.includes('object type') || r.includes('did not sync')) return 'Power BI does not take this kind of change from here.';
   if (r.includes('delete refused')) return 'Power BI would not remove it. Compare again and try once more.';
+  // Words the person should never read: how the engine moves a change, and the other tools it points at.
+  if (/tmdl|xmla|shell|apply path|metadata|lineage|live deploy|deploy via|merged locally|\bTOM\b/i.test(reason)) return 'This change stays in your copy for now. Semanticus cannot send it to Power BI yet.';
   return reason.trim();
+}
+
+/** The engine's whole-push error, in plain words. A level raise that landed carries the service's own text after the sentence the person needs;
+ *  that text goes through plainFailure so no engine word reaches the page. A raise Power BI refused shows the person's sentence and then ONLY the
+ *  service's first sentence, and only when it is plain words: no error code, no activity id, no "Technical Details", nothing after them, and
+ *  nothing at all when the first sentence names how the engine works. Any other error is shown as it comes. */
+export function plainPublishError(error: string): string {
+  const text = (error || '').trim();
+  const landed = /^(The compatibility level is now \d+\. Nothing else was published\.)\s*([\s\S]*)$/.exec(text);
+  const refused = /^(Power BI would not raise the compatibility level from \d+ to \d+, so nothing was published)[.:]?\s*([\s\S]*)$/.exec(text);
+  if (refused && !landed) {
+    const head = refused[1] + '.';
+    const first = firstPlainSentence(refused[2]);
+    return first ? `${head} ${first}` : head;
+  }
+  const m = landed;
+  if (!m) return text;
+  const reason = m[2].replace(/\s*Technical Details:[\s\S]*$/i, '').trim();
+  return reason ? `${m[1]} ${plainFailure(reason)}` : m[1];
+}
+
+/** The first sentence of a service message when it reads as plain words; otherwise empty. Codes and the engine's own vocabulary are not plain. */
+function firstPlainSentence(message: string): string {
+  const cut = (message || '').replace(/\s*Technical Details:[\s\S]*$/i, '').trim();
+  const sentence = /^[\s\S]+?[.!?](?=\s|$)/.exec(cut)?.[0]?.trim() ?? '';
+  if (!sentence) return '';
+  if (/0x[0-9a-f]{4,}|root\s*activity|activity\s*id|error\s*code|technical details|tmdl|xmla|shell|apply path|metadata|lineage|live deploy|deploy via|merged locally|\bTOM\b/i.test(sentence)) return '';
+  return sentence;
 }
 
 /** The changes that did not go, named in one plain phrase: "1 change could not go (Model)". Up to two names, then a count. */
@@ -242,7 +292,16 @@ export function checkingCopy(target: string): string { return `Checking ${target
 export function unreachableCopy(target: string): string { return `Could not reach ${target || 'the destination'}.`; }
 
 export function nothingToPublishCopy(target: string): string {
-  return `Nothing to publish. ${target || 'The destination'} already has everything in your copy.`;
+  // The button already says Nothing to publish; this line says why, once (hero20 D13).
+  return `${target || 'The destination'} already has everything in your copy.`;
+}
+
+/** The list after a good publish, before the page compares again: what went out is gone from it at once, so the button and the
+ *  list do not sit on screen for seconds saying there is still something to publish (hero19 D13). A refused row stays. */
+export function leftAfterPublish<T extends { ref: string }>(items: T[], appliedRefs: string[] | null | undefined, failedRefs: string[] | null | undefined): T[] {
+  const gone = new Set(appliedRefs ?? []);
+  const refused = (failedRefs ?? []).map((f) => String(f));
+  return items.filter((i) => !gone.has(i.ref) || refused.some((f) => f.startsWith(i.ref)));
 }
 
 export function publishedLine(count: number, target: string): string {
@@ -325,4 +384,26 @@ export function freeNewModelName(name: string, taken: string[]): string {
   const has = new Set(taken.map((t) => t.trim().toLowerCase()));
   if (!has.has(name.trim().toLowerCase())) return name;
   for (let n = 2; ; n++) { const next = `${name.trim()} ${n}`; if (!has.has(next.toLowerCase())) return next; }
+}
+
+// ---- Where the assistant is publishing (D6, launch video 12 Oct) ----
+// The engine says it with a start and an end (kind publish_target, only for the assistant's real publish). While it runs, the new-model card shows that target
+// and not "Choose a workspace" and the open model's name.
+export type AssistantPublish = { phase: 'start' | 'end'; workspace: string; name: string };
+export function assistantPublish(e: { kind: string; origin?: string; result?: unknown } | null | undefined): AssistantPublish | null {
+  if (!e || e.kind !== 'publish_target' || e.origin === 'human') return null;
+  const r = (e.result ?? {}) as { phase?: unknown; workspace?: unknown; name?: unknown };
+  if ((r.phase !== 'start' && r.phase !== 'end') || typeof r.workspace !== 'string' || !r.workspace.trim()) return null;
+  return { phase: r.phase, workspace: r.workspace.trim(), name: typeof r.name === 'string' ? r.name.trim() : '' };
+}
+/** The restore point the assistant's compare publish just made, so the Publish page offers the same Undo publish as the person's own press. */
+export function assistantPublishUndo(e: { kind: string; origin?: string; result?: unknown } | null | undefined): { id: string; count: number } | null {
+  if (!e || e.kind !== 'apply_model_diff' || e.origin === 'human') return null;
+  const r = (e.result ?? {}) as { applied?: unknown; count?: unknown; restorePointId?: unknown };
+  if (r.applied !== true || typeof r.restorePointId !== 'string' || !r.restorePointId) return null;
+  const count = typeof r.count === 'number' ? r.count : 0;
+  return count > 0 ? { id: r.restorePointId, count } : null;
+}
+export function assistantPublishLine(t: { workspace: string; name: string }): string {
+  return t.name ? `Your assistant is publishing ${t.name} to ${t.workspace}.` : `Your assistant is publishing to ${t.workspace}.`;
 }

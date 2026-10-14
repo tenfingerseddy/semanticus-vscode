@@ -435,6 +435,23 @@ test('a body over the byte cap is refused with 413', async () => {
     assert.equal(w.upstream.calls.length, 0);
 });
 
+test('thirty questions with a full 64 KB snapshot fit inside the byte cap and are not refused for count', async () => {
+    assert.equal(LIMITS.maxQuestions, 30);
+    const w = await world();
+    const thirty = {};
+    for (let i = 0; i < 30; i++) {
+        thirty['q' + i] = { type: 'choice', instructions: 'pick one of these ' + 'x'.repeat(40),
+            criteria: { a: 'first option text', b: 'second option text', c: 'third option text' } };
+    }
+    const body = decideBody({ point: 'relationship.join', questions: thirty, schemaVersion: 1 });
+    const padded = JSON.stringify({ ...JSON.parse(body), pad: 'x'.repeat(LIMITS.maxSnapshotBytes) });
+    assert.ok(new TextEncoder().encode(padded).length < LIMITS.maxRequestBytes, 'a full snapshot and thirty questions fit');
+    const res = await w.decide(await w.token(), body);
+    const out = await res.json().catch(() => ({}));
+    assert.notEqual(out.error, 'too_many_questions');
+    assert.notEqual(out.error, 'too_large');
+});
+
 test('more questions than the cap is refused with 413', async () => {
     const w = await world();
     const many = {};
@@ -653,20 +670,84 @@ test('two licences using the same idempotency key are billed separately on the h
     assert.equal((await (await w.budget(b)).json()).used, 500);
 });
 
-test('the per-licence concurrency cap of six refuses the seventh call', async () => {
+test('there is no limit on requests at once: twenty parallel calls are all served', async () => {
+    assert.equal(LIMITS.perSidConcurrency, 0, 'Kane, 13 Oct: only the monthly token budget guards a licence');
     let release;
     const gate = new Promise((r) => { release = r; });
     const w = await world({ upstream: async () => { await gate; return { status: 200, body: VENDOR_REPLY }; } });
     const tok = await w.token();
     const inflight = [];
-    for (let i = 0; i < LIMITS.perSidConcurrency; i++) inflight.push(w.decide(tok, decideBody({ idempotencyKey: 'c' + i })));
-    // Let the six reservations land before the seventh asks.
+    for (let i = 0; i < 20; i++) inflight.push(w.decide(tok, decideBody({ idempotencyKey: 'c' + i })));
     await new Promise((r) => setTimeout(r, 20));
-    const seventh = await w.decide(tok, decideBody({ idempotencyKey: 'c-extra' }));
-    assert.equal(seventh.status, 429);
-    assert.equal((await seventh.json()).error, 'too_many_in_flight');
     release();
-    await Promise.all(inflight);
+    const results = await Promise.all(inflight);
+    assert.deepEqual(results.map((r) => r.status), new Array(20).fill(200));
+});
+
+test('a reply body that dies mid-read leaves the hold stuck, not forwarded forever', async () => {
+    const w = await world({
+        upstream: () => ({ status: 200, body: '' }),
+    });
+    // A vendor whose body stream errors after the headers: response.text() throws inside the worker.
+    const brokenBody = () => new Response(new ReadableStream({ start(c) { c.error(new Error('socket reset')); } }),
+        { status: 200, headers: { 'content-type': 'application/json' } });
+    const relay = createRelay({ fetch: async () => brokenBody(), now: () => w.clock.now });
+    const tok = await w.token();
+    const call = (key) => relay.fetch(new Request('https://relay.semanticus.com.au/v1/decide', {
+        method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + tok },
+        body: decideBody({ idempotencyKey: key }),
+    }), w.env, { waitUntil() {} });
+    for (let i = 0; i < 6; i++) {
+        const res = await call('leak-' + i);
+        assert.equal(res.status, 502, 'the call must be answered, not thrown');
+    }
+    const ledger = await dumpLedger(w.ledgers, 'sid:sub_test_1');
+    assert.ok(ledger.open.every((e) => e.state === 'stuck'), 'a possibly charged call is stuck, never left forwarded');
+    const next = await call('after-leak');
+    assert.equal(next.status, 502);
+});
+
+test('a hold nobody settled stops blocking its own key once the vendor deadline has passed', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    // Only the first call hangs; a retry gets an answer.
+    const w = await world({ upstream: async (_info, n) => { if (n === 1) await gate; return { status: 200, body: VENDOR_REPLY }; } });
+    const tok = await w.token();
+    try {
+        const hung = w.decide(tok, decideBody({ idempotencyKey: 'leak' }));
+        hung.catch(() => {});
+        await new Promise((r) => setTimeout(r, 20));
+        const again = await w.decide(tok, decideBody({ idempotencyKey: 'leak' }));
+        assert.equal(again.status, 409, 'while the call can still be running, a second forward is refused');
+
+        // The worker for it died: nothing ever settles it. The vendor deadline plus the grace has passed.
+        w.clock.now += LIMITS.upstreamTimeoutMs + LIMITS.inFlightGraceMs + 1_000;
+        const later = await w.decide(tok, decideBody({ idempotencyKey: 'leak' }));
+        assert.notEqual(later.status, 409, 'a dead hold must not block the retry of its own key');
+        const ledger = await dumpLedger(w.ledgers, 'sid:sub_test_1');
+        assert.ok(ledger.open.some((e) => e.state === 'forwarded'), 'it still holds its estimate for the budget');
+    } finally {
+        release();
+    }
+});
+
+test('when a concurrency limit is switched on, holds older than the vendor deadline do not count toward it', async () => {
+    const w = await world();
+    const ledger = w.env.LEDGER.get(w.env.LEDGER.idFromName('sid:leaky'));
+    const call = async (op, body) => (await (await ledger.fetch('https://ledger/' + op, {
+        method: 'POST', body: JSON.stringify(body),
+    })).json());
+    for (let i = 0; i < 6; i++) {
+        const r = await call('reserve', { key: 'k' + i, digest: 'd', estimate: 500, cap: 1e9, concurrencyLimit: 6, now: T0 });
+        assert.equal(r.ok, true);
+        await call('forward', { id: r.id, now: T0 });
+    }
+    const during = await call('reserve', { key: 'k7', digest: 'd', estimate: 500, cap: 1e9, concurrencyLimit: 6, now: T0 + 1_000 });
+    assert.equal(during.error, 'concurrency', 'six real calls fill a limit of six');
+
+    // Six leaks: never settled. Thirty minutes later they must not hold the licence.
+    const later = await call('reserve', { key: 'k7', digest: 'd', estimate: 500, cap: 1e9, concurrencyLimit: 6, now: T0 + 30 * 60_000 });
+    assert.equal(later.ok, true, 'six leaked holds locked a licence for an hour before this fix');
 });
 
 // --- upstream failures ----------------------------------------------------------------------------------
@@ -814,9 +895,9 @@ test('a refusal is logged with its outcome and still no content', async () => {
 // "<question>:<object ref>". Only those four points may do it, only up to what a chunk needs, and everything else keeps its bound.
 
 const BATCHED = {
-    'measure.folder_and_format': { cap: 24, questions: ['display_folder', 'format_family'], field: 'measures', schemaVersion: 2 },
+    'measure.folder_and_format': { cap: 30, questions: ['display_folder', 'format_family'], field: 'measures', schemaVersion: 2 },
     'column.format': { cap: 30, questions: ['format_family'], field: 'columns', schemaVersion: 1 },
-    'column.summarize': { cap: 20, questions: ['summarize_by'], field: 'columns', schemaVersion: 1 },
+    'column.summarize': { cap: 30, questions: ['summarize_by'], field: 'columns', schemaVersion: 1 },
     'ai.schema': { cap: 30, questions: ['ai_schema'], field: 'objects', schemaVersion: 1 },
 };
 
@@ -948,4 +1029,29 @@ test('a bigger request is held for what it is: the estimate is the body over thr
     assert.equal(estimates[1], sizeOf(b));
     assert.equal(mine.done.every((e) => e.state === 'settled'), true, JSON.stringify(Object.keys(held)));
     assert.equal(Number(big.headers.get('x-relay-tokens-used')), 4000, 'the licence is charged what the vendor reported, not the estimate');
+});
+
+// --- the Pro trial (1.5): no grace, budgeted per trial ---------------------------------------------------
+
+test('a trial token one second past its end is refused as expired: a trial gets no grace', async () => {
+    const w = await world();
+    const res = await w.decide(await w.token({ trial: true, sid: 'trial_0123456789abcdef01234567', exp: Math.floor(T0 / 1000) - 1 }));
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).error, 'expired');
+    assert.equal(w.upstream.calls.length, 0);
+});
+
+test('a trial token before its end is served and budgeted under its own trial sid', async () => {
+    const w = await world();
+    const res = await w.decide(await w.token({ trial: true, sid: 'trial_0123456789abcdef01234567', exp: Math.floor((T0 + DAY) / 1000) }));
+    assert.equal(res.status, 200);
+    const ledger = await dumpLedger(w.ledgers, 'sid:trial_0123456789abcdef01234567');
+    assert.ok(ledger, 'a trial must budget under sid:trial_<fingerprint>');
+    assert.equal(ledger.meta.settled, 1200);
+});
+
+test('a paid token the same distance past its end keeps the grace (only trials lose it)', async () => {
+    const w = await world();
+    const res = await w.decide(await w.token({ exp: Math.floor(T0 / 1000) - 1 }));
+    assert.equal(res.status, 200);
 });

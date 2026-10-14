@@ -3,10 +3,11 @@ import { DriverBar } from './driver-bar';
 import { driverStore, type DriveMode } from './driver-store';
 import { onAssistantCall, onDriveMode, onReconnect, onStudioAnswer, onStudioShow, rpc } from '../bridge';
 import { setAssistantAnswer } from './answer-store';
-import { onPersonInput, postDriverMessage } from './driver-wire';
+import { onPersonInput, postDriverMessage, setDriveMode } from './driver-wire';
 import { NoteStrip } from './note-strip';
 import { StudioCursor } from './cursor';
 import { DriveEdge } from './drive-edge';
+import { usePlanChrome } from '../plan-chrome';
 
 export function isPersonInput(target: EventTarget | null): boolean {
   return target instanceof Element && !!target.closest('.studio-root')
@@ -60,12 +61,11 @@ export function StudioLayer() {
       document.removeEventListener('keydown', input, true);
     };
   }, []);
-  const mode = (next: DriveMode) => {
-    driverStore.setMode(next);
-    postDriverMessage({ type: 'setDriveMode', mode: next });
-  };
+  // The Plan page folds the driver bar into its own header (1.5, pick C): same switch, same store, one place on that page.
+  const calm = usePlanChrome().calm;
+  const mode = (next: DriveMode) => setDriveMode(next);
   return <>
-    <DriverBar onMode={mode} onResume={driverStore.letClaudeDrive} />
+    {!calm && <DriverBar onMode={mode} onResume={driverStore.letClaudeDrive} />}
     <div data-studio-note-strip><NoteStrip /></div>
     <StudioCursor />
     <DriveEdge />

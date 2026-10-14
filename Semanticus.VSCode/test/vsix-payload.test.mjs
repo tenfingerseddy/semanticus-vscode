@@ -259,7 +259,8 @@ assert.doesNotMatch(marketplaceReadme, /releases\/tag\/v?\d/u, 'README links to 
 assert.doesNotMatch(marketplaceReadme, /releases\/download\/v?\d/u, 'README links to a versioned download; use releases/latest');
 assert.doesNotMatch(marketplaceReadme, /one[- ]click/iu, 'README says one click');
 assert.doesNotMatch(extensionPackage.description, /one[- ]click/iu, 'package.json description says one click');
-for (const image of ['https://semanticus.com.au/assets/shots/diagram.png', 'https://semanticus.com.au/assets/shots/workflows.png'])
+for (const image of ['https://semanticus.com.au/assets/shots/plan.png', 'https://semanticus.com.au/assets/shots/diagram-matrix.png',
+  'https://semanticus.com.au/assets/shots/workflows.png'])
   assert.ok(marketplaceReadme.includes(image), 'README lost its image ' + image);
 // The repository front page (the public mirror's README) has the same links and the same rule.
 const frontPage = readFileSync(new URL('../../README.md', import.meta.url), 'utf8');

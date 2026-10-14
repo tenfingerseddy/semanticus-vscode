@@ -69,7 +69,7 @@ namespace Semanticus.Engine
         // True when a KEY NAME is (contains, as a whole word) a credential marker. Word-level, not substring (HIGH 2):
         // "ClientSecret"/[client,secret] and "ApiKey"/[api,key] hit; "Turkey"/[turkey], "Monkey"/[monkey],
         // "Secretariat"/[secretariat] do NOT. "User ID"/"user_id" compact to "userid" and are named that way.
-        private static bool IsSecretKeyName(string key)
+        internal static bool IsSecretKeyName(string key)
         {
             if (string.IsNullOrEmpty(key)) return false;
             var words = KeyWordSplit.Split(key).Where(w => w.Length > 0).ToArray();

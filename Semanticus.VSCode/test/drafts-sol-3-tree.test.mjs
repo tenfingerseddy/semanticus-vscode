@@ -82,7 +82,7 @@ const folder = { ref: folderRef('Sales', 'KPIs'), name: 'KPIs', kind: 'dfolder',
 /** One command: its source(s), its arguments, what the person answers (the LAST prompt is the one B opens during), and the engine method that is the write. */
 const CASES = [
   { cmd: 'renameCmd', args: [measure], answers: { input: ['Revenue'] }, write: 'renameObject' },
-  { cmd: 'authorDelete', args: [measure, [measure]], answers: { warn: ['Delete'] }, write: 'deleteObject' },
+  { cmd: 'authorDelete', args: [measure, [measure]], answers: {}, write: 'deleteObject', noPrompt: true },
   { cmd: 'roleAddRlsCmd', args: [role], answers: { input: ['table:Sales', '[Region] = "West"'] }, write: 'setTablePermission' },
   { cmd: 'summarizeByCmd', args: [column], answers: { pick: [(items) => items.find((i) => i === 'Sum')] }, write: 'setColumnMetadata' },
   { cmd: 'dataCategoryCmd', args: [column], answers: { pick: [(items) => items.find((i) => i.value === 'City')] }, write: 'setColumnMetadata' },

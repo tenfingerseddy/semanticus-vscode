@@ -12,7 +12,7 @@
 // Each picker is a pure view (rendered state by state in test/connect-pickers.test.mjs) plus a thin stateful shell
 // that asks the engine. Neither view speaks engine words: no "XMLA", no "endpoint", no "dataset".
 import { useEffect, useRef, useState } from 'react';
-import { rpc } from './bridge';
+import { rpc, rpcPressed } from './bridge';
 import {
   COPY, SIGN_IN_WAYS, WORKSPACE_ENV_OPTIONS, engineSentence, instanceDetail, instanceName, isAdvancedSignIn,
   sortModels, sortWorkspaces, workspaceChoice, workspaceName,
@@ -337,8 +337,8 @@ export function WorkspacePickerView(p: WorkspacePickerViewProps) {
   );
 }
 
-export function WorkspacePicker({ account, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
-  account?: string | null; initialAuthMode?: string; initialTenant?: string;
+export function WorkspacePicker({ account, pressedFirst = false, initialAuthMode = 'interactive', initialTenant = '', onBack, onPasteAddress, onConnect }: {
+  account?: string | null; pressedFirst?: boolean; initialAuthMode?: string; initialTenant?: string;
   onBack: () => void; onPasteAddress: () => void; onConnect: PickAction<WorkspaceChoice>;
 }) {
   const [authMode, setAuthMode] = useState(initialAuthMode);
@@ -357,24 +357,26 @@ export function WorkspacePicker({ account, initialAuthMode = 'interactive', init
   useEffect(() => () => { live.current = false; }, []);
   const tenantArg = () => (isAdvancedSignIn(authMode) ? (tenant.trim() || null) : null);
 
-  const loadWorkspaces = async () => {
+  const loadWorkspaces = async (pressed = true) => {
     const mine = ++wsGen.current;
     ++modelGen.current;
     setWorkspaces({ kind: 'loading' }); setWsId(null); setModels(null); setModelId(null); setConnectError(null);
     try {
-      const list = (await rpc<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg())) ?? [];
+      const list = (await (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', authMode, tenantArg())) ?? [];
       if (mine === wsGen.current && live.current) setWorkspaces({ kind: 'ready', items: sortWorkspaces(list) });
     } catch (e) { if (mine === wsGen.current && live.current) setWorkspaces({ kind: 'failed', message: engineSentence(e) }); }
   };
   // The list is read as the chosen sign-in. A change of sign-in way reads it again; a typed tenant waits for
   // "List workspaces", so a half-typed domain is never sent.
-  useEffect(() => { void loadWorkspaces(); }, [authMode]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // A page opened by a deep link reads with the saved sign-in only. One a person opened with a button (pressedFirst), or choosing another way to sign in, is the person's press.
+  const firstRead = useRef(true);
+  useEffect(() => { const first = firstRead.current; firstRead.current = false; void loadWorkspaces(pressedFirst || !first); }, [authMode]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const pickWorkspace = async (id: string) => {
     const mine = ++modelGen.current;
     setWsId(id); setModelId(null); setModels({ kind: 'loading' }); setConnectError(null);
     try {
-      const list = sortModels((await rpc<WorkspaceModel[]>('listWorkspaceModels', id, authMode, tenantArg())) ?? []);
+      const list = sortModels((await rpcPressed<WorkspaceModel[]>('listWorkspaceModels', id, authMode, tenantArg())) ?? []);
       if (mine !== modelGen.current || !live.current) return;
       setModels({ kind: 'ready', items: list });
       if (list.length === 1) setModelId(list[0].id);   // one model: it is the pick, one click saved

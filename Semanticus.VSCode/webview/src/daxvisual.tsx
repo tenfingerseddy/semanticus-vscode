@@ -6,6 +6,7 @@
 import { useMemo, useState } from 'react';
 import * as echarts from 'echarts';
 import { EChart, tokenPx } from './echart';
+import { seriesColor, seriesPalette, useThemeEpoch } from './chartpalette';
 import { ResultGrid } from './grid';
 import type { ResultSet } from './wire';
 import { PivotConfig, contextFilterLines, queryGroupRefs, sortPlan } from './daxwells';
@@ -241,15 +242,17 @@ export function VizSwitcher({ viz, onViz, fits }: { viz: VizType; onViz: (v: Viz
 // ── the visual ───────────────────────────────────────────────────────────────
 // `across`: the columns (not the rows) are the axis a line or bar runs along. Queries sets it when the date sits in
 // the columns and the rows are categories, so time runs left to right and each row is one series (doc 03, P2).
-export function DaxVisual({ res, config, viz, height, onExplain, across = false }: { res: ResultSet; config: PivotConfig; viz: VizType; height: number; onExplain?: (p: ExplainPayload) => void; across?: boolean }) {
+// `chosenOrder`: the person put the fields in their places (Queries' wells), so two splits keep that order. An answer in Ask your
+// data leaves it off, and a bar puts the field with more values on the axis (twoSplitAxes).
+export function DaxVisual({ res, config, viz, height, onExplain, across = false, chosenOrder = false }: { res: ResultSet; config: PivotConfig; viz: VizType; height: number; onExplain?: (p: ExplainPayload) => void; across?: boolean; chosenOrder?: boolean }) {
   // One measure by two columns is drawn as a series for each value of one column along the other (twoSplitAxes), so a chart
   // reads it like the pivot it is; the grid, the matrix and the card keep the config as the person built it.
   const isChart = viz !== 'table' && viz !== 'card' && viz !== 'matrix';
   const fold = useMemo(() => {
     if (!isChart || config.cols.length || config.rows.length !== 2 || config.values.length !== 1) return null;
-    const at = twoSplitAxes(axisDims(res, config), 1, viz);
+    const at = twoSplitAxes(axisDims(res, config), 1, viz, chosenOrder);
     return at ? { config: { ...config, rows: [config.rows[0]], cols: [config.rows[1]] }, across: at.axis === 1 } : null;
-  }, [res, config, viz, isChart]);
+  }, [res, config, viz, isChart, chosenOrder]);
   const cfg = fold?.config ?? config;
   const m = useMemo(() => tabulate(res, cfg), [res, cfg]);
   // On screen a key reads as a person would write it ("Jan 2025", "3 Jan 2025"); the raw key still feeds every filter.
@@ -268,7 +271,7 @@ export function DaxVisual({ res, config, viz, height, onExplain, across = false 
     onCellMenu={onExplain ? (row, ci) => { const p = explainPayloadFromRow(config, row, ci, res.columns[ci]?.format); if (p) { onExplain(p); return true; } return false; } : undefined} />;
   if (viz === 'card') return <CardViz m={m} />;
   if (viz === 'matrix') return <MatrixViz m={m} config={config} height={height} hover={hover} setHover={setHover} onExplain={onExplain} fmt={fmt} />;
-  return <ChartViz m={m} config={cfg} viz={viz} height={height} across={(fold?.across ?? across) && !m.colIsValues} fmt={fmt} />;
+  return <ChartViz m={m} config={cfg} viz={viz} height={height} across={(fold?.across ?? across) && !m.colIsValues} fmt={fmt} seriesOrdered={seriesOrdered(res, cfg, (fold?.across ?? across) && !m.colIsValues, m.colIsValues)} />;
 }
 
 // A card is ONE number. Added together, two measures (Net Sales 1,000 and Units 10) make a figure nobody asked for, and so do
@@ -321,7 +324,7 @@ function MatrixViz({ m, config, height, hover, setHover, onExplain, fmt }: { fmt
 export function CtxPopover({ ctx, x, y }: { ctx: CellContext; x: number; y: number }) {
   const left = Math.max(8, Math.min(x + 6, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 286));
   const top = Math.min(y + 4, (typeof window !== 'undefined' ? window.innerHeight : 800) - 240);
-  const srcColor = { rows: '#9cdcfe', cols: '#9cdcfe', filter: 'var(--sem-accent)' } as const;
+  const srcColor = { rows: 'var(--sem-series-2)', cols: 'var(--sem-series-2)', filter: 'var(--sem-series-1)' } as const;
   return (
     <div className="fixed pointer-events-none" style={{ zIndex: 60, left, top, width: 278 }}>
       <div className="rounded-(--sem-radius-card) overflow-hidden" style={{ background: 'var(--sem-surface)', border: '1px solid var(--sem-accent-line)', boxShadow: '0 18px 44px -20px rgba(0,0,0,.9)' }}>
@@ -350,17 +353,30 @@ export function CtxPopover({ ctx, x, y }: { ctx: CellContext; x: number; y: numb
 /** Pixels under the plot when a legend is drawn: the axis labels, then the legend, with a little air between them. */
 export const LEGEND_ROOM = 58;
 
-function ChartViz({ m, config, viz, height, across = false, fmt }: { fmt: KeyFmt; m: Matrix; config: PivotConfig; viz: VizType; height: number; across?: boolean }) {
+/** Whether the series of a chart have an order (months, days, years, numbers): then a chart with many of them draws a ramp that
+ *  reads in that order, and otherwise the six steps and then a ramp. Series from a measure, or from joined fields, have none. */
+function seriesOrdered(res: ResultSet, cfg: PivotConfig, across: boolean, colIsValues: boolean): boolean {
+  if (colIsValues) return false;
+  const fields = across ? cfg.rows : cfg.cols;
+  if (fields.length !== 1) return false;
+  const ci = across ? 0 : cfg.rows.length;
+  const dim = axisDims(res, cfg)[ci];
+  if (dim?.isDate) return dim.ordered !== false;
+  return res.rows.length > 0 && res.rows.every((r) => r?.[ci] == null || typeof r[ci] === 'number');
+}
+
+function ChartViz({ m, config, viz, height, across = false, fmt, seriesOrdered: ordered = false }: { fmt: KeyFmt; m: Matrix; config: PivotConfig; viz: VizType; height: number; across?: boolean; seriesOrdered?: boolean }) {
+  const theme = useThemeEpoch();
   const option = useMemo<echarts.EChartsCoreOption>(() => {
-    const accent = cssVar('--sem-accent', '#2ED47A');
+    const accent = seriesColor(0);
     const muted = cssVar('--sem-muted', '#9aa0aa'), border = cssVar('--sem-border', 'rgba(140,140,160,.22)'), fg = cssVar('--sem-fg', '#ddd');
-    // One hue per series from the theme's own chart colours, so neighbours never share a hue (two greens did).
-    const palette = [cssVar('--vscode-charts-blue', '#59A4F9'), cssVar('--vscode-charts-orange', '#D18616'), cssVar('--vscode-charts-purple', '#B180D7'),
-      cssVar('--vscode-charts-green', '#89D185'), cssVar('--vscode-charts-red', '#F14C4C'), cssVar('--vscode-charts-yellow', '#CCA700'), accent];
+    // The chart palette (tokens.css): green, blue, purple, then each one step further from the page; past six, a ramp so no colour
+    // repeats (chartpalette.ts). A series also has its legend name and its place, so colour is never the only way to tell two apart.
     const rowNames = m.rows.map((r) => r.keys.map((k, ki) => fmt.rowKey(ki, k)).join(' / '));
     const colNames = m.colIsValues ? m.colKeys : m.colKeys.map(fmt.colKey);
     const categories = across ? colNames : rowNames;
     const seriesNames = across ? rowNames : colNames;
+    const palette = seriesPalette(Math.max(seriesNames.length, 3), ordered);
     // cell(series, point) -> the matrix cell, whichever way round the chart is drawn
     const cellAt = (si: number, pi: number) => (across ? m.rows[si]?.cells[pi] : m.rows[pi]?.cells[si]);
     const points = across ? m.colKeys.length : m.rows.length;
@@ -393,7 +409,7 @@ function ChartViz({ m, config, viz, height, across = false, fmt }: { fmt: KeyFmt
       name: sn, type: base,
       ...(viz === 'area' ? { areaStyle: { opacity: 0.18 }, smooth: true } : {}),
       ...(viz === 'line' ? { smooth: false, symbol: 'circle', symbolSize: 5 } : {}),
-      itemStyle: { color: palette[si % palette.length], borderRadius: base === 'bar' ? [3, 3, 0, 0] : 0 },
+      itemStyle: { color: palette[si] ?? palette[si % palette.length], borderRadius: base === 'bar' ? [3, 3, 0, 0] : 0 },
       data: Array.from({ length: points }, (_, pi) => { const v = cellAt(si, pi); const n = typeof v === 'number' ? v : null; return viz === 'scatter' ? [pi, n] : n; }),
     }));
     const shown = new Set(m.formats);
@@ -418,6 +434,6 @@ function ChartViz({ m, config, viz, height, across = false, fmt }: { fmt: KeyFmt
       yAxis: { type: 'value', axisLabel: { color: muted, fontSize: tokenPx('--sem-text-label'), ...(axisFormat ? { formatter: (v: number) => percentOf(v, axisFormat) ?? String(v) } : {}) }, splitLine: { lineStyle: { color: border } } },
       series,
     };
-  }, [m, config, viz, across, fmt]);
+  }, [m, config, viz, across, fmt, theme, ordered]);
   return <EChart option={option} height={height} />;
 }

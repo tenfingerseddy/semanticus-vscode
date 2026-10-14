@@ -65,7 +65,7 @@ namespace Semanticus.Engine
                     // Flush postponed dependencies so same-batch referencers are visible.
                     TabularEditor.TOMWrapper.Utils.DependencyMaintenance.RebuildNow();
                     _unusedByRef = (_parts == null
-                            ? Lineage.LineageGraph.Unused(m)
+                            ? (_entry?.Coverage?.NoReports == true ? Lineage.LineageGraph.UnusedNoReports(m) : Lineage.LineageGraph.Unused(m))
                             : Lineage.LineageGraph.AnalyzeReports(m, _parts).Unused)
                         .Items.ToDictionary(x => x.Ref, StringComparer.OrdinalIgnoreCase);
                 }

@@ -86,6 +86,8 @@ export interface StartGrades {
   afterBuildBestPracticeOpen?: number | null;
   /** True until the decide has settled and the preview is current: "after the build" can still move. */
   afterBuildProvisional?: boolean;
+  /** The plan was built and the build was undone: the model has no tables to grade now (D7). */
+  nowUndone?: boolean;
 }
 export interface StartSample { state: 'none' | 'reading' | 'read' | 'refused'; reason?: string | null; measured?: number; notMeasured?: number }
 export interface StartEdit { op: string; target: string; value?: string }
@@ -199,6 +201,7 @@ export const COPY = {
   gradeAI: 'AI readiness', gradeBP: 'Model quality',
   gradeNow: 'Raw tables', gradeAfter: 'after the build',
   gradeUnknown: 'not measured yet',
+  gradeUndone: 'No tables now', gradeUndoneKey: 'The build is undone, so the model has nothing to grade. The grade after the build is a forecast.',
   gradeNotScored: 'The raw tables are not scored yet',
   linesInPlan: 'Changes in the plan', wordsTitle: 'Words',
   legendJev: 'Jev chose this', legendRule: 'Semanticus chose this', legendYou: 'You', legendAssistant: 'Your assistant wrote', legendDefault: 'Default, no Jev (Free)',
@@ -733,7 +736,7 @@ export function footOf(view: StartPlanView, tier: Tier, prev?: StartPlanView | n
   return { state: 'ready', lead: COPY.footReady, rest: COPY.undoLine };
 }
 
-export interface Grade { now: string | null; after: string | null; afterNumber: number | null; bestPractice: string | null; bestPracticeOpen: number | null; provisional: boolean; note: string | null }
+export interface Grade { undone: boolean; now: string | null; after: string | null; afterNumber: number | null; bestPractice: string | null; bestPracticeOpen: number | null; provisional: boolean; note: string | null }
 
 /** The AI readiness grade after the build, as the letter the engine gives (a number only when it sends no letter), and whether
  *  it can still move. A provisional grade is never shown as the answer: the note says so beside it. */
@@ -743,7 +746,7 @@ export function gradeOf(view: StartPlanView, tier: Tier): Grade {
   const provisional = !view.built && !!g.afterBuildProvisional && after != null;
   const jevWorks = tier.pro && !view.jevDeclined && (view.decide?.state === 'deciding' || view.decide?.state === 'waiting_grant');
   return {
-    now: g.nowGrade || (g.now != null ? String(g.now) : null), after, afterNumber: g.afterBuild ?? null,
+    undone: !view.built && !!g.nowUndone, now: g.nowGrade || (g.now != null ? String(g.now) : null), after, afterNumber: g.afterBuild ?? null,
     bestPractice: g.afterBuildBestPractice || null, bestPracticeOpen: typeof g.afterBuildBestPracticeOpen === 'number' ? g.afterBuildBestPracticeOpen : null, provisional,
     note: provisional ? (jevWorks ? COPY.gradeProvisionalJev : COPY.gradeProvisional) : null,
   };

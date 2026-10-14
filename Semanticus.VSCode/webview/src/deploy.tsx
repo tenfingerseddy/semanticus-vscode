@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePersistedState } from './hooks';
-import { rpc } from './bridge';
+import { rpc, rpcPressed, onActivity } from './bridge';
 import { setPublishReach } from './publishReach';
+import { voicePublishStage } from './personality/messages';
 import { type CompareSeed } from './compare';
 import { PublishChanges, PageAction } from './publish-changes';
 import { useConnection } from './connection';
@@ -9,7 +10,7 @@ import { openConnectionsOnView } from './connectionshub';
 import { compareSeedFromSession } from './contextbar';
 import { AccountPicker } from './accountpicker';
 import { defaultSignInMode, isInteractiveSignIn, signInProblem, uiLabel } from './copy';
-import { promoteLabel, publishStageName, restoreDetail, restoreLabel, rollbackResultLine, shortWhen } from './publishcopy';
+import { assistantPublish, promoteLabel, publishStageName, restoreDetail, restoreLabel, rollbackResultLine, shortWhen } from './publishcopy';
 
 // Wire shapes mirror Semanticus.Engine/Alm/AlmProtocol.cs (camelCased).
 interface ConnectionRecord { id: string; kind: string; endpoint: string; database: string; modelName: string; label?: string | null; }
@@ -43,6 +44,12 @@ export function DeployView({ seed, initialMode = 'changes', restoreTarget, onRes
   const [restoreId, setRestoreId] = useState('');
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreErr, setRestoreErr] = useState<string | null>(null);
+  // Where the assistant is publishing right now: while it does, the header names that place, so it never says there is none (hero19 D20).
+  const [assistantTo, setAssistantTo] = useState<string | null>(null);
+  useEffect(() => onActivity((e) => {
+    const t = assistantPublish(e);
+    if (t) setAssistantTo(t.phase === 'start' ? t.workspace : null);
+  }), []);
 
   async function loadConnections() {
     try { setConnections((await rpc<ConnectionRecord[]>('listConnections')) ?? []); }
@@ -137,12 +144,13 @@ export function DeployView({ seed, initialMode = 'changes', restoreTarget, onRes
                 {account && <span className="sem-text-meta">as {account}</span>}
                 <button type="button" onClick={chooseDestination} className="sem-btn sem-btn-quiet sem-btn-sm">Change</button>
               </>
-            ) : <span className="sem-text-meta">No publish destination yet.</span>}
+            ) : assistantTo ? <span data-testid="deploy-assistant-to">To <b>{assistantTo}</b></span>
+              : <span className="sem-text-meta">No publish destination yet.</span>}
             <div ref={setSlot} className="sem-inline sem-push" />
           </div>
         </header>
         {mode === 'changes' && <PublishChanges key={session?.sessionId ?? 'none'} seed={hasDestination ? reviewSeed : { left: reviewSeed?.left ?? { kind: 'session' }, right: null, note: reviewSeed?.note, nonce: reviewSeed?.nonce ?? 0 }}
-          destination={targetName} slot={slot} onWrote={() => void loadRestorePoints()} onChooseDestination={chooseDestination}
+          destination={targetName} stage={voicePublishStage(target?.label)} slot={slot} onWrote={() => void loadRestorePoints()} onChooseDestination={chooseDestination}
           onReach={(ok) => setPublishReach(ok ? null : { sessionId: session?.sessionId ?? '', connectionId: context?.publishing?.connectionId ?? null })} />}
         {mode === 'versions' && <VersionsPanel points={restorePoints} selectedId={restoreId} onSelect={setRestoreId} target={targetName}
           loading={restoreLoading} error={restoreErr} slot={slot} onRestored={loadRestorePoints} />}
@@ -274,24 +282,24 @@ function PromotePanel({ slot }: { slot: HTMLElement | null }) {
   async function loadPipelines(mode: string = signInMode) {
     setBusy('pipelines'); setPipeErr(null); setSigningIn(isInteractiveSignIn(mode));
     try {
-      const ps = await rpc<DeploymentPipeline[]>('listDeploymentPipelines', mode, promoteTenantId);
+      const ps = await rpcPressed<DeploymentPipeline[]>('listDeploymentPipelines', mode, promoteTenantId);
       setPipelines(ps);
       if (ps.length) {   // surface the first pipeline's stages straight away
         setSelPipe(ps[0].id);
-        const s = await rpc<PipelineStage[]>('getPipelineStages', ps[0].id, mode, promoteTenantId);
+        const s = await rpcPressed<PipelineStage[]>('getPipelineStages', ps[0].id, mode, promoteTenantId);
         setStages((m) => ({ ...m, [ps[0].id]: s }));
       }
     } catch (e) { setPipeErr(String((e as Error).message ?? e)); }
     finally { setBusy(null); setSigningIn(false); }
   }
-  // Pressing Sign in retries the read the browser way, which is the one way that works with nothing set up on the
+  // Every pipeline read here comes from a button (Find my pipelines, look again, refresh, Sign in), so it is a press. Sign in retries the read the browser way, which is the one way that works with nothing set up on the
   // computer. It also becomes the remembered choice, so the next press does not fail the same way.
   function signInAndRetry() { setPickedMode('interactive'); void loadPipelines('interactive'); }
   async function selectPipeline(id: string) {
     setSelPipe(id); setPipeErr(null);
     if (stages[id]) return;
     setBusy('stages');
-    try { const s = await rpc<PipelineStage[]>('getPipelineStages', id, signInMode, promoteTenantId); setStages((m) => ({ ...m, [id]: s })); }
+    try { const s = await rpcPressed<PipelineStage[]>('getPipelineStages', id, signInMode, promoteTenantId); setStages((m) => ({ ...m, [id]: s })); }
     catch (e) { setPipeErr(String((e as Error).message ?? e)); }
     finally { setBusy(null); }
   }

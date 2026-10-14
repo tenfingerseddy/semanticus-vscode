@@ -53,14 +53,15 @@ namespace Semanticus.Tests
         // queries.chart_kind (D6, 28 Sep, OFF until its replay clears its bar) changed this value and NOT the version, the
         // same way: question_words and result_shape (split names, date or not, distinct counts, how many numbers and rows).
         // cleanup.suggest (m11/plan-harm round 5, 30 Sep) joined the same version 4 set: still no release carries the registry.
-        private const string FrozenFieldFingerprint = "1e91f6812065acd5c24c9c4c0c7899cff1adf37f2de68613ffef5a1ba0d899f9";
+        // next.step (1.5, the Next line, 11 Oct) added five fields and bumped the consent version to 6 in the same change.
+        private const string FrozenFieldFingerprint = "537dda8f5ff23535af72d6e0a49bb5107de75712e4e819936f9a1bd441dad751";
 
         [Fact]
         public void The_declared_fields_are_frozen_against_the_consent_version()
         {
             Assert.True(FrozenFieldFingerprint == DecisionRegistry.DeclaredFieldFingerprint,
                 "expected " + FrozenFieldFingerprint + " but the declared fields hash to " + DecisionRegistry.DeclaredFieldFingerprint);
-            Assert.Equal(5, DecisionRegistry.ConsentSchemaVersion);   // the M11 join's one release bump (30 Sep)
+            Assert.Equal(6, DecisionRegistry.ConsentSchemaVersion);   // 1.5: next.step joined (the Next line, 11 Oct); version 5 shipped, so it bumps
         }
 
         /// <summary>F-229. The measure point used to send the formula text, and a formula can carry a value (a

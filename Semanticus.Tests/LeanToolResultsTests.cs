@@ -112,6 +112,29 @@ namespace Semanticus.Tests
         }
     }
 
+    public class LeanAskedForMoreTests
+    {
+        // hero17 P10: a caller that asks for max 100 got about 15 items, because the page budget ignored max. It now gets the bigger page it named.
+        [Fact]
+        public async Task A_named_max_above_the_default_gets_a_bigger_page()
+        {
+            var engine = DispatchProxy.Create<IEngine, LeanEngineFake>();
+            var fake = (LeanEngineFake)(object)engine;
+            fake.View.Sections[0].Groups[0].Lines = Enumerable.Range(0, 400).Select(i => new StartLine
+            {
+                Item = new ChangeItem { Id = "line-" + i, Kind = "set_description", ObjectRef = "column:Sales/Column" + i, After = new string('x', 100) },
+                Why = "Describe the column.", Kept = true, DecidedBy = "rule",
+            }).ToList();
+            var small = (await McpTools.GetStartPlanOp(engine, item: "tables", offset: 0, max: 40)).Summary.Page.Items.Length;
+            var bigView = await McpTools.GetStartPlanOp(engine, item: "tables", offset: 0, max: 100);
+            var big = bigView.Summary.Page.Items.Length;
+            Assert.True(small < 40, "the default page still stops at its budget");
+            Assert.True(big > small * 2, "a named max gets a bigger page");
+            Assert.True(McpLeanResults.Chars(bigView) <= PlanReadShape.WholePlanChars, "but never past a whole plan read");
+            Assert.True((await McpTools.GetStartWordsOp(engine, 100)).Items.Count > 15);
+        }
+    }
+
     public class LeanEngineFake : StartEngineFake
     {
         public int ReadyCalls;

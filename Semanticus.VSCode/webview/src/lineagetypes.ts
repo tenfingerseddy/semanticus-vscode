@@ -3,6 +3,7 @@
 // Mirrors Semanticus.Engine/Lineage/LineageProtocol.cs (camelCased over the JSON-RPC door).
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { paintColor } from './chartpalette';
 
 export interface LineageNode { ref: string; name: string; kind: string; table?: string; isHidden?: boolean; detail?: string }
 export interface LineageEdge { from: string; to: string; kind: string }
@@ -14,11 +15,19 @@ export const KIND_GLYPH: Record<string, string> = {
   // The report layer (downstream of the model — where a field is actually shown).
   report: '◰', page: '▭', visual: '◫',
 };
+// Node kinds draw from the one chart palette (--sem-series-1 to 6, tokens.css): measures and calculated columns are green,
+// columns and hierarchies blue, relationships and sources purple. Red is only for a name that did not resolve, and a
+// table is the muted grey. A kind is also told apart by its glyph and its legend label, never by colour alone.
 export const KIND_COLOR: Record<string, string> = {
-  measure: '#2ED47A', column: '#3fb0e6', calcColumn: '#17B3A3', relationship: '#e0b341',
-  hierarchy: '#e0b341', table: 'var(--sem-muted)', source: '#4E7CA8', unresolved: 'var(--sem-bad)',
-  // Report layer = a warm family, visually distinct from the cool model kinds.
-  report: '#ff7043', page: '#ffa726', visual: '#ffca28',
+  measure: 'var(--sem-series-1)', calcColumn: 'var(--sem-series-4)', column: 'var(--sem-series-2)', hierarchy: 'var(--sem-series-5)',
+  relationship: 'var(--sem-series-3)', source: 'var(--sem-series-6)', table: 'var(--sem-muted)', unresolved: 'var(--sem-bad)',
+  // The report layer: the same steps, in the order the model kinds use them.
+  report: 'var(--sem-series-3)', page: 'var(--sem-series-6)', visual: 'var(--sem-series-5)',
+};
+/** The dot shape per kind, so tables, sources and reports read apart from fields without colour. Circle when absent. */
+export const KIND_SYMBOL: Record<string, string> = {
+  table: 'rect', calcTable: 'rect', source: 'triangle', hierarchy: 'diamond', relationship: 'diamond',
+  report: 'roundRect', page: 'roundRect', visual: 'roundRect',
 };
 
 // Human label for a node kind (legend / tooltips).
@@ -98,14 +107,17 @@ export function makeScope(tables: Set<string>, fields: Set<string>) {
 
 // Resolve a KIND_COLOR entry to a concrete color: ECharts canvas can't read CSS custom properties, so a
 // `var(--…)` value is looked up against the document root (with a fallback) before it reaches a chart option.
+// A var(--token) becomes the rgb() a canvas chart can read through paintColor (chartpalette.ts).
+// Cached for one draw (clearColorCache at the top of a chart option build): a graph asks for the same few colours per node.
+const colorCache = new Map<string, string>();
+export function clearColorCache() { colorCache.clear(); }
 export function resolveColor(v: string | undefined, fallback = '#9aa0aa'): string {
   if (!v) return fallback;
-  if (v.startsWith('var(')) {
-    const name = v.slice(4, -1).trim();
-    const got = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return got || fallback;
-  }
-  return v;
+  if (/^(#|rgb)/i.test(v)) return v;
+  const hit = colorCache.get(v); if (hit) return hit;
+  const out = paintColor(v, fallback);
+  colorCache.set(v, out);
+  return out;
 }
 
 // Make a chart/canvas container fill the remaining viewport height, so the lineage visuals are DYNAMIC to the window

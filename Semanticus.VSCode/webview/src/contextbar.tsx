@@ -3,6 +3,8 @@ import { useConnection, type ModelConnectionContext, type SessionInfo } from './
 import type { ConnectionStatus } from './wire';
 import type { ModelRef } from './compare';
 import type { HubView } from './connectionshub';
+import { LinkStatus } from './personality/link';
+import { PlanNotes } from './plan-notes';
 
 // The Studio footer answers the roles users otherwise conflate:
 //   what am I EDITING · what answers TESTS/QUERIES · where will I PUBLISH?
@@ -160,10 +162,14 @@ export function ContextBar({ onConnections }: { onConnections: (section?: HubVie
         <span className="connection-kicker">Publish:</span>
         <span className={publishing?.available ? 'connection-value' : 'connection-value connection-value-none'}>{publishMain}</span>
       </button>
+      {/* The Plan page's notes, as one quiet word (1.5). */}
+      <PlanNotes />
       {/* The unsaved-edits warning is said once, where it matters: beside Ask answers and query results (QueryStalenessChip). */}
       {!warn && <span className="connection-sync sem-chip sem-chip-dot">
         <span className="truncate" title={pillTitle}>{v.label}</span>
       </span>}
+      {/* The Link and the working verb (1.5): what Claude or Semanticus is doing right now, at the bar's right end. */}
+      <LinkStatus />
     </div>
   );
 }

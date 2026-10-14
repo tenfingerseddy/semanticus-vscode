@@ -390,7 +390,7 @@ namespace Semanticus.Engine
             }
 
             // One sign-in per (mode, tenant) for the whole run: table counts and compare-with-source checks share it.
-            var sqlTokens = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var sqlTokens = new SqlTokenCache();
             var phase = System.Diagnostics.Stopwatch.StartNew();
             // The checks that take time, counted up front so the page can say "312 of 691": a relationship and a table count
             // each, a saved check each. A run with no live connection sends no query, so it counts only the saved checks.
@@ -403,19 +403,27 @@ namespace Semanticus.Engine
             progress.Start("relationships");
             if (live != null)
             {
-                foreach (var rel in relInputs)
+                // The source half of every table count starts now: it is SQL on another server, so it runs while the
+                // relationship probes and the table DAX use the single DAX lane. At most three SQL queries run at once.
+                var sourceCounts = tableInputs.Select(t => Task.Run(() => ExecuteTableSourceCountAsync(t, origin, sqlTokens))).ToList();
+                try
                 {
-                    rel.Probe = await ExecuteRelationshipProbesAsync(live, rel);
-                    progress.Step("relationships");
+                    foreach (var rel in relInputs)
+                    {
+                        rel.Probe = await ExecuteRelationshipProbesAsync(live, rel);
+                        progress.Step("relationships");
+                    }
+                    LogRunPhase("relationships", relInputs.Count, phase);
+                    phase.Restart();
+                    for (var i = 0; i < tableInputs.Count; i++)
+                    {
+                        await ExecuteTableModelCountAsync(live, tableInputs[i]);
+                        await sourceCounts[i];
+                        progress.Step("table counts");
+                    }
+                    LogRunPhase("table counts", tableInputs.Count, phase);
                 }
-                LogRunPhase("relationships", relInputs.Count, phase);
-                phase.Restart();
-                foreach (var table in tableInputs)
-                {
-                    await ExecuteTableRowCountAsync(live, table, origin, sqlTokens);
-                    progress.Step("table counts");
-                }
-                LogRunPhase("table counts", tableInputs.Count, phase);
+                finally { await SettleTasksAsync(sourceCounts); }
             }
             else
             {
@@ -435,19 +443,29 @@ namespace Semanticus.Engine
             {
                 phase.Restart();
                 var modelEndpointId = reconPlans.Count == 0 ? null : await ModelSqlEndpointIdAsync(s);
-                foreach (var plan in reconPlans)
+                // Up to three checks are in flight at once, so one check's SQL runs while another's DAX holds the lane. The DAX
+                // lane is still one query at a time, the SQL lane takes three, and the results land in the order of the plans.
+                var reconOutcomes = new ReconcileOutcome[reconPlans.Count];
+                using (var inFlight = new SemaphoreSlim(RunChecksInFlight))
                 {
-                    outcomes.Add(await RunReconcileDefAsync(plan, live != null, origin, modelEndpointId, sqlTokens));
-                    progress.Step("saved checks");
+                    var running = reconPlans.Select((plan, i) => Task.Run(async () =>
+                    {
+                        await inFlight.WaitAsync().ConfigureAwait(false);
+                        try
+                        {
+                            reconOutcomes[i] = await RunReconcileDefAsync(plan, live != null, origin, modelEndpointId, sqlTokens).ConfigureAwait(false);
+                            progress.Step("saved checks");
+                        }
+                        finally { inFlight.Release(); }
+                    })).ToList();
+                    try { await Task.WhenAll(running); }
+                    finally { await SettleTasksAsync(running); }
                 }
+                outcomes.AddRange(reconOutcomes);
                 LogRunPhase("compare with source", reconPlans.Count, phase,
                     outcomes.Sum(x => x.DurationMs), outcomes.Sum(x => x.SqlDurationMs));
                 phase.Restart();
-                foreach (var d in valueDefs)
-                {
-                    outcomes.Add(await RunMeasureValueDefAsync(d, identities, live != null, origin));
-                    progress.Step("saved checks");
-                }
+                outcomes.AddRange(await RunMeasureValuesAsync(valueDefs, identities, live != null, origin, () => progress.Step("saved checks")));
                 LogRunPhase("trusted numbers", valueDefs.Count, phase);
             }
             else
@@ -591,9 +609,12 @@ namespace Semanticus.Engine
 
             public void Step(string note)
             {
-                _done++;
-                if (_done < _total && _clock.ElapsedMilliseconds - _lastMs < _minMs) return;
-                Publish(note);
+                lock (this)
+                {
+                    _done++;
+                    if (_done < _total && _clock.ElapsedMilliseconds - _lastMs < _minMs) return;
+                    Publish(note);
+                }
             }
 
             private void Publish(string note)
@@ -612,6 +633,17 @@ namespace Semanticus.Engine
             var seam = RunLogForTests;
             if (seam != null) { seam(line); return; }
             try { Console.Error.WriteLine(line); } catch { }
+        }
+
+        /// <summary>How many saved checks run side by side. Their DAX still goes one query at a time; this is what lets the
+        /// SQL of one check run while another's DAX holds the lane.</summary>
+        private const int RunChecksInFlight = 3;
+
+        /// <summary>Wait for every task in the list, whatever happened to it, so nothing is left running or reported as an
+        /// unobserved failure when a run ends early.</summary>
+        private static async Task SettleTasksAsync(IEnumerable<Task> tasks)
+        {
+            foreach (var t in tasks) { try { await t.ConfigureAwait(false); } catch { } }
         }
 
         private void LogRunPhase(string phase, int count, System.Diagnostics.Stopwatch took, long? daxMs = null, long? sqlMs = null)
@@ -688,6 +720,7 @@ namespace Semanticus.Engine
         private void RememberTestRun(TestSuiteRunResult run)
         {
             _lastTestRun = run;
+            NoteNextStepChecks(run);   // 1.5: a finished run moves the Next line on from "Run your checks"
             lock (_recentTestRuns)
             {
                 _recentTestRuns.Add(run);
@@ -1077,10 +1110,10 @@ namespace Semanticus.Engine
         private static Task<RelationshipProbeResult> ExecuteRelationshipProbesAsync(LiveConnection live, RelationshipCheckInput rel)
             => RelationshipProbeRunner.RunAsync(q => live.ExecuteAsync(q, 2, 120), rel);
 
-        /// <summary>Run one deterministic COUNTROWS / COUNT_BIG pair. A mismatch is not a failure here because
+        /// <summary>Run one deterministic COUNTROWS / COUNT_BIG pair. The two halves are separate so the source half (SQL, another
+        /// server) can run while the model half (DAX, the single lane) and the relationship probes do. A mismatch is not a failure here because
         /// the two connections cannot prove snapshot alignment; the pure judge keeps it NotVerifiable.</summary>
-        private async Task ExecuteTableRowCountAsync(LiveConnection live, TableRowCountInput table, string origin,
-            Dictionary<string, string> sqlTokens)
+        private async Task ExecuteTableModelCountAsync(LiveConnection live, TableRowCountInput table)
         {
             if (!string.IsNullOrEmpty(table.DiscoveryError)) return;
             var dax = $"EVALUATE ROW(\"__table_rows\", COUNTROWS('{table.ModelTable.Replace("'", "''")}'))";
@@ -1096,7 +1129,13 @@ namespace Semanticus.Engine
                 table.ModelObservedUtc = DateTime.UtcNow.ToString("o");
                 table.ModelError = ex.Message;
             }
+        }
 
+        /// <summary>The source half of a table count: the SQL COUNT_BIG. It touches only the source fields of the input, so it
+        /// can run while the model half and the relationship probes run on the DAX lane.</summary>
+        private async Task ExecuteTableSourceCountAsync(TableRowCountInput table, string origin, SqlTokenCache sqlTokens)
+        {
+            if (!string.IsNullOrEmpty(table.DiscoveryError)) return;
             var gate = GuardAgent(AgentCapability.QueryData, table.Server, table.Database, origin, isCommit: true,
                 summary: $"run the ambient row-count check: read {table.Schema}.{table.Entity} from {table.Database} on {table.Server}",
                 intentBasis: "querydata", consumeGrant: false);
@@ -1114,7 +1153,7 @@ namespace Semanticus.Engine
                 tenantId = connection?.TenantId;
             }
             string token;
-            try { token = await RunSqlTokenAsync(sqlTokens, authMode, tenantId, origin).ConfigureAwait(false); }
+            try { token = ReconcileSqlForTests != null && SqlTokenFetchForTests == null ? null : await RunSqlTokenAsync(sqlTokens, authMode, tenantId, origin).ConfigureAwait(false); }
             catch (Exception ex)
             {
                 table.SourceError = "could not acquire a SQL token: " + ScrubSchemaError(ex.Message);
@@ -1122,7 +1161,7 @@ namespace Semanticus.Engine
             }
 
             var sql = $"SELECT COUNT_BIG(*) AS [semanticus_table_rows] FROM {SqlIdentifier(table.Schema)}.{SqlIdentifier(table.Entity)}";
-            var source = await FabricSqlQuery.ExecuteAsync(table.Server, table.Database, token, sql, 2, 120, CancellationToken.None).ConfigureAwait(false);
+            var source = await ReconcileSqlAsync(table.Server, table.Database, token, sql, 2).ConfigureAwait(false);
             table.SourceObservedUtc = DateTime.UtcNow.ToString("o");
             if (!TryReadCount(source, out var sourceCount, out var sourceError)) table.SourceError = sourceError;
             else table.SourceCount = sourceCount;
@@ -1133,14 +1172,41 @@ namespace Semanticus.Engine
         /// from disk again, which was paid once per check. Only a token that was got is kept: a sign-in that failed is
         /// tried again by the next check, so each check still says for itself why it could not run. A run is minutes long
         /// and a token lives about an hour. With no cache (a single direct call) it is a plain fetch.</summary>
-        private async Task<string> RunSqlTokenAsync(Dictionary<string, string> cache, string authMode, string tenantId, string origin)
+        private async Task<string> RunSqlTokenAsync(SqlTokenCache cache, string authMode, string tenantId, string origin)
         {
             if (cache == null) return await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
             var key = string.Join("\u001f", authMode ?? "azcli", tenantId ?? "");
-            if (cache.TryGetValue(key, out var kept)) return kept;
-            var token = await AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None).ConfigureAwait(false);
-            cache[key] = token;
-            return token;
+            return await cache.GetAsync(key, () => AcquireSqlTokenAsync(authMode, tenantId, origin, CancellationToken.None)).ConfigureAwait(false);
+        }
+
+        /// <summary>The run's sign-in cache. Checks now run side by side, so two of them can ask for the same sign-in at once:
+        /// the second waits for the first fetch instead of starting its own. A fetch that failed is never kept, and a check
+        /// that waited on a failed fetch tries once for itself, so every check still says for itself why it could not run.</summary>
+        internal sealed class SqlTokenCache
+        {
+            private readonly Dictionary<string, Task<string>> _fetches = new Dictionary<string, Task<string>>(StringComparer.OrdinalIgnoreCase);
+
+            public async Task<string> GetAsync(string key, Func<Task<string>> fetch)
+            {
+                var joined = false;
+                while (true)
+                {
+                    Task<string> mine;
+                    bool creator;
+                    lock (_fetches)
+                    {
+                        creator = !_fetches.TryGetValue(key, out mine);
+                        if (creator) _fetches[key] = mine = Task.Run(fetch);
+                    }
+                    try { return await mine.ConfigureAwait(false); }
+                    catch
+                    {
+                        lock (_fetches) { if (_fetches.TryGetValue(key, out var now) && ReferenceEquals(now, mine)) _fetches.Remove(key); }
+                        if (creator || joined) throw;
+                        joined = true;   // I only waited on someone else's failed fetch: try once myself
+                    }
+                }
+            }
         }
 
         private static bool TryReadCount(ResultSet result, out long count, out string error)
@@ -1369,7 +1435,7 @@ namespace Semanticus.Engine
         }
 
         private async Task<ReconcileOutcome> RunReconcileDefAsync(ReconcilePlan plan, bool live, string origin, string modelEndpointId,
-            Dictionary<string, string> sqlTokens = null)
+            SqlTokenCache sqlTokens = null)
         {
             var o = new ReconcileOutcome
             {
@@ -1452,6 +1518,25 @@ namespace Semanticus.Engine
 
         private async Task<ReconcileOutcome> RunMeasureValueDefAsync(TestDefinition def, TestObjectIdentityIndex identities, bool live, string origin)
         {
+            var prepared = await PrepareMeasureValueAsync(def, identities, live);
+            return prepared.Pending == null ? prepared.Outcome : await AskMeasureValueAsync(prepared.Pending, origin);
+        }
+
+        /// <summary>A trusted-number check that is ready to ask: the outcome so far, what it expects, the query it would run
+        /// on its own, and (when it is a plain scalar) the one expression a batch can ask beside others.</summary>
+        private sealed class MeasureValuePending
+        {
+            public ReconcileOutcome Outcome;
+            public MeasureValueRequest Request;
+            public string Dax;
+            public string Scalar;
+        }
+
+        /// <summary>Everything a trusted-number check settles before it asks the model anything: the number it expects, the
+        /// measure it binds to, the query it would send. A check that ends here (no number, no measure, refused scope, no
+        /// connection) comes back with its outcome and no pending part; one that must ask comes back with both.</summary>
+        private async Task<(ReconcileOutcome Outcome, MeasureValuePending Pending)> PrepareMeasureValueAsync(TestDefinition def, TestObjectIdentityIndex identities, bool live)
+        {
             var request = string.IsNullOrWhiteSpace(def.ParamsJson) ? null : TestSuiteStore.Deserialize<MeasureValueRequest>(def.ParamsJson);
             var o = new ReconcileOutcome
             {
@@ -1474,7 +1559,7 @@ namespace Semanticus.Engine
             {
                 o.Verdict = Verdict.NotVerifiable;
                 o.Message = "This expected-total test has no number to trust.";
-                return o;
+                return (o, null);
             }
             // Say what the check is looking for from here on, whatever happens next: a check that could not run
             // still has an expected answer, and the page should be able to show it.
@@ -1499,7 +1584,7 @@ namespace Semanticus.Engine
             {
                 o.Missing = true; o.Verdict = Verdict.NotVerifiable;
                 o.Message = "the measure this test was bound to no longer exists (or was recreated with a new identity). Re-bind or delete the test";
-                return o;
+                return (o, null);
             }
             var expression = request.ExpressionDax?.Trim();
             // An expression test checks DAX the model does not hold yet (the DAX Lab "Test this expression" path),
@@ -1508,7 +1593,7 @@ namespace Semanticus.Engine
             {
                 o.Verdict = Verdict.Fail;
                 o.Message = "This measure has no formula.";
-                return o;
+                return (o, null);
             }
             var filter = !string.IsNullOrWhiteSpace(request.FilterDax) ? request.FilterDax.Trim()
                 : !string.IsNullOrWhiteSpace(request.FilterColumn) && !string.IsNullOrWhiteSpace(request.FilterValue)
@@ -1516,29 +1601,45 @@ namespace Semanticus.Engine
                     : null;
             o.Filter = filter;
             var dax = BuildMeasureValueDax(bound.Name, expression, filter, out var refusal);
+            var scalar = BuildMeasureValueScalar(bound.Name, expression, filter);
             // A query this check cannot scope has no verdict to give, so it is refused BEFORE the query is sent
             // and before the no-connection message: a check that can never be asked says so whatever is connected.
             if (refusal != null)
             {
                 o.Verdict = Verdict.NotVerifiable;
                 o.Message = refusal;
-                return o;
+                return (o, null);
             }
             o.Dax = dax;
             if (!live)
             {
                 o.Verdict = Verdict.NotVerifiable;
                 o.Message = "Not run: no live connection, so the measure could not be asked.";
-                return o;
+                return (o, null);
             }
+            return (o, new MeasureValuePending { Outcome = o, Request = request, Dax = dax, Scalar = scalar });
+        }
+
+        /// <summary>Ask one trusted-number check its own query and judge the answer.</summary>
+        private async Task<ReconcileOutcome> AskMeasureValueAsync(MeasureValuePending p, string origin)
+        {
             ResultSet rs;
-            try { rs = await RunDaxAsync(dax, 8, origin); }
+            try { rs = await RunDaxAsync(p.Dax, 8, origin); }
             catch (Exception ex)
             {
-                o.Verdict = Verdict.NotVerifiable;
-                o.Message = "Could not ask the measure: " + ex.Message;
-                return o;
+                p.Outcome.Verdict = Verdict.NotVerifiable;
+                p.Outcome.Message = "Could not ask the measure: " + ex.Message;
+                return p.Outcome;
             }
+            return JudgeMeasureValue(p, rs);
+        }
+
+        /// <summary>The verdict for one trusted-number check from the answer it got. One path for a check asked on its own
+        /// and a check answered inside a batch, so the words and the numbers cannot differ between them.</summary>
+        private static ReconcileOutcome JudgeMeasureValue(MeasureValuePending p, ResultSet rs)
+        {
+            var o = p.Outcome;
+            var request = p.Request;
             if (rs == null || rs.Error != null)
             {
                 o.Verdict = Verdict.NotVerifiable;
@@ -1570,6 +1671,81 @@ namespace Semanticus.Engine
             o.Matches = match ? 1 : 0;
             o.Mismatches = match ? 0 : 1;
             return o;
+        }
+
+
+        /// <summary>The most trusted-number checks asked in one query.</summary>
+        internal const int MeasureValueBatchSize = 20;
+
+        /// <summary>Run every trusted-number check of a run, in order, and return their outcomes in that same order. Plain
+        /// scalar checks are asked in batches: ONE query, EVALUATE ROW with a column per check (each column is exactly the
+        /// expression the check would send on its own), so 67 checks cost 4 round trips, not 67. The result is the same
+        /// number the single query gives. Three things keep it that way. (1) A batch that errors, or comes back with the
+        /// wrong shape, is thrown away and every check in it is asked on its own, so a bad check blanks only itself and
+        /// says what it always said. (2) A check whose batched number does not match is asked on its own again, so a
+        /// failing check shows the exact query and the exact answer a person can run. (3) A check that passes shows the
+        /// batch query as its evidence, because that is the query that produced its number. Checks that are not a plain
+        /// scalar (a complete query, a comment in the text) are never batched.</summary>
+        private async Task<List<ReconcileOutcome>> RunMeasureValuesAsync(List<TestDefinition> defs, TestObjectIdentityIndex identities,
+            bool live, string origin, Action step)
+        {
+            var prepared = new List<(ReconcileOutcome Outcome, MeasureValuePending Pending)>();
+            foreach (var d in defs) prepared.Add(await PrepareMeasureValueAsync(d, identities, live));
+            var outcomes = prepared.Select(x => x.Outcome).ToList();
+            var done = new bool[prepared.Count];
+            var batchable = Enumerable.Range(0, prepared.Count)
+                .Where(i => prepared[i].Pending?.Scalar != null && !HasCommentMarker(prepared[i].Pending.Scalar)).ToList();
+            for (var at = 0; at < batchable.Count; at += MeasureValueBatchSize)
+            {
+                var group = batchable.Skip(at).Take(MeasureValueBatchSize).ToList();
+                if (group.Count < 2) continue;   // one check gains nothing from a batch: it is asked on its own below
+                var query = BuildMeasureValueBatchDax(group.Select(i => prepared[i].Pending.Scalar).ToList());
+                ResultSet rs = null;
+                try { rs = await RunDaxAsync(query, 8, origin); } catch { }
+                if (rs == null || rs.Error != null || rs.Rows == null || rs.Rows.Length != 1
+                    || rs.Rows[0] == null || rs.Rows[0].Length != group.Count) continue;   // any trouble: every check in it goes on its own
+                for (var k = 0; k < group.Count; k++)
+                {
+                    var p = prepared[group[k]].Pending;
+                    var cell = rs.Rows[0][k];
+                    var abs = p.Request.ToleranceAbsolute ?? InterviewScoring.OracleAbsTol;
+                    var rel = p.Request.ToleranceRelative ?? InterviewScoring.OracleRelTol;
+                    if (!MeasureValueMatches(cell, p.Request.ExpectedValue, abs, rel)) continue;   // not a pass: asked on its own below
+                    JudgeMeasureValue(p, new ResultSet
+                    {
+                        Columns = new[] { new ColumnDef { Name = "[v]" } }, Rows = new[] { new[] { cell } }, RowCount = 1, ElapsedMs = rs.ElapsedMs,
+                    });
+                    p.Outcome.Dax = query;
+                    done[group[k]] = true;
+                    step();
+                }
+            }
+            for (var i = 0; i < prepared.Count; i++)
+            {
+                if (done[i]) continue;
+                if (prepared[i].Pending != null) await AskMeasureValueAsync(prepared[i].Pending, origin);
+                step();
+            }
+            return outcomes;
+        }
+
+        /// <summary>One query for many plain scalar checks: a column per check, named v0, v1 and so on.</summary>
+        internal static string BuildMeasureValueBatchDax(IReadOnlyList<string> scalars) =>
+            "EVALUATE ROW(" + string.Join(",", scalars.Select((x, i) => "\n" + QUOTE + "v" + i + QUOTE + ", " + x)) + "\n)";
+
+        /// <summary>A comment would swallow the text after it inside a shared query, so such a check is asked on its own.</summary>
+        private static bool HasCommentMarker(string dax) =>
+            dax.Contains("//") || dax.Contains("--") || dax.Contains("/*");
+
+        /// <summary>The scalar a plain trusted-number check evaluates (the part after the column name in its ROW query), or null
+        /// when the check is a complete query that is run as it is written. BuildMeasureValueDax is this plus the ROW wrapper.</summary>
+        internal static string BuildMeasureValueScalar(string measureName, string expressionDax, string filterDax)
+        {
+            var expression = expressionDax?.Trim();
+            var filter = string.IsNullOrWhiteSpace(filterDax) ? null : filterDax.Trim().TrimEnd(',', ' ', TAB, CR, LF);
+            if (!string.IsNullOrEmpty(expression) && StartsQuery(expression)) return null;
+            var scalar = string.IsNullOrEmpty(expression) ? "[" + (measureName ?? "").Replace("]", "]]") + "]" : expression;
+            return filter == null ? scalar : "CALCULATE(" + scalar + ", " + filter + ")";
         }
 
         /// <summary>A trusted-answer check asks for ONE number, so a result that is not a single cell has no verdict
@@ -1618,10 +1794,7 @@ namespace Semanticus.Engine
                     ? expression
                     : "EVALUATE CALCULATETABLE(" + QueryBody(expression) + ", " + filter + ")";
             }
-            var scalar = string.IsNullOrEmpty(expression) ? "[" + (measureName ?? "").Replace("]", "]]") + "]" : expression;
-            return filter == null
-                ? "EVALUATE ROW(" + QUOTE + "v" + QUOTE + ", " + scalar + ")"
-                : "EVALUATE ROW(" + QUOTE + "v" + QUOTE + ", CALCULATE(" + scalar + ", " + filter + "))";
+            return "EVALUATE ROW(" + QUOTE + "v" + QUOTE + ", " + BuildMeasureValueScalar(measureName, expression, filter) + ")";
         }
 
         private const char TAB = (char)9;

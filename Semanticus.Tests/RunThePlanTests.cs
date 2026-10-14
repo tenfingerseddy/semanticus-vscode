@@ -107,6 +107,7 @@ namespace Semanticus.Tests
             var result = await f.Engine.ModelPlanActionAsync(row.Id, "start", "human");
             var notes = await f.Engine.GetStudioNotesAsync(f.Sessions.SessionId);
             var note = Assert.Single(notes.Notes);
+            Assert.Equal(pro ? "person" : "assistant", note.By);   // h17 P15: the person pressed it, so the note is the person's (Free's would-apply note is still the engine's)
             var kind = bestPractice ? "best-practice" : "safe";
             Assert.Equal(pro
                 ? "Pro applied " + count + " " + kind + " " + (count == 1 ? "fix" : "fixes") + " in one step. One undo takes " + (count == 1 ? "it" : "them") + " back."

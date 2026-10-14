@@ -4,6 +4,7 @@ import { Evidence } from './evidence';
 import * as M from './plan-history-model';
 import './plan-history.css';
 import { RunEntryActions } from './workflow-run';
+import { HistoryMotion } from './personality/motion/history';
 
 // ===================================================================================================
 // History inside the Plan (Plan-heart contract 8, mockup plan-heart.html section 4).
@@ -204,6 +205,7 @@ export function PlanHistory({ sessionId = null, objectRef: objectRefProp = null,
 
   return (
     <div className="ph" data-testid="plan-history">
+      <HistoryMotion rows={rows} sessionId={view?.sessionId} partial={more || !!objectRef || who !== 'all'} />
       <div className="ph-top">
         <div className="sem-seg" role="group" aria-label="Who made the change">
           {M.WHO_FILTERS.map((f) => (

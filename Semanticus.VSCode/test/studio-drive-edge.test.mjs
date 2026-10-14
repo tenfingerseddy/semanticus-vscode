@@ -90,16 +90,18 @@ test('the overlay is invisible to the pointer, so a click anywhere in the Studio
   }
 });
 
-test('motion rules: one 1px line, opacity only, tokens only, reduced motion keeps the still line, no timers', () => {
+test('motion rules: one 2px line in the assistant purple, opacity only, tokens only, reduced motion keeps the still line, no timers', () => {
   const block = css.slice(css.indexOf('.sc-edge {'));
-  assert.match(block, /\.sc-edge \{[^}]*border: 1px solid var\(--sem-accent\)/);
-  assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgb\(|transition|2px/i);
+  assert.match(block, /\.sc-edge \{[^}]*border: 2px solid var\(--sem-actor-assistant\)/);
+  assert.doesNotMatch(block.slice(0, block.indexOf('@keyframes')), /box-shadow|stroke|outline/, 'a border snaps to whole device pixels, the same on all four sides; a shadow or a scaled stroke does not');
+  assert.doesNotMatch(block, /#[0-9a-f]{3,8}\b|rgb\(|transition/i);
+  assert.doesNotMatch(block.slice(block.indexOf('@keyframes')), /\b\d+px\b/, 'the pulse never changes width');
   const rest = Number('0.' + block.match(/\.sc-edge \{[^}]*opacity: \.(\d+)/)[1]) * 100;
-  assert.ok(rest >= 35 && rest <= 45, `rest strength ${rest}`);
+  assert.ok(rest >= 80 && rest <= 90, `rest strength ${rest}`);
   const breathe = block.match(/@keyframes sc-edge-breathe \{(.*)\}/)[1];
   assert.match(block, /sc-edge-breathe 3\.[0-9]s ease-in-out 300ms infinite/, 'a slow breath of about 3.6 s');
   const levels = [...breathe.matchAll(/opacity: \.(\d+)/g)].map((m) => Number('0.' + m[1]) * 100);
-  assert.ok(Math.min(...levels) >= 25 && Math.max(...levels) <= 50, `breath ${levels}`);
+  assert.ok(Math.min(...levels) >= 60 && Math.max(...levels) <= 100, `breath ${levels}`);
   for (const [, body] of block.matchAll(/@keyframes [\w-]+ \{(.*)\}/g)) assert.doesNotMatch(body.replace(/opacity:\s*\.?\d+/g, ''), /[a-z-]+\s*:/, 'only opacity is animated');
   assert.match(block, /@media \(prefers-reduced-motion: reduce\) \{ \.sc-edge \{ animation: none/);
   assert.match(block, /body\.vscode-reduce-motion \.sc-edge \{ animation: none/);

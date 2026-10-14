@@ -75,6 +75,15 @@ namespace Semanticus.Engine
             return table == null ? null : "table:" + table;
         }
 
+        /// <summary>Whether a call writes: its commit argument. Null when the call has none, so only a tool that previews is told apart.</summary>
+        internal static bool? CommitOf(IEnumerable<KeyValuePair<string, JsonElement>> arguments)
+        {
+            if (arguments == null) return null;
+            foreach (var kv in arguments)
+                if (kv.Key == "commit") return kv.Value.ValueKind == JsonValueKind.True ? true : kv.Value.ValueKind == JsonValueKind.False ? false : (bool?)null;
+            return false;   // a dry run is the default for a tool that has a commit argument; this reader only runs for the press tools below
+        }
+
         internal static async ValueTask<CallToolResult> InvokeAsync(IEngine engine, Func<ValueTask<CallToolResult>> next, string toolName, IEnumerable<KeyValuePair<string, JsonElement>> arguments = null,
             string client = null, string clientVersion = null)
         {
@@ -85,7 +94,7 @@ namespace Semanticus.Engine
             {
                 // The Studio's "next prompt" signal (contract section 4): this tool call began. First thing, so a show inside the call
                 // arrives after it. Never fails the call; the owner path publishes in this process, the attached path tells the owner.
-                try { await engine.NoteAgentCallAsync(toolName ?? "", FocusOf(arguments), client, clientVersion).ConfigureAwait(false); } catch { /* a ride-along */ }
+                try { await engine.NoteAgentCallAsync(toolName ?? "", FocusOf(arguments), client, clientVersion, CommitOf(arguments)).ConfigureAwait(false); } catch { /* a ride-along */ }
                 try { result = await next().ConfigureAwait(false); }
                 catch (Exception ex)
                 {

@@ -245,7 +245,13 @@ namespace Semanticus.Tests
             await second.OpenAsync(modelPath);
             await RunPlanAsync(second, oracle);
             Assert.True(oracle.Asks > 0, "Jev was never asked after the restart, so this proves nothing");
-            if (expectSample) Assert.True(RequestsWithSample(oracle) > 0, "the grant did not survive the restart: the sample the person allowed was withheld");
+            // Sweep triage (13 Oct): the build's decide rounds already settle the sample-reading column questions, and the Plan no longer asks a column already set to
+            // None again (summarize-match), so after a restart no request need carry the sample. The Allow arm asserts the gate and the facts the Plan hands the families instead.
+            if (expectSample)
+            {
+                Assert.True(await second.SampleDisclosedAsync(second.LoadSourceFacts(secondSessions.Current).PlanId), "the grant did not survive the restart: the stored permission no longer covers the sample");
+                Assert.Equal(Semanticus.Engine.Facts.ModelFactsData.SourceSample, second.TryGetJevAskFacts()?.Data);
+            }
             else Assert.True(RequestsWithSample(oracle) == 0, RequestsWithSample(oracle) + " requests carried sample facts after a restart, for a person who said Not now");
         }
 

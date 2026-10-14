@@ -1472,6 +1472,29 @@ namespace Semanticus.Tests
             Assert.Equal("Would publish Sales (test) to Semanticus Demo as a new import model. After it is created: Set the data source sign-in in the Power BI service, then refresh.", preview.Note);
         }
 
+        // D6 (launch video, 12 Oct): while the assistant published, the Publish page showed "Choose a workspace" and the open model's name. The engine now says
+        // where the assistant is publishing (a start and an end), and says it for a real publish only, never a dry run and never the person's own press.
+        [Fact]
+        public async System.Threading.Tasks.Task The_assistants_publish_says_its_target_at_the_start_and_at_the_end_and_a_dry_run_says_nothing()
+        {
+            var sessions = new SessionManager();
+            using var engine = new LocalEngine(sessions, TestEntitlements.Pro);
+            await engine.CreateModelAsync("Sales", 1604);
+            var seen = new System.Collections.Generic.List<ActivityEvent>();
+            sessions.Bus.Activity += e => { if (e.Kind == "publish_target") seen.Add(e); };
+
+            await engine.PublishNewModelAsync("Semanticus Demo", "launch-video-test", origin: "agent", commit: false);
+            Assert.Empty(seen);
+
+            try { await engine.PublishNewModelAsync("Semanticus Demo", "launch-video-test", origin: "agent", commit: true); } catch { /* no sign-in in a test: the end still comes */ }
+
+            Assert.Equal(2, seen.Count);
+            Assert.Equal("Publishing launch-video-test to Semanticus Demo", seen[0].Label);
+            Assert.Equal(("Semanticus Demo", "launch-video-test"), (seen[0].Target, seen[0].Query));
+            Assert.Contains("\"phase\":\"end\"", System.Text.Json.JsonSerializer.Serialize(seen[1].Result));
+            Assert.All(seen, e => Assert.Equal("agent", e.Origin));
+        }
+
         // Hero run 5 (9 Oct): publishing as a new model under a name the workspace already has. The create call is a POST of a new item, so the existing model is never
         // touched; the check before it says so in plain words and names the workspace.
         [Fact]

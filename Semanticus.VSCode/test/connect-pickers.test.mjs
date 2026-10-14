@@ -206,7 +206,7 @@ const wsView = (extra = {}) => draw(V.WorkspacePickerView, {
 // ===================================================================================================
 {
   const src = readFileSync(join(webview, 'src', 'connectpickers.tsx'), 'utf8');
-  const calls = [...src.matchAll(/\brpc\s*(?:<[^()]*?>)?\s*\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
+  const calls = [...src.matchAll(/(?:\brpc(?:Pressed)?|\(pressed \? rpcPressed : rpc\))\s*(?:<[^()]*?>)?\s*\(\s*'([^']+)'/g)].map((m) => m[1]).sort();
   assert.deepEqual([...new Set(calls)], ['listLocalInstances', 'listWorkspaceModels', 'listWorkspaces', 'probeAuthPrerequisites'],
     'the pickers only READ; every open, connect and test attach goes back to the host, which keeps the unsaved-changes check');
   for (const f of ['connectpickers.tsx', 'connectpickers-model.ts']) {

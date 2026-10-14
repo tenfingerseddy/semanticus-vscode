@@ -52,7 +52,7 @@ namespace Semanticus.Engine
         /// <see cref="CleanupGuard"/>'s, and it changes only what is ticked, never what is listed.</summary>
         private async Task<CleanupSweep> PlanUnusedAsync(Session s)
         {
-            var unused = await UnusedObjectsAsync().ConfigureAwait(false);
+            var unused = await UnusedObjectsCoreAsync(keepVisibleUntilReportsChecked: false).ConfigureAwait(false);
             // Only a report whose use of the model was actually read counts as read. A chosen report that was checked and
             // could not be read (a .pbix) has evidence too, and the sweep ignores it (AnalyzeReports: read = 0 means no
             // report use and no demotion), so counting it would tell a person a report vouched for these (verify, 29 Sep, D2).

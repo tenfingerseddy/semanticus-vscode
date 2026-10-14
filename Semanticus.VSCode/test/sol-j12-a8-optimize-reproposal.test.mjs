@@ -26,6 +26,7 @@ test('A8: typing on a re-proposed line keeps the previous line words with the re
       onPlanChange: (fn) => { changed = fn; return () => undefined; } },
     './sendtask': { GiveToAssistant: () => null, slotTask: () => ({}) },
     './copy': { uiLabel: (s) => s },
+    './personality/motion': { BulkCount: () => null },
   }, MODEL);
   const O = pg.load('optimize.tsx');
   const view = pg.mount(() => O.OptimizeView({}));

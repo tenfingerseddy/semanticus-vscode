@@ -424,8 +424,10 @@ namespace Semanticus.Engine
                     Sub = parts.Family == ColumnSummarizeFamily.Name
                         ? "These columns and measures change: " + Join(names, 4) : Join(names, 4),
                     Value = string.Empty,
-                    // A row that holds only format suggestions waits on the person (the doer is you): Run the plan cannot take it.
-                    Who = JevFormatSuggestion.WaitsOnPerson(suggestions) ? ModelPlanOwners.You : ModelPlanOwners.Jev,
+                    // A row that holds only format suggestions is not Semanticus's: Run the plan never applies a suggestion. Checking that a
+                    // format fits the number is something the assistant can do (it reads the DAX and asks in chat when it cannot tell), so the
+                    // row is the assistant's, not the person's (Kane, 13 Oct 2026: the person is the last resort).
+                    Who = JevFormatSuggestion.WaitsOnPerson(suggestions) ? ModelPlanOwners.Assistant : ModelPlanOwners.Jev,
                     // Where the row came from: Jev when Jev chose any of it, else what the rules found. StampDerived
                     // keeps a source set here rather than reading one off the id.
                     Source = byJev > 0 ? PlanSources.Jev : PlanSources.Found,

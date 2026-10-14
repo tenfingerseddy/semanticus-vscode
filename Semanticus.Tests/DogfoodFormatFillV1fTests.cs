@@ -688,8 +688,10 @@ namespace Semanticus.Tests
             await RecordAsync(f, new Dictionary<string, string> { ["Revenue"] = "whole_number", ["Share"] = "percent" });
             var plan = await SettledPlanAsync(f);
             var row = Assert.Single(plan.Items, i => i.Id == "jev.measures.table:Sales");
-            Assert.Equal("you", row.Doer);
-            Assert.NotEqual("ready", row.StateWord);
+            // The assistant's since 13 Oct (Kane: the person is the last resort): it checks the formats fit and asks. Run the plan still never
+            // takes it, because Run the plan takes only Semanticus's rows.
+            Assert.Equal("assistant", row.Doer);
+            Assert.DoesNotContain(PlanReadySet.Rows(plan.Items), r => r.Id == row.Id);
             Assert.All(FormatLines(row).Values, l => Assert.False(l.Kept));
             Assert.Contains(row.Why, w => w.Contains("only suggestions", StringComparison.Ordinal));
             await McpTools.ApplyPlanItems(f.Engine, null, plan.ReadyDigest);

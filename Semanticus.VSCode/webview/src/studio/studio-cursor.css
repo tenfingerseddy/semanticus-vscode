@@ -1,8 +1,8 @@
 /* The assistant's press: a ring on the real control (cursor.tsx pressControl). There is no pointer and no overlay; the button itself is the sign. */
 [data-claude-press] {
-  outline: 2px solid var(--sem-doer-agent) !important;
+  outline: 2px solid var(--sem-actor-assistant) !important;
   outline-offset: 2px;
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--sem-doer-agent) 35%, transparent), 0 0 16px 4px color-mix(in srgb, var(--sem-doer-agent) 45%, transparent) !important;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--sem-actor-assistant) 35%, transparent), 0 0 16px 4px color-mix(in srgb, var(--sem-actor-assistant) 45%, transparent) !important;
   animation: sc-press 380ms ease-out;
 }
 @keyframes sc-press {
@@ -13,14 +13,18 @@
 @media (prefers-reduced-motion: reduce) { [data-claude-press] { animation: none; } }
 body.vscode-reduce-motion [data-claude-press] { animation: none; }
 
-/* The edge (drive-edge.tsx): one 1px line in the accent round the Studio while the assistant works. It fades in in 300 ms, breathes between
-   25 and 50 percent in 3.6 s, and fades out in 300 ms on handback. Opacity only, so nothing is laid out again. Reduced motion keeps the
-   still line at 40 percent. */
-.sc-edge { z-index: 89; box-sizing: border-box; border: 1px solid var(--sem-accent); opacity: .4; }
+/* The edge (drive-edge.tsx): one 2px line in the assistant's purple round the Studio while the assistant works. It fades in in 300 ms,
+   breathes between 70 and 100 percent in 3.6 s, and fades out in 300 ms on handback. Opacity only, so nothing is laid out again and
+   the line never changes width. Reduced motion keeps the still line at 85 percent.
+   A plain border on purpose: Chromium snaps a border to whole device pixels, so all four sides are the same weight at every window size
+   and zoom (measured at 100, 110, 120, 125, 144, 150 and 175 percent, tools/uishot/edge-probe.mjs). Measured too: the 1px border it
+   replaced was equal on all four sides as well, but only 1 device pixel at 25 to 50 percent strength, so it all but vanished over a
+   lighter band and read as "thinner in places". Weight and strength were the fault, so those are what changed. */
+.sc-edge { z-index: 89; box-sizing: border-box; border: 2px solid var(--sem-actor-assistant); opacity: .85; }
 .sc-edge[data-edge="on"] { animation: sc-edge-in 300ms ease-out both, sc-edge-breathe 3.6s ease-in-out 300ms infinite; }
 .sc-edge[data-edge="fade"] { animation: sc-edge-out 300ms ease-in forwards; }
-@keyframes sc-edge-in { from { opacity: 0; } to { opacity: .25; } }
-@keyframes sc-edge-breathe { 0%, 100% { opacity: .25; } 50% { opacity: .5; } }
+@keyframes sc-edge-in { from { opacity: 0; } to { opacity: .7; } }
+@keyframes sc-edge-breathe { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
 @keyframes sc-edge-out { to { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .sc-edge { animation: none !important; } }
 body.vscode-reduce-motion .sc-edge { animation: none !important; }

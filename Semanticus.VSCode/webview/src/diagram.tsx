@@ -1,18 +1,18 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
-  ReactFlow, ReactFlowProvider, Background, Controls, Handle, Position, ConnectionMode,
+  ReactFlow, ReactFlowProvider, Background, Controls, ControlButton, Handle, Position, ConnectionMode,
   NodeToolbar, useNodesState, useEdgesState, useReactFlow, useUpdateNodeInternals, useStoreApi, getViewportForBounds,
   type Node, type Edge, type NodeProps, type Connection,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
 import { rpc, onDidChange, onLayoutChange, loadState, saveState, requestDropTables, type LayoutData } from './bridge';
-import { edgeTypes, RelConnectionLine, BusRoutes, runInSlices } from './diagramedges';
+import { edgeTypes, RelConnectionLine, BusRoutes, MatrixGuides, DOT_SLOT, runInSlices } from './diagramedges';
 import { RelationshipsView } from './relationships';
 import { CANVAS_CHIP_MIN_H, CanvasChip, RowMenu, RowSep, ToolRow, canvasInsetStyle, useCanvasBox, useToolRow } from './toolrow';
 import type { ColumnRow } from './wire';
 import { uiLabel } from './copy';
-import { NODE_W, NODE_H, sizeForAnchors, classifyRoles, baryOrder, roleOf, computeAnchors, busMatrixPositions, type Anchor, type Side } from './diagramlayout.mjs';
+import { NODE_W, NODE_H, sizeForAnchors, classifyRoles, baryOrder, roleOf, computeAnchors, busMatrixPositions, matrixPositions, matrixSizer, cellRels, cellSlots, matrixMarks, type Anchor, type Side } from './diagramlayout.mjs';
 import { reflowCards, clearDropped, roomSteps, keepBeside, linesBySide, CARD_GAP, changedPositions, toggleExpansion, setExpansionFor, layoutBox, boxChanges, sizesToCompare, changeReloadsDiagram, isLayoutChange, isArrangeChange, spreadStart, spreadKey, savedAfterDrag, savedSpots, filterHeldHeight, recordsHeight, readableFirstView, type FitSize, type SideLines } from './diagramfit.mjs';
 
 // The page's own how-to sentences. They used to sit on the toolbar as a long grey line, which cost the canvas a
@@ -24,7 +24,10 @@ export const DIAGRAM_NOTES: string[] = [DIAGRAM_CANVAS_HINT, DIAGRAM_RELATIONSHI
 
 // Field-parameter accent: a restrained muted violet (Kane's "purple") that sits beside the Ink+Signal palette
 // without competing with Signal green / date amber / calc teal. Solid swatch takes black text like the others.
-const FIELD_PARAM_VIOLET = '#9B7EDE';
+// A table's role takes a chart step (tokens.css): data green, calculated light green, field parameter purple, date light blue.
+const FIELD_PARAM_VIOLET = 'var(--sem-series-3)';
+const CALCULATED_GREEN = 'var(--sem-series-4)';
+const DATE_BLUE = 'var(--sem-series-5)';
 
 // wire types (camelCase, from Semanticus.Engine/Protocol.cs)
 export interface GraphTable { ref: string; name: string; isHidden: boolean; isDateTable: boolean; isCalculated: boolean; isFieldParameter: boolean; columns: number; measures: number; keyColumns: string[]; hasDescription: boolean; }
@@ -59,7 +62,7 @@ const GRID = 20;   // snap-to-grid step (matches the Background dot gap)
 type XY = { x: number; y: number };
 type Size = { w: number; h: number };
 type SizeOf = (name: string) => Size;   // a node's dynamic box, derived from its anchors for the active layout
-type LayoutMode = 'free' | 'hierarchy' | 'busmatrix' | 'layered';
+type LayoutMode = 'free' | 'hierarchy' | 'busmatrix' | 'layered' | 'matrix';
 // `expanded` is legacy: expansion used to live per diagram and was thrown away by every arrange. It is now one
 // per-table map for the whole canvas (diagramExpanded), and this field is only read once, to seed that map.
 // `keep`: the cards the person (a put-back) or their assistant (save_layout's keep) asked to leave where they are when
@@ -101,11 +104,12 @@ const OPEN_CARD_Z = 5;
 
 function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
   const t = data.t;
+  const narrow = data.w < 130;
   // Instrument (23 September): a table's role is a quiet word in its header (date, field parameter, calculated,
   // hidden), not a coloured wash and a coloured pill. The lines between tables keep their colours, because those
   // are the diagram's data. A field parameter IS a calc table, so it must be tested before the plain-calc branch.
   // Kane's field-parameter identity (violet plus an FP marker) stays, as a dot and a word.
-  const dot = t.isDateTable ? 'var(--sem-warn)' : t.isFieldParameter ? FIELD_PARAM_VIOLET : t.isCalculated ? 'var(--sem-muted)' : null;
+  const dot = t.isDateTable ? DATE_BLUE : t.isFieldParameter ? FIELD_PARAM_VIOLET : t.isCalculated ? CALCULATED_GREEN : null;
 
   // Expanded column list: key + already-related columns first, then a divider, then the rest. Search filters across all.
   const cols = useMemo(() => {
@@ -142,22 +146,23 @@ function TableNode({ data, selected }: NodeProps<Node<GraphCardData>>) {
       {data.anchors.map((a) => (
         <Handle key={a.rel + ':' + a.kind} id={a.rel + ':' + a.kind} type={a.kind} position={a.side as Position} isConnectable={false} style={anchorStyle(a.side, a.frac)} />
       ))}
-      <div className="px-3 py-1 flex items-center gap-2" style={{ borderBottom: '1px solid var(--sem-rule)' }}>
+      <div className={`${narrow ? 'px-2' : 'px-3'} py-1 flex items-center gap-2`} style={{ borderBottom: '1px solid var(--sem-rule)' }}>
         <button className="nodrag" onClick={() => data.onToggleExpand(t.name)} title={data.expanded ? 'Hide columns' : 'Show columns to connect'}
           aria-label={data.expanded ? `Hide the columns of ${t.name}` : `Show the columns of ${t.name}`}
           style={{ background: 'transparent', border: 'none', color: 'var(--sem-fg)', cursor: 'pointer', padding: 0, fontSize: 'var(--sem-text-label)', width: 12 }}>{data.expanded ? '▾' : '▸'}</button>
-        <span className="font-semibold truncate" style={{ color: 'var(--sem-fg)' }}>{t.name}</span>
+        <span className="font-semibold truncate" title={t.name} style={{ color: 'var(--sem-fg)' }}>{t.name}</span>
         <span className="ml-auto flex items-center gap-1 shrink-0" style={{ color: 'var(--sem-muted)' }}>
           {t.isHidden && <span title="Hidden from report view">hidden</span>}
-          {dot && <span className="w-1 h-1 rounded-full shrink-0" style={{ background: dot }} />}
+          {dot && <span className="w-1 h-1 rounded-full shrink-0" title={t.isDateTable ? 'Date table' : t.isFieldParameter ? 'Field parameter' : 'Calculated'} style={{ background: dot }} />}
           {/* A field parameter is a calc table: show the more specific FP marker instead of calculated, never both. */}
-          {t.isDateTable ? <span>date</span>
+          {/* A narrow card (a crowded matrix) keeps the dot and drops the word, so the name has the room. */}
+          {t.isDateTable ? (narrow ? null : <span>date</span>)
             : t.isFieldParameter ? <span title="Field parameter">FP</span>
-            : t.isCalculated && <span>calculated</span>}
+            : t.isCalculated && (narrow ? null : <span>calculated</span>)}
         </span>
       </div>
       {!data.expanded ? (
-        <div className="px-3 py-1 flex flex-col gap-1" style={{ color: 'var(--sem-muted)' }}>
+        <div className={`${narrow ? 'px-2' : 'px-3'} py-1 flex flex-col gap-1`} style={{ color: 'var(--sem-muted)' }}>
           <div className="flex gap-3">
             <span><span className="sem-num">{t.columns}</span> cols</span>
             {/* A zero says nothing and "isolated" repeats the "not linked" chip, so neither is drawn. */}
@@ -212,6 +217,8 @@ const tbBtn: React.CSSProperties = {
 const nodeTypes = { table: TableNode };
 // React Flow's fit margin: a fraction of the viewport left around the fitted graph, not a CSS length.
 const FIT_MARGIN = 0.2;
+// The matrix is already tight and has nothing to avoid, so it frames closer: its cards read larger on the same screen.
+const MATRIX_FIT_MARGIN = 0.06;
 // Screen px left clear at the edge a readable first frame starts from (the page margin, --sem-page-margin).
 const FIRST_FRAME_PAD = 24;
 // The canvas's own zoom floor, shared by the ReactFlow prop and the first-frame fit sum.
@@ -409,7 +416,12 @@ function computeLanes(rels: GraphRelationship[], anchors: Map<string, Anchor[]>,
   return out;
 }
 
-function edgesFor(rels: GraphRelationship[], memberNames: Set<string>, anchors: Map<string, Anchor[]>, centers: Map<string, XY>): Edge[] {
+/** What the matrix needs to draw its links: which are dots, where each dot sits in its cell, and which go round the cards. */
+type MatrixEdges = { cells: Set<string>; slots: Map<string, { i: number; n: number }>; brackets: Map<string, { kind: 'left' | 'top'; near: boolean; from: number; to: number }> };
+function matrixEdges(members: { name: string }[], rels: GraphRelationship[]): MatrixEdges {
+  return { cells: cellRels(members, rels), slots: cellSlots(members, rels), brackets: matrixMarks(members, rels) };
+}
+function edgesFor(rels: GraphRelationship[], memberNames: Set<string>, anchors: Map<string, Anchor[]>, centers: Map<string, XY>, matrix: MatrixEdges | null = null): Edge[] {
   // Two staggers, both position-driven: `offset` separates non-vertical fans (a busy node's lines turn on distinct
   // lanes, not one collapsed midpoint), and `lane` (computeLanes) sets the single crossbar height for vertical/layered
   // edges from the fact-aligned centre outward. Both follow the on-screen fan, not relationship order.
@@ -433,7 +445,8 @@ function edgesFor(rels: GraphRelationship[], memberNames: Set<string>, anchors: 
         type: 'semrel', animated: bidi && r.isActive,
         // lane ∈ (0,1): the single crossbar's height for a vertical (layered) edge (computeLanes, centre→outward).
         // offset: the per-edge lane stagger for non-vertical edges. fromMany/toMany pick each end's marker (fork/bar).
-        data: { lane: laneOf.get(r.name) ?? 0.5, offset: 12 + sSeq.i * 10 + tSeq.i * 6, fromMany: r.fromCardinality === 'Many', toMany: r.toCardinality === 'Many', title: `${r.fromTable}[${r.fromColumn}] (${uiLabel(r.fromCardinality)}) → ${r.toTable}[${r.toColumn}] (${uiLabel(r.toCardinality)}) · ${uiLabel(r.crossFilter)}${r.isActive ? '' : ' · inactive'}` },
+        data: { cell: matrix?.cells.has(r.name) ? (roleOf(r).manyT === r.fromTable ? 'source' : 'target') : undefined, bracket: matrix?.brackets.get(r.name),
+          slots: matrix?.slots.get(r.name)?.n, dx: matrix?.slots.has(r.name) ? (matrix.slots.get(r.name)!.i - (matrix.slots.get(r.name)!.n - 1) / 2) * DOT_SLOT : 0, lane: laneOf.get(r.name) ?? 0.5, offset: 12 + sSeq.i * 10 + tSeq.i * 6, fromMany: r.fromCardinality === 'Many', toMany: r.toCardinality === 'Many', title: `${r.fromTable}[${r.fromColumn}] (${uiLabel(r.fromCardinality)}) → ${r.toTable}[${r.toColumn}] (${uiLabel(r.toCardinality)}) · ${uiLabel(r.crossFilter)}${r.isActive ? '' : ' · inactive'}` },
         style: { stroke: color, strokeWidth: 1.5, strokeDasharray: r.isActive ? undefined : '5 4' },
       } as Edge;
     });
@@ -560,7 +573,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     const { width, height } = flowStore.getState();
     const ns = rf.getNodes();
     const bounds = ns.length ? rf.getNodesBounds(ns) : null;
-    const full = bounds && width > 0 && height > 0 ? getViewportForBounds(bounds, width, height, MIN_ZOOM, 2, FIT_MARGIN) : null;
+    const full = bounds && width > 0 && height > 0 ? getViewportForBounds(bounds, width, height, MIN_ZOOM, 2, opts?.padding ?? FIT_MARGIN) : null;   // the margin the fit itself uses, so a frame that fits is never cut short
     const view = bounds && full ? readableFirstView(bounds, width, height, full.zoom, FIRST_FRAME_PAD) : null;
     if (!view) { doFit(opts); return; }
     try { void rf.setViewport(view); } catch { /* not mounted */ }
@@ -774,11 +787,12 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // Sides + per-side COUNTS are position-independent (they set node size + the layout's footprint); the per-edge
     // slot ORDER is then computed below from the placed positions (the angle sort), so a fan attaches sequentially.
     const sides = computeAnchors(members, graph.relationships, effLayout);
-    const sizeOf: SizeOf = (n) => sizeForAnchors(sides.get(n) ?? EMPTY_ANCHORS);
+    const ownSize: SizeOf = (n) => sizeForAnchors(sides.get(n) ?? EMPTY_ANCHORS);
+    const sizeOf: SizeOf = effLayout === 'matrix' ? matrixSizer(members, graph.relationships, ownSize) : ownSize;
     // A layout reserves each card's REAL box (an open card is taller than its anchor box), so it starts clear.
     const boxOf: SizeOf = (n) => layoutBox(sizeOf(n), measuredOf.get(n));
     const placed = arranging
-      ? busMatrixPositions(members, graph.relationships, boxOf, canvasAspect())   // fresh All-tables → default bus matrix
+      ? effLayout === 'matrix' ? matrixPositions(members, graph.relationships, boxOf) : busMatrixPositions(members, graph.relationships, boxOf, canvasAspect())   // fresh All-tables → the default bus matrix (a saved layout is never touched)
       : placePositions(members, graph.relationships, known, boxOf);     // else keep saved/dragged positions
     // Order each table's anchor slots by the now-known positions (centre = position + half size) — the angle sort.
     const centers = new Map<string, XY>();
@@ -807,7 +821,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
         },
       };
     }));
-    setEdges(edgesFor(graph.relationships, memberNames, anchors, centers));
+    setEdges(edgesFor(graph.relationships, memberNames, anchors, centers, effLayout === 'matrix' ? matrixEdges(members, graph.relationships) : null));
     // Saved positions may predate a card's current size: run the overlap pass once measured. Only for a change of the LAYOUT
     // (review round 8): opening or closing a card rebuilds the cards too, to show or hide its columns, and looking is not a
     // layout change, so it settles nothing, saves nothing and offers nothing.
@@ -835,7 +849,7 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // moved the view while it loaded.
     if (!didFirstFit.current && members.length > 0 && !interactedSinceFit.current) {
       didFirstFit.current = true;
-      fitWhenMeasured({ padding: FIT_MARGIN }, true);
+      fitWhenMeasured({ padding: effLayout === 'matrix' ? MATRIX_FIT_MARGIN : FIT_MARGIN }, true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graph, activeId, membershipKey, layout, expandedKey, columns]);
@@ -857,12 +871,13 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   const restyleFromPositions = useCallback(() => {
     if (!graph) return;
     const sides = computeAnchors(members, graph.relationships, layout);
-    const sizeOf: SizeOf = (n) => sizeForAnchors(sides.get(n) ?? EMPTY_ANCHORS);
+    const ownSize: SizeOf = (n) => sizeForAnchors(sides.get(n) ?? EMPTY_ANCHORS);
+    const sizeOf: SizeOf = layout === 'matrix' ? matrixSizer(members, graph.relationships, ownSize) : ownSize;
     const centers = new Map<string, XY>();
     for (const n of rf.getNodes()) { const s = sizeOf(n.id); centers.set(n.id, { x: n.position.x + s.w / 2, y: n.position.y + s.h / 2 }); }
     const anchors = computeAnchors(members, graph.relationships, layout, centers);
     setNodes((ns) => ns.map((n) => ({ ...n, data: { ...n.data, anchors: anchors.get(n.id) ?? EMPTY_ANCHORS } })));
-    setEdges(edgesFor(graph.relationships, new Set(members.map((t) => t.name)), anchors, centers));
+    setEdges(edgesFor(graph.relationships, new Set(members.map((t) => t.name)), anchors, centers, layout === 'matrix' ? matrixEdges(members, graph.relationships) : null));
     updateNodeInternals(members.map((t) => t.name));   // one re-measure for every card, as above
   }, [graph, members, layout, rf, setNodes, setEdges, updateNodeInternals]);
 
@@ -1168,7 +1183,9 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // Size each node from the anchors of the TARGET layout (handle sides differ per layout), so spacing matches
     // exactly the box the node will render at — busy nodes get their own wider/taller footprint.
     const anchors = computeAnchors(baseMembers, graph.relationships, mode);
-    const sizeOf: SizeOf = (n) => layoutBox(sizeForAnchors(anchors.get(n) ?? EMPTY_ANCHORS), rf.getInternalNode(n)?.measured, !!expanded[n]);
+    const ownSize: SizeOf = (n) => sizeForAnchors(anchors.get(n) ?? EMPTY_ANCHORS);
+    const base: SizeOf = mode === 'matrix' ? matrixSizer(baseMembers, graph.relationships, ownSize) : ownSize;
+    const sizeOf: SizeOf = (n) => layoutBox(base(n), rf.getInternalNode(n)?.measured, !!expanded[n]);
     const placed = layoutFn(baseMembers, graph.relationships, sizeOf);
     // Round 9: an arrange ends the spread first (every card back on its saved spot); the spread is drawn again from the new
     // layout for the cards still open, once the make-room below has run.
@@ -1181,10 +1198,11 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
     // interaction guard exists to protect a view the person chose, not to suppress the arrangement they just asked for.
     // It frames READABLY, as the first open does: a full fit after Vertical or Layered drew the text at about 4px in a
     // narrow Studio (journey m11-2, F17). Fit on the row still shows the whole diagram.
-    fitWhenMeasured({ padding: FIT_MARGIN, duration: 300 }, true);
+    fitWhenMeasured({ padding: mode === 'matrix' ? MATRIX_FIT_MARGIN : FIT_MARGIN, duration: 300 }, true);
   }, [graph, baseMembers, setNodes, editActive, rf, active.all, saveEngineLayout, fitWhenMeasured, dropRoom, expanded]);
   const autoArrange = useCallback(() => arrangeWith(hierarchyPositions, 'hierarchy'), [arrangeWith]);
   const busMatrix = useCallback(() => arrangeWith((m, r, sz) => busMatrixPositions(m, r, sz, canvasAspect()), 'busmatrix'), [arrangeWith, canvasAspect]);
+  const matrix = useCallback(() => arrangeWith(matrixPositions, 'matrix'), [arrangeWith]);
   const layered = useCallback(() => arrangeWith(layeredPositions, 'layered'), [arrangeWith]);
 
   // --- drop tables onto the canvas ---
@@ -1411,11 +1429,13 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   const [canvasRef, canvasBox] = useCanvasBox();
   const canvasH = canvasBox.height;
   const legendText = 'Line colours: green is a one-way link, amber filters both ways, grey dashed is switched off. The fork end of a line is the many side, the bar end is the one side.';
+  const gridLegendText = 'A dot: the fact in its row uses the table in its column. Dot colours: green is a one-way link, amber filters both ways, a ring is switched off. A small tag on a card is a link to another fact or lookup table; point at it to see the other card.';
   const arrangeControls = (
     <>
       <button className="sem-btn sem-btn-sm" onClick={autoArrange} aria-pressed={layout === 'hierarchy'} title="Vertical: facts on the left, lookup tables on the right. Tables stack down each band and the links run across as lanes">Vertical</button>
       <button className="sem-btn sem-btn-sm" onClick={layered} aria-pressed={layout === 'layered'} title="Layered: lookup tables across the top, facts underneath. Every link is a clean straight lane">Layered</button>
       <button className="sem-btn sem-btn-sm" onClick={busMatrix} aria-pressed={layout === 'busmatrix'} title="Bus matrix, the usual one: facts down the left, lookup tables across the top, unlinked tables on the right">Bus matrix</button>
+      <button className="sem-btn sem-btn-sm" onClick={matrix} aria-pressed={layout === 'matrix'} title="Dot grid: the same rows and columns, with a dot where a fact uses a lookup table instead of a line. Unlinked tables sit underneath">Dot grid</button>
       <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(true)} title="Open every table so you can see its columns and drag one column onto another to link them">Expand all</button>
       <button className="sem-btn sem-btn-sm" onClick={() => setExpandAll(false)} title="Close every table">Collapse all</button>
       <button className="sem-btn sem-btn-sm" onClick={() => setSnap((s) => !s)} aria-pressed={snap} title="Line dragged tables up on a grid, so a layout you arrange by hand stays tidy">Snap to grid</button>
@@ -1423,8 +1443,8 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   );
   const kindChips = (
     <>
-      <KindChip on={showData} onClick={() => setShowData((v) => !v)} color="var(--sem-accent)" label="Tables" count={kindCounts.data} title="Show regular data tables" />
-      <KindChip on={showCalc} onClick={() => setShowCalc((v) => !v)} color="#17B3A3" label="Calculated" count={kindCounts.calc} title="Show tables built from a calculation" />
+      <KindChip on={showData} onClick={() => setShowData((v) => !v)} color="var(--sem-series-1)" label="Tables" count={kindCounts.data} title="Show regular data tables" />
+      <KindChip on={showCalc} onClick={() => setShowCalc((v) => !v)} color={CALCULATED_GREEN} label="Calculated" count={kindCounts.calc} title="Show tables built from a calculation" />
       <KindChip on={showFp} onClick={() => setShowFp((v) => !v)} color={FIELD_PARAM_VIOLET} label="Field params" count={kindCounts.fp} title="Show field parameters" />
     </>
   );
@@ -1432,6 +1452,35 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
   if (err) return <div className="p-4"><div className="rounded-(--sem-radius-card) px-3 py-2 text-xs" style={{ background: 'color-mix(in srgb,var(--sem-bad) 14%, transparent)', color: 'var(--sem-bad)' }}>{err}</div></div>;
   if (!graph) return <div className="p-6 text-xs" style={{ color: 'var(--sem-muted)' }}>Loading model graph…</div>;
 
+  const chips = (
+    <>
+        {audit && (
+          // The Add tables list already owns the canvas's left edge on a custom diagram, so the chip starts to
+          // the right of it rather than sitting underneath it.
+          <CanvasChip at="start" style={!active.all && absent.length > 0 ? { left: 200 } : undefined}
+            title={canvasH >= CANVAS_CHIP_MIN_H ? undefined : legendText}>
+            <span><b>{audit.tables}</b> tables</span>
+            <span><b>{audit.rels}</b> links</span>
+            {audit.bidi > 0 && <span><b>{audit.bidi}</b> filter both ways</span>}
+            {audit.inactive > 0 && <span><b>{audit.inactive}</b> switched off</span>}
+            {audit.isolated > 0 && <span><b>{audit.isolated}</b> not linked</span>}
+            {members.length !== audit.tables && <span>{members.length} of {audit.tables} shown</span>}
+          </CanvasChip>
+        )}
+        {audit && canvasH >= CANVAS_CHIP_MIN_H && (
+          <CanvasChip at="end" title={layout === 'matrix' ? gridLegendText : legendText}>
+            {layout === 'matrix'
+              ? <><span>Dot: fact uses table</span><span>Tag: linked card</span></>
+              : <><CardGlyph kind="many" /> many
+                <CardGlyph kind="one" /> one</>}
+            <span style={{ width: 1, height: 12, background: 'var(--sem-border)' }} />
+            <Legend color="var(--sem-accent)" text="1-way" />
+            <Legend color="var(--sem-warn)" text="both ways" />
+            <Legend color="var(--sem-muted)" text="switched off" dashed />
+          </CanvasChip>
+        )}
+    </>
+  );
   return (
     <div className="h-full flex flex-col">
       {/* ONE tool row. The hint sentence that used to sit beside the Canvas / Relationships switch is now the
@@ -1498,36 +1547,24 @@ function DiagramInner({ addReq, focusReq, onAddConsumed, modeSwitch }: {
           fitView minZoom={MIN_ZOOM} proOptions={{ hideAttribution: true }}
         >
           <Background color="var(--sem-border)" gap={20} />
-          <Controls showInteractive={false} />
+          {/* The dot grid keeps the same floor as its first frame: Fit never draws text below readable, it holds that zoom and you pan.
+              React Flow queues its own fit and would run it after ours, so in the grid its Fit button is swapped for one that frames readably. */}
+          <Controls showInteractive={false} showFitView={layout !== 'matrix'}>
+            {layout === 'matrix' && (
+              <ControlButton className="react-flow__controls-fitview" title="Fit View" aria-label="Fit View" onClick={() => readableFit({ padding: MATRIX_FIT_MARGIN })}>
+                <svg viewBox="0 0 32 30"><path d="M3.692 4.63c0-.53.4-.938.939-.938h5.215V0H4.708C2.13 0 0 2.054 0 4.63v5.216h3.692V4.631zM27.354 0h-5.2v3.692h5.17c.53 0 .984.4.984.939v5.215H32V4.631A4.624 4.624 0 0027.354 0zm.954 24.83c0 .532-.4.94-.939.94h-5.215v3.768h5.215c2.577 0 4.631-2.13 4.631-4.707v-5.139h-3.692v5.139zm-23.677.94c-.531 0-.939-.4-.939-.94v-5.138H0v5.139c0 2.577 2.13 4.707 4.708 4.707h5.138V25.77H4.631z" /></svg>
+              </ControlButton>
+            )}
+          </Controls>
+          {layout === 'matrix' && <MatrixGuides />}
         </ReactFlow>
         </BusRoutes>
         {/* The counts and the legend, which used to be a 34px row of their own above the canvas. As chips they
             cost the canvas nothing, and they sit clear of the zoom controls React Flow pins to the bottom-left.
             On a canvas too short for two chips the legend folds into the counts chip's tooltip rather than
             stacking a second chip over the picture. */}
-        {audit && (
-          // The Add tables list already owns the canvas's left edge on a custom diagram, so the chip starts to
-          // the right of it rather than sitting underneath it.
-          <CanvasChip at="start" style={!active.all && absent.length > 0 ? { left: 200 } : undefined}
-            title={canvasH >= CANVAS_CHIP_MIN_H ? undefined : legendText}>
-            <span><b>{audit.tables}</b> tables</span>
-            <span><b>{audit.rels}</b> links</span>
-            {audit.bidi > 0 && <span><b>{audit.bidi}</b> filter both ways</span>}
-            {audit.inactive > 0 && <span><b>{audit.inactive}</b> switched off</span>}
-            {audit.isolated > 0 && <span><b>{audit.isolated}</b> not linked</span>}
-            {members.length !== audit.tables && <span>{members.length} of {audit.tables} shown</span>}
-          </CanvasChip>
-        )}
-        {audit && canvasH >= CANVAS_CHIP_MIN_H && (
-          <CanvasChip at="end" title={legendText}>
-            <CardGlyph kind="many" /> many
-            <CardGlyph kind="one" /> one
-            <span style={{ width: 1, height: 12, background: 'var(--sem-border)' }} />
-            <Legend color="var(--sem-accent)" text="1-way" />
-            <Legend color="var(--sem-warn)" text="both ways" />
-            <Legend color="var(--sem-muted)" text="switched off" dashed />
-          </CanvasChip>
-        )}
+        {/* The dot grid's counts and legend share one row that wraps (the legend goes above the counts on a narrow canvas), so neither covers or cuts the other. */}
+        {layout === 'matrix' ? <div className="sem-chip-row">{chips}</div> : chips}
         {members.length === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-xs pointer-events-none px-6 text-center" style={{ color: 'var(--sem-muted)' }}>
             {baseMembers.length > 0

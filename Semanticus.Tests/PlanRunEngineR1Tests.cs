@@ -41,12 +41,16 @@ namespace Semanticus.Tests
             var seen = new List<PlanRunProgress>();
             f.Sessions.Bus.PlanRunProgressed += seen.Add;
             var plan = await f.Engine.GetModelPlanAsync();
+            var startState = string.Join(" ; ", plan.Items.Select(i => i.Id + "=" + i.Doer + "/" + i.StateWord + (i.WaitsFor?.Length > 0 ? "<-" + string.Join("+", i.WaitsFor.Select(w => w.Id)) : "")));
 
             var result = await f.Engine.ApplyPlanItemsAsync(null, "human", plan.ReadyDigest);
 
             Assert.True(result.Performed, result.Sentence);
             // The press finished everything Semanticus could do: no Semanticus row is left Ready (Kane, 8 Oct: it must work in one press).
-            Assert.DoesNotContain((await f.Engine.GetModelPlanAsync()).Items, i => i.Doer == PlanDoers.Semanticus && i.StateWord == PlanStateWords.Ready);
+            var leftRows = (await f.Engine.GetModelPlanAsync()).Items.Where(i => i.Doer == PlanDoers.Semanticus && i.StateWord == PlanStateWords.Ready).ToArray();
+            var left = leftRows.Select(i => i.Id + " [" + i.Title + "; " + i.StateNote + "; set " + i.ChangeSet?.State + " " + string.Join("/", (i.ChangeSet?.Lines ?? Array.Empty<ModelPlanChangeLine>()).Select(l => l.Line)) + "; why " + string.Join(" ", i.Why) + "]").ToArray();
+            Assert.True(left.Length == 0, "Semanticus rows still Ready after the press: " + string.Join(", ", left) + " | " + result.Sentence
+                + " | skipped: " + string.Join("; ", result.Skipped.Select(x => x.ItemId + ": " + x.Reason)) + " | start: " + startState);
             var dump = Environment.GetEnvironmentVariable("R1_DUMP");
             if (!string.IsNullOrEmpty(dump))
                 System.IO.File.WriteAllLines(dump, seen.Select(e => e.Ms + "ms w" + e.Wave + " " + e.Phase + " " + string.Join("+", e.ItemIds) + " c=" + e.Changes + " " + e.Reason)
@@ -257,7 +261,7 @@ namespace Semanticus.Tests
             var person = plan.Items.Where(i => i.Doer == PlanDoers.You).Select(i => i.Id).ToHashSet();
             Assert.Contains("proposal/collisions", person);
             foreach (var row in plan.Items.Where(i => i.Doer != PlanDoers.You && PlanStateWords.IsOpen(i.StateWord)))
-                Assert.DoesNotContain(row.WaitsFor, w => person.Contains(w.Id));
+                Assert.True(!row.WaitsFor.Any(w => person.Contains(w.Id)), row.Id + " (" + row.Doer + ") waits for " + string.Join(", ", row.WaitsFor.Where(w => person.Contains(w.Id)).Select(w => w.Id)));
             var words = Row(plan, "words/model");
             Assert.NotNull(words);
             Assert.Equal(PlanDoers.Assistant, words.Doer);

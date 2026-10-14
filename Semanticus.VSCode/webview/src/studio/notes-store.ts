@@ -31,6 +31,9 @@ export const READ_BASE_MS = 1500;
 export const READ_PER_CHAR_MS = 55;
 export const READ_MIN_MS = 2500;
 export const READ_MAX_MS = 8000;
+/** How long a page stays on screen before the next note may move it to another page (drive follow, 13 Oct). A note on the same page still
+ *  waits out its read time. This keeps the screen on the tool the assistant is using now, and still never flickers: one move per call. */
+export const MOVE_DWELL_MS = 1800;
 
 /** How long a note stays on screen while the person reads it. Reduced motion does not change it. */
 export function readTimeMs(say: string): number {
@@ -96,6 +99,8 @@ export function createNotesStore(deps: NotesDeps) {
   let phase: StripPhase | null = null;
   let playing: StudioNote | null = null;
   let timer: unknown = null;
+  let dwellTimer: unknown = null;
+  let dwellOver = true;
   let burst = 0;
   let quiet: unknown = null;
   let workOver = false;
@@ -121,7 +126,11 @@ export function createNotesStore(deps: NotesDeps) {
     listeners.forEach((fn) => fn());
   }
 
-  function stopTimer() { if (timer !== null) { deps.clearTimer(timer); timer = null; } }
+  function stopTimer() {
+    if (timer !== null) { deps.clearTimer(timer); timer = null; }
+    if (dwellTimer !== null) { deps.clearTimer(dwellTimer); dwellTimer = null; }
+  }
+
 
   /** A note or an assistant call: the work goes on, so the quiet starts again. */
   function activity() {
@@ -164,10 +173,20 @@ export function createNotesStore(deps: NotesDeps) {
     unread.delete(note.id);
     deps.moveTo(note);
     timer = deps.setTimer(readEnd, readTimeMs(note.say));
+    dwellOver = false;
+    dwellTimer = deps.setTimer(() => { dwellTimer = null; dwellOver = true; if (advanceToOtherPage()) emit(); }, MOVE_DWELL_MS);
+  }
+
+  /** The note playing has held its page for the dwell and the next note is on another page: the assistant has moved on, so the screen does too. */
+  function advanceToOtherPage(): boolean {
+    if (phase !== 'playing' || !dwellOver || !playing || queue.length === 0 || !driver.canMoveScreen()) return false;
+    if (queue[0].place === playing.place) return false;
+    readEnd();
+    return true;
   }
 
   function readEnd() {
-    timer = null;
+    stopTimer();
     if (phase !== 'playing') return;
     phase = 'done'; playing = null;
     pump();
@@ -279,6 +298,7 @@ export function createNotesStore(deps: NotesDeps) {
         queue.push(note);
         pump();
         fold();
+        advanceToOtherPage();
       }
       emit();
     },

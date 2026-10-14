@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { rpc, onDidChange, onActivity } from './bridge';
+import { rpc, rpcPressed, onDidChange, onActivity, onProgress } from './bridge';
 import { useConnection } from './connection';
+import { noteTestPublish, setVoicePublishContext } from './personality/message-line';
 import { isSignInError } from './authcopy';
 import type { ApplyDiffResult, CompareSeed, ModelDiff } from './compare';
 import { KIND_ICON, ReviewCardBody } from './diffview';
 import {
-  checkingCopy, clockTime, failureReasons, groupRows, isRemoval, neededParent, notPublishedLine, nothingToPublishCopy,
-  couldNotGoLine, freeNewModelName, heldReason, newModelLabel, newModelSignIn, publishableRows, publishCounts, publishedLine, publishLabel, rowNote, undoneLine, unreachableCopy,
+  assistantPublish, assistantPublishLine, assistantPublishUndo, checkingCopy, leftAfterPublish, clockTime, failureReasons, groupRows, isRemoval, neededParent, notPublishedLine, nothingToPublishCopy,
+  couldNotGoLine, freeNewModelName, newModelLabel, newModelSignIn, plainPublishError, publishableRows, publishCounts, publishedLine, publishLabel, rowNote, undoneLine, unreachableCopy,
 } from './publishcopy';
 import { engineSentence, sortWorkspaces, workspaceName, type FabricWorkspace, type Load } from './connectpickers-model';
+import { PublishDraw } from './personality/motion';
+import { foldDeployProgress, deployStepLine, type DeployStepNow } from './publish-progress';
+import { usePublishAsk, clearPublishAsk } from './publish-ask';
 
 // The Changes tab of the Publish page. It compares your copy with the destination, once, then answers every tick
 // from the list it already holds: a tick never reads the destination again. One dry run of the whole list names the
@@ -17,7 +21,7 @@ import { engineSentence, sortWorkspaces, workspaceName, type FabricWorkspace, ty
 // and the live model, because the label names the count and the place, and the write keeps a restore point.
 
 interface RollbackWire { applied: boolean; error?: string; note?: string }
-type Line = { tone: 'good' | 'bad'; text: string; undo?: { id: string; when: string } };
+type Line = { tone: 'good' | 'bad'; text: string; undo?: { id: string; when: string }; published?: boolean; first?: boolean };
 interface NewModelResult { workspace: string; endpoint: string; database: string; loaded: boolean; loadError?: string; signInNeeded?: boolean; note: string }
 // The line a new model's publish ends on. The page turns into the Changes view of the new destination as soon as the
 // context names it, so the line is carried over to that view once.
@@ -29,13 +33,13 @@ export function PageAction({ slot, children }: { slot: HTMLElement | null; child
   return slot ? createPortal(children, slot) : null;
 }
 
-export function PublishChanges({ seed, destination, slot, onWrote, onReach, onChooseDestination }: {
-  seed: CompareSeed | null; destination: string; slot: HTMLElement | null;
+export function PublishChanges({ seed, destination, stage, slot, onWrote, onReach, onChooseDestination }: {
+  seed: CompareSeed | null; destination: string; stage?: string; slot: HTMLElement | null;
   onWrote?: () => void;                       // the destination just changed (a publish or an undo)
   onReach?: (ok: boolean) => void;            // whether the last read reached the destination
   onChooseDestination: () => void;
 }) {
-  const { connectXmla, busy: signingIn } = useConnection();
+  const { connectXmla, busy: signingIn, context } = useConnection();
   const left = seed?.left ?? null;
   const right = seed?.right && seed.right.kind === 'workspace' ? seed.right : null;
   const [diff, setDiff] = useState<ModelDiff | null>(null);
@@ -46,6 +50,18 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
   const [busy, setBusy] = useState<'publish' | 'undo' | null>(null);
   const [line, setLine] = useState<Line | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  // The step a publish to the live model is on, in plain words, and a clock that moves once a second while one runs.
+  const [step, setStep] = useState<DeployStepNow | null>(null);
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => onProgress((e) => setStep((cur) => foldDeployProgress(cur, e, Date.now()))), []);
+  useEffect(() => {
+    if (!step) return;
+    setTick(Date.now());
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [step?.runId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const stepLine = deployStepLine(step, tick);
+  const asking = usePublishAsk();   // the assistant waits on the person about a red check
   const seq = useRef(0);
   const known = useRef<Set<string>>(new Set());   // refs of the last list, so a re-read keeps the person's ticks
   const wishNow = useRef(wish); wishNow.current = wish;
@@ -89,7 +105,13 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
     let timer: number | undefined;
     const again = () => { window.clearTimeout(timer); timer = window.setTimeout(() => void read(), 500); };
     const offC = onDidChange(again);
-    const offA = onActivity((e) => { if (e.kind === 'apply_model_diff' || e.kind === 'deploy_live' || e.kind === 'rollback_push') again(); });
+    const offA = onActivity((e) => {
+      if (e.kind === 'apply_model_diff' || e.kind === 'deploy_live' || e.kind === 'rollback_push') again();
+      // The assistant's own compare publish: the same Undo publish as a press here, and Earlier versions reads its new restore point.
+      const u = assistantPublishUndo(e);
+      if (u) { setLine({ tone: 'good', text: publishedLine(u.count, destination), undo: { id: u.id, when: clockTime(new Date()) }, published: true }); onWrote?.(); }
+      else if (e.kind === 'rollback_push') onWrote?.();
+    });
     return () => { offC(); offA(); window.clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity]);
@@ -100,7 +122,7 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
     for (const it of items) { if (!wish.has(it.ref)) continue; const p = neededParent(it, items, wish); if (p) m.set(it.ref, p); }
     return m;
   }, [items, wish]);
-  const effective = useMemo(() => new Set(items.filter((i) => wish.has(i.ref) && !needs.has(i.ref) && !refused.has(i.ref) && !heldReason(i)).map((i) => i.ref)), [items, wish, needs, refused]);
+  const effective = useMemo(() => new Set(items.filter((i) => wish.has(i.ref) && !needs.has(i.ref) && !refused.has(i.ref)).map((i) => i.ref)), [items, wish, needs, refused]);
   const counts = useMemo(() => publishCounts(items, effective), [items, effective]);
   const groups = useMemo(() => groupRows(items), [items]);
 
@@ -112,20 +134,25 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
     const when = clockTime(new Date());
     carried = null;
     setBusy('publish'); setLine(null);
+    setVoicePublishContext(stage, items.some((i) => effective.has(i.ref) && isRemoval(i)));
     try {
       const r = await rpc<ApplyDiffResult>('applyDiff', left, right, [...effective], true, 'human');
-      if (r.error) setLine({ tone: 'bad', text: r.error });
+      if (r.error) setLine({ tone: 'bad', text: plainPublishError(r.error) });
       else if (!r.applied) {
         const why = [...failureReasons(r.failedRefs, items).values()][0];
         setLine({ tone: 'bad', text: `${notPublishedLine(destination)}${why ? ` ${why}` : ''}` });
       } else {
+        clearPublishAsk();
         const failed = failureReasons(r.failedRefs, items);
         const extra = failed.size > 0 ? ` ${couldNotGoLine(failed, items)} ${[...failed.values()][0]}` : '';
-        setLine({ tone: 'good', text: publishedLine(r.count, destination) + extra, undo: r.restorePointId && r.count > 0 ? { id: r.restorePointId, when } : undefined });
+        // What went out leaves the list now; the compare below confirms it.
+        if (r.count > 0) setDiff((d) => d ? { ...d, items: leftAfterPublish(d.items, r.appliedRefs, r.failedRefs) } : d);
+        setLine({ tone: 'good', text: publishedLine(r.count, destination) + extra, undo: r.restorePointId && r.count > 0 ? { id: r.restorePointId, when } : undefined, published: failed.size === 0 && r.count > 0 });
+        if (!failed.size && r.count > 0 && !items.some((i) => effective.has(i.ref) && isRemoval(i))) noteTestPublish(stage, publishedLine(r.count, destination));
       }
       onWrote?.();
     } catch (e) { setLine({ tone: 'bad', text: String((e as Error).message ?? e) }); }
-    finally { setBusy(null); }
+    finally { setVoicePublishContext(); setBusy(null); }
     await read();   // a refused write usually means the destination moved: compare again by itself and relabel
   }
 
@@ -162,6 +189,7 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
 
       {line && (
         <div className="sem-inset sem-inline" data-testid="publish-result" role="status">
+          {line.published && <PublishDraw eventKey={line} first={line.first} production={!['local', 'dev', 'uat'].includes(context?.publishing?.effectiveLabel ?? context?.publishing?.label ?? 'prod')} />}
           <span className={line.tone === 'good' ? 'sem-chip sem-chip-ok' : 'sem-chip sem-chip-bad'} aria-hidden="true" />
           <span className="min-w-0 flex-1 text-(length:--sem-text-body)">{line.text}</span>
           {line.undo && <button type="button" className="sem-btn sem-btn-sm" data-testid="publish-undo" disabled={!!busy} onClick={() => void undo(line.undo!)}>{busy === 'undo' ? 'Undoing...' : 'Undo publish'}</button>}
@@ -178,7 +206,12 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
         </div>
       )}
 
-      {checking && !readErr && <div className="sem-text-meta" data-testid="publish-checking">{checkingCopy(destination)}</div>}
+      {asking && <div className="sem-inset sem-inline" data-testid="publish-asking" role="status">
+        <span className="sem-chip sem-chip-warn" aria-hidden="true" /><span className="min-w-0 flex-1 text-(length:--sem-text-body)">{asking}</span>
+      </div>}
+
+      {stepLine && <div className="sem-text-meta" data-testid="publish-step" role="status">{stepLine}</div>}
+      {checking && !readErr && !stepLine && <div className="sem-text-meta" data-testid="publish-checking">{checkingCopy(destination)}</div>}
       {empty && <div className="sem-text-body" data-testid="publish-empty">{nothingToPublishCopy(destination)}</div>}
 
       {diff && !empty && (
@@ -196,7 +229,7 @@ export function PublishChanges({ seed, destination, slot, onWrote, onReach, onCh
               </div>
               {g.rows.map((row) => {
                 const parent = needs.get(row.ref);
-                const reason = refused.get(row.ref) ?? heldReason(row);
+                const reason = refused.get(row.ref);
                 const blocked = !!parent || !!reason;
                 return (
                   <div key={row.ref + ':' + row.action} data-testid="publish-row" data-ref={row.ref} className="px-4"
@@ -247,9 +280,28 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
   const typedName = useRef(false);   // the person changed the name: it is theirs, and no default replaces it
   const [busy, setBusy] = useState(false);
   const [line, setLine] = useState<Line | null>(null);
+  // The step the create is on, in plain words, with the seconds it has taken (hero20 D7: 18 minutes of nothing). The engine sends the same events a publish to a live model does.
+  const [step, setStep] = useState<DeployStepNow | null>(null);
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => onProgress((e) => setStep((cur) => foldDeployProgress(cur, e, Date.now()))), []);
+  useEffect(() => {
+    if (!step) return;
+    setTick(Date.now());
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [step?.runId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const stepLine = deployStepLine(step, tick);
+  // Where the assistant is publishing right now (D6): the card shows that target, not the open model's name and an empty workspace.
+  const [target, setTarget] = useState<{ workspace: string; name: string } | null>(null);
+  useEffect(() => onActivity((e) => {
+    const t = assistantPublish(e);
+    if (!t) return;
+    if (t.phase === 'start') { if (t.name) { typedName.current = true; setName(t.name); } setTarget({ workspace: t.workspace, name: t.name }); }
+    else setTarget(null);
+  }), []);
   useEffect(() => { if (!name && session?.modelName) setName(session.modelName); }, [session?.modelName]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function load() {
+  async function load(pressed = false) {
     setWorkspaces({ kind: 'loading' });
     // The sign-in the model's SQL source was read with comes first: it is the one the person just used.
     const plan = await rpc<{ source?: { authMode?: string; tenantId?: string } }>('getStartPlan').catch(() => null);
@@ -257,7 +309,7 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
     const si = newModelSignIn([plan?.source, context?.publishing, context?.editing, context?.querying, ...saved.filter((r) => r.kind === 'xmla')]);
     setSignIn(si);
     try {
-      const list = sortWorkspaces((await rpc<FabricWorkspace[]>('listWorkspaces', si.authMode, si.tenantId)) ?? []);
+      const list = sortWorkspaces((await (pressed ? rpcPressed : rpc)<FabricWorkspace[]>('listWorkspaces', si.authMode, si.tenantId)) ?? []);
       setWorkspaces({ kind: 'ready', items: list });
       if (list.length === 1) setWsId(list[0].id);
     } catch (e) { setWorkspaces({ kind: 'failed', message: engineSentence(e) }); }
@@ -282,7 +334,7 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
     try {
       const r = await rpc<NewModelResult>('publishNewModel', workspaceName(ws), name.trim(), signIn.authMode, signIn.tenantId, 'human', ws.id);
       // An import model Power BI has no source sign-in for is published; its line is the next step, not an error.
-      carried = { database: r.database, line: { tone: r.loaded || r.signInNeeded ? 'good' : 'bad', text: r.note } };
+      carried = { database: r.database, line: { tone: r.loaded || r.signInNeeded ? 'good' : 'bad', text: r.note, published: r.loaded || r.signInNeeded, first: true } };
       setLine(carried.line);
       onWrote?.();
       await refresh();
@@ -294,12 +346,15 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
     <>
       <PageAction slot={slot}>
         <button type="button" className="sem-btn sem-btn-quiet" data-testid="publish-choose" onClick={onChooseDestination}>Choose destination</button>
-        <button type="button" className="sem-btn sem-btn-primary" data-testid="publish-new-go" disabled={!ws || !name.trim() || busy} onClick={() => void publish()}>
-          {newModelLabel({ busy, workspace: ws ? workspaceName(ws) : null })}</button>
+        <button type="button" className="sem-btn sem-btn-primary" data-testid="publish-new-go" disabled={!ws || !name.trim() || busy || !!target} onClick={() => void publish()}>
+          {newModelLabel({ busy: busy || !!target, workspace: ws ? workspaceName(ws) : null })}</button>
       </PageAction>
       {note && <div className="sem-text-meta">{note}</div>}
+      {stepLine && <div className="sem-text-meta" data-testid="publish-new-step" role="status">{stepLine}</div>}
+      {target && <div className="sem-inset sem-inline" data-testid="publish-assistant-target" role="status"><span className="sem-chip sem-chip-ok" aria-hidden="true" /><span>{assistantPublishLine(target)}</span></div>}
       {line && (
         <div className="sem-inset sem-inline" data-testid="publish-result" role="status">
+          {line.published && <PublishDraw eventKey={line} first={line.first} />}
           <span className={line.tone === 'good' ? 'sem-chip sem-chip-ok' : 'sem-chip sem-chip-bad'} aria-hidden="true" />
           <span className="min-w-0 flex-1 text-(length:--sem-text-body)">{line.text}</span>
         </div>
@@ -308,7 +363,7 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
         <h3 className="sem-card-title">New model in a workspace</h3>
         <div className="sem-inline flex-wrap">
           <label className="sem-field-label">Workspace
-            {workspaces.kind === 'ready' ? (
+            {target ? <span className="sem-field" data-testid="publish-new-ws-target">{target.workspace}</span> : workspaces.kind === 'ready' ? (
               <select className="sem-field" data-testid="publish-new-ws" value={wsId} disabled={busy} onChange={(e) => setWsId(e.target.value)}>
                 <option value="">Choose a workspace</option>
                 {workspaces.items.map((w) => <option key={w.id} value={w.id}>{workspaceName(w)}</option>)}
@@ -316,11 +371,11 @@ function NewModel({ slot, note, onChooseDestination, onWrote }: {
             ) : <span className="sem-text-meta">{workspaces.kind === 'loading' ? 'Looking for your workspaces...' : workspaces.message}</span>}
           </label>
           <label className="sem-field-label">Name
-            <input className="sem-field" data-testid="publish-new-name" value={name} disabled={busy} autoComplete="off" onChange={(e) => { typedName.current = true; setName(e.target.value); }} />
+            <input className="sem-field" data-testid="publish-new-name" value={name} disabled={busy || !!target} autoComplete="off" onChange={(e) => { typedName.current = true; setName(e.target.value); }} />
           </label>
-          {workspaces.kind === 'failed' && <button type="button" className="sem-btn sem-btn-sm" onClick={() => void load()}>Try again</button>}
+          {workspaces.kind === 'failed' && <button type="button" className="sem-btn sem-btn-sm" data-testid="publish-new-ws-retry" onClick={() => void load(true)}>{isSignInError(workspaces.message) ? 'Sign in' : 'Try again'}</button>}
         </div>
-        <span className="sem-text-meta">Publishes the whole model and loads its data. Later publishes update it.</span>
+        <span className="sem-text-meta">Publishes the whole model. Later publishes update it.</span>
       </section>
     </>
   );

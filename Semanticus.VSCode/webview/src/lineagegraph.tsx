@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type * as echarts from 'echarts';
 import { EChart, tokenPx } from './echart';
-import { KIND_COLOR, KIND_GLYPH, KIND_LABEL, fieldFacetOptions, makeScope, rankNodeMatches, resolveColor, tableFacetOptions, useFillHeight, type LineageResult } from './lineagetypes';
+import { useThemeEpoch } from './chartpalette';
+import { KIND_COLOR, KIND_GLYPH, KIND_LABEL, KIND_SYMBOL, clearColorCache, fieldFacetOptions, makeScope, rankNodeMatches, resolveColor, tableFacetOptions, useFillHeight, type LineageResult } from './lineagetypes';
 import { MultiSelect } from './lineageslicer';
+import { createLayout, runLayoutSliced, seedPositions } from './lineagelayout.mjs';
+import { LinkMark } from './personality/link';
+import { linkWork } from './personality/link-state';
 import { CANVAS_CHIP_MIN_H, CanvasChip, CanvasChipStack, RowMenu, RowSep, ToolRow, canvasInsetStyle, useToolRow, visibleBottomInset } from './toolrow';
 
 // ===================================================================================================
@@ -20,9 +24,12 @@ function esc(s: string): string {
 }
 
 // Edge semantics → colour (the kinds get_lineage emits on each edge).
+// Colours come from the chart palette (see KIND_COLOR). The kinds also differ by line style as well as tone: solid for what a thing depends on
+// and for relationships, dashed for where a table comes from and where it is shown, dotted for structure.
 const EDGE_COLOR: Record<string, string> = {
-  dependsOn: '#2ED47A', relationship: '#e0b341', contains: 'rgba(150,150,170,0.45)', source: '#4E7CA8', reportUsage: '#ff8c42',
+  dependsOn: 'var(--sem-series-1)', relationship: 'var(--sem-series-3)', contains: 'var(--sem-series-neutral)', source: 'var(--sem-series-6)', reportUsage: 'var(--sem-series-5)',
 };
+const EDGE_DASH: Record<string, 'solid' | 'dashed' | 'dotted'> = { dependsOn: 'solid', relationship: 'solid', contains: 'dotted', source: 'dashed', reportUsage: 'dashed' };
 const EDGE_LABEL: Record<string, string> = {
   dependsOn: 'depends on', relationship: 'relationship', contains: 'contains', source: 'source', reportUsage: 'shown in',
 };
@@ -52,6 +59,31 @@ function neighborhood(root: string, edges: { from: string; to: string }[], depth
   return seen;
 }
 
+const EMPTY_OPTION: echarts.EChartsCoreOption = { backgroundColor: 'transparent', series: [] };
+
+// The walk highlight and dot size, applied to the option's data. The whole point of selecting a node is to READ the names
+// of what it connects to, so when a selection is active the ENTIRE lit set (the node AND its neighbours) is labelled;
+// labelLayout.hideOverlap culls only labels that physically collide. With nothing selected, labels show on a small graph
+// only, so a hairball isn't drowned in text. Pure: it returns new arrays and never touches the chart.
+function styleGraph(data: any[], links: any[], lit: Set<string> | null, selectedRef: string | undefined, sizeScale: number, ring: string) {
+  const on = lit != null;
+  const showLabels = data.length <= 70;
+  const nd = data.map((d) => {
+    const bo = d._hidden ? 0.5 : 1;
+    const isLit = !on || lit!.has(d.id);
+    const isSel = on && d.id === selectedRef;
+    return { ...d,
+      symbolSize: (d._size ?? d.symbolSize ?? 8) * sizeScale, _size: d._size ?? d.symbolSize ?? 8,
+      itemStyle: { ...d.itemStyle, opacity: isLit ? bo : 0.05, borderColor: isSel ? ring : (d._border ?? 'transparent'), borderWidth: isSel ? 2.5 : (d._borderWidth ?? 0) },
+      label: { show: on ? isLit : showLabels } };
+  });
+  const nl = links.map((l) => {
+    const isLit = !on || (lit!.has(l.source) && lit!.has(l.target));
+    return { ...l, lineStyle: { ...l.lineStyle, opacity: isLit ? (l._opacity ?? 0.55) : 0.03 } };
+  });
+  return { data: nd, links: nl };
+}
+
 export interface GraphViewProps {
   graph: LineageResult | null;
   onOpenImpact: (ref: string) => void;
@@ -78,6 +110,28 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
   // card; clicking ANY node (lit neighbour or faded stranger) MOVES the selection there, so repeated clicks walk the
   // graph one hop at a time with the highlight following. Click empty canvas or Clear selection to deselect.
   // Everything outside the lit set fades, and hover-emphasis is disabled while a selection is active.
+  // Large models open in FOCUSED (a local view) instead of dumping a whole-model hairball. One-shot, on first load, seeded
+  // at the highest-degree measure so there is an immediate meaningful view. It is decided DURING render, before anything
+  // is drawn: deciding it in an effect drew the whole model first (850 things, many seconds) and then drew it again.
+  // The person can switch to Whole model anytime.
+  const [autoFocusDone, setAutoFocusDone] = useState(false);
+  if (!autoFocusDone && graph) {
+    setAutoFocusDone(true);
+    if ((graph.nodes?.length ?? 0) > 150) {
+      const deg = new Map<string, number>();
+      for (const e of graph.edges) { deg.set(e.from, (deg.get(e.from) ?? 0) + 1); deg.set(e.to, (deg.get(e.to) ?? 0) + 1); }
+      // Prefer the highest-degree MEASURE (a meaningful, tight starting point) over the raw highest-degree node: in a
+      // real model that is usually a Date column or a table, connected to nearly everything (a huge, unhelpful focus).
+      let best: string | null = null, bestDeg = -1, bestMeasure: string | null = null, bestMeasureDeg = -1;
+      for (const n of graph.nodes) {
+        const d = deg.get(n.ref) ?? 0;
+        if (d > bestDeg) { bestDeg = d; best = n.ref; }
+        if (n.kind === 'measure' && d > bestMeasureDeg) { bestMeasureDeg = d; bestMeasure = n.ref; }
+      }
+      const pick = bestMeasure ?? best;
+      if (pick) { setFocusRef(pick); setScope('focus'); }
+    }
+  }
   const [resetNonce, setResetNonce] = useState(0);   // Reset bumps this to force a fresh layout even from default state
   const [sizeScale, setSizeScale] = useState(DEFAULT_SIZE);   // node-size slider (multiplies the degree-based bubble size)
   const chartRef = useRef<echarts.ECharts | null>(null);
@@ -85,7 +139,6 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
   // True once the person has panned/zoomed (wheel or drag) since the LAST fit. A resize-triggered auto-fit checks this
   // so it never fights a manual view the person set up on purpose — it only reframes when they haven't touched it since.
   const interactedSinceFit = useRef(false);
-  const autoFocused = useRef(false);   // one-shot: large models open in Focused so the first view isn't a hairball
   // Throttle the size slider to one update per animation frame: a raw drag fires dozens of events/sec, each triggering
   // an O(N) style-merge + canvas repaint. Coalescing to ~60fps keeps dragging smooth on a big graph.
   const sizeRaf = useRef<number | null>(null);
@@ -95,9 +148,11 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
     if (sizeRaf.current == null) sizeRaf.current = requestAnimationFrame(() => { sizeRaf.current = null; if (pendingSize.current != null) setSizeScale(pendingSize.current); });
   };
 
+  clearColorCache();   // theme colours are read once per render, then reused for every node
+  useThemeEpoch();   // a theme change draws the graph again: its colours are baked in when it is drawn
   const fg = resolveColor('var(--sem-fg)', '#ddd');
   const muted = resolveColor('var(--sem-muted)', '#9aa0aa');
-  const accent = resolveColor('var(--sem-accent)', '#2ED47A');
+  const accent = resolveColor('var(--sem-accent)', '#3CC08F');
   const surface = resolveColor('var(--sem-surface)', '#1e1e2a');
   const border = resolveColor('var(--sem-border)', 'rgba(140,140,160,0.22)');
 
@@ -126,7 +181,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
       + '|' + es.map((e) => e.from + '>' + e.to + ':' + e.kind).join(',');
   }, [graph]);
 
-  const { option, shown, total } = useMemo(() => {
+  const { option: baseOption, layoutIn, shown, total } = useMemo(() => {
     const allNodes = graph?.nodes ?? [];
     const allEdges = graph?.edges ?? [];
 
@@ -152,30 +207,42 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
     const links = edges.map((e) => {
       degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
       degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
-      return { source: e.from, target: e.to, lineStyle: { color: EDGE_COLOR[e.kind] ?? muted, width: 1, opacity: 0.55, curveness: 0 }, _kind: e.kind };
+      return { source: e.from, target: e.to, lineStyle: { color: resolveColor(EDGE_COLOR[e.kind], muted), type: EDGE_DASH[e.kind] ?? 'solid', width: 1, opacity: 0.55, curveness: 0 }, _kind: e.kind, _opacity: 0.55 };
     });
 
     const kinds = [...new Set(nodes.map((n) => n.kind))];
     const catIndex = new Map(kinds.map((k, i) => [k, i]));
     const categories = kinds.map((k) => ({ name: KIND_LABEL[k] ?? k, itemStyle: { color: resolveColor(KIND_COLOR[k], muted) } }));
 
-    const data = nodes.map((n) => {
+    // The force view is drawn from OUR positions (lineagelayout.mjs), never ECharts' random-start force. The seeded start
+    // goes in here so the first frame is already organised by table; the sliced layout refines it in the effect below.
+    const layoutIn = layout === 'force'
+      ? { nodes: nodes.map((n) => ({ id: n.ref, group: n.table ?? n.name })), links: links.map((l) => ({ source: l.source, target: l.target })) }
+      : null;
+    const seed = layoutIn ? seedPositions(layoutIn.nodes) : null;
+    const data = nodes.map((n, i) => {
       const deg = degree.get(n.ref) ?? 0;
       const isFocus = n.ref === focusRef;
       return {
-        id: n.ref, name: n.name, category: catIndex.get(n.kind),
+        id: n.ref, name: n.name, category: catIndex.get(n.kind), symbol: KIND_SYMBOL[n.kind] ?? 'circle',
         symbolSize: Math.max(7, Math.min(7 + deg * 2, 34)) * (isFocus ? 1.25 : 1),
         itemStyle: {
           color: resolveColor(KIND_COLOR[n.kind], muted), opacity: n.isHidden ? 0.5 : 1,
-          borderColor: isFocus ? accent : 'transparent', borderWidth: isFocus ? 2.5 : 0,
+          borderColor: isFocus ? fg : 'transparent', borderWidth: isFocus ? 2.5 : 0,
         },
         _kind: n.kind, _table: n.table ?? '', _deg: deg, _hidden: !!n.isHidden,
+        // A square reads bigger than a dot of the same size, so tables are drawn smaller than their links alone say.
+        _size: Math.max(7, Math.min(7 + deg * 2, 34)) * (isFocus ? 1.25 : 1) * (KIND_SYMBOL[n.kind] === 'rect' ? 0.7 : 1), _border: isFocus ? fg : 'transparent', _borderWidth: isFocus ? 2.5 : 0,
+        ...(seed ? { x: seed[2 * i], y: seed[2 * i + 1] } : {}),
       };
     });
 
     const showLabels = nodes.length <= 70;
     const opt: echarts.EChartsCoreOption = {
       backgroundColor: 'transparent',
+      // No animation: the same model must look the same on every draw, and a tween per node on every refresh is cost for
+      // nothing the person asked for.
+      animation: false,
       // No ECharts legend — the kind-filter chips in the toolbar are the colour key AND the (hard) type filter.
       tooltip: {
         confine: true, backgroundColor: surface, borderColor: border, borderWidth: 1, textStyle: { color: fg, fontSize: tokenPx('--sem-text-meta') },
@@ -187,13 +254,9 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
         },
       },
       series: [{
-        type: 'graph', layout, roam: true, draggable: true, scaleLimit: { min: 0.3, max: 6 },
+        type: 'graph', layout: layout === 'force' ? 'none' : layout, roam: true, draggable: true, scaleLimit: { min: 0.3, max: 6 },
         categories, data, links,
         edgeSymbol: ['none', 'arrow'], edgeSymbolSize: [0, 7],
-        // layoutAnimation:false → the force settles SYNCHRONOUSLY in one pass (no per-frame animation loop). This (a) is
-        // far cheaper on a big graph (no continuous re-simulation/repaint), and (b) guarantees getItemLayout returns
-        // SETTLED positions immediately, so the position-freeze below can never capture an unsettled initial scatter.
-        force: { repulsion: 240, edgeLength: [60, 170], gravity: 0.05, friction: 0.6, layoutAnimation: false },
         circular: { rotateLabel: true },
         label: { show: showLabels, position: 'right', color: fg, fontSize: tokenPx('--sem-text-label'), formatter: (p: any) => p.data?.name ?? '' },
         labelLayout: { hideOverlap: true },
@@ -202,7 +265,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
         blur: { itemStyle: { opacity: 0.07 }, lineStyle: { opacity: 0.04 }, label: { show: false } },
       }],
     };
-    return { option: opt, shown: nodes.length, total: allNodes.length };
+    return { option: opt, layoutIn, shown: nodes.length, total: allNodes.length };
     // `graph` is read in the body but intentionally NOT a dep — `sig` captures the render-relevant structure.
     // `resetNonce` is a dep so Reset emits a NEW option object even when every control is already at its default:
     // the EChart wrapper applies options with notMerge, so that one bump discards the frozen node positions (baked
@@ -210,17 +273,56 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig, layout, scope, focusRef, depth, disabledKey, tablesKey, fieldsKey, resetNonce, fg, muted, accent, surface, border]);
 
-  // Refs so the (mount-bound) chart-event handlers read live state without rebinding.
-  const optionRef = useRef(option); optionRef.current = option;
+  // The sliced layout. It paints the seeded picture at once, then refines it a few times a second without holding the
+  // thread for more than a few milliseconds, so the view switch, the search and the menus keep answering. The same model
+  // always settles to the same picture (no random start). `frame` carries the latest positions for THIS option only.
+  const [frame, setFrame] = useState<{ key: unknown; pos: Float64Array; stamp: number } | null>(null);
+  const [drawing, setDrawing] = useState(false);
+  // The chart mounts one frame after the toolbar and the view switch, so pressing Graph answers at once and the work of
+  // starting a canvas chart is its own short task rather than part of the click.
+  // Stage 0: no chart. Stage 1: an empty chart (starting the canvas is one short task). Stage 2: the picture (its own task).
+  const [stage, setStage] = useState(0);
+  useEffect(() => {
+    if (stage >= 2) return;
+    const id = requestAnimationFrame(() => setStage(stage + 1));
+    return () => cancelAnimationFrame(id);
+  }, [stage]);
+  const chartMounted = stage >= 1;
+  const [showDrawing, setShowDrawing] = useState(false);
+  useEffect(() => {
+    setFrame(null);
+    if (!layoutIn || layoutIn.nodes.length === 0) { setDrawing(false); return; }
+    setDrawing(true);
+    const lay = createLayout({ nodes: layoutIn.nodes, links: layoutIn.links });
+    let stamp = 0;
+    // Only the seeded picture and the finished one: drawing 850 things costs about 300 ms a time, so a mid-way frame is a
+    // second freeze. The Drawing note and the Link carry the wait.
+    const cancel = runLayoutSliced(lay, (pos, done) => {
+      if (lay.iteration === 0) return;   // the seeded picture is already in the option
+      setFrame({ key: baseOption, pos: Float64Array.from(pos), stamp: ++stamp });
+      if (done) setDrawing(false);
+    }, { intermediate: false });
+    return cancel;
+  }, [baseOption, layoutIn]);
+  // A short draw (a small model) must not flash a note, so the note waits a moment. The Link works for the whole draw.
+  useEffect(() => {
+    if (!drawing) { setShowDrawing(false); return; }
+    const t = window.setTimeout(() => setShowDrawing(true), 250);
+    return () => window.clearTimeout(t);
+  }, [drawing]);
+  useEffect(() => {
+    linkWork.hold('lineage-graph', drawing);
+    return () => linkWork.hold('lineage-graph', false);
+  }, [drawing]);
 
   // Undirected adjacency of what's currently shown (from the option's links) — used to expand the selection to its
   // immediate neighbours so selecting lights the node AND its connections.
   const adjacency = useMemo(() => {
     const adj = new Map<string, Set<string>>();
     const link = (a: string, b: string) => { let s = adj.get(a); if (!s) { s = new Set(); adj.set(a, s); } s.add(b); };
-    for (const l of ((option as any)?.series?.[0]?.links ?? []) as { source: string; target: string }[]) { link(l.source, l.target); link(l.target, l.source); }
+    for (const l of ((baseOption as any)?.series?.[0]?.links ?? []) as { source: string; target: string }[]) { link(l.source, l.target); link(l.target, l.source); }
     return adj;
-  }, [option]);
+  }, [baseOption]);
   // The lit set = the selected node plus ALL its direct neighbours — the whole point of selecting is reading what it
   // connects to, so nothing adjacent is culled. Everything else fades.
   const lit = useMemo<Set<string> | null>(() => {
@@ -230,62 +332,39 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
     return nodes;
   }, [selected, adjacency]);
 
-  // Apply the walk highlight + node size WITHOUT a relayout. Baking each node's current position (x/y + `fixed`) into the
-  // data-merge stops ECharts' force layout from re-running (no "re-orient on click"); symbolSize is scaled here too so
-  // the size slider resizes in place. An edge lights only when BOTH ends are lit. Runs after the base option setOption.
+  // The option the chart is given: the base, the newest positions, and the walk highlight and dot size as they stand NOW.
+  // Styling here (not in an effect after the chart has drawn) means the first paint already looks like the last one: no
+  // second pass that shrinks the dots, and one chart update per frame instead of two. The style is read through a ref so
+  // a click or the size slider does not rebuild the option (that would reset the person's zoom); they merge below.
+  const styleRef = useRef({ lit, selected, sizeScale, ring: fg });
+  styleRef.current = { lit, selected, sizeScale, ring: fg };
+  const option = useMemo(() => {
+    const s0 = (baseOption as any).series[0];
+    const pos = frame && frame.key === baseOption ? frame.pos : null;
+    // A big graph is not drawn until it is laid out: drawing the seeded start would cost one more freeze (about 300 ms for
+    // 850 things) for a picture that is about to change. The Drawing note and the Link say it is coming.
+    if (!pos && layoutIn && layoutIn.nodes.length > 400) return EMPTY_OPTION;
+    const st = styleRef.current;
+    const placed = pos ? (s0.data as any[]).map((d, i) => ({ ...d, x: pos[2 * i], y: pos[2 * i + 1] })) : (s0.data as any[]);
+    const styled = styleGraph(placed, s0.links as any[], st.lit, st.selected?.ref, st.sizeScale, st.ring);
+    return { ...(baseOption as any), series: [{ ...s0, emphasis: { ...s0.emphasis, disabled: st.lit != null }, data: styled.data, links: styled.links }] } as echarts.EChartsCoreOption;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [baseOption, frame, layoutIn]);
+
+  // Refs so the (mount-bound) chart-event handlers read live state without rebinding.
+  const optionRef = useRef(option); optionRef.current = option;
+
+  // Apply the walk highlight + node size to the chart that is already drawn, WITHOUT rebuilding it (so the zoom stays and
+  // nothing moves: the positions are ours and sit in the option). An edge lights only when BOTH ends are lit.
   useEffect(() => {
     const c = chartRef.current; if (!c || (c as any).isDisposed?.()) return;
     const s0 = (optionRef.current as any)?.series?.[0];
     const data = s0?.data as any[] | undefined, links = s0?.links as any[] | undefined;
     if (!data || !links) return;
-    const layById = new Map<string, number[]>();
-    try {
-      const sd = (c as any).getModel().getSeriesByIndex(0)?.getData();
-      if (sd) for (let i = 0; i < sd.count(); i++) { const l = sd.getItemLayout(i); if (l) layById.set(sd.getId(i), l); }
-    } catch { /* positions optional */ }
-    const on = lit != null;
-    // The whole point of selecting a node is to READ the names of what it connects to — so when a selection is
-    // active, label the ENTIRE lit set (the node AND its neighbours). labelLayout.hideOverlap (base option) culls
-    // only the labels that physically collide, so even a big ring stays legible instead of a wall of text. When
-    // nothing is selected, keep base behaviour (labels on a small graph only, so a hairball isn't drowned in text).
-    const showLabels = data.length <= 70;
-    const nd = data.map((d) => {
-      const bo = d._hidden ? 0.5 : 1;
-      const isLit = !on || lit!.has(d.id);
-      const isSel = on && d.id === selected?.ref;
-      const lp = layById.get(d.id);
-      return { ...d,
-        ...(lp ? { x: lp[0], y: lp[1], fixed: true } : {}),
-        symbolSize: (d.symbolSize ?? 8) * sizeScale,
-        itemStyle: { ...d.itemStyle, opacity: isLit ? bo : 0.05, borderColor: isSel ? accent : (d.itemStyle?.borderColor ?? 'transparent'), borderWidth: isSel ? 2.5 : (d.itemStyle?.borderWidth ?? 0) },
-        label: { show: on ? isLit : showLabels } };
-    });
-    const nl = links.map((l) => {
-      const isLit = !on || (lit!.has(l.source) && lit!.has(l.target));
-      return { ...l, lineStyle: { ...l.lineStyle, opacity: isLit ? (l.lineStyle?.opacity ?? 0.55) : 0.03 } };
-    });
+    const styled = styleGraph(data, links, lit, selected?.ref, sizeScale, fg);
     // emphasis.disabled while a selection is active so hovering the faded background can't re-light it.
-    c.setOption({ series: [{ emphasis: { disabled: on }, data: nd, links: nl }] });
-  }, [lit, selected, option, accent, sizeScale]);
-
-  // Large models open in FOCUSED (a local view) instead of dumping a whole-model hairball — one-shot, on first load,
-  // seeded at the highest-degree node so there's an immediate meaningful view. The user can switch to Whole model anytime.
-  useEffect(() => {
-    if (autoFocused.current || !graph || (graph.nodes?.length ?? 0) <= 150) return;
-    autoFocused.current = true;
-    const deg = new Map<string, number>();
-    for (const e of graph.edges) { deg.set(e.from, (deg.get(e.from) ?? 0) + 1); deg.set(e.to, (deg.get(e.to) ?? 0) + 1); }
-    // Prefer the highest-degree MEASURE (a meaningful, tight starting point) over the raw highest-degree node — in a
-    // real model that's usually a Date column or a table, which is connected to nearly everything (a huge, unhelpful focus).
-    let best: string | null = null, bestDeg = -1, bestMeasure: string | null = null, bestMeasureDeg = -1;
-    for (const n of graph.nodes) {
-      const d = deg.get(n.ref) ?? 0;
-      if (d > bestDeg) { bestDeg = d; best = n.ref; }
-      if (n.kind === 'measure' && d > bestMeasureDeg) { bestMeasureDeg = d; bestMeasure = n.ref; }
-    }
-    const pick = bestMeasure ?? best;
-    if (pick) { setFocusRef(pick); setScope('focus'); }
-  }, [graph]);
+    c.setOption({ series: [{ emphasis: { disabled: lit != null }, data: styled.data, links: styled.links }] });
+  }, [lit, selected, fg, sizeScale]);
 
   // Fit ALL shown nodes into the viewport. ECharts `graph` has no built-in fit (force layout can spread far wider than
   // the canvas → nodes render off-screen, unreachable without manual scroll/zoom). Measure the node pixel bounds after
@@ -310,14 +389,15 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
     const pw = Math.max(1, maxX - minX), ph = Math.max(1, maxY - minY);
     const zoom = Math.max(0.15, Math.min((W * 0.86) / pw, (H * 0.86) / ph, 4));
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    c.dispatchAction({ type: 'graphRoam', zoom, originX: cx, originY: cy });   // zoom keeps (cx,cy) fixed on screen…
-    c.dispatchAction({ type: 'graphRoam', dx: W / 2 - cx, dy: H / 2 - cy });   // …then recentre it
+    // ONE action, so a big graph is redrawn once, not twice: ECharts pans first (the bbox centre goes to the middle of the
+    // canvas), then zooms about that middle point, which therefore stays where it is.
+    c.dispatchAction({ type: 'graphRoam', dx: W / 2 - cx, dy: H / 2 - cy, zoom, originX: W / 2, originY: H / 2 });
     interactedSinceFit.current = false;   // a completed fit is the new baseline the interaction guard measures from
   };
 
   // Auto-fit once per STRUCTURAL view (new topology / scope / focus / depth / filter / layout / reset) — NOT on a
   // select/hover (those don't change fitKey), so a user's manual zoom is preserved while they walk the graph.
-  const fitKey = sig + '|' + layout + '|' + scope + '|' + (focusRef ?? '') + '|' + depth + '|' + disabledKey + '|' + tablesKey + '|' + fieldsKey + '|' + resetNonce;
+  const fitKey = sig + '|' + layout + '|' + scope + '|' + (focusRef ?? '') + '|' + depth + '|' + disabledKey + '|' + tablesKey + '|' + fieldsKey + '|' + resetNonce + '|' + (drawing ? 'drawing' : 'drawn') + '|' + stage;
   useEffect(() => {
     const c = chartRef.current; if (!c || (c as any).isDisposed?.()) return;
     let done = false;
@@ -420,8 +500,8 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
   );
   const sliceControls = (
     <>
-      <MultiSelect label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the picture down to some of the tables" />
-      <MultiSelect label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the picture down to certain measures or columns" />
+      <MultiSelect inline label="Tables" options={tableOptions} selected={selTables} onChange={setSelTables} width={220} title="Cut the picture down to some of the tables" />
+      <MultiSelect inline label="Fields" options={fieldOptions} selected={selFields} onChange={setSelFields} width={260} title="Cut the picture down to certain measures or columns" />
       {(selTables.size > 0 || selFields.size > 0) && <ToolBtn onClick={() => { setSelTables(new Set()); setSelFields(new Set()); }}>Clear</ToolBtn>}
     </>
   );
@@ -486,16 +566,16 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
         <RowSep />
         {scopeControls}
         <RowMenu label="Layout" title="How the picture is laid out, how big the dots are, and how to reset it">{layoutControls}</RowMenu>
-        <RowMenu label="Filter" align="end" badge={(selTables.size + selFields.size + disabled.size) || undefined} title="Cut the picture down to part of the model">{sliceControls}{kindControls}</RowMenu>
+        <RowMenu label="Filter" align="end" wide badge={(selTables.size + selFields.size + disabled.size) || undefined} title="Cut the picture down to part of the model">{sliceControls}{kindControls}</RowMenu>
       </ToolRow>
 
       {/* data-own-zoom: this graph has roam:true, so Ctrl+wheel is ITS gesture, not Studio's. Saying so is the
           contract; relying on which events ZRender happens to consume is not. Astra measured it, 2026-09-14, at
           1000x768: a Ctrl+wheel at x=70,y=450 (canvas, no graph under the pointer) took Studio to 110% while the
           same gesture at x=700,y=400 did nothing, so the behaviour depended on where the pointer was. */}
-      <div ref={(el) => { fillRef(el); containerElRef.current = el; }} className="lineage-graph-canvas xe-canvas" data-own-zoom
+      <div ref={(el) => { fillRef(el); containerElRef.current = el; }} className="lineage-graph-canvas xe-canvas" data-own-zoom data-drawing={drawing ? '1' : '0'}
         style={{ position: 'relative', ...canvasInsetStyle(chartInset) }}>
-        <EChart option={option} height={chartH}
+        {chartMounted && <EChart option={stage >= 2 ? option : EMPTY_OPTION} height={chartH}
           onChartReady={(c) => {
             chartRef.current = c;
             // CLICK vs DRAG: ZRender proxies the browser's NATIVE click, which fires after ANY mousedown+mouseup on
@@ -535,7 +615,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
               // Selection MOVES (never accumulates): clicking a lit neighbour walks the highlight one hop over.
               setSelected({ ref: id, name: nd?.name ?? id, kind: nd?._kind ?? 'unresolved', table: nd?._table });
             });
-          }} />
+          }} />}
         {shown === 0 && (
           <div className="absolute inset-0 flex items-center justify-center text-xs" style={{ color: 'var(--sem-muted)' }}>
             {scope === 'focus' && !focusRef ? 'Click something, or search for it, to see just its corner of the model.' : 'Nothing matches the filters you have set.'}
@@ -550,6 +630,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
             {onCheckReports && <button className="sem-btn sem-btn-sm" onClick={onCheckReports}>Check reports</button>}
           </CanvasChip>
         )}
+        {showDrawing && <CanvasChip at="top"><LinkMark state="working" size={16} /><span>Drawing the picture</span></CanvasChip>}
         {scope === 'focus' && !focusRef && <CanvasChip at="top" tone="warn">Click something, or search for it, to pick the centre</CanvasChip>}
         {/* Bottom-left: the selection card, with the counts under it. Both used to be text on a row. */}
         <CanvasChipStack at="start">
@@ -574,7 +655,7 @@ export function LineageGraphView({ graph, onOpenImpact, modeSwitch, counts, cave
           <CanvasChip at="end" title="An arrow points from a thing to what it depends on">
             {edgeKindsPresent.map((k) => (
               <span key={k} className="flex items-center gap-1">
-                <span style={{ width: 14, height: 0, borderTop: '2px solid ' + (EDGE_COLOR[k] ?? muted), display: 'inline-block' }} />
+                <span style={{ width: 14, height: 0, borderTop: '2px ' + (EDGE_DASH[k] ?? 'solid') + ' ' + (EDGE_COLOR[k] ?? 'var(--sem-muted)'), display: 'inline-block' }} />
                 {EDGE_LABEL[k] ?? k}
               </span>
             ))}

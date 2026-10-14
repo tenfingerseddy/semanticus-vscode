@@ -96,6 +96,24 @@ namespace Semanticus.Tests
             Assert.True(diff.Updated >= 1);
         }
 
+        // ---- model_diff on the assistant door takes the live model as its other side (read-only) ----
+        [Fact]
+        public async Task Model_diff_compares_with_a_live_model_through_targetEndpoint_and_targetDatabase()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake());
+            var modes = new List<string>();
+            engine.WorkspaceTokenExportForTests = mode => { modes.Add(mode); return Task.FromResult(Snap(Db("2"))); };
+
+            var diff = await McpTools.ModelDiff(engine, sourceFile: FileRef(Db("1")).Path, targetEndpoint: Endpoint, targetDatabase: "DS");
+
+            Assert.True(string.IsNullOrEmpty(diff.Error));
+            Assert.True(diff.Updated >= 1);
+            Assert.Equal(new[] { "azcli" }, modes);   // the assistant never opens a sign-in window
+
+            var both = await McpTools.ModelDiff(engine, targetFile: FileRef(Db("1")).Path, targetEndpoint: Endpoint, targetDatabase: "DS");
+            Assert.Contains("targetFile", both.Error);
+        }
+
         // ---- AGENT compare: the cold failure NEVER pops UI — teaching refusal, no interactive retry ----
         [Fact]
         public async Task Agent_compare_with_no_token_is_refused_and_never_opens_interactive_signin()

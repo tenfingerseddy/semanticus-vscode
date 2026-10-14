@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { rpc, onSpecChange, pickSpecFile } from './bridge';
+import { rpc, rpcPressed, onSpecChange, pickSpecFile } from './bridge';
 import { listSqlSources, openSqlSources, type SqlSourceRecord } from './connectionshub';
 import { useConnection } from './connection';
 import { SIGN_IN_MODES } from './copy';
@@ -31,7 +31,8 @@ const contentOf = (value?: ModelSpec | null): string => stable(value ?? null);
 interface SpecSnapshot { version: number; source: string; spec: ModelSpec | null; }
 interface SpecBuildReport { revision: number; created: string[]; skipped: string[]; errors: string[]; notes?: string[]; tablesBefore: number; tablesAfter: number; measuresBefore: number; measuresAfter: number; note?: string; }
 
-const ROLE_COLOR: Record<string, string> = { fact: 'var(--sem-accent)', dimension: '#3FB0E6', date: 'var(--sem-warn)', calculated: '#17B3A3', isolated: 'var(--sem-muted)' };
+// A star-schema role takes a chart step (tokens.css), the same ones the Diagram uses for a table's kind.
+const ROLE_COLOR: Record<string, string> = { fact: 'var(--sem-series-1)', dimension: 'var(--sem-series-2)', date: 'var(--sem-series-5)', calculated: 'var(--sem-series-4)', isolated: 'var(--sem-muted)' };
 const SOURCE_LABEL: Record<string, string> = { manual: 'edited', 'autogenerate-model': 'from open model', 'autogenerate-fabric': 'from SQL', file: 'loaded from file' };
 
 // The set of star-schema roles a table can carry (mirrors SpecTable.Role in Spec.cs). "Measure group" is not a role —
@@ -188,13 +189,13 @@ export function SpecView({ session, startSql, onStartTaken, onStartPlan }: {
     const args: unknown[] = [fabric.server.trim(), fabric.database.trim(), fabric.authMode, fabric.storageMode, 'human'];
     const tenant = fabric.tenant.trim();
     if (tenant) args.push(tenant);
-    setSnap(await rpc<SpecSnapshot>('autogenerateSpecFromFabric', ...args));
+    setSnap(await rpcPressed<SpecSnapshot>('autogenerateSpecFromFabric', ...args));
     setShowFabric(false); setShowChoices(false);
   });
   // The same call, fed from an endpoint saved on Connections: its server, database, sign-in and tenant.
   const draftFromSaved = (r: SqlSourceRecord, storageMode: string) => run('fabric', async () => {
     setReport(null);
-    setSnap(await rpc<SpecSnapshot>('autogenerateSpecFromFabric', ...sqlDraftArgs(r, storageMode)));
+    setSnap(await rpcPressed<SpecSnapshot>('autogenerateSpecFromFabric', ...sqlDraftArgs(r, storageMode)));
     setShowFabric(false); setShowChoices(false);
   });
   const build = () => {
@@ -433,7 +434,7 @@ function SpecEditor({ spec, counts, edit }: { spec: ModelSpec; counts: ReturnTyp
                 ? `date table: ${spec.dateTable.name}, marked on ${spec.dateTable.dateColumn}`
                 : `date table: ${spec.dateTable.name}, added`}</Chip>}
             {spec.dateTable && spec.dateTable.note && <span style={{ color: 'var(--sem-muted)' }}>{spec.dateTable.note}</span>}
-            {(spec.timeIntelligence ?? []).map((v) => <Badge key={v} color="#4E7CA8">{v}</Badge>)}
+            {(spec.timeIntelligence ?? []).map((v) => <Badge key={v} color="var(--sem-series-2)">{v}</Badge>)}
             {(spec.timeIntelligenceBaseMeasures?.length ?? 0) > 0 && <span style={{ color: 'var(--sem-muted)' }}>over {spec.timeIntelligenceBaseMeasures!.join(', ')}</span>}
           </div>
         </Section>
@@ -617,7 +618,7 @@ function RelationshipsEditor({ spec, edit }: { spec: ModelSpec; edit: (mut: (s: 
             <span className="font-semibold">{proposals.length > 0 ? `Detected ${proposals.length} proposal${proposals.length === 1 ? '' : 's'}` : 'No high-confidence relationships found'}</span>
             <span style={{ color: 'var(--sem-muted)' }}>by key-column name matching: review before accepting</span>
             <div className="ml-auto flex items-center gap-2">
-              {proposals.length > 0 && <button onClick={acceptAll} className="text-(length:--sem-text-label) px-2 py-1 rounded" style={{ color: '#000', background: 'var(--sem-accent)' }}>Add all</button>}
+              {proposals.length > 0 && <button onClick={acceptAll} className="text-(length:--sem-text-label) px-2 py-1 rounded" style={{ color: 'var(--sem-on-accent)', background: 'var(--sem-accent)' }}>Add all</button>}
               <IconBtn title="Dismiss" onClick={() => setProposals(null)}>✕</IconBtn>
             </div>
           </div>
@@ -695,7 +696,7 @@ function RelationshipBuilder({ spec, onAdd, onCancel }: { spec: ModelSpec; onAdd
       </div>
       <div className="flex items-center gap-2">
         <button disabled={!valid} onClick={() => onAdd({ fromTable, fromColumn, toTable, toColumn, cardinality, crossFilter, isActive })}
-          className="text-(length:--sem-text-label) px-2 py-1 rounded disabled:opacity-50" style={{ color: '#000', background: 'var(--sem-accent)' }}>Add relationship</button>
+          className="text-(length:--sem-text-label) px-2 py-1 rounded disabled:opacity-50" style={{ color: 'var(--sem-on-accent)', background: 'var(--sem-accent)' }}>Add relationship</button>
         <button onClick={onCancel} className="text-(length:--sem-text-label) px-2 py-1 rounded" style={{ color: 'var(--sem-fg)', background: 'var(--sem-surface)', border: '1px solid var(--sem-border)' }}>Cancel</button>
         {dup && <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-warn)' }}>That relationship already exists.</span>}
         {fromTable === toTable && <span className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-warn)' }}>Pick two different tables.</span>}
@@ -747,7 +748,7 @@ function TableAdder({ spec, edit }: { spec: ModelSpec; edit: (mut: (s: ModelSpec
         className="text-(length:--sem-text-meta) px-2 py-1 rounded outline-none" style={{ width: 150, background: 'var(--sem-surface-2)', color: 'var(--sem-fg)', border: '1px solid var(--sem-border)' }} />
       <Sel value={role} ariaLabel="New table role" onChange={setRole}
         options={[...TABLE_ROLES.map((r) => ({ value: r, label: r })), { value: '__measuregroup__', label: 'Measure group' }]} />
-      <button onClick={add} className="text-(length:--sem-text-label) px-2 py-1 rounded" style={{ color: '#000', background: 'var(--sem-accent)' }}>Add</button>
+      <button onClick={add} className="text-(length:--sem-text-label) px-2 py-1 rounded" style={{ color: 'var(--sem-on-accent)', background: 'var(--sem-accent)' }}>Add</button>
       <IconBtn title="Cancel" onClick={() => setOpen(false)}>✕</IconBtn>
     </span>
   );
@@ -1141,7 +1142,7 @@ function Chip({ children }: { children: React.ReactNode }) {
   return <span className="text-(length:--sem-text-label) px-2 py-1 rounded-full" style={{ background: 'var(--sem-surface-2)', color: 'var(--sem-muted)', border: '1px solid var(--sem-border)' }}>{children}</span>;
 }
 function Badge({ color, children }: { color: string; children: React.ReactNode }) {
-  return <span className="text-(length:--sem-text-label) px-1 rounded align-middle" style={{ background: color, color: '#000' }}>{children}</span>;
+  return <span className="text-(length:--sem-text-label) px-1 rounded align-middle" style={{ background: color, color: 'var(--sem-on-series)' }}>{children}</span>;
 }
 function Banner({ tone, children }: { tone: 'bad' | 'good' | 'warn'; children: React.ReactNode }) {
   const c = tone === 'bad' ? 'var(--sem-bad)' : tone === 'warn' ? 'var(--sem-warn)' : 'var(--sem-good)';

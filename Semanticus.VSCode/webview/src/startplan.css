@@ -23,11 +23,11 @@
 .sp-note-warn { box-shadow: inset 2px 0 0 var(--sem-warn); }
 .sp-note-bad { box-shadow: inset 2px 0 0 var(--sem-bad); }
 .sp-note-good { box-shadow: inset 2px 0 0 var(--sem-good); }
-.sp-note-busy { box-shadow: inset 2px 0 0 var(--sem-doer-engine); }
-.sp-note-need { box-shadow: inset 2px 0 0 var(--sem-doer-you); }
+.sp-note-busy { box-shadow: inset 2px 0 0 var(--sem-actor-semanticus); }
+.sp-note-need { box-shadow: inset 2px 0 0 var(--sem-actor-you); }
 .sp-note .sp-bar { flex: 1 1 120px; max-width: 240px; }
 .sp-bar { display: flex; height: var(--sem-space-1); overflow: hidden; background: var(--sem-rule); }
-.sp-bar i { display: block; height: 100%; background: var(--sem-doer-engine); }
+.sp-bar i { display: block; height: 100%; background: var(--sem-actor-semanticus); }
 .sp-bar-wait i { width: 35%; animation: sp-bar-wait 1.4s ease-in-out infinite alternate; }
 @keyframes sp-bar-wait { from { transform: translateX(0); } to { transform: translateX(185%); } }
 @media (prefers-reduced-motion: reduce) { .sp-bar-wait i { animation: none; width: 100%; } }
@@ -43,8 +43,8 @@
 .sp-cell-v small { color: var(--sem-muted); font-size: var(--sem-text-meta); font-weight: var(--sem-weight); }
 .sp-gauge { display: flex; height: var(--sem-space-1); overflow: hidden; background: var(--sem-rule); }
 .sp-gauge i { display: block; height: 100%; }
-.sp-g-jev { background: var(--sem-fg); } .sp-g-rule { background: var(--sem-doer-engine); } .sp-g-assistant { background: var(--sem-doer-agent); }
-.sp-g-you { background: var(--sem-doer-you); } .sp-g-default { background: var(--sem-faint); } .sp-g-words { background: var(--sem-doer-agent); }
+.sp-g-jev { background: var(--sem-fg); } .sp-g-rule { background: var(--sem-actor-semanticus); } .sp-g-assistant { background: var(--sem-actor-assistant); }
+.sp-g-you { background: var(--sem-actor-you); } .sp-g-default { background: var(--sem-faint); } .sp-g-words { background: var(--sem-actor-assistant); }
 .sp-keys { display: flex; flex-wrap: wrap; gap: 0 var(--sem-space-3); color: var(--sem-muted); }
 /* A grade that can still move is never drawn as the answer: no green, and its words sit right under it. */
 .sp-after.sp-provisional { color: var(--sem-muted); font-style: italic; }
@@ -60,7 +60,7 @@
 .sp-facts b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
 
 /* the Needs you band: the lines Jev was not sure about, and the grant, each with its own choices */
-.sp-needs { display: flex; flex-direction: column; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-tint-warn); }
+.sp-needs { display: flex; flex-direction: column; border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); background: var(--sem-tint-you); }
 .sp-needs-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sem-space-1) var(--sem-space-3); min-height: var(--sem-bar-h); padding: var(--sem-space-2) var(--sem-card-pad); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); color: var(--sem-muted); }
 .sp-needs-h b { color: var(--sem-fg); font-size: var(--sem-text-body); font-weight: var(--sem-weight-strong); }
 .sp-need { display: grid; grid-template-columns: 112px minmax(0, 1fr) auto; gap: var(--sem-space-1) var(--sem-space-3); align-items: center; padding: var(--sem-space-2) var(--sem-card-pad); border-top: var(--sem-hairline) solid var(--sem-border); }
@@ -80,9 +80,9 @@
 .sp-who { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-width: 0; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); white-space: nowrap; }
 .sp-ico { flex: none; width: 12px; height: 12px; }
 .sp-who-jev .sp-ico { color: var(--sem-fg); }
-.sp-who-rule .sp-ico { color: var(--sem-doer-engine); }
-.sp-who-you .sp-ico { color: var(--sem-doer-you); }
-.sp-who-assistant .sp-ico { color: var(--sem-doer-agent); }
+.sp-who-rule .sp-ico { color: var(--sem-actor-semanticus); }
+.sp-who-you .sp-ico { color: var(--sem-actor-you); }
+.sp-who-assistant .sp-ico { color: var(--sem-actor-assistant); }
 .sp-who-default .sp-ico { color: var(--sem-muted); }
 .sp-conf { color: var(--sem-muted); }
 
@@ -106,8 +106,8 @@ body.vscode-high-contrast .sp-filter[aria-pressed="true"]::after, body.vscode-hi
 .sp-sec-h b { font-size: var(--sem-text-title); font-weight: var(--sem-weight-strong); white-space: nowrap; }
 .sp-sec-q { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sem-muted); font-size: var(--sem-text-meta); }
 .sp-sec-r { display: inline-flex; align-items: center; gap: var(--sem-space-3); margin-left: auto; color: var(--sem-muted); font-size: var(--sem-text-meta); white-space: nowrap; }
-.sp-need-n { display: inline-flex; align-items: center; gap: var(--sem-space-1); color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
-.sp-need-n::before { content: ""; width: var(--sem-space-1); height: var(--sem-space-1); border-radius: 50%; background: var(--sem-warn); }
+.sp-need-n { display: inline-flex; align-items: center; gap: var(--sem-space-1); color: var(--sem-actor-you); font-weight: var(--sem-weight-strong); }
+.sp-need-n::before { content: ""; width: var(--sem-space-1); height: var(--sem-space-1); border-radius: 50%; background: var(--sem-actor-you); }
 
 .sp-grp { display: flex; align-items: center; gap: var(--sem-space-2); width: 100%; box-sizing: border-box; min-height: var(--sem-row); padding: 0 var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font-size: var(--sem-text-meta); text-align: left; cursor: pointer; }
 .sp-grp:hover { background: var(--sem-hover); }
@@ -118,7 +118,7 @@ body.vscode-high-contrast .sp-filter[aria-pressed="true"]::after, body.vscode-hi
 /* The recorded Jev mark and its confidence must fit before the row title. */
 .sp-row { display: grid; grid-template-columns: calc(6 * var(--sem-space-6)) minmax(0, 1fr) 184px 96px; gap: var(--sem-space-3); align-items: center; box-sizing: border-box; width: 100%; min-height: var(--sem-row-2); padding: var(--sem-space-1) 0 var(--sem-space-1) var(--sem-card-pad); border: 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
 .sp-row:hover { background: var(--sem-hover); }
-.sp-row-need { box-shadow: inset 2px 0 0 var(--sem-warn); }
+.sp-row-need { box-shadow: inset 2px 0 0 var(--sem-actor-you); }
 /* A held line is shown and kept, but not built: an amber edge and a quiet title, never struck out (it comes back). */
 .sp-row-held { box-shadow: inset 2px 0 0 var(--sem-warn); }
 .sp-row-held .sp-row-t b { color: var(--sem-muted); }
@@ -135,8 +135,8 @@ body.vscode-high-contrast .sp-filter[aria-pressed="true"]::after, body.vscode-hi
 .sp-state { display: inline-flex; align-items: baseline; gap: var(--sem-space-2); white-space: nowrap; font-size: var(--sem-text-meta); }
 .sp-state::before { content: ""; flex: none; align-self: center; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--sem-fg); }
 .sp-state-good::before { border: 0; background: var(--sem-good); }
-.sp-state-need { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
-.sp-state-need::before { border: 0; background: var(--sem-warn); }
+.sp-state-need { color: var(--sem-actor-you); font-weight: var(--sem-weight-strong); }
+.sp-state-need::before { border: 0; background: var(--sem-actor-you); }
 .sp-state-warn { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
 .sp-state-warn::before { border: 0; background: var(--sem-warn); }
 .sp-state-quiet { color: var(--sem-muted); }

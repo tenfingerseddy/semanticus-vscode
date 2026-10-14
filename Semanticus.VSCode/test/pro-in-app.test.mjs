@@ -165,6 +165,12 @@ const LIVE_ADDS = [
   'Workflows: work you repeat becomes steps the app checks as you go.',
 ];
 
+// h17 P2 and P17: a trial's Pro page has the same Remove as the paid page, and says the days left in words (no token counts).
+const trialPro = raw('pro', { purchase: 'idle' }, { trial: { tier: 'pro', isTrial: true, trialEndsAt: Date.parse('2026-11-11T00:00:00Z') / 1000, trialDaysLeft: 30 } });
+assert.match(trialPro, /data-testid="pro-remove"/, 'a trial can take the licence off this computer');
+assert.match(readable(trialPro), /30 days left/);
+assert.doesNotMatch(trialPro, /This month: /);
+
 // Free.
 const free = render('free', { purchase: 'idle' });
 assert.match(free, /Semanticus Pro/);
@@ -250,15 +256,7 @@ const jevOn = M.jevStateOf(RELAY_OK, { current: true }, true);
 assert.deepEqual([jevOn.state, jevOn.word, jevOn.line], ['on', 'On', 'Jev is on for this model.']);
 assert.equal(M.jevStateOf(RELAY_OK, null, true).state, 'on', 'no model open: reachable is on, and the line says permission comes per model');
 assert.match(M.jevStateOf(RELAY_OK, null, true).line, /permission/);
-// The month on Your assistant > Settings: what Pro decides. When the month cannot be read, the reason is the
-// engine's own clause, and the page reads it as a sentence like every other line here (verify round 4, r4-06).
 const DS = load(join(webview, 'src', 'decisions-settings.tsx'));
-assert.equal(
-  DS.monthLine({ monthlyUsedInputTokens: null, monthlyCapInputTokens: null,
-    monthlyReason: 'this session is set up for development and goes straight to the service, so there is no monthly allowance to read' }),
-  'This session is set up for development and goes straight to the service, so there is no monthly allowance to read.');
-assert.equal(DS.monthLine({ monthlyUsedInputTokens: 5000, monthlyCapInputTokens: 30000 }), 'This month: 5 thousand of 30 thousand');
-assert.equal(DS.monthLine({ monthlyUsedInputTokens: null, monthlyCapInputTokens: null }), null, 'no reason invents no line');
 // Harm fix (r1 min4): a getDecisionPoints reply that is not a list blanked all of Studio ("(points ?? []).map is not a
 // function"). Whatever the engine answers, the rows are a list.
 for (const odd of [{}, { error: 'x' }, 'nope', 7, true]) assert.deepEqual(DS.pointsOf(odd), [], `a reply of ${JSON.stringify(odd)} is no rows, not a crash`);
@@ -319,7 +317,8 @@ for (const file of ['propreview.tsx', 'plan.tsx', 'askbox.tsx', 'decisions-setti
   const source = srcOf(file);
   for (const m of source.matchAll(/>Unlock Pro</g)) {
     const before = source.slice(Math.max(0, m.index - 400), m.index);
-    assert.match(before, /onClick=\{upgradeToPro\}|onClick=\{\(\) => \{ close\(\); upgradeToPro\(\); \}\}/, `${file}: an Unlock Pro that does not open the Pro page`);
+    // m15 trial: a locked button may hand over what was pressed, so it runs once Pro is on.
+    assert.match(before, /onClick=\{upgradeToPro\}|onClick=\{\(\) => \{ close\(\); upgradeToPro\(\); \}\}|onClick=\{\(\) => upgradeToPro\(\{ label: '[^']+', tab: '[a-z]+', run: \w+ \}\)\}/, `${file}: an Unlock Pro that does not open the Pro page`);
   }
 }
 assert.doesNotMatch(pro, /onClick=\{manageLicense\}/, 'the upsell notice no longer sends anyone to the website');
@@ -379,7 +378,8 @@ const mcpSources = ['McpTools.cs', 'McpToolsAuthoring.cs'].map((f) => join(root,
 for (const f of mcpSources) assert.doesNotMatch(readFileSync(f, 'utf8'), /activateLicense|storeLicense|licenseToken/i, `${f} must not reach licence storage`);
 // "Pro Plans and Support" and the palette's Get Pro open the page, not the website.
 assert.match(extension, /registerPersonCommand\('semanticus\.manageLicense', \(\) => openProPage\(context\)\)/);
-assert.match(extension, /registerPersonCommand\('semanticus\.upgradeToPro', \(\) => openProPage\(context\)\)/);
+// m15 trial: the status bar's trial items say where they came from; every path still ends on the page.
+assert.match(extension, /registerPersonCommand\('semanticus\.upgradeToPro', \(from\?: unknown\) => \{[\s\S]{0,400}?openProPage\(context\);\s*\}\)/);
 assert.match(extension, /function openProPage\(context: vscode\.ExtensionContext\)[\s\S]{0,200}navigateStudio\(context, 'pro'\)/);
 assert.ok(pkg.contributes.commands.some((c) => c.command === 'semanticus.manageLicense'), 'the palette keeps its way in');
 

@@ -288,6 +288,7 @@ namespace Semanticus.Tests
         [Fact]
         public async Task Human_browser_lane_reaches_the_browser_and_a_stand_in_takes_its_place_positive_control()
         {
+            using var press = SignInPress.Press();   // a person's press: only a press may reach the browser step
             Environment.SetEnvironmentVariable("SEMANTICUS_ENTRA_CLIENT_ID", UnregisteredClientId);
             using var engine = new LocalEngine(new SessionManager(), new Fake());
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(25));

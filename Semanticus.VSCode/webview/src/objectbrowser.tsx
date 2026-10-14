@@ -69,10 +69,10 @@ export function useBrowserData(): { nodes: BrowserNode[]; tables: WireTable[]; e
 
 type GroupBy = 'table' | 'folder' | 'flat';
 const KIND_GLYPH: Record<ObjectKind, { g: string; color: string }> = {
-  measure: { g: 'ƒ', color: 'var(--sem-accent)' },
-  column: { g: '▦', color: '#9cdcfe' },
-  hierarchy: { g: '⛼', color: '#4ec9b0' },
-  table: { g: '▤', color: 'var(--sem-muted)' },
+  measure: { g: 'ƒ', color: 'var(--sem-kind-measure)' },
+  column: { g: '▦', color: 'var(--sem-kind-column)' },
+  hierarchy: { g: '⛼', color: 'var(--sem-series-5)' },
+  table: { g: '▤', color: 'var(--sem-kind-table)' },
 };
 const ROW_H = 28;
 

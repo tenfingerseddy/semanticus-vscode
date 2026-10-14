@@ -926,7 +926,7 @@ namespace Semanticus.Tests
             await PlanHarmKit.AsExistingModelWithAReportReadAsync(f, "ChangeFreeYours.bim");
             var cleanup = Row(await f.Engine.GetModelPlanAsync(), "cleanup/model");
             Assert.NotNull(cleanup);
-            Assert.Equal(ModelPlanOwners.You, cleanup.Who);
+            Assert.Equal(ModelPlanOwners.Assistant, cleanup.Who);   // the assistant does every row a tool can do (doer lane, 13 Oct); the person's approval is still all Free needs
 
             var proposed = await f.Engine.ModelPlanActionAsync("cleanup/model", "propose", "human");
             var set = Row(proposed.Plan, "cleanup/model").ChangeSet;

@@ -22,8 +22,9 @@ import { analyzeDax, collectVars, extractDaxSymbols, varDefinition, type DaxInde
 import { formatDax } from './daxFormat';
 import { buildDaxHeader, splitDaxHeader, reKeyRef, uniqueName, checkDaxHeader, decideDaxSave, decideRenameRecovery, guardModelMatch, identityToken, pickOpenDaxHref, shouldCloseDaxTab, shouldApplyDaxBuffer, MODEL_SCOPED_KINDS, type PendingRenameRecord } from './daxHeader';
 import { resolveEditDaxNode } from './editDaxTarget';
-import { FencedMessageWriter, withModelIdentity, personAction, outsideAnyAction, insideAnyAction, actionModelIdentity, fenceIdentity } from './modelFence';
+import { FencedMessageWriter, withModelIdentity, withPress, personAction, outsideAnyAction, insideAnyAction, actionModelIdentity, fenceIdentity } from './modelFence';
 import {
+    BillingError,
     CollectGate,
     PRODUCTION_BILLING_URL,
     RENEWAL_CHECK_INTERVAL_MS,
@@ -50,6 +51,17 @@ import {
     type RememberedPlan,
 } from './proPage';
 import {
+    collectTrialToken,
+    handChangesIn,
+    newTrialNonce,
+    shouldOfferTrial,
+    startTrial,
+    trialEmailOf,
+    trialEndsWords,
+    trialOfferWords,
+    trialPhaseOf,
+} from './proTrial';
+import {
     ASSISTANT_UNSAVED_OLDER,
     ASSISTANT_UNSAVED_SAME,
     OLDER_BUILD_SAVE_COPY,
@@ -71,7 +83,7 @@ import {
     type StaleEngineVerdict,
 } from './engineResolution';
 import { canUseOsKeychain, mcpLaunchArgs, ownerServeArgs, ownerSignInArgs, ownerStdinPayload } from './licenseDelivery';
-import { precheckLicense, swapLicenseInEngine, type LicenseSwapDoor, type LicenseSwapResult } from './licenseSwap';
+import { precheckLicense, removeMirroredLicenceFile, swapLicenseInEngine, type LicenseSwapDoor, type LicenseSwapResult } from './licenseSwap';
 import { installAssistantSkills } from './assistantSkills';
 import { launcherEntry, writePosixLauncher } from './mcpLauncher';
 import { normFolder, folderParts, folderRef, parentFolderPath, leafFolderName, groupFolderLevel } from './folders';
@@ -81,6 +93,7 @@ import { readGuideFlags, writeGuideFlag } from './guideFlags';
 import { choiceFor, connectAssistant, driveModeFor, markFirstRun, modeAfterConnect, readFirstRun, runFirstRunConnect, writeDriveMode, type FirstRunChoice } from './firstRun';
 import { ConsentAsks } from './consentAsks';
 import { StudioNotes } from './studioNotes';
+import { attachPersonalitySettings, writePersonalitySetting } from './personalitySettings';
 import { createLearn, type LearnDeps } from './learnHost';
 import { scriptToResend, type ScriptSource } from './scriptResend';
 import { draftModelKeyOf } from './draftKey';
@@ -145,7 +158,9 @@ const localDisplayName = (r: ModelConnectionRecord): string =>
 // `sid` is the Stripe subscription id the customer portal is keyed on. OPTIONAL and often absent: the engine
 // only started carrying the claim with the Stripe slice, and a Paddle-era token has no such claim at all, so
 // every reader must have a fallback (currentSubscriptionId reads the token itself).
-interface EntitlementInfo { tier: string; licensedTo?: string; expiry?: number; reason?: string; manageUrl?: string; sid?: string; }
+interface EntitlementInfo { tier: string; licensedTo?: string; expiry?: number; reason?: string; manageUrl?: string; sid?: string;
+    /** The free Pro month (m15 trial): a trial token, its end (unix s), whole days left rounded up, and Free because it ended. */
+    isTrial?: boolean; trialEndsAt?: number; trialDaysLeft?: number; trialEnded?: boolean; }
 interface SetResult { revision: number; changed: boolean; warning?: string; }
 // Mirrors Semanticus.Engine RenameResult (camelCased over the RPC). newRef is the AUTHORITATIVE post-rename ref the
 // engine computed (never a string-spliced guess) — the header-driven save re-keys to it, falling back to reKeyRef only
@@ -251,7 +266,7 @@ function resolveStudioDriveMode(): StudioDriveMode {
     const saved = extCtx?.workspaceState.get<unknown>(STUDIO_DRIVE_MODE_KEY);
     return isStudioDriveMode(saved) ? saved : assistantConnected ? 'claudeDrives' : 'iDrive';
 }
-function pushStudioMessage(type: 'studioShow' | 'studioSuggest' | 'studioAnswer' | 'assistantCall', payload: unknown): void {
+function pushStudioMessage(type: 'studioShow' | 'studioSuggest' | 'studioAnswer' | 'assistantCall' | 'studioNextStep', payload: unknown): void {
     if (!studioPanel && !studioDriveModeLoaded) { studioDriveMode = resolveStudioDriveMode(); studioDriveModeLoaded = true; }
     if (type === 'assistantCall') { const at = (payload as { at?: unknown } | null)?.at; if (typeof at === 'string') noteStudioAssistantCall(at); }
     studioNotes.setDriver({ mode: studioDriveMode, state: studioDriverState });
@@ -366,6 +381,10 @@ export async function activate(context: vscode.ExtensionContext) {
     aiConnectStatus.tooltip = 'Wire your assistant to this Semanticus session. Writes .mcp.json in this folder.';
     context.subscriptions.push(aiConnectStatus, vscode.workspace.onDidChangeWorkspaceFolders(() => refreshAiConnectStatus()));
     refreshAiConnectStatus();
+
+    // The free Pro month on the status bar: the one-time offer after hand edits, the last three days, the end.
+    trialStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 93);
+    context.subscriptions.push(trialStatus);
 
     // canSelectMany: the explorer supports multi-select so "Script ▸", Delete, Hide/Show and Create-hierarchy
     // can operate on a whole selection in one undoable gesture (the agent door already batches; now the UI does too).
@@ -622,7 +641,11 @@ export async function activate(context: vscode.ExtensionContext) {
     // Buying Pro, and managing what was bought. The palette's Get Pro opens the same page as the Studio chip,
     // Help and every Unlock Pro, because the plan is chosen there now; the page then drives the one flow.
     context.subscriptions.push(
-        registerPersonCommand('semanticus.upgradeToPro', () => openProPage(context)),
+        registerPersonCommand('semanticus.upgradeToPro', (from?: unknown) => {
+            if (from === 'trialOffer') void retireTrialOffer(context);
+            if (from === 'trialEnd') { void context.globalState.update(TRIAL_END_SEEN_KEY, true); trialStatus?.hide(); }
+            openProPage(context);
+        }),
         registerPersonCommand('semanticus.manageSubscription', () => manageSubscriptionCmd(context)),
         // The "return to VS Code" link on the Stripe thanks page lands here.
         vscode.window.registerUriHandler({ handleUri: (uri) => { void handleSemanticusUri(context, uri); } }),
@@ -1817,6 +1840,7 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
 
         connected.onNotification('model/didChange', (n: ChangeNotification) => {
             out.appendLine(`didChange rev=${n.revision} origin=${n.origin} label=${n.label ?? ''}`);
+            noteHandChanges(n);
             tree.refresh();
             if (!n.replay && (n.by ?? (n.origin === 'agent' ? 'assistant' : n.origin)) === 'assistant') {
                 const refs = (n.deltas ?? []).filter((d) => d.kind !== 'remove').map((d) => d.ref);
@@ -1836,6 +1860,13 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             void refreshSyncChip();   // an edit can flip hasUnsavedChanges → repaint the editing↔querying verdict
             postToPanels({ type: 'didChange', payload: n });   // both the Studio panel AND the standalone Connections hub re-read session state
         });
+        // The engine moved the tier by itself: a trial reached its end while the window was open (m15 trial, contract C).
+        connected.onNotification('entitlement/didChange', () => {
+            postToPanels({ type: 'entitlementChanged' });
+            void refreshTrialStatus();
+            void refreshProAccount(extCtx);
+        });
+        void refreshTrialStatus();
         // A model swap made through another door (the assistant's create_model, open_model, open_live, open_local,
         // prepare_working_copy or a History restore). A swap is not an edit, so no model/didChange announces it: without
         // this the window kept showing the old model until the new one was edited. The same wiring a local open runs.
@@ -1847,8 +1878,6 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
             saidMayMoveTree = false;
             out.appendLine(`sessionDidChange reason=${n.reason} session=${n.sessionId} model=${n.modelName ?? ''}`);
             if (n.sessionId) autoOpenedSessionId = n.sessionId;
-            // At once, before any await: a page that mounts on the new model asks about the Pro card straight away.
-            consentAsks.noteSwap('otherDoor');
             void bindGridAndTree(n.modelName, tree, 'otherDoor').catch((e: any) => out.appendLine('Refreshing after a model swap failed: ' + (e?.message ?? e)));
         });
         // The change plan broadcasts separately so the Studio Optimize tab updates live as the plan
@@ -1902,6 +1931,8 @@ async function connectEngineAttempt(context: vscode.ExtensionContext, quiet: boo
         connected.onNotification('studio/show', (n: unknown) => pushStudioMessage('studioShow', n));
         connected.onNotification('studio/suggest', (n: unknown) => pushStudioMessage('studioSuggest', n));
         connected.onNotification('studio/answer', (n: unknown) => pushStudioMessage('studioAnswer', n));
+        // The Next line (1.5): the engine's one suggested next step, sent only when it changes.
+        connected.onNotification('studio/nextStep', (n: unknown) => pushStudioMessage('studioNextStep', n));
         connected.onNotification('assistant/call', (n: unknown) => pushStudioMessage('assistantCall', n));
         // A NON-mutating run by the user's Claude (run_dax / profile_dax / debug / …) broadcasts so Studio
         // reflects what the agent is doing live — the read counterpart of model/didChange. Relay only (no
@@ -2869,6 +2900,7 @@ async function applyLicenseToken(context: vscode.ExtensionContext, trimmed: stri
 async function reverifyAfterLicenseChange(context: vscode.ExtensionContext, announce: LicenseAnnounce, fallbackNotice?: string): Promise<void> {
     const token = await getLicenseToken(context, { reconcile: false });
     const swap = await swapLicenseInEngine(licenseSwapDoor(), token, async () => {
+        if (!token) removeMirroredLicenceFile();   // a removal: the restart must not re-read the file Connect saved
         if (fallbackNotice) { vscode.window.showInformationMessage(fallbackNotice); return; }
         // Re-verify the old way: restart the engine WE spawned so it re-reads the token from stdin, then report what
         // the engine computed. If we merely ATTACHED to an engine we don't own, we must not kill it, so prompt for a
@@ -2889,6 +2921,7 @@ async function reverifyAfterLicenseChange(context: vscode.ExtensionContext, anno
         : `The engine swapped its license in place. It now reports ${swap.entitlement?.tier ?? 'unknown'}.`);
     // Studio's chip and every locked page read the tier once and cache it; tell them it moved.
     postToPanels({ type: 'entitlementChanged' });
+    void refreshTrialStatus();
     await announce(swap.entitlement as EntitlementInfo | undefined, swap.refused);
 }
 
@@ -3258,6 +3291,20 @@ async function handleProPageMessage(context: vscode.ExtensionContext, msg: any):
         case 'manage':
             await manageSubscriptionCmd(context);
             return;
+        case 'trialStart': {
+            const email = trialEmailOf(msg.email);
+            if (!email) { setProPage({ ...proPage, trial: { step: 'error', message: 'That email address does not look right. Check it and try again.' } }); return; }
+            if (licenseInteractiveFlowActive || proPage.trial?.step === 'waiting' || proPage.trial?.step === 'sending') return;
+            licenseInteractiveFlowActive = true;
+            licenseConflictPromptedKey = undefined;
+            try { await startTrialFlow(context, email); }
+            finally { licenseInteractiveFlowActive = false; }
+            return;
+        }
+        case 'trialCancel':
+            trialCollectionInFlight?.cancel();
+            setProPage({ ...proPage, trial: undefined });
+            return;
         case 'remove': {
             if (licenseInteractiveFlowActive) {
                 vscode.window.showInformationMessage('Semanticus: a license operation is already in progress. Finish or dismiss it first.');
@@ -3277,6 +3324,125 @@ async function handleProPageMessage(context: vscode.ExtensionContext, msg: any):
             return;
         }
     }
+}
+
+// ===================================================================================================
+// The free Pro month (Kane, 11 Oct 2026; trial mockup option B). The protocol is in proTrial.ts (no vscode).
+// Starting it is a person action on the Pro page: it needs an email the person types. The licence that comes
+// back goes through applyLicenseToken, the same path as a key and a purchase. The assistant reads the state
+// (get_entitlement carries isTrial, trialEndsAt, trialDaysLeft, trialEnded) and never starts a trial.
+// ===================================================================================================
+
+let trialStatus: vscode.StatusBarItem | undefined;
+let trialCollectionInFlight: CollectGate | undefined;
+/// Changes the person applied by hand in this window, for the one-time offer's own count.
+let handChangesThisWindow = 0;
+const TRIAL_OFFERED_KEY = 'semanticus.trialOffered';
+const TRIAL_USED_KEY = 'semanticus.trialUsed';
+const TRIAL_END_SEEN_KEY = 'semanticus.trialEndSeen';
+let trialOfferShowing = false;
+
+async function startTrialFlow(context: vscode.ExtensionContext, email: string): Promise<void> {
+    const nonce = newTrialNonce();
+    setProPage({ ...proPage, trial: { step: 'sending', email } });
+    let answer: 'sent' | 'used';
+    try { answer = await startTrial(billingBaseUrl(), email, nonce); }
+    catch (e: any) {
+        out.appendLine(`[trial] the free month did not start: ${e?.message ?? e}`);
+        const unreachable = e instanceof BillingError && (e.status === 0 || e.status === 404);
+        setProPage({ ...proPage, trial: { step: 'error', email,
+            message: unreachable ? 'The free month cannot start just now. Check your connection and try again.' : (e?.message || 'The free month could not start just now. Try again in a minute.') } });
+        return;
+    }
+    if (answer === 'used') {
+        await context.globalState.update(TRIAL_USED_KEY, true);
+        setProPage({ ...proPage, trial: { step: 'used', email } });
+        return;
+    }
+    // The snapshot is taken before the wait, as for a purchase: a licence change that lands meanwhile wins.
+    const canStore = await canUseSecretStorage(context);
+    const opened = await openLicenseSnapshot(context, canStore);
+    const gate = new CollectGate();
+    trialCollectionInFlight = gate;
+    setProPage({ ...proPage, trial: { step: 'waiting', email } });
+    let outcome;
+    try { outcome = await collectTrialToken({ base: billingBaseUrl(), nonce, gate }); }
+    finally { if (trialCollectionInFlight === gate) trialCollectionInFlight = undefined; }
+
+    if (outcome.kind === 'token') {
+        await context.globalState.update(TRIAL_USED_KEY, true);
+        if (await applyLicenseToken(context, outcome.token.trim(), opened, canStore)) {
+            await reverifyAfterLicenseChange(context, async () => {
+                let tier = '';
+                try { tier = ((await conn?.sendRequest('getEntitlement') as EntitlementInfo | undefined)?.tier ?? '').toLowerCase(); } catch { /* read as not on */ }
+                proPage = { ...proPage, trial: tier === 'pro' ? { step: 'on', email } : undefined };
+                await refreshProAccount(context);
+                void refreshTrialStatus();
+            });
+        }
+        if (proPage.trial?.step === 'waiting') setProPage({ ...proPage, trial: undefined });
+        return;
+    }
+    if (outcome.kind === 'cancelled') return;
+    setProPage({ ...proPage, trial: { step: 'error', email, message: outcome.kind === 'timeout'
+        ? 'The link in the email was not pressed in 15 minutes. Start again to get a new email.'
+        : outcome.kind === 'gone' ? 'That free month was already turned on. Check the Pro page on the computer you used.'
+        : 'The free month could not start just now. Try again in a minute.' } });
+}
+
+/// Count the person's own applied changes, and show the one-time offer when the count is real.
+function noteHandChanges(n: ChangeNotification): void {
+    const added = handChangesIn(n);
+    if (added <= 0) return;
+    handChangesThisWindow += added;
+    void maybeOfferTrial();
+}
+
+async function maybeOfferTrial(): Promise<void> {
+    if (trialOfferShowing || !trialStatus || !conn) return;
+    const ctx = extCtx;
+    if (ctx.globalState.get<boolean>(TRIAL_OFFERED_KEY) || ctx.globalState.get<boolean>(TRIAL_USED_KEY)) return;
+    let info: EntitlementInfo | undefined;
+    try { info = await conn.sendRequest('getEntitlement') as EntitlementInfo; } catch { return; }
+    if (!shouldOfferTrial({ ...info, handChanges: handChangesThisWindow })) return;
+    const words = trialOfferWords(handChangesThisWindow);
+    trialOfferShowing = true;
+    // Shown once, ever: marked as offered the moment it appears. It stays for this window until pressed.
+    await ctx.globalState.update(TRIAL_OFFERED_KEY, true);
+    trialStatus.text = `$(star) ${words.text}`;
+    trialStatus.tooltip = words.tooltip;
+    trialStatus.command = { title: 'Try Pro free', command: 'semanticus.upgradeToPro', arguments: ['trialOffer'] };
+    trialStatus.show();
+}
+
+async function retireTrialOffer(_context: vscode.ExtensionContext): Promise<void> {
+    if (!trialOfferShowing) return;
+    trialOfferShowing = false;
+    trialStatus?.hide();
+    void refreshTrialStatus();
+}
+
+/// The last three days and the end, on the status bar. Nothing during the rest of the month.
+async function refreshTrialStatus(): Promise<void> {
+    if (!trialStatus || trialOfferShowing) return;
+    let info: EntitlementInfo | undefined;
+    try { info = await conn?.sendRequest('getEntitlement') as EntitlementInfo | undefined; } catch { /* nothing known */ }
+    const phase = trialPhaseOf(info);
+    if (phase === 'ending') {
+        trialStatus.text = `$(clock) ${trialEndsWords(info?.trialDaysLeft ?? 0).replace(/\.$/, '')}`;
+        trialStatus.tooltip = 'Your free Pro month ends soon. Press to keep Pro. Nothing you made is lost either way.';
+        trialStatus.command = 'semanticus.upgradeToPro';
+        trialStatus.show();
+        return;
+    }
+    if (phase === 'ended' && !extCtx.globalState.get<boolean>(TRIAL_END_SEEN_KEY)) {
+        trialStatus.text = '$(info) Your Pro month ended';
+        trialStatus.tooltip = 'You are back on Semanticus Free. Nothing you made is lost. Press to see your Pro month.';
+        trialStatus.command = { title: 'Your Pro month', command: 'semanticus.upgradeToPro', arguments: ['trialEnd'] };
+        trialStatus.show();
+        return;
+    }
+    trialStatus.hide();
 }
 
 /// vscode://semanticus-vscode.semanticus-vscode/pro?nonce=… — the "return to VS Code" link on the thanks
@@ -5316,6 +5482,7 @@ async function offerFileRecovery(info: SessionInfo & { fileRecovery?: FileRecove
     if (!choice || !connected || connected !== conn || currentSessionId !== info.sessionId) return;
     try {
         await connected.sendRequest('resolveFileRecovery', info.sessionId, choice === 'Restore them');
+        offeredFileRecoverySession = undefined;   // an older kept copy may be next, and the refresh below offers it
         await refreshStatus(); tree.refresh(); await propGrid?.reload(info.modelName);
     } catch (e) { vscode.window.showErrorMessage('The kept changes could not be restored. ' + String((e as Error).message || e)); }
 }
@@ -5518,10 +5685,8 @@ async function finishOpen(r: OpenResult | undefined, tree: ModelTreeProvider): P
 }
 
 // `by` says whose swap this was. 'otherDoor' is a swap the person did not make here (the assistant, or another
-// window): Studio follows it but does not treat it as the person's own open, so nothing it keeps once per open
-// (the Pro permission card) comes back because of it.
+// window): Studio follows it but does not reopen itself for it. It does ask the person about Jev for a model nobody has decided about.
 async function bindGridAndTree(modelName: string | undefined, tree: ModelTreeProvider, by: 'person' | 'otherDoor' = 'person'): Promise<void> {
-    consentAsks.noteSwap(by);
     tree.clearAssistantFlash();
     await propGrid.showModel(modelName);   // a model swap never inherits an old object's property target
     tree.refresh();
@@ -6805,9 +6970,7 @@ async function authorDelete(node?: TreeNode, nodes?: TreeNode[]) {
     if (!conn) { warnNoEngine(); return; }
     const targets = selectionRefs(node, nodes);
     if (!targets.length) return;
-    const label = targets.length === 1 ? `${COPYABLE_KINDS[targets[0].kind] ?? targets[0].kind} "${targets[0].name}"` : `${targets.length} objects`;
-    const ok = await vscode.window.showWarningMessage(`Delete ${label}? DAX references are NOT auto-rewritten, so check dependents first.`, { modal: true }, 'Delete');
-    if (ok !== 'Delete') return;
+    // No question: Undo puts a delete back (Kane, 8 Oct: undo is the safety net).
     try {
         const refs = targets.map((t) => t.ref).filter(Boolean);
         if (refs.length === 1) await conn.sendRequest('deleteObject', refs[0], 'human');
@@ -7670,12 +7833,15 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             void openReferenceSession(ref).finally(() => postToPanels({ type: 'connectionChanged' }));
             return;
         }
+        if (msg?.type === 'setPersonalitySetting') { await writePersonalitySetting(msg).catch(() => undefined); return; }
         if (msg?.type === 'openExternal') {                                              // sandboxed-iframe links → the user's browser
             const url = String(msg.url ?? '');
             if (/^https?:\/\//i.test(url)) void vscode.env.openExternal(vscode.Uri.parse(url));
             return;
         }
         if (msg?.type === 'studioReady') {
+            // Personality, sounds and motion (1.5): the person's settings, now and on every change.
+            attachPersonalitySettings(panel);
             if (!isStandalone) {
                 const assistantConnected = hasSemanticusMcpEntry(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath);
                 studioDriveMode = resolveStudioDriveMode();
@@ -7753,9 +7919,11 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // Every request a page sends names the model that page was showing (C1, drafts-sol round 2): the ENGINE refuses a write whose page is not on the open model.
             // One place for every page and every editor; withModelIdentity puts it on this request and no other.
             const named = msg.modelIdentity;
-            const result: any = params.length
-                ? await withModelIdentity(named, () => caller.sendRequest(msg.method, ParameterStructures.byPosition, ...params))
-                : await withModelIdentity(named, () => caller.sendRequest(msg.method));
+            // A call a button made says so (rpcPressed); only that kind may open a sign-in window in the engine (SignInPress).
+            const pressed = msg.pressed === true;
+            const result: any = await withPress(pressed, () => params.length
+                ? withModelIdentity(named, () => caller.sendRequest(msg.method, ParameterStructures.byPosition, ...params))
+                : withModelIdentity(named, () => caller.sendRequest(msg.method)));
             // A History restore reopens the model as a new session. The engine does not announce a swap to the
             // connection that asked for it, so a restore Studio starts is refreshed here, like an open (verifier D3).
             const modelSwapped = msg.method === 'open' || msg.method === 'openLocal' || msg.method === 'openLive' || msg.method === 'createModel'
@@ -7768,7 +7936,6 @@ function studioRelayHandler(panel: vscode.WebviewPanel, isStandalone: boolean): 
             // open (the Pro permission card): 'restore', not 'person'.
             const swapBy = msg.method === 'restoreHistoryCheckpoint' ? 'restore' : 'person';
             if (modelSwapped) {
-                consentAsks.noteSwap(swapBy);
                 try { await propGrid.showModel(result?.context?.editing?.modelName ?? result?.modelName ?? result?.destination?.name ?? 'Model'); } catch { }
                 tree.refresh();
                 const swapped = await refreshStatus();

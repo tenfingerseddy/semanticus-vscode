@@ -206,7 +206,9 @@ namespace Semanticus.Tests
             // A finding left alone because its change was declined is still open and auto-fixable, so Fix all lists it with the reason
             // (round 6, L2) and never claims that nothing remains.
             Assert.Contains(result.Unfixed, u => u.ObjectRef == "column:Sales/CustomerKey" && u.RuleId == "HIDE_FOREIGN_KEYS" && u.Reason.Contains("related finding"));
-            Assert.DoesNotContain(result.Unfixed, u => u.ObjectRef == "column:Sales/ProductKey");   // hidden by the press, so the visible-only finding stopped firing: nothing to list
+            // Hidden by the press: one press finishes what it opens (fd6b33a9, hero19 D9), so the MDX finding on the hidden column is fixed in the same press, not listed.
+            Assert.DoesNotContain(result.Unfixed, u => u.ObjectRef == "column:Sales/ProductKey");
+            Assert.False(await Read(f, m => m.Tables["Sales"].Columns["ProductKey"].IsAvailableInMDX));
             Assert.True(result.Remaining >= 1);
         }
 
@@ -224,6 +226,10 @@ namespace Semanticus.Tests
             await f.Engine.WaiveFindingAsync("bpa", "HIDE_FOREIGN_KEYS", "column:Sales/ProductKey", Why, "human");
 
             Assert.DoesNotContain((await f.Engine.GetModelPlanAsync()).Items, i => i.Id == "safefix/Visibility");
+
+            // Nothing was fixed: the person said leave it, so the row is not recorded as done (Plan done) on the next read either.
+            var again = await f.Engine.GetModelPlanAsync();
+            Assert.DoesNotContain(again.Items, i => i.Id == "safefix/Visibility");
         }
     }
 }

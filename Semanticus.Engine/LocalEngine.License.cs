@@ -27,12 +27,24 @@ namespace Semanticus.Engine
         /// so rather than claiming free). <paramref name="verifyOnly"/> answers the same question and swaps nothing,
         /// so the page can refuse a bad key before anything is stored.
         ///
-        /// The agent door is not told: it reads the entitlement on its next call, as it learns of every change.</summary>
+        /// Every Studio connection is told (<c>entitlement/didChange</c>), so another window on the same engine changes too.
+        /// The agent door is not pushed anything: it reads the entitlement on its next call, as it learns of every change.</summary>
         internal Entitlement.LicenseSwapResult ApplyLicense(string token, bool verifyOnly)
+        {
+            var result = SwapLicense(token, verifyOnly);
+            if (result.Applied) PublishEntitlementChanged();
+            return result;
+        }
+
+        private Entitlement.LicenseSwapResult SwapLicense(string token, bool verifyOnly)
         {
             var trimmed = string.IsNullOrWhiteSpace(token) ? null : token.Trim();
             lock (_licenseGate)
             {
+                // A removal deletes the licence file BEFORE the evaluator runs: with no token it falls back to the user
+                // licence file, so reading it first would land a removed licence on the very Pro it was saved as.
+                // A replaced licence is written only after it is accepted (below), so a refused key never touches it.
+                if (trimmed == null && !verifyOnly) Entitlement.LicenseMirror.Follow(UserLicenseFile(), null);
                 var candidate = _licenseEvaluator(trimmed);
                 var current = _entitlement;
                 if (trimmed != null && (candidate == null || !candidate.IsPro))
@@ -40,12 +52,15 @@ namespace Semanticus.Engine
                     {
                         Accepted = false,
                         Reason = candidate?.Info?.Reason ?? "license missing or invalid",
-                        Entitlement = Entitlement.FeatureGrants.Stamp(current.Info, current),
+                        Entitlement = StampedInfo(current),
                     };
                 if (verifyOnly)
-                    return new Entitlement.LicenseSwapResult { Accepted = true, Entitlement = Entitlement.FeatureGrants.Stamp(current.Info, current) };
+                    return new Entitlement.LicenseSwapResult { Accepted = true, Entitlement = StampedInfo(current) };
 
                 _entitlement = candidate;
+                // The licence file other assistants read (see LicenseMirror) follows the licence. It is made here only when an
+                // assistant is already connected, so Pro that begins after the connect (a trial, a key, a purchase) reaches it.
+                if (trimmed != null) Entitlement.LicenseMirror.Follow(UserLicenseFile(), trimmed, create: AnyAssistantConnected());
                 // The hosted decision service was built with the old licence's credential. Retire it and drop it, so
                 // the next use builds one with the new credential, or none: a removed licence must not keep a route
                 // that spends money. Dropping alone was not enough (F-243): a request that started under the old
@@ -58,7 +73,7 @@ namespace Semanticus.Engine
                 {
                     Accepted = true,
                     Applied = true,
-                    Entitlement = Entitlement.FeatureGrants.Stamp(candidate.Info, candidate),
+                    Entitlement = StampedInfo(candidate),
                 };
             }
         }

@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -165,9 +166,54 @@ namespace Semanticus.Engine
         private static TokenCredential BrowserCredential(string tenant, AuthenticationRecord savedRecord, bool disableInteractive, string loginHint)
         {
             var gate = !disableInteractive && InteractiveSignIn.MustGate;
-            var cred = new InteractiveBrowserCredential(InteractiveOptions(tenant, savedRecord, disableInteractive || gate, loginHint));
+            // A credential that may prompt is built with the press gate (SignInPress): it prompts only while a person's press is in force, whenever it is used.
+            var cred = disableInteractive || gate
+                ? Plain(InteractiveOptions(tenant, savedRecord, true, loginHint))
+                : new PressGatedBrowserCredential(InteractiveOptions(tenant, savedRecord, false, loginHint), rec => Plain(InteractiveOptions(tenant, rec ?? savedRecord, true, loginHint)));
             if (gate) BrowserGated.AddOrUpdate(cred, null);
             return cred;
+        }
+
+        /// <summary>The browser credential of an engine that may open a window. Used with a press (SignInPress) it is the credential it always was; used
+        /// by anything automatic it is its silent twin, which reads the saved sign-in and throws AuthenticationRequiredException when that is not enough.
+        /// The check runs at every use, so a credential a press cached is still silent for the next automatic read.</summary>
+        private static InteractiveBrowserCredential Plain(InteractiveBrowserCredentialOptions options) => new InteractiveBrowserCredential(options);   // the one place a browser credential is built
+
+        private sealed class PressGatedBrowserCredential : InteractiveBrowserCredential
+        {
+            // Azure.Identity 1.13.1 keeps the signed-in account in an internal Record property, set by AuthenticateAsync and by a
+            // first interactive GetToken. The silent twin was built before that capture, so without a rebuild a first sign-in made by a
+            // press could never renew silently for later automatic reads.
+            private static readonly PropertyInfo RecordProp = typeof(InteractiveBrowserCredential).GetProperty("Record", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            private readonly Func<AuthenticationRecord, InteractiveBrowserCredential> _makeSilent;
+            private InteractiveBrowserCredential _silent;
+            private AuthenticationRecord _silentRecord;
+            private readonly object _gate = new();
+
+            public PressGatedBrowserCredential(InteractiveBrowserCredentialOptions options, Func<AuthenticationRecord, InteractiveBrowserCredential> makeSilent) : base(options)
+            {
+                _makeSilent = makeSilent;
+                _silent = makeSilent(null);
+            }
+
+            // Rebuild the silent twin from the account this credential captured, when it differs from the one the twin holds.
+            internal void SyncSilentTwin()
+            {
+                var captured = RecordProp?.GetValue(this) as AuthenticationRecord;
+                lock (_gate)
+                {
+                    if (captured == null || ReferenceEquals(captured, _silentRecord)) return;
+                    _silent = _makeSilent(captured);
+                    _silentRecord = captured;
+                }
+            }
+
+            private InteractiveBrowserCredential Silent() { SyncSilentTwin(); lock (_gate) return _silent; }
+
+            public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+                => SignInPress.Pressed ? base.GetToken(requestContext, cancellationToken) : Silent().GetToken(requestContext, cancellationToken);
+            public override System.Threading.Tasks.ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+                => SignInPress.Pressed ? base.GetTokenAsync(requestContext, cancellationToken) : Silent().GetTokenAsync(requestContext, cancellationToken);
         }
 
         private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<TokenCredential, object> BrowserGated = new();
@@ -667,6 +713,7 @@ namespace Semanticus.Engine
             if (cred is InteractiveBrowserCredential ibc)
             {
                 // A first sign-in or a switch opens the browser. Not in an engine that may not (InteractiveSignIn).
+                if (!SignInPress.Pressed) throw new InvalidOperationException(SignInPress.NotPressedText);   // automatic: a first sign-in opens nothing
                 if (IsBrowserGated(ibc)) throw InteractiveSignIn.Refuse("a first sign-in, " + mode);
                 // The chooser hang lives here: closing the tab does not cancel MSAL, so without a ceiling the page
                 // waited until the 10 minute webview guard (D-014). SignInWait names cancel vs timeout and logs an id.
@@ -825,7 +872,12 @@ namespace Semanticus.Engine
             try { return await cred.GetTokenAsync(new TokenRequestContext(scopes), ct).ConfigureAwait(false); }
             catch (AuthenticationRequiredException ex) when (IsBrowserGated(cred))
             {
+                if (!SignInPress.Pressed) throw new InvalidOperationException(SignInPress.NotPressedText, ex);   // automatic: no window, and no browser stand-in reached
                 throw InteractiveSignIn.Refuse("a token for " + string.Join(" ", scopes), ex);
+            }
+            catch (AuthenticationRequiredException ex) when (cred is PressGatedBrowserCredential && !SignInPress.Pressed)
+            {
+                throw new InvalidOperationException(SignInPress.NotPressedText, ex);
             }
         }
 

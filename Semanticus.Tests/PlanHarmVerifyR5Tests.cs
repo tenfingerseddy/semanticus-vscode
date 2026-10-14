@@ -86,7 +86,7 @@ namespace Semanticus.Tests
             var set = proposed.Plan.Items.Single(i => i.Id == "cleanup/model").ChangeSet;
             Assert.NotNull(set);
 
-            var sweep = await f.Engine.UnusedObjectsAsync();
+            var sweep = await f.Engine.UnusedObjectsCoreAsync(keepVisibleUntilReportsChecked: false);
             var safeColumns = (sweep?.Items ?? Array.Empty<UnusedItem>())
                 .Where(i => (string.Equals(i.Verdict, "safe", StringComparison.Ordinal) || string.Equals(i.Verdict, "visibleAttribute", StringComparison.Ordinal))
                          && !string.Equals(i.Kind, "measure", StringComparison.OrdinalIgnoreCase))

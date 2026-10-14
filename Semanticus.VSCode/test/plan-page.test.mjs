@@ -47,6 +47,9 @@ const STUBS = {
     onPlanChange: () => () => {}, onSpecChange: () => () => {}, copyText: async () => {},
     pickSpecFile: async () => null,
   },
+  './plan-head': { PlanHead: ({ slot, drive, run }) => React.createElement('header', { 'data-testid': 'plan-head' }, slot, drive, run), DriveSwitch: () => null, LiveSlot: () => null,
+    usePlanGrade: () => ({ grade: null, refresh: async () => null }) },
+  './studio/ask-assistant': { askAssistant: async () => ({ ok: true, text: '' }) },
   './connection': { useConnection: () => ({ session: { sessionId: 'test' }, context: null }) },
   './pro': {
     useTier: () => stubTier,
@@ -60,7 +63,7 @@ function load(file) {
   // .mjs is in the list because a plain ES module this page imports can be loaded here too (the Overview's
   // overviewfacts.mjs was the first; it retired with the Overview in slice 11).
   const full = /\.(ts|tsx|mjs)$/.test(file) ? file
-    : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
+    : existsSync(file + '.tsx') ? file + '.tsx' : existsSync(file + '.ts') ? file + '.ts' : file + '/index.ts';
   if (cache.has(full)) return cache.get(full);
   const source = readFileSync(full, 'utf8');
   const js = ts.transpileModule(source, {
@@ -481,5 +484,12 @@ assert.equal(byId(planUnskip(skipped, CLEANUP), CLEANUP).skipReason, undefined);
   const asProved = readable(draw({ ...base, suggestion: false, status: 'approved', checkText: '#,##0 is the standard whole numbers format.' }));
   assert.match(asProved, /\bsafe\b/, 'control: a proved line keeps its chip');
   assert.doesNotMatch(asProved, /Jev suggests this format/, 'and carries no suggestion note');
-  assert.match(srcOf('optimize.tsx'), /from Jev/, 'the summary counts Jev lines in a category of their own');
+  assert.match(srcOf('optimize.tsx'), />Jev \{s\?\.jev/, 'the filter counts Jev lines in a category of their own');
+}
+
+// hero17 P11: a reopened live model swaps the engine while the plan is being read. The cut-off read is read again, not shown as a failure.
+{
+  const plan = readFileSync(join(webview, 'src', 'plan.tsx'), 'utf8');
+  assert.match(plan, /onReconnect\(\(\) => setRetry\(/, 'the plan page reads again when the engine connection is swapped');
+  assert.match(plan, /!\/engine connection was lost\/\.test\(messageOf\(failure\)\)/, 'and a read the swap cut off shows no error');
 }

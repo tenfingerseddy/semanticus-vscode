@@ -318,7 +318,7 @@ namespace Semanticus.Engine
                         c => new CloudReport { Id = c.ReportId ?? c.Name, Name = c.Name, ReportType = "PowerBIReport" },
                         StringComparer.OrdinalIgnoreCase);
                     string fabricToken;
-                    try { fabricToken = await AcquireFabricTokenAsync(authMode ?? "azcli", tenantId, origin, cancellationToken).ConfigureAwait(false); }
+                    try { fabricToken = await AcquireFabricTokenAsync(authMode, tenantId, origin, cancellationToken).ConfigureAwait(false); }
                     catch (Exception ex) when (ex is not ArgumentException && !cancellationToken.IsCancellationRequested)
                     { throw new InvalidOperationException(FabricRest.Scrub(ex.Message)); }
                     fetched = await FetchCloudReportPartsAsync(group.Key, reportIds, byId, fabricToken, cancellationToken).ConfigureAwait(false);
@@ -432,6 +432,9 @@ namespace Semanticus.Engine
             /// <summary>The names of the chosen reports whose reading is missing or out of date.</summary>
             public string[] Unchecked { get; set; } = Array.Empty<string>();
             public bool HasChoices => Chosen > 0;
+            /// <summary>The caller set the report list to empty in this session: the model has no reports (none found locally or published).
+            /// That is a report-aware sweep over an empty set, and it says so. Never true when a report is chosen.</summary>
+            public bool NoReports { get; set; }
             /// <summary>True only when every chosen report has a current reading.</summary>
             public bool Complete => Chosen > 0 && Unchecked.Length == 0;
             /// <summary>The sentence both doors say when a deletion is asked for on incomplete coverage.</summary>
@@ -486,7 +489,9 @@ namespace Semanticus.Engine
                 generation = _reportScopeGenerations.TryGetValue(key, out var g) ? g : 0;
             }
 
-            var coverage = new ReportScopeCoverage { Chosen = choices.Count };
+            bool declaredNone;
+            lock (_reportScopeGate) declaredNone = _reportScopeTouched.Contains(key);
+            var coverage = new ReportScopeCoverage { Chosen = choices.Count, NoReports = choices.Count == 0 && declaredNone };
             var missing = new List<string>();
             var readings = new List<string>();
             foreach (var c in choices)
@@ -517,7 +522,7 @@ namespace Semanticus.Engine
             // R2: one comparable string for the basis. Deliberately blind to the model revision and to the time of
             // the reading, so a model edit or an honest re-read of the SAME selection is not a changed basis, while
             // a different selection, or evidence that was dropped, is.
-            var signature = choices.Count == 0 ? "none"
+            var signature = choices.Count == 0 ? (coverage.NoReports ? "noReports" : "none")
                 : string.Join("|", choices.Select(c => c.Id).OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
                     .Select(id => id + ":" + (evidence != null && evidence.ByChoiceId.ContainsKey(id) ? "read" : "unread")));
             return new ScopeBasis

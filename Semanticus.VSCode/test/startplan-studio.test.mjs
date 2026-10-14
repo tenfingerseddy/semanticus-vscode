@@ -434,7 +434,7 @@ const render = (view, pro, extra = {}) => renderToStaticMarkup(React.createEleme
   const verbs = [...contract.matchAll(/Task<[\w<>]+>\s+(\w+)Async\(/g)].map((m) => m[1].charAt(0).toLowerCase() + m[1].slice(1));
   assert.ok(verbs.length >= 9 && verbs.includes('approveStartPlan') && verbs.includes('buildStartPlan'), `the contract's verbs were found: ${verbs.join(', ')}`);
   const calls = new Set();
-  for (const f of ['startplan.tsx', 'plan.tsx', 'spec.tsx']) for (const m of src(f).matchAll(/\brpc\s*(?:<[^()]*?>)?\s*\(\s*(['"])([^'"]+)\1/g)) calls.add(m[2]);
+  for (const f of ['startplan.tsx', 'plan.tsx', 'spec.tsx']) for (const m of src(f).matchAll(/\brpc(?:Pressed)?\s*(?:<[^()]*?>)?\s*\(\s*(['"])([^'"]+)\1/g)) calls.add(m[2]);
   const mine = [...calls].filter((n) => /StartPlan|StartModel|StartDisclosure|startPlan/.test(n));
   assert.ok(mine.length >= 6, `the page calls the start plan verbs: ${mine.join(', ')}`);
   for (const n of mine) assert.ok(verbs.includes(n), `${n} is a verb of IStartPlanEngine`);

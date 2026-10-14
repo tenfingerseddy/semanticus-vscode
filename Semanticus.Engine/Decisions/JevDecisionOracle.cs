@@ -95,7 +95,17 @@ namespace Semanticus.Engine.Decisions
         /// person waiting. See docs/redesign/jev-pilot-verdict-2.md.</summary>
         internal static readonly TimeSpan Deadline = TimeSpan.FromSeconds(4);
 
-        internal const int MaxConcurrent = 6;
+        /// <summary>How many asks this engine process has out at once, and the only such limit: one oracle serves the whole engine (every Jev family,
+        /// the Plan's ranking, start plan and Ask), so this is the engine-wide cap. The relay no longer limits asks in flight for a licence (Kane,
+        /// 13 Oct: only the monthly budget does), so this is not there to protect cost. It keeps the person's machine responsive while a model opens.</summary>
+        internal const int MaxConcurrent = 16;
+
+        /// <summary>How long one ask waits its turn if the relay ever says too many are in flight (the 429 back-off stays for safety), before it gives the ask back to the Plan
+        /// (which keeps the job queued and asks again on the next read). A crowded relay is not a failure and is never charged.</summary>
+        internal static readonly TimeSpan BusyBound = TimeSpan.FromMinutes(2);
+
+        /// <summary>The longest single pause between two tries while the relay is crowded.</summary>
+        private static readonly TimeSpan BusyPauseCap = TimeSpan.FromSeconds(10);
         private const int MaxSnapshotBytes = 64 * 1024;
 
         /// <summary>A request that asks a table at a time (m11/jev-batch: up to about thirty questions) gets a little more time than a
@@ -138,6 +148,43 @@ namespace Semanticus.Engine.Decisions
         internal Func<DateTime> UtcNowForTest;
 
         private DateTime UtcNow => UtcNowForTest?.Invoke() ?? DateTime.UtcNow;
+
+        /// <summary>Test seam: the pause between tries while the relay is crowded, so a suite does not wait seconds. Null on every production path.</summary>
+        internal Func<TimeSpan, CancellationToken, Task> BusyDelayForTest;
+
+        /// <summary>Test seam: the longest an ask waits its turn. Null on every production path, which reads <see cref="BusyBound"/>.</summary>
+        internal TimeSpan? BusyBoundForTest;
+
+        /// <summary>What the last crowded reply said about when to come back, and whether the reply was a crowded one at all.</summary>
+        private sealed class Crowd
+        {
+            public bool Hit;
+            public TimeSpan? RetryAfter;
+        }
+
+        private int _waitingAsks;
+        private long _waitingSinceTicks;
+
+        /// <summary>When the oldest ask now waiting its turn began to wait, or null when none is. The Plan row reads it ("Jev is waiting its turn, 0:12").</summary>
+        public DateTime? WaitingSince
+        {
+            get
+            {
+                if (Volatile.Read(ref _waitingAsks) <= 0) return null;
+                var ticks = Interlocked.Read(ref _waitingSinceTicks);
+                return ticks == 0 ? (DateTime?)null : new DateTime(ticks, DateTimeKind.Utc);
+            }
+        }
+
+        private void BeginWaiting()
+        {
+            if (Interlocked.Increment(ref _waitingAsks) == 1) Interlocked.Exchange(ref _waitingSinceTicks, UtcNow.Ticks);
+        }
+
+        private void EndWaiting()
+        {
+            if (Interlocked.Decrement(ref _waitingAsks) <= 0) Interlocked.Exchange(ref _waitingSinceTicks, 0);
+        }
 
         /// <summary>How long a relay refusal that says the service is not answering for now holds off this session's next
         /// asks (see HeldOffReason).</summary>
@@ -251,9 +298,64 @@ namespace Semanticus.Engine.Decisions
         /// models' answers.</summary>
         public string LastServedModelVersion { get; private set; }
 
+        /// <summary>One ask. A relay that says too many requests are in flight is crowded, not broken: the ask waits its turn (a pause with
+        /// jitter, or the relay's own Retry-After) and goes again, for up to <see cref="BusyBound"/>, and a crowded reply is never charged
+        /// (it is a free refusal). Past the bound it comes back with <see cref="CrowdedReason"/>, which the Plan reads as "not finished, will
+        /// be asked again", never as a stop.</summary>
         public async Task<DecisionAnswers> AskAsync(DecisionRequest request, CancellationToken ct)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
+            var crowd = new Crowd();
+            var bound = BusyBoundForTest ?? BusyBound;
+            var waited = TimeSpan.Zero;
+            var waiting = false;
+            try
+            {
+                for (var round = 0; ; round++)
+                {
+                    crowd.Hit = false;
+                    crowd.RetryAfter = null;
+                    var answers = await AskOnceAsync(request, ct, crowd).ConfigureAwait(false);
+                    if (!crowd.Hit || ct.IsCancellationRequested) return answers;
+                    if (waited >= bound)
+                    {
+                        Log(request.PointName, 0, waited, "crowded");
+                        return DecisionAnswers.NotDecided(request, CrowdedReason);
+                    }
+                    var pause = BusyPause(round, crowd.RetryAfter);
+                    if (waited + pause > bound) pause = bound - waited;
+                    if (!waiting) { BeginWaiting(); waiting = true; }
+                    try
+                    {
+                        var delay = BusyDelayForTest;
+                        await (delay != null ? delay(pause, ct) : Task.Delay(pause, ct)).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        Log(request.PointName, 0, waited, "cancelled");
+                        return DecisionAnswers.NotDecided(request, CancelledReason);
+                    }
+                    waited += pause;
+                }
+            }
+            finally
+            {
+                if (waiting) EndWaiting();
+            }
+        }
+
+        /// <summary>How long to wait before the next try: the relay's Retry-After when it sent one, else one second doubling to ten, and
+        /// either way a little jitter so several asks (and a second engine) do not all come back in the same instant.</summary>
+        private static TimeSpan BusyPause(int round, TimeSpan? retryAfter)
+        {
+            var baseSeconds = retryAfter.HasValue
+                ? Math.Min(30, Math.Max(0.25, retryAfter.Value.TotalSeconds))
+                : Math.Min(BusyPauseCap.TotalSeconds, Math.Pow(2, Math.Min(round, 4)));
+            return TimeSpan.FromSeconds(baseSeconds * (1 + Random.Shared.NextDouble() * 0.5));
+        }
+
+        private async Task<DecisionAnswers> AskOnceAsync(DecisionRequest request, CancellationToken ct, Crowd crowd)
+        {
 
             // A point that is not registered never reaches the wire, whatever the caller thought it was doing.
             DecisionPoint point;
@@ -306,7 +408,10 @@ namespace Semanticus.Engine.Decisions
 
             using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct))
             {
-                deadline.CancelAfter(_deadline + ExtraFor(request));
+                // The deadline is the time on the wire, so it starts when the ask takes a slot, not when it joins the queue: a model that has just
+                // opened sends a few hundred asks at once, and an ask that waited its turn behind others used to be dropped unsent at four seconds
+                // (the Plan then showed "Jev has looked at 0 of N"). The wait for a slot has its own, much longer bound (BusyBound).
+                var queueBound = BusyBoundForTest ?? BusyBound;
 
                 var started = DateTime.UtcNow;
                 // How many attempts WENT OUT, for the log. Counted where an attempt is sent, not where it starts, so an
@@ -333,7 +438,12 @@ namespace Semanticus.Engine.Decisions
 
                 try
                 {
-                    await _cap.WaitAsync(deadline.Token).ConfigureAwait(false);
+                    using (var queue = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                    {
+                        queue.CancelAfter(queueBound);
+                        await _cap.WaitAsync(queue.Token).ConfigureAwait(false);
+                    }
+                    deadline.CancelAfter(_deadline + ExtraFor(request));
                 }
                 catch (OperationCanceledException)
                 {
@@ -471,6 +581,11 @@ namespace Semanticus.Engine.Decisions
                             // relay counts a vendor 4xx (worker.mjs). The budget is a cost cap: it never under-counts.
                             if (RefusedBeforeAnyWork(response.StatusCode, _relayBase != null)) spend.Refund();
                             failure = RefusalReason(text, response.StatusCode, out failureCode);
+                            if (_relayBase != null && IsCrowdedRefusal(response.StatusCode, failureCode))
+                            {
+                                crowd.Hit = true;
+                                if (response.Headers.RetryAfter?.Delta is TimeSpan hinted) crowd.RetryAfter = hinted;
+                            }
                             // A refusal the relay's contract makes BEFORE it reserves or forwards cost nothing, so
                             // the hold is given back rather than counted. Counting it let a licence's spent month
                             // use this session's allowance up in refusals, and every row then blamed this session
@@ -594,6 +709,11 @@ namespace Semanticus.Engine.Decisions
         /// <summary>No reply came back before the deadline. The log line still says "timeout" (the failure code).</summary>
         public const string TimedOutReason = NotAvailableReason;
 
+        /// <summary>The relay stayed crowded for the whole wait. Nothing was charged and the Plan keeps the job queued and asks again by itself.</summary>
+        public const string CrowdedReason = "Jev is waiting its turn, so Semanticus will try again by itself.";
+
+        public static bool IsCrowded(string reason) => string.Equals((reason ?? string.Empty).Trim(), CrowdedReason, StringComparison.Ordinal);
+
         /// <summary>The ask waited its turn behind others past the deadline, so it was never sent.</summary>
         public const string QueueDroppedReason = "the advice request waited too long behind others and was dropped";
 
@@ -627,6 +747,10 @@ namespace Semanticus.Engine.Decisions
             // The served model's own switch: relay.md folds it into "paused", the worker names it (worker.mjs).
             ["model_paused"] = 503,
         };
+
+        /// <summary>The relay's "too many in flight for this licence": busy for a moment, so the ask waits its turn rather than failing.</summary>
+        internal static bool IsCrowdedRefusal(HttpStatusCode status, string code) =>
+            (int)status == 429 && string.Equals(code, "too_many_in_flight", StringComparison.Ordinal);
 
         internal static bool IsFreeRelayRefusal(HttpStatusCode status, string code) =>
             code != null && FreeRelayRefusals.TryGetValue(code, out var expected) && expected == (int)status;

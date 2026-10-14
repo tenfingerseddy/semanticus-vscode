@@ -323,6 +323,9 @@ namespace Semanticus.Engine
         /// accept a finding you can see, not one nobody checked.</summary>
         public int BpaUnknownBlocking { get; set; }
         public string[] Blockers { get; set; } = Array.Empty<string>();
+        /// <summary>One key per blocking finding (rule, object, and how many times the object was edited). Never on the wire. A person's yes
+        /// in chat clears these keys, so a later publish does not ask again for the same finding on the same unchanged object (hero19 D6).</summary>
+        internal string[] FindingKeys { get; set; } = Array.Empty<string>();
         /// <summary>Blocking findings on objects this change did not touch. Information, never a block.</summary>
         public int OlderWarnings { get; set; }
         /// <summary>True when the gate judged the whole model instead of a change set: no edits in this session yet,

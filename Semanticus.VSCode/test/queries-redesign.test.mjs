@@ -45,7 +45,8 @@ assert.doesNotMatch(lab, /QuerySentence/, 'the sentence is gone from the page');
 
 // The space rule: the result fills the page and the query is not repeated.
 assert.match(lab, /data-primary="result"/, 'the result region is tagged for the space check');
-assert.match(lab, /sem-card sem-card-flush flex-1 flex flex-col min-h-0" data-primary="result"/, 'the result card grows to fill');
+// It grows to fill, except a Speed panel with nothing measured, which ends after its own content.
+assert.match(lab, /sem-card sem-card-flush flex flex-col min-h-0 \$\{tab === 'speed' && !speedHasContent \? 'shrink-0' : 'flex-1'\}`\} data-primary="result"/, 'the result card grows to fill');
 assert.doesNotMatch(lab, /useResizable\('lab\.wbH'/, 'no fixed-height result box');
 
 // Charts: the rules pick, labelled with the reason, one click to change, one click back.
@@ -96,10 +97,11 @@ assert.doesNotMatch(ask, /'runDax'|runQuery/, 'M2: the question hook never runs 
 const runSites = [...lab.matchAll(/^.*\brunQuery\(.*$/gm)].map((m) => m[0].trim());
 const expected = [
   /^async function runQuery\(q: string\) \{$/,
-  /^function run\(\) \{ setTab\('result'\); void runQuery\(currentQuery\(\)\); \}$/,
+  /^function run\(\) \{ if \(assistantShown\) \{ backToMine\(\); return; \} setTab\('result'\); void runQuery\(personQuery\(\)\); \}$/,
   /^const t = setTimeout\(\(\) => \{ void runQuery\(q\); \}, 220\);$/,
   /^if \(runSentence && conn\?\.connected && config\.values\.length\) void runQuery\(buildQuery\(config\)\);$/,
   /^else if \(chipsHere\) void runQuery\(buildQuery\(config\)\);$/,
+  /^if \(conn\?\.connected && personQuery\(\)\.trim\(\) && \(mode === 'query' \|\| chipsHere \|\| wellsReady\)\) void runQuery\(personQuery\(\)\);$/,
   /^\.then\(\(r\) => \{ if \(r\.ok\) void runQuery\(currentQuery\(\)\); else if \(r\.message\) setErr\(r\.message\); \}\);$/,
 ];
 assert.equal(runSites.length, expected.length, `M2: runQuery is called from ${runSites.length} places, expected ${expected.length}:\n  ${runSites.join('\n  ')}`);
@@ -114,5 +116,13 @@ assert.equal((lab.match(/\brun\(\)(?! \{)/g) || []).length, 1, 'M2: run() is cal
 assert.equal((lab.match(/onClick=\{run\}/g) || []).length, 1, 'M2: and from the Run button');
 // The auto-run of the wells steps aside while a question holds the query.
 assert.match(lab, /if \(mode !== 'visual' \|\| chipsHere \|\| !conn\?\.connected \|\| !wellsTouched\.current\) return;/, 'M2: the wells do not re-run under a question');
+
+// Query show (Kane, 13 Oct): an assistant's run is the result at once (Result selected, its DAX shown read-only in place of the
+// person's wells), and Speed never shows numbers that belong to another query. Driven end to end by tools/uishot/query-show-drive.mjs.
+assert.match(lab, /useClaudeReflection\('run_dax'[\s\S]{0,900}setAssistantDax\([^\n]*setTab\('result'\)/, 'an assistant run selects the Result view');
+assert.match(lab, /data-testid="queries-assistant-dax"/, 'the assistant\'s DAX is shown read-only');
+assert.match(lab, /queryShownAbove=\{assistantShown && claudeEvent\.kind === 'run_dax'\}/, 'the strip does not repeat the DAX the box shows');
+assert.doesNotMatch(lab, /queries-speed-stale|measured before, not the result on screen/, 'no stale-number warning: numbers of another query are not shown');
+assert.match(lab, /timings: ownSpeed \? timings : null, cw: ownSpeed \? cw : null, plan: ownSpeed \? plan : null, bench: ownSpeed \? bench : null/, 'Speed gets only this result\'s own numbers');
 
 console.log('queries redesign passed');

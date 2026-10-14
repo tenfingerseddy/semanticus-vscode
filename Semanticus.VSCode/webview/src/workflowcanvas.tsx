@@ -12,7 +12,7 @@ import { TagMark } from './workflowforms';
 // reads one way everywhere in Studio.
 import { CanvasChip } from './toolrow';
 import { workflowLayoutSession } from './workflowlayout.mjs';
-import type { BoxesStepView } from './workflowboxes.mjs';
+import { stepSummary, type BoxesStepView } from './workflowboxes.mjs';
 import { mapLayoutPositions, type WorkflowEditPreview } from './workflowdraft.mjs';
 
 type StepNode = Node<{ step: BoxesStepView }, 'workflowStep'>;
@@ -31,7 +31,13 @@ const FIT_VIEW_OPTIONS = { padding: FIT_MARGIN, maxZoom: 1 };
 
 export interface CanvasCounts { steps: number; actions: number; checks: number }
 
+// A step box says who does it, what it does and how many checks it holds, in plain words. A format 3 step used to
+// read as an empty box ("0 actions") because only the format 1 fields were read.
+const checkWords = (n: number) => (n === 0 ? 'No checks' : n === 1 ? '1 check' : `${n} checks`);
 function WorkflowStepNode({ data: { step }, selected }: NodeProps<StepNode>) {
+  const sum = stepSummary(step);
+  const does = sum.action ?? sum.detail;
+  const whoColor = sum.who === 'person' ? 'var(--sem-actor-you)' : sum.who === 'assistant' ? 'var(--sem-actor-assistant)' : 'var(--sem-actor-semanticus)';
   return (
     <div data-wf-canvas-step={step.order} className="rounded border p-3 text-left"
       style={{ width: 248, background: 'var(--sem-surface)', color: 'var(--sem-fg)',
@@ -41,12 +47,13 @@ function WorkflowStepNode({ data: { step }, selected }: NodeProps<StepNode>) {
       <div className="text-(length:--sem-text-label) mb-1 flex items-center gap-1" style={{ color: 'var(--sem-muted)' }}>Step {step.number}
         {(step.tags ?? []).map((tag) => <TagMark key={tag} tag={tag} />)}</div>
       <div className="text-(length:--sem-text-body) font-semibold break-words">{step.title || 'Untitled'}</div>
-      <div className="text-(length:--sem-text-label) mt-1 break-words" style={{ color: 'var(--sem-muted)' }}>{step.idLabel}</div>
       <div className="flex flex-col gap-1 mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
+        <span data-wf-canvas-who={sum.who} style={{ color: whoColor }}>{sum.whoWords}</span>
         {step.when && <span>When {step.when}</span>}
         {step.forEach && <span>For each {step.forEach.as || 'item'} in {step.forEach.in || 'a list'}</span>}
         {step.call && <span>Calls {step.call.workflow}</span>}
-        {!step.when && !step.forEach && !step.call && <span>{step.ops.length} {step.ops.length === 1 ? 'action' : 'actions'}</span>}
+        {!step.when && !step.forEach && !step.call && <span data-wf-canvas-does="true" style={{ color: 'var(--sem-fg)' }}>{does}</span>}
+        <span data-wf-canvas-checks={sum.checks}>{checkWords(sum.checks)}</span>
       </div>
       <Handle type="source" position={Position.Right} isConnectable={false} />
     </div>

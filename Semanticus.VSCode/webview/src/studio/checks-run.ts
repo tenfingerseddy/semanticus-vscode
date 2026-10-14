@@ -58,3 +58,37 @@ export function runLine(view: AssistantRun): string | null {
 /** A scan the assistant asked for: the page that shows it scans again at once, so the person sees the result and not an older card.
  *  Keyed by the MCP tool; the value is the page's route id (route.ts). */
 export const SCAN_PAGE_OF_TOOL: Record<string, 'bpa' | 'readiness'> = { bpa_scan: 'bpa', ai_readiness_scan: 'readiness' };
+
+// The other Validation tools the assistant runs (testspeed2, 13 Oct). A single check tried, a question graded, a check saved or deleted,
+// a run recorded, unmatched rows looked at, a SQL source tested. The engine sends one plain sentence for each; the page shows it above the
+// results and reads again whatever the tool changed, so the screen is never behind the call.
+
+export type PageReload = 'suite' | 'history' | 'sources' | 'mappings';
+
+export const TOOL_NOTE_RELOADS: Record<string, readonly PageReload[]> = {
+  try_test: [],
+  run_interview: [],
+  reconcile_measure: [],
+  get_unmatched_rows: [],
+  export_test_report: [],
+  record_test_run: ['history'],
+  test_sql_source: ['sources'],
+  review_reconcile_mapping: ['sources', 'mappings'],
+  save_test: ['suite', 'mappings'],
+  delete_test: ['suite', 'mappings'],
+};
+
+export const TOOL_NOTE_KINDS: readonly string[] = Object.keys(TOOL_NOTE_RELOADS);
+
+export type ToolNote = { text: string; ok: boolean; kind: string; seq: number | null };
+
+/** The sentence for the page and what to read again, or null when this event is not one of these tools. */
+export function toolNote(event: { seq?: number; kind?: string; ok?: boolean; label?: string; error?: string | null }): { note: ToolNote; reload: readonly PageReload[] } | null {
+  const kind = event.kind ?? '';
+  const reload = TOOL_NOTE_RELOADS[kind];
+  if (!reload) return null;
+  const ok = event.ok !== false && !event.error;
+  const text = ok ? event.label : event.error || event.label;
+  if (!text) return null;
+  return { note: { text, ok, kind, seq: event.seq ?? null }, reload };
+}

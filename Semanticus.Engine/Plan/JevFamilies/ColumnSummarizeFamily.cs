@@ -59,7 +59,7 @@ namespace Semanticus.Engine
         internal const bool Batched = true;
 
         /// <summary>How many columns one batched request asks about. A table with more goes in more requests.</summary>
-        internal const int ChunkSize = 20;
+        internal const int ChunkSize = 30;
 
         /// <summary>How many columns one run asks about for the first time. A cap, not a sample: every ask costs budget.
         /// Answers already heard are not asked again, and the rest are asked in the runs that follow.</summary>
@@ -84,6 +84,10 @@ namespace Semanticus.Engine
             public string ColumnName;
             public string TableRef;
             public string TableName;
+
+            /// <summary>The display folder most of this table's measures already sit in, or null when none does. A measure this family
+            /// creates goes in the same line into that folder, so the folders-and-formats row never has to come back for it.</summary>
+            public string Folder;
 
             /// <summary>The column's summarize setting now, as TOM names it. Kept here for Map and never sent.</summary>
             public string Current;
@@ -151,7 +155,10 @@ namespace Semanticus.Engine
             c != null && c.Type != ColumnType.RowNumber && !(c.Table is CalculationGroupTable)
             && (c.DataType == DataType.Int64 || c.DataType == DataType.Double || c.DataType == DataType.Decimal);
 
-        internal static Prepared Prepare(Model m, Facts.ModelFacts facts, ISet<string> removed = null)
+        /// <param name="skipAnswered">True on the Plan: a column that already has a base measure, or that a start plan decided and set not to add up, is answered and is not asked about again. False on the
+        /// start plan's decide loop, which asks every round on purpose (it reads a pick that keeps flipping from the repeated answers).</param>
+        /// <param name="startDecided">The columns a start plan heard Jev on (column refs). A tidy column set to None that is not here still gets its measure row.</param>
+        internal static Prepared Prepare(Model m, Facts.ModelFacts facts, ISet<string> removed = null, bool skipAnswered = false, ISet<string> startDecided = null)
         {
             var prepared = new Prepared();
             var point = DecisionRegistry.Require(DecisionRegistry.ColumnSummarize);
@@ -203,6 +210,15 @@ namespace Semanticus.Engine
                         var existing = measures.Existing(option, table.Name, c.Name);
                         if (existing != null) ask.Existing[option] = existing;
                     }
+                    // A column that already has a base measure is answered: asking Jev again offered a second measure, then re-asked the
+                    // table every time a measure was added (Kane, 13 Oct 2026). The summarize setting of the column is the readiness rule's.
+                    // A column the start plan decided and the build set to None is answered too. The Plan asked it again in a smaller batch than the start plan's
+                    // decide loop sent, so Jev was asked twice and a new digest never matched the stored answer (StartPlanEndToEnd, 13 Oct). Only THOSE columns:
+                    // a tidy numeric column that was already None with no base measure still gets its measure row.
+                    if (skipAnswered && (ask.Existing.Count > 0 || (c.SummarizeBy == AggregateFunction.None && startDecided != null && startDecided.Contains(ask.Ref)))) continue;
+                    ask.Folder = table.Measures.Select(x => x.DisplayFolder).Where(x => !string.IsNullOrWhiteSpace(x))
+                        .GroupBy(x => x, StringComparer.OrdinalIgnoreCase).OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+                        .Select(g => g.Key).FirstOrDefault();
                     prepared.Asks.Add(ask);
                 }
             }
@@ -534,10 +550,13 @@ namespace Semanticus.Engine
                      ? "A count is a whole number, so it shows no decimal places."
                      : string.Equals(ask.ColumnFormat, format, StringComparison.Ordinal) ? ask.ColumnName + " already shows as " + format + ", and the measure takes the same format."
                      : "A thousands separator, and one decimal place when the values are not whole."),
+                (Kind: "set_display_folder", Target: "displayFolder", Title: "Put in the " + ask.Folder + " folder", After: ask.Folder,
+                 Check: ask.Folder + " is the folder most of this table's measures already sit in."),
                 (Kind: "set_description", Target: "description", Title: "Describe it", After: Description(pick, BaseMeasures.Humanize(ask.ColumnName), ask.TableName),
                  Check: "Semanticus wrote this description from the measure's own formula."),
             }.ToList();
             // A new measure is visible by default, but a hidden table still hides it from Copilot, and set_synonyms refuses it.
+            if (string.IsNullOrWhiteSpace(ask.Folder)) created.RemoveAll(c => c.Kind == "set_display_folder");
             if (ask.HasLinguistic && !ask.TableHidden)
                 created.Add((Kind: "set_synonyms", Target: "synonyms", Title: "Give it the words people use", After: Synonyms(pick, ask.ColumnName),
                              Check: "Semanticus made these words from the measure's own name, so Copilot knows other ways people ask for it."));

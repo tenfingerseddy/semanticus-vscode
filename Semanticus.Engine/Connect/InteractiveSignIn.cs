@@ -48,6 +48,10 @@ namespace Semanticus.Engine
         /// <summary>True only in an engine started with <see cref="Option"/>. False in every test, smoke and tool run.</summary>
         public static bool Allowed => _allowed;
 
+        /// <summary>Test seam: lets one test stand in for an engine started with <see cref="Option"/>, to prove a credential that may prompt still
+        /// does not while nothing was pressed (SignInPress). The caller puts it back in a finally.</summary>
+        internal static void AllowedForTests(bool allowed) => _allowed = allowed;
+
         /// <summary>Honour <see cref="Option"/> on this engine's command line. Absent, the browser stays off.</summary>
         public static void ApplyCommandLine(string[] args)
         {

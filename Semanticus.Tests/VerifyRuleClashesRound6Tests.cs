@@ -105,7 +105,10 @@ namespace Semanticus.Tests
             Assert.NotNull(row);   // the Model Plan still offers "Mark Date as the date table" for the engine to do
 
             var ran = await RunThePlanAsync(f, door);
-            Assert.Contains("datetable/model", ran);   // not vacuous: Run the plan ran that row
+            // Not vacuous: Run the plan ran other rows. Once the finding is accepted every change on the date row is unticked, so the row goes to the assistant and
+            // Run the plan skips it (the plan's AllUntickedNote), where it used to run the row and leave the line out.
+            Assert.NotEmpty(ran);
+            Assert.DoesNotContain("datetable/model", ran);
 
             var (category, key) = await Read(f, m => (m.Tables["Date"].DataCategory, m.Tables["Date"].Columns["Date"].IsKey));
             Assert.NotEqual("Time", category);

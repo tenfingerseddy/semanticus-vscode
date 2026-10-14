@@ -27,6 +27,7 @@ const STUBS = {
   },
   './sparkline': { ValueSparkline: () => null },
   './plan-history.css': {},
+  './personality/motion/history': { HistoryMotion: () => null },
 };
 const cache = new Map();
 function load(file) {

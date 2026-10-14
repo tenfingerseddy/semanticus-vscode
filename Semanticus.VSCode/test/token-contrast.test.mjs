@@ -31,8 +31,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (file) => readFileSync(resolve(root, file), 'utf8');
 const SOURCES = ['webview/src/tokens.css', 'webview/src/styles.css'];
 
-const HUES = ['--sem-good', '--sem-warn', '--sem-bad', '--sem-doer-engine', '--sem-doer-you', '--sem-doer-agent'];
-const GROUNDS = ['--sem-bg', '--sem-surface', '--sem-surface-2', '--sem-hover', '--sem-tint-engine', '--sem-tint-you', '--sem-tint-agent', '--sem-tint-warn', '--sem-tint-select'];
+// The chart palette (Kane, 12 October 2026): six steps from the three actor hues, and a neutral for "other". Each is drawn as text
+// somewhere (a node kind's glyph, a role dot's word, a key), so each is held to the same 4.55:1 as a hue.
+const SERIES = ['--sem-series-1', '--sem-series-2', '--sem-series-3', '--sem-series-4', '--sem-series-5', '--sem-series-6'];
+const HUES = ['--sem-good', '--sem-warn', '--sem-bad', '--sem-actor-semanticus', '--sem-actor-you', '--sem-actor-assistant', ...SERIES.slice(3)];
+const GROUNDS = ['--sem-bg', '--sem-surface', '--sem-surface-2', '--sem-hover', '--sem-tint-semanticus', '--sem-tint-you', '--sem-tint-assistant', '--sem-tint-warn', '--sem-tint-select'];
 const CHARTS = ['green', 'yellow', 'red', 'blue', 'orange', 'purple'].map((c) => `--vscode-charts-${c}`);
 const MIN = 4.55;
 
@@ -424,21 +427,19 @@ for (const [id, t] of Object.entries(CHECKED)) {
   }
 }
 
-// A doer keeps its hue in every theme (colour level B: blue for Semanticus, orange for you, purple for your
-// assistant). VS Code hands a webview charts.orange from the find-match highlight, and a theme is free to make
-// that a colour with no hue at all: Abyss's is a grey (#eeeeee44) and Quiet Light's is a pink (#EDC9D8). Mixed
-// toward the text colour, a grey source stays grey, so the You track loses the one thing that tells it apart
-// from the other two, and every contrast check still passes because grey on a dark page reads fine. A theme
-// whose source has no hue names its own --sem-you-src (tokens.css, the hue steps). Oklab chroma 0.05 is the
-// floor: the doers measure 0.09 to 0.15 where the source is a real orange, and a grey measures under 0.03.
+// An actor keeps its hue in every theme (Kane, 12 October 2026: green for Semanticus, blue for you, purple for your
+// assistant, no orange for anyone). A theme is free to make a chart colour one with no hue at all (Abyss's orange was
+// a grey, #eeeeee44), and mixed toward the text colour a grey source stays grey, so an actor would lose the one thing
+// that tells it apart from the other two while every contrast check still passed, because grey on a dark page reads
+// fine. Oklab chroma 0.05 is the floor: the actors measure 0.09 and up, and a grey measures under 0.03.
 const MIN_CHROMA = 0.05;
 const chroma = (c) => { const [, A, B] = toOklab(c); return Math.hypot(A, B); };
 for (const [id, t] of Object.entries(CHECKED)) {
-  for (const doer of ['--sem-doer-engine', '--sem-doer-you', '--sem-doer-agent']) {
-    check(`${t.label}: ${doer} keeps its hue`, () => {
+  for (const actor of ['--sem-actor-semanticus', '--sem-actor-you', '--sem-actor-assistant']) {
+    check(`${t.label}: ${actor} keeps its hue`, () => {
       const val = computed(id);
-      const c = color(val(doer)), k = chroma(c);
-      rows.push(`${t.label.padEnd(19)} ${doer.padEnd(18)} ${toHex(c)}  oklab chroma ${k.toFixed(3)}`);
+      const c = color(val(actor)), k = chroma(c);
+      rows.push(`${t.label.padEnd(19)} ${actor.padEnd(22)} ${toHex(c)}  oklab chroma ${k.toFixed(3)}`);
       assert.ok(k >= MIN_CHROMA, `${toHex(c)} has oklab chroma ${k.toFixed(3)}, under ${MIN_CHROMA}`);
     });
   }
@@ -524,6 +525,147 @@ check('where an inline style paints the page colour', () => {
     if (n) seen[f] = n;
   }
   assert.deepEqual(seen, PAGE_COLOUR_INLINE);
+});
+
+// One colour per actor (Kane, 12 October 2026). The three actor tokens are the only way a surface says who acts; the old per-surface
+// names are gone, no actor is orange or amber, and the surfaces that speak for the person (a need you count, the band behind it,
+// the I drive state) and for the assistant (the sign, the edge) read the token, not a status colour.
+check('one token per actor, and no orange or amber actor', () => {
+  const tokens = read('webview/src/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(tokens, /--sem-actor-semanticus:\s*oklab\(from var\(--sem-accent\)/, 'Semanticus is the app jade');
+  assert.match(tokens, /--sem-actor-you:[^;]*--vscode-charts-blue/, 'you are blue');
+  assert.match(tokens, /--sem-actor-assistant:[^;]*--vscode-charts-purple/, 'your assistant is purple');
+  for (const m of tokens.matchAll(/--sem-(?:actor|tint)-(?:semanticus|you|assistant):\s*([^;]+);/g)) assert.doesNotMatch(m[1], /orange|yellow|--sem-warn/, `an actor is never a warning colour: ${m[0]}`);
+  const gone = [];
+  for (const dir of ['webview/src', 'test', 'tools/uishot']) {
+    const walk = (d) => readdirSync(resolve(root, d), { withFileTypes: true }).forEach((e) => {
+      if (e.name === 'node_modules' || e.name === 'shots') return;
+      const rel = `${d}/${e.name}`;
+      if (e.isDirectory()) return walk(rel);
+      if (!/\.(css|tsx?|mjs)$/.test(e.name) || e.name === 'token-contrast.test.mjs') return;
+      const text = read(rel);
+      if (/--sem-(?:doer-(?:engine|you|agent)|tint-(?:engine|agent)|you-src|agent-step|engine-step)\b/.test(text)) gone.push(rel);
+    });
+    walk(dir);
+  }
+  assert.deepEqual(gone, [], 'the old per-surface actor colours are retired');
+  const styles = read('webview/src/styles.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const rule of ['.pw-count-you', '.pw-state-you .pw-state-mark', '.pw-state-you .pw-state-w', '.pw-needs', '.sem-needs-band']) {
+    const at = styles.indexOf(`${rule} {`);
+    assert.ok(at >= 0, `${rule} exists`);
+    const body = styles.slice(at, styles.indexOf('}', at));
+    assert.match(body, /--sem-(?:actor-you|tint-you)/, `${rule} is the person's blue`);
+    assert.doesNotMatch(body, /--sem-warn|--sem-tint-warn/, `${rule} is not a warning colour`);
+  }
+  const bar = read('webview/src/studio/driver-bar.tsx');
+  assert.match(bar, /driver\.mode === 'iDrive' \|\| person \? 'var\(--sem-actor-you\)' : 'var\(--sem-actor-assistant\)'/, 'I drive and You have the wheel are blue, Claude drives is purple');
+  const sign = read('webview/src/studio/assistant-sign.css');
+  assert.doesNotMatch(sign, /--sem-accent|--sem-on-accent/, 'the assistant sign is purple, idle and working');
+  assert.match(sign, /\.as-sign\[data-state="working"\] \.as-tile \{[^}]*background: var\(--sem-actor-assistant\)/);
+});
+
+// ---- the chart palette -------------------------------------------------------------------------------------------
+// One palette for every surface that shows several colours and is not a warning. The three base steps are the actors, the next
+// three are the same hues one step further from the page, and a neutral grey is "other" and "unused". The checks: the steps
+// are what tokens.css says, text on a step (the page colour, as on the CC sign) holds 4.55:1, neighbouring steps differ in
+// lightness or in hue (a colour-blind reader still has the series' place and label), and no step is a warning colour.
+const okLab = (c) => toOklab(c);
+const okDelta = (p, q) => { const [a, b] = [okLab(p), okLab(q)]; return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); };
+const hueDeg = (c) => { const [, A, B] = okLab(c); return (Math.atan2(B, A) * 180) / Math.PI; };
+const hueGap = (p, q) => { const d = Math.abs(hueDeg(p) - hueDeg(q)) % 360; return d > 180 ? 360 - d : d; };
+const MIN_SAME_HUE_L = 0.13;   // one hue, two steps: at least this far apart in oklab lightness
+const MIN_STEP = 0.07;   // oklab distance between neighbouring steps (a just-noticeable step is about 0.02)
+check('the chart palette is defined from the actors', () => {
+  const tokens = read('webview/src/tokens.css').replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(tokens, /--sem-series-1:\s*var\(--sem-actor-semanticus\)/);
+  assert.match(tokens, /--sem-series-2:\s*var\(--sem-actor-you\)/);
+  assert.match(tokens, /--sem-series-3:\s*var\(--sem-actor-assistant\)/);
+  for (const [n, from] of [[4, 1], [5, 2], [6, 3]]) assert.match(tokens, new RegExp(`--sem-series-${n}:\\s*oklab\\(from var\\(--sem-series-${from}\\) calc\\(l \\+ var\\(--sem-series-shift\\)\\) a b\\)`), `step ${n} is step ${from} one step further from the page`);
+  assert.match(tokens, /--sem-on-series:\s*var\(--sem-bg\)/, 'text on a step is the page colour');
+  for (const m of tokens.matchAll(/--sem-series-[\w-]+:\s*([^;]+);/g)) assert.doesNotMatch(m[1], /orange|yellow|red|--sem-warn|--sem-bad/, `a chart step is never a warning colour: ${m[0]}`);
+});
+for (const [id, t] of Object.entries(CHECKED)) {
+  const val = computed(id), card = computed(id, true);
+  const page = color(val('--sem-bg'));
+  const steps = SERIES.map((name) => ({ name, c: color(val(name)) }));
+  for (const [i, { name, c }] of steps.entries()) {
+    check(`${t.label}: text on ${name}`, () => {
+      const ink = color(val('--sem-on-series'));
+      const r = ratio(over(ink, c), c);
+      rows.push(`${t.label.padEnd(19)} ink on ${name.padEnd(15)} ${toHex(c)}  ${r.toFixed(2)}:1`);
+      assert.ok(r >= MIN, `the page colour on ${name} (${toHex(c)}) is ${r.toFixed(2)}:1, under ${MIN}:1`);
+    });
+    // Every pair of the six, not only neighbours: 1 and 4, 2 and 5, 3 and 6 are one hue a step apart, and on a light theme they sat 0.075 apart
+    // in lightness (two greens in a legend that read as one) while the old neighbour-only check passed.
+    for (const [j, other] of steps.entries()) if (j > i) check(`${t.label}: ${name} and ${other.name} differ`, () => {
+      const q = other.c, d = okDelta(c, q), h = hueGap(c, q), dl = Math.abs(okLab(c)[0] - okLab(q)[0]);
+      rows.push(`${t.label.padEnd(19)} ${name} vs ${other.name}: oklab distance ${d.toFixed(3)}, lightness ${dl.toFixed(3)}, hue ${h.toFixed(0)} degrees`);
+      assert.ok(d >= MIN_STEP, `${name} (${toHex(c)}) and ${other.name} (${toHex(q)}) are ${d.toFixed(3)} apart, under ${MIN_STEP}`);
+      assert.ok(h >= 25 || dl >= MIN_SAME_HUE_L, `${name} (${toHex(c)}) and ${other.name} (${toHex(q)}) share a hue and are ${dl.toFixed(3)} apart in lightness, under ${MIN_SAME_HUE_L}`);
+    });
+  }
+  // The neutral is a fill for "other" and "unused" (a bar's remainder, a quiet line), never text, so it is held to the 3:1 a graphic needs.
+  check(`${t.label}: the neutral reads as a fill and is not one of the steps`, () => {
+    const n = color(val('--sem-series-neutral'));
+    const r = ratio(n, page);
+    rows.push(`${t.label.padEnd(19)} --sem-series-neutral ${toHex(n)} on the page  ${r.toFixed(2)}:1`);
+    assert.ok(r >= 3, `the neutral is ${r.toFixed(2)}:1 on the page, under 3:1`);
+    for (const { name, c } of steps) assert.ok(chroma(c) - chroma(n) >= 0.04 || isHC(t), `${name} is as grey as the neutral`);
+  });
+}
+
+// The old palette is retired (Kane, 12 October 2026). Every colour a chart, a node kind, a tag or a role dot used to carry as its own hex,
+// and the two engine tokens, are gone from source; a surface that wants several colours takes a step above. A status colour
+// (--sem-good, --sem-warn, --sem-bad, a diff's added and removed) is not a palette and stays.
+const RETIRED = [
+  '#36c98b', '#e0b341', '#7C8BA5', '#3fa66d', '#5b8ff9', '#e0a53d', '#2ED47A', '#3fb0e6', '#17B3A3', '#4E7CA8', '#ff7043', '#ffa726',
+  '#ffca28', '#ff8c42', '#e0654b', '#6b9bd2', '#9B7EDE', '#DCDCAA', '#795E26',
+  '--sem-engine-fe', '--sem-engine-se', '--sem-on-engine-fe', '--sem-on-engine-se', 'rgba(46,212,122',
+];
+check('no retired palette colour is back in source', () => {
+  const found = [];
+  const walk = (d) => readdirSync(resolve(root, d), { withFileTypes: true }).forEach((e) => {
+    if (e.name === 'node_modules' || e.name === 'shots') return;
+    const rel = `${d}/${e.name}`;
+    if (e.isDirectory()) return walk(rel);
+    if (!/\.(css|tsx?|mjs)$/.test(e.name) || ['token-contrast.test.mjs', 'mstdlib.ts', 'themes.mjs'].includes(e.name)) return;
+    const text = read(rel).toLowerCase();
+    for (const old of RETIRED) if (text.includes(old.toLowerCase())) found.push(`${rel}: ${old}`);
+  });
+  for (const d of ['webview/src', 'src']) walk(d);
+  assert.deepEqual(found, [], 'a retired palette colour is back; use a --sem-series-N step');
+});
+// Where several colours are drawn without a warning meaning, each file takes them from the palette: a canvas chart through
+// chartpalette.ts, a DOM surface through var(--sem-series-N). These files had their own hex before the palette existed.
+check('the surfaces that draw several colours read the chart palette', () => {
+  const want = {
+    'webview/src/echart.tsx': /seriesColor|seriesVar/, 'webview/src/lineagetypes.ts': /--sem-series-1/, 'webview/src/lineagegraph.tsx': /--sem-series-1/,
+    'webview/src/daxvisual.tsx': /seriesPalette\(/, 'webview/src/diagram.tsx': /--sem-series-3/, 'webview/src/spec.tsx': /--sem-series-2/,
+    'webview/src/objectbrowser.tsx': /--sem-kind-measure/, 'webview/src/knowledge.tsx': /--sem-series-1/, 'webview/src/daxlab.tsx': /--sem-series-2/,
+  };
+  const missing = Object.entries(want).filter(([f, re]) => !re.test(read(f))).map(([f]) => f);
+  assert.deepEqual(missing, []);
+});
+
+// Text drawn on a chart step takes --sem-on-series. A literal black or white ink was 4.77:1 on the old blue and 2.28:1 on a light
+// theme's new one (the Model Spec time-intelligence badge), and the per-token check above cannot see an ink written inline. In
+// any file that draws a chart step, a literal ink must sit on a line whose background is a status or accent token.
+check('no literal ink is drawn on a chart step', () => {
+  const found = [];
+  const walk = (d) => readdirSync(resolve(root, d), { withFileTypes: true }).forEach((e) => {
+    const rel = `${d}/${e.name}`;
+    if (e.isDirectory()) return walk(rel);
+    if (!/\.(tsx?|css)$/.test(e.name)) return;
+    const text = read(rel);
+    if (!/sem-series|seriesColor|seriesVar/.test(text)) return;
+    text.split('\n').forEach((line, n) => {
+      if (!/\bcolor:\s*['"](#000|#000000|#fff|#ffffff|black|white)['"]/i.test(line)) return;
+      if (/background:\s*['"]var\(--sem-(bad|good|warn|accent)\)/.test(line)) return;
+      found.push(`${rel}:${n + 1}`);
+    });
+  });
+  walk('webview/src');
+  assert.deepEqual(found, [], 'a literal ink sits beside a chart step; use var(--sem-on-series)');
 });
 
 if (process.env.TOKEN_CONTRAST_TABLE) console.log(rows.join('\n'));

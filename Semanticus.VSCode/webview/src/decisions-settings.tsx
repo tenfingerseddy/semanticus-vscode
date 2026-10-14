@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { onDidChange, rpc } from './bridge';
-import { ConsentCard, ProAdviceLine, settingsPanelShown, type DecisionPointW } from './consent';
+import { ConsentCard, ProAdviceLine, settingsPanelShown, useAskForOpenModel, type DecisionPointW } from './consent';
 
 // ===================================================================================================
 // The Pro page > What Pro decides (a section, since r1 min4; it was a window behind the Your assistant menu).
 //
 // The other half of F-176. Three of the seven typed-decision operations are settings a person drives,
 // and until this file none of them had a control anywhere in VS Code: the switches existed on the wire
-// and nowhere a person could reach. This is one switch per REGISTERED point, the month's allowance, and
+// and nowhere a person could reach. This is one switch per REGISTERED point and
 // a fold that says what each point sends.
 //
 // EVERY WORD ON THIS PAGE COMES FROM THE ENGINE, and that is the point rather than a preference. The
@@ -24,15 +24,6 @@ import { ConsentCard, ProAdviceLine, settingsPanelShown, type DecisionPointW } f
 // FREE SESSIONS see nothing: the Pro page mounts this section in its Pro body only. Every registered point is
 // Pro only, so switches here would be switches over nothing.
 // ===================================================================================================
-
-/** get_decision_budget, camelCased on the wire. Semanticus.Engine/Decisions/DecisionProtocol.cs. */
-interface DecisionBudgetW {
-  /** The whole licence's month, settled by the relay across every session. Absent when it cannot be read. */
-  monthlyUsedInputTokens?: number | null;
-  monthlyCapInputTokens?: number | null;
-  /** Why the month could not be read, in the engine's own plain words. */
-  monthlyReason?: string | null;
-}
 
 const TITLE = 'What Pro decides';
 const LEAD = 'Turn one off and Semanticus stops asking about it.';
@@ -90,39 +81,10 @@ function plainField(field: string): string {
   return name.replace(/_/g, ' ');
 }
 
-/**
- * A token count in the words the relay uses. It is an allowance, not a currency, and printing 41,203 of
- * 30,000,000 asks a person to count digits to learn something they could read in three words.
- */
-function plainCount(n: number): string {
-  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10} million`;
-  if (n >= 1_000) return `${Math.round(n / 1_000)} thousand`;
-  return String(n);
-}
-
-/** A reason the engine writes as a clause ("this session is set up for development ...") read as a sentence on
- *  the page: a capital at the front and a full stop at the end, like every other line here. */
-function asSentence(reason: string): string {
-  const text = reason.trim();
-  if (text.length === 0) return text;
-  const capital = `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
-  return /[.!?]$/.test(capital) ? capital : `${capital}.`;
-}
-
-export function monthLine(budget: DecisionBudgetW | null): string | null {
-  if (!budget) return null;
-  if (budget.monthlyUsedInputTokens == null || budget.monthlyCapInputTokens == null) {
-    // Absent with a reason, never rounded into a zero that reads as measured.
-    return budget.monthlyReason ? asSentence(budget.monthlyReason) : null;
-  }
-  return `This month: ${plainCount(budget.monthlyUsedInputTokens)} of ${plainCount(budget.monthlyCapInputTokens)}`;
-}
-
 /** What Pro decides, as a section of the Pro page (Pro only: the page mounts it in its Pro body). The 14 switches are
  *  folded behind "Choose which": Semanticus deciding is the default, so switching one off is the person's quiet task. */
 export function DecisionSettingsSection() {
   const [points, setPoints] = useState<DecisionPointW[] | null>(null);
-  const [budget, setBudget] = useState<DecisionBudgetW | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [choosing, setChoosing] = useState(false);
@@ -168,11 +130,6 @@ export function DecisionSettingsSection() {
       })
       .then((next) => { if (live) setPoints(pointsOf(next)); })
       .catch((reason: unknown) => { if (live) setError(reason instanceof Error ? reason.message : String(reason)); });
-    // The month is the one read here that goes to a network. It never throws and it never blocks the
-    // switches: a relay that is down costs the counter, not the page.
-    void rpc<DecisionBudgetW>('getDecisionBudget')
-      .then((next) => { if (live) setBudget(next ?? null); })
-      .catch(() => { if (live) setBudget(null); });
     return () => { live = false; };
   }, [reads]);
 
@@ -193,7 +150,6 @@ export function DecisionSettingsSection() {
       });
   };
 
-  const month = monthLine(budget);
   const rows = points ?? [];
 
   return (
@@ -204,7 +160,6 @@ export function DecisionSettingsSection() {
       {/* Permission for this model, and the one place a person can take it back (withdrawConsent). */}
       <ProAdviceLine />
       <div className="mt-3 flex items-center gap-3">
-        <span data-testid="decisions-month" className="text-xs" style={{ color: 'var(--sem-muted)' }}>{month ?? ''}</span>
         <button type="button" data-testid="decisions-fold" onClick={() => setChoosing((c) => !c)} aria-expanded={choosing}
           className="sem-btn sem-btn-sm sem-btn-quiet ml-auto">
           {points ? `Choose which (${rows.length})` : 'Choose which'}
@@ -267,5 +222,6 @@ export function DecisionSettingsSection() {
  * one line in App.tsx rather than two, so a sibling lane rewriting the header strip has nothing extra to merge.
  */
 export function ProDecisionsHost() {
+  useAskForOpenModel();
   return <ConsentCard />;
 }

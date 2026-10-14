@@ -17,6 +17,9 @@ export const HEART_SHAPE = {
   "gradeAfter": "A",
   "bestPractice": "C",
   "bestPracticeWhy": "Best practice C: 4 open errors and 9 warnings across 190 objects checked, 0.20 weighted per object (C is over 0.10 up to 0.25). A needs no open errors or warnings.",
+  "bestPracticeScore": 74,
+  "tasksDone": 8,
+  "tasksAll": 20,
   "tracks": [
    {
     "doer": "semanticus",
@@ -85,6 +88,7 @@ export const HEART_SHAPE = {
    "doer": "you",
    "stateWord": "needs_you",
    "stateNote": "A choice only you can make.",
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model: every one has a summary.",
    "objects": [
@@ -98,6 +102,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -136,6 +141,7 @@ export const HEART_SHAPE = {
    "doer": "you",
    "stateWord": "needs_you",
    "stateNote": "Your assistant could not: it needs the month the fiscal year starts.",
+   "assistantAtWork": false,
    "doneWhen": "you_mark",
    "doneText": "You mark it done.",
    "objects": [
@@ -148,6 +154,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -189,6 +196,7 @@ export const HEART_SHAPE = {
    "doer": "semanticus",
    "stateWord": "on_it",
    "stateNote": "step 3 of 7",
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model when the run finishes.",
    "objects": [],
@@ -199,6 +207,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -240,6 +249,7 @@ export const HEART_SHAPE = {
    "doer": "assistant",
    "stateWord": "on_it",
    "stateNote": "since its last call",
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model: the hierarchy exists.",
    "objects": [
@@ -254,6 +264,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": 1,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -298,6 +309,7 @@ export const HEART_SHAPE = {
    "doer": "assistant",
    "stateWord": "ready",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model: all 12 have words.",
    "objects": [
@@ -311,6 +323,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -352,6 +365,7 @@ export const HEART_SHAPE = {
    "doer": "semanticus",
    "stateWord": "ready",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model.",
    "objects": [
@@ -365,6 +379,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -403,6 +418,7 @@ export const HEART_SHAPE = {
    "doer": "semanticus",
    "stateWord": "ready",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model.",
    "objects": [
@@ -415,6 +431,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -453,6 +470,7 @@ export const HEART_SHAPE = {
    "doer": "semanticus",
    "stateWord": "waiting",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model.",
    "objects": [
@@ -470,6 +488,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -508,6 +527,7 @@ export const HEART_SHAPE = {
    "doer": "assistant",
    "stateWord": "paused",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "assistant_says",
    "doneText": "Your assistant says it is done.",
    "objects": [
@@ -520,6 +540,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": true,
    "order": 2,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -564,6 +585,7 @@ export const HEART_SHAPE = {
    "doer": "semanticus",
    "stateWord": "ready",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model.",
    "objects": [
@@ -577,6 +599,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -615,6 +638,7 @@ export const HEART_SHAPE = {
    "doer": "assistant",
    "stateWord": "ready",
    "stateNote": "on its next call",
+   "assistantAtWork": false,
    "doneWhen": "has_words",
    "doneText": "Semanticus checks the model: all 8 have words.",
    "objects": [
@@ -627,6 +651,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": 3,
+   "assistantNote": null,
    "note": "Keep each one to a sentence.",
    "reply": null,
    "fullText": null,
@@ -668,6 +693,7 @@ export const HEART_SHAPE = {
    "doer": "assistant",
    "stateWord": "waiting",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": "Semanticus checks the model: both have words.",
    "objects": [
@@ -686,6 +712,7 @@ export const HEART_SHAPE = {
    "waitsForCount": null,
    "held": false,
    "order": null,
+   "assistantNote": null,
    "note": null,
    "reply": null,
    "fullText": null,
@@ -719,6 +746,7 @@ export const HEART_QUEUE = {
    "sourcePage": "diagram",
    "doer": "assistant",
    "stateNote": "since its last call",
+   "assistantAtWork": false,
    "doneWhen": "model_check",
    "doneText": null,
    "objects": [
@@ -769,6 +797,7 @@ export const HEART_QUEUE = {
    "sourcePage": null,
    "doer": "assistant",
    "stateNote": "on its next call",
+   "assistantAtWork": false,
    "doneWhen": "has_words",
    "doneText": "Semanticus checks the model: all 12 have words.",
    "objects": [
@@ -821,6 +850,7 @@ export const HEART_QUEUE = {
    "sourcePage": "readiness",
    "doer": "assistant",
    "stateNote": "on its next call",
+   "assistantAtWork": false,
    "doneWhen": "has_words",
    "doneText": null,
    "objects": [
@@ -870,6 +900,7 @@ export const HEART_QUEUE = {
    "sourcePage": null,
    "doer": "assistant",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "has_words",
    "doneText": null,
    "objects": [
@@ -917,6 +948,7 @@ export const HEART_QUEUE = {
    "sourcePage": null,
    "doer": "assistant",
    "stateNote": null,
+   "assistantAtWork": false,
    "doneWhen": "has_words",
    "doneText": null,
    "objects": [

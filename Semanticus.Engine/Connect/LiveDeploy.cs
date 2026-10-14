@@ -153,54 +153,11 @@ namespace Semanticus.Engine
         /// Null/empty ⇒ byte-for-byte the historic no-delete behaviour (the whole-model deploy passes nothing).</param>
         public static DeployReport SyncSessionToLive(string sessionBimPath, string endpoint, string database, string token, DateTimeOffset expiresOn, bool commit, IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets = null, bool identityStrict = false, bool captureRestorePoint = false, IReadOnlyCollection<string> explicitDeleteRefs = null)
         {
-            var src = TOM.JsonSerializer.DeserializeDatabase(File.ReadAllText(sessionBimPath), null, AS.CompatibilityMode.PowerBI).Model;
-
-            using var server = new TOM.Server();
-            // A token = cloud XMLA (AMO managed auth via Server.AccessToken). No token = a LOCAL instance
-            // (Power BI Desktop) — connect with the current Windows identity, exactly as Tabular Editor writes
-            // back to a running Desktop model. The caller (DeployLiveAsync) decides via IsLocalEndpoint.
-            if (!string.IsNullOrEmpty(token))
-                server.AccessToken = new AS.AccessToken(token, expiresOn);
-            server.Connect("Data Source=" + endpoint);
-            var liveDb = server.Databases.FindByName(database) ?? throw new InvalidOperationException($"Database '{database}' not found on the endpoint.");
-
-            // Whole-model Save to Live had no restore point (D-003). Capture the live metadata HERE, after
-            // connect and before SyncAndApply mutates it, so production pays one connection. The selective
-            // push already wrote its own restore point and leaves captureRestorePoint false.
-            RestorePointRecord restorePoint = null;
-            var tickedDeletes = explicitDeleteRefs != null && explicitDeleteRefs.Count > 0
-                && (explicitDeleteTargets == null || explicitDeleteTargets.Count == 0);
-            if (captureRestorePoint && commit)
-            {
-                try
-                {
-                    restorePoint = RestorePointStore.Write(endpoint, database,
-                        TOM.JsonSerializer.SerializeDatabase(liveDb), "deploy_live",
-                        tickedDeletes ? explicitDeleteRefs.Count + " delete(s)" : "before the live write",
-                        Array.Empty<string>(),
-                        tickedDeletes ? explicitDeleteRefs.ToArray() : Array.Empty<string>());
-                }
-                catch (Exception ex)
-                {
-                    // A ticked delete cannot be undone without a restore point, so a failed snapshot is a wall.
-                    // A whole-model save with no deletes is a warning, not a wall (D-003).
-                    if (tickedDeletes)
-                        return new DeployReport { Endpoint = endpoint, Database = database,
-                            Error = LiveMatchCopy.DeleteRefusedNoRestore(FabricRest.Scrub(ex.Message)) };
-                }
-            }
-
-            // The SERVER-FREE orchestration lives in SyncAndApply (offline-testable). We pass the live model's real
-            // SaveChanges + calc-recalc as callbacks — a test passes in-memory recorders instead.
-            var rep = SyncAndApply(src, liveDb.Model, commit, endpoint, database, explicitDeleteTargets,
-                saveChanges: () => liveDb.Model.SaveChanges(),
-                recalcCalcTables: names =>
-                {
-                    foreach (var name in names) liveDb.Model.Tables.Find(name)?.RequestRefresh(TOM.RefreshType.Calculate);
-                    liveDb.Model.SaveChanges();
-                },
-                identityStrict: identityStrict, explicitDeleteRefs: explicitDeleteRefs);
-            if (rep != null && restorePoint != null) rep.RestorePointId = restorePoint.Id;
+            // One connection for one call. DeployLiveAsync keeps the handle between a preview and its commit instead.
+            var timer = new DeployTimer();
+            using var handle = AmoLiveHandle.Open(endpoint, database, token, expiresOn, timer);
+            var rep = handle.Sync(sessionBimPath, endpoint, database, commit, explicitDeleteTargets, identityStrict, captureRestorePoint, explicitDeleteRefs, timer);
+            if (rep != null) { rep.Steps = timer.Steps; rep.Timing = timer.Summary(); }
             return rep;
         }
 
@@ -216,13 +173,29 @@ namespace Semanticus.Engine
         /// deliberately NOT overridable. An Absent delete is benign (someone already removed it; the intent is
         /// satisfied) and never aborts.</summary>
         internal static DeployReport SyncAndApply(TOM.Model src, TOM.Model live, bool commit, string endpoint, string database,
-            IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets, Action saveChanges, Action<IReadOnlyCollection<string>> recalcCalcTables, bool identityStrict = false, IReadOnlyCollection<string> explicitDeleteRefs = null)
+            IReadOnlyCollection<LiveDeleteTarget> explicitDeleteTargets, Action saveChanges, Action<IReadOnlyCollection<string>> recalcCalcTables, bool identityStrict = false, IReadOnlyCollection<string> explicitDeleteRefs = null, Action<int> beforeSend = null,
+            Action<int> raiseCompatibility = null, Func<IReadOnlyCollection<string>, TOM.Model> reloadCalcTables = null)
         {
+            // A higher compatibility level on the source must be in place before the model changes that need it (calendars) are
+            // built, so the in-memory live level is set now. The raise itself is its own live write that Power BI cannot undo, so
+            // it is SENT only after every check that can stop the push has passed (see below). It never lowers a level.
+            var fromLevel = live.Database?.CompatibilityLevel ?? 0; var toLevel = src.Database?.CompatibilityLevel ?? 0;
+            var raisedFrom = 0;
+            var raising = commit && fromLevel > 0 && toLevel > fromLevel;
+            if (raising)
+            {
+                try { live.Database.CompatibilityLevel = toLevel; raisedFrom = fromLevel; }
+                catch (Exception ex)
+                {
+                    return new DeployReport { Endpoint = endpoint, Database = database, Committed = false,
+                        Error = $"Power BI would not raise the compatibility level from {fromLevel} to {toLevel}, so nothing was published: {ex.Message}" };
+                }
+            }
             // BLOCKER 1: the live objects THIS deploy wrote (created / updated in place). SyncModels fills it; the explicit-
             // delete channel refuses a delete that lands on one (an endpoint-rename relationship the same push updated) —
             // deleting it would undo the sync. A ticked whole-model delete uses the same set.
             var changedLive = new HashSet<TOM.MetadataObject>();
-            var rep = SyncModels(src, live, commit, endpoint, database, identityStrict, changedLive);
+            var rep = SyncModels(src, live, commit, endpoint, database, identityStrict, changedLive, raisedFrom);
             var deletes = explicitDeleteTargets;
             if ((deletes == null || deletes.Count == 0) && explicitDeleteRefs != null && explicitDeleteRefs.Count > 0)
                 deletes = ResolveTickedLiveOnly(live, rep.LiveOnly, explicitDeleteRefs);
@@ -266,13 +239,35 @@ namespace Semanticus.Engine
                 }
             }
 
+            // Every check that can stop the push has passed: now send the raise, as its own write.
+            if (raising)
+            {
+                try { (raiseCompatibility ?? (_ => { }))(toLevel); }
+                catch (Exception ex)
+                {
+                    // The calendars go first: the level cannot drop below what they need.
+                    try { live.UndoLocalChanges(); } catch { /* a detached model has nothing to undo */ }
+                    try { if (live.Database.CompatibilityLevel != fromLevel) live.Database.CompatibilityLevel = fromLevel; } catch { /* the next use reads the model again */ }
+                    rep.Committed = false;
+                    rep.Error = $"Power BI would not raise the compatibility level from {fromLevel} to {toLevel}, so nothing was published: {ex.Message}";
+                    return rep;
+                }
+            }
+
             // Clean: apply the deletes for real, inside the SAME change set as the adds/updates (one SaveChanges).
             RemoveExplicit(live, deletes, commit, rep, changedLive, syncedRefs, pushedRelRefs, matchedRelRefs);
             if (commit && rep.TotalChanges > 0)
             {
                 // The single atomic boundary — a SaveChanges failure writes nothing and is surfaced via Error.
+                beforeSend?.Invoke(rep.TotalChanges);
                 try { saveChanges(); rep.Committed = true; }
-                catch (Exception ex) { rep.Error = "SaveChanges failed. Nothing was committed: " + ex.Message; }
+                catch (Exception ex)
+                {
+                    // A raise that landed stays: Power BI cannot undo it, so the report must say the level changed.
+                    rep.Error = raising
+                        ? $"The compatibility level is now {toLevel}. Nothing else was published. {ex.Message}"
+                        : "SaveChanges failed. Nothing was committed: " + ex.Message;
+                }
             }
             // NEW calculated tables are created EMPTY by the metadata save above; a Calculate pass populates their
             // engine-derived columns/rows. Recalc the ones we added in a SECOND commit — a recalc failure leaves them
@@ -282,10 +277,167 @@ namespace Semanticus.Engine
                 try { recalcCalcTables(rep.CalcTablesAdded); }
                 catch (Exception ex)
                 {
-                    rep.Error = $"Metadata committed, but the Calculate recalc of new table(s) [{string.Join(", ", rep.CalcTablesAdded)}] failed. They exist but stay empty until refreshed: {ex.Message}";
+                    // The second save never starts, so nothing it carries went out: their hierarchy, calendar and relationship are not claimed.
+                    FailSecondPass(src, rep, "the Calculate recalc failed: " + ex.Message,
+                        $"Metadata committed, but the Calculate recalc of new table(s) [{string.Join(", ", rep.CalcTablesAdded)}] failed. They exist but stay empty until refreshed, and their hierarchy, calendar and relationship were not added: {ex.Message}");
+                    return rep;
+                }
+                // SECOND PASS: the Calculate pass has made the tables' columns, so their hierarchy, sort-by, calendar and the
+                // relationships to them go now, in one more save of this same push (table, then relationship, then calendar).
+                try { live = reloadCalcTables?.Invoke(rep.CalcTablesAdded) ?? live; }   // a re-read can hand back a new model tree: the second pass works on that one
+                catch (Exception ex) { FailSecondPass(src, rep, "the new table's columns could not be read back: " + ex.Message); return rep; }
+                var failures = FinishNewCalcTables(src, live, rep.CalcTablesAdded, changedLive, out var wrote, out var columnsAdded);
+                if (!wrote) { if (failures.Count > 0) ReportSecondPassFailures(rep, failures); return rep; }
+                try { saveChanges(); }
+                catch (Exception ex)
+                {
+                    try { live.UndoLocalChanges(); } catch { /* a detached model has nothing to undo */ }
+                    FailSecondPass(src, rep, ex.Message);
+                    return rep;
+                }
+                if (failures.Count > 0) ReportSecondPassFailures(rep, failures);
+                // The columns made above hold nothing until the table is calculated again.
+                if (columnsAdded)
+                {
+                    try { recalcCalcTables(rep.CalcTablesAdded); }
+                    catch (Exception ex) { rep.Error = $"The new table(s) [{string.Join(", ", rep.CalcTablesAdded)}] were created, but their added columns stay empty until refreshed: {ex.Message}"; }
                 }
             }
             return rep;
+        }
+
+        // The refs the second pass carries for the tables this push created, each built the way the first pass added it: every hierarchy,
+        // every sort-by column, and every relationship with an end on one of the tables. The table ref is not one of them: the table
+        // went out in the first save, so it stays reported as sent. Exact refs only, never a match on part of a name ("Ship Date").
+        private static HashSet<string> SecondPassRefs(TOM.Model src, IReadOnlyCollection<string> names)
+        {
+            var refs = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var name in names)
+            {
+                var st = src.Tables.Find(name);
+                if (st == null) continue;
+                foreach (var h in st.Hierarchies.Cast<TOM.Hierarchy>()) refs.Add(AlmRef.Child("hierarchy", name, h.Name));
+                foreach (var c in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && c.SortByColumn != null)) refs.Add(AlmRef.Child("column", name, c.Name));
+            }
+            foreach (var srel in src.Relationships.Cast<TOM.Relationship>())
+                if (srel is TOM.SingleColumnRelationship ssc && ssc.FromColumn != null && ssc.ToColumn != null
+                    && (names.Contains(ssc.FromColumn.Table?.Name ?? "") || names.Contains(ssc.ToColumn.Table?.Name ?? "")))
+                    refs.Add("relationship:" + RelSig(srel));
+            return refs;
+        }
+
+        // The second save did not go (or could not start): withdraw every ref it would have carried, so the report says only what went out.
+        private static void FailSecondPass(TOM.Model src, DeployReport rep, string why, string error = null)
+        {
+            var names = rep.CalcTablesAdded;
+            var carried = SecondPassRefs(src, names);
+            var gone = (rep.SyncedRefs ?? Array.Empty<string>()).Where(carried.Contains).ToArray();
+            rep.SyncedRefs = (rep.SyncedRefs ?? Array.Empty<string>()).Except(gone).ToArray();
+            rep.Unmatched = (rep.Unmatched ?? Array.Empty<string>()).Concat(gone.Select(r => r + " (the table was created, but this was not added to it: " + why + ")")).ToArray();
+            rep.Error = error ?? $"The new table(s) [{string.Join(", ", names)}] were created and calculated, but their hierarchy, calendar or relationship was not added: {why}";
+        }
+
+        private static void ReportSecondPassFailures(DeployReport rep, List<(string Ref, string Why)> failures)
+        {
+            var refs = failures.Select(f => f.Ref).ToHashSet(StringComparer.Ordinal);
+            rep.SyncedRefs = (rep.SyncedRefs ?? Array.Empty<string>()).Where(r => !refs.Contains(r)).ToArray();
+            rep.Unmatched = (rep.Unmatched ?? Array.Empty<string>()).Concat(failures.Select(f => f.Ref + " (" + f.Why + ")")).ToArray();
+        }
+
+        /// <summary>The second pass for a calculated table this push created: once the Calculate pass has made its columns, bind
+        /// everything that needs them BY NAME (the columns carry no tag of ours) on the live table. Returns what could not go.</summary>
+        internal static List<(string Ref, string Why)> FinishNewCalcTables(TOM.Model src, TOM.Model live, IReadOnlyCollection<string> names, HashSet<TOM.MetadataObject> changedLive, out bool wrote, out bool columnsAdded)
+        {
+            var failed = new List<(string Ref, string Why)>();
+            var writes = 0; var addedColumns = false;
+            foreach (var name in names)
+            {
+                var st = src.Tables.Find(name); var lt = live.Tables.Find(name);
+                var tableRef = AlmRef.Top("table", name);
+                if (st == null || lt == null) continue;
+                // The columns the service made, in the source's own settings (hidden, key, format, folder, sort order).
+                foreach (var sc in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber))
+                {
+                    var lc = lt.Columns.Find(sc.Name);
+                    // A calculated column the person added to the table (the calendar template's Year, Quarter, Month) is not one the service derives
+                    // from the table's formula: it is made here, and the table is calculated once more after the save.
+                    if (lc == null && sc is TOM.CalculatedColumn scCalc)
+                    {
+                        var ncc = new TOM.CalculatedColumn { Name = sc.Name, Expression = scCalc.Expression, DataType = sc.DataType };
+                        if (SupportsLineage(live) && !string.IsNullOrEmpty(sc.LineageTag)) ncc.LineageTag = sc.LineageTag;
+                        lt.Columns.Add(ncc); lc = ncc; writes++; addedColumns = true; changedLive?.Add(ncc);
+                    }
+                    if (lc == null) { failed.Add((AlmRef.Child("column", name, sc.Name), "the service did not make this column")); continue; }
+                    var before = writes;
+                    if (lc.Description != sc.Description) { lc.Description = sc.Description; writes++; }
+                    if (lc.IsHidden != sc.IsHidden) { lc.IsHidden = sc.IsHidden; writes++; }
+                    if (lc.FormatString != sc.FormatString) { lc.FormatString = sc.FormatString; writes++; }
+                    if (lc.DisplayFolder != sc.DisplayFolder) { lc.DisplayFolder = sc.DisplayFolder; writes++; }
+                    if (lc.SummarizeBy != sc.SummarizeBy) { lc.SummarizeBy = sc.SummarizeBy; writes++; }
+                    if (lc.DataCategory != sc.DataCategory) { lc.DataCategory = sc.DataCategory; writes++; }
+                    if (lc.IsKey != sc.IsKey) { lc.IsKey = sc.IsKey; writes++; }
+                    if (lc.IsAvailableInMDX != sc.IsAvailableInMDX) { lc.IsAvailableInMDX = sc.IsAvailableInMDX; writes++; }
+                    if (writes > before) changedLive?.Add(lc);
+                }
+                foreach (var sc in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && c.SortByColumn != null))
+                {
+                    var lc = lt.Columns.Find(sc.Name); var key = lt.Columns.Find(sc.SortByColumn.Name);
+                    if (lc != null && key != null) { if (!ReferenceEquals(lc.SortByColumn, key)) { lc.SortByColumn = key; writes++; } }
+                    else failed.Add((AlmRef.Child("column", name, sc.Name), "its sort-by column is not on the new table"));
+                }
+                foreach (var sh in st.Hierarchies.Cast<TOM.Hierarchy>())
+                {
+                    var href = AlmRef.Child("hierarchy", name, sh.Name);
+                    if (lt.Hierarchies.Find(sh.Name) != null) continue;
+                    var cols = sh.Levels.Cast<TOM.Level>().OrderBy(l => l.Ordinal).Select(l => (l, c: l.Column == null ? null : lt.Columns.Find(l.Column.Name))).ToList();
+                    var miss = cols.FirstOrDefault(x => x.c == null);
+                    if (miss.l != null) { failed.Add((href, $"hierarchy level column '{miss.l.Column?.Name}' is not on the new table")); continue; }
+                    var nh = new TOM.Hierarchy { Name = sh.Name, Description = sh.Description, IsHidden = sh.IsHidden, DisplayFolder = sh.DisplayFolder };
+                    if (SupportsLineage(live) && !string.IsNullOrEmpty(sh.LineageTag)) nh.LineageTag = sh.LineageTag;
+                    lt.Hierarchies.Add(nh);
+                    foreach (var (sl, c) in cols)
+                    {
+                        var nl = new TOM.Level { Name = sl.Name, Ordinal = sl.Ordinal, Column = c };
+                        if (SupportsLineage(live) && !string.IsNullOrEmpty(sl.LineageTag)) nl.LineageTag = sl.LineageTag;
+                        if (!string.IsNullOrEmpty(sl.Description)) nl.Description = sl.Description;
+                        nh.Levels.Add(nl);
+                    }
+                    changedLive?.Add(nh); writes++;
+                }
+            }
+            // Relationships next: one end on a table this push created.
+            var haveSigs = new HashSet<string>(live.Relationships.Cast<TOM.Relationship>().Select(RelSig), StringComparer.Ordinal);
+            var usedNames = new HashSet<string>(live.Relationships.Cast<TOM.Relationship>().Select(r => r.Name), StringComparer.Ordinal);
+            foreach (var srel in src.Relationships.Cast<TOM.Relationship>())
+            {
+                if (!(srel is TOM.SingleColumnRelationship ssc) || ssc.FromColumn == null || ssc.ToColumn == null) continue;
+                if (!names.Contains(ssc.FromColumn.Table?.Name ?? "") && !names.Contains(ssc.ToColumn.Table?.Name ?? "")) continue;
+                var rref = "relationship:" + RelSig(srel);
+                var from = live.Tables.Find(ssc.FromColumn.Table?.Name ?? "")?.Columns.Find(ssc.FromColumn.Name);
+                var to = live.Tables.Find(ssc.ToColumn.Table?.Name ?? "")?.Columns.Find(ssc.ToColumn.Name);
+                if (from == null || to == null) { failed.Add((rref, "an endpoint column is not on the live model")); continue; }
+                if (haveSigs.Contains(RelSig(from, to))) continue;
+                var nr = new TOM.SingleColumnRelationship
+                {
+                    Name = !string.IsNullOrEmpty(srel.Name) && !usedNames.Contains(srel.Name) ? srel.Name : Guid.NewGuid().ToString(),
+                    FromColumn = from, ToColumn = to,
+                    FromCardinality = ssc.FromCardinality, ToCardinality = ssc.ToCardinality,
+                    CrossFilteringBehavior = ssc.CrossFilteringBehavior, IsActive = ssc.IsActive,
+                    SecurityFilteringBehavior = ssc.SecurityFilteringBehavior,
+                    RelyOnReferentialIntegrity = ssc.RelyOnReferentialIntegrity, JoinOnDateBehavior = ssc.JoinOnDateBehavior
+                };
+                live.Relationships.Add(nr); usedNames.Add(nr.Name); changedLive?.Add(nr); writes++;
+            }
+            // Calendars last: they bind to the columns above.
+            foreach (var name in names)
+            {
+                var st = src.Tables.Find(name); var lt = live.Tables.Find(name);
+                if (st == null || lt == null || ModelCompare.CalendarsEqual(st, lt)) continue;
+                try { ModelCompare.CopyCalendars(st, lt); writes++; }
+                catch (Exception ex) { failed.Add((AlmRef.Top("table", name), ex.Message)); }
+            }
+            wrote = writes > 0; columnsAdded = addedColumns;
+            return failed;
         }
 
         /// <summary>Build identity-carrying delete targets for the LiveOnly refs the caller ticked. Identity comes
@@ -638,7 +790,7 @@ namespace Semanticus.Engine
         /// false (deploy_live, arbitrary session) name-falls-back; true (selective push, src = a live snapshot) makes a
         /// non-empty tag miss TERMINAL and reports the same-named live object as unmatched instead of mutating it.</summary>
         internal static DeployReport SyncModels(TOM.Model src, TOM.Model live, bool apply, string endpoint = "", string database = "", bool identityStrict = false,
-            HashSet<TOM.MetadataObject> changedLive = null)
+            HashSet<TOM.MetadataObject> changedLive = null, int levelRaisedFrom = 0)
         {
             // BLOCKER 1 (third-state delete race): the live objects THIS deploy actually WROTE — created, or updated in
             // place. The explicit-delete channel (RemoveExplicit) refuses a delete that lands on one of these: a deploy
@@ -680,6 +832,7 @@ namespace Semanticus.Engine
             // table ref), right before rep.SyncedRefs is built.
             var heldRefs = new HashSet<string>(StringComparer.Ordinal);
             var calcTablesAdded = new List<string>();   // new calc tables to Calculate-recalc after the metadata save
+            var newCalcNames = new HashSet<string>(StringComparer.Ordinal);   // the same names: a relationship to one of their columns waits for the second pass
             var dataTablesAdded = new List<string>();    // new Direct Lake DATA tables created — announced EMPTY (rows load on the next service refresh)
             // The SESSION columns THIS deploy will create (new columns on matched tables + columns of new tables). A
             // cross-binding (sort-by / hierarchy level / relationship endpoint) to one of these resolves via this set in
@@ -689,12 +842,19 @@ namespace Semanticus.Engine
             // Live-only preserved hierarchy LEVELS — ref built AFTER the renames loop so it follows the table's FINAL name
             // and uses the escaped ref grammar (MINOR 5), mirroring liveOnlyChildren.
             var liveOnlyLevels = new List<(TOM.Table table, string hier, string level)>();
-            int desc = 0, ren = 0, vis = 0, cat = 0, fmt = 0, fold = 0, expr = 0, sum = 0, cult = 0, part = 0, nexpr = 0, added = 0, calc = 0, metadata = 0;
+            int desc = 0, ren = 0, vis = 0, cat = 0, fmt = 0, fold = 0, expr = 0, sum = 0, cult = 0, part = 0, nexpr = 0, added = 0, calc = 0, metadata = 0, roleCount = 0;
             // The STRUCTURAL classes (added 2026-07-09 after the ETS incident: an A/100-offline model scored B/80.6 in
             // the service because its sort-by column, Calendar hierarchy, date-table mark and finding waivers had never
             // deployed and nothing said so). Each answer-affecting; each now carried and counted.
             int sortBy = 0, hier = 0, rel = 0, ann = 0;
             var renames = new List<(TOM.NamedMetadataObject obj, string oldName, string newName, Func<string, TOM.NamedMetadataObject> findSibling, string id)>();
+
+            // The compatibility level only ever goes UP, as the first change of the push (a newer feature, like a calendar, needs
+            // it). levelRaisedFrom is the level the live model held before SyncAndApply raised it, so a real push still counts it.
+            var srcLevel = src.Database?.CompatibilityLevel ?? 0;
+            var liveLevel = levelRaisedFrom > 0 ? levelRaisedFrom : live.Database?.CompatibilityLevel ?? 0;
+            if (srcLevel > 0 && liveLevel > 0 && srcLevel > liveLevel)
+            { metadata++; changes.Add($"compatibility level {liveLevel} -> {srcLevel}"); syncedRefs.Add("compatibility"); }
 
             // Model-container metadata is a first-class diff item now (#135). Arbitrary non-audit annotations have
             // a safe live carrier; any other model-shell difference is named and withheld instead of silently lost.
@@ -747,6 +907,7 @@ namespace Semanticus.Engine
                         nt.Description = st.Description; nt.IsHidden = st.IsHidden; nt.DataCategory = st.DataCategory;
                         nt.Partitions.Add(new TOM.Partition { Name = only.Name, Source = new TOM.CalculatedPartitionSource { Expression = ccs.Expression } });
                         ModelCompare.CopyLiveTableSupplement(st, nt);
+                        // A calculated table's calendars follow in the second pass, once the Calculate pass has made its columns (FinishNewCalcTables).
                         var newTableSourceState = ModelCompare.LiveTableState(st);
                         var newTableState = ModelCompare.LiveTableState(nt);
                         if (!JsonSemanticEqual(newTableSourceState.Residual, newTableState.Residual)
@@ -763,7 +924,15 @@ namespace Semanticus.Engine
                         // Owned annotations ride along (dry-run parity: nt.Annotations is empty in both modes, so the
                         // count matches). Any authored child a new-table creation can't carry is NAMED, never dropped.
                         ann += DeployOwnedAnnotations(st.Annotations, nt.Annotations, apply, tableRef, changes, syncedRefs);
-                        var calcUncarried = ReportUncarriedNewTableChildren(st, unmatched);
+                        var calcUncarried = ReportUncarriedNewTableChildren(st, unmatched, secondPass: true);
+                        // The hierarchy, sort-by and calendar need the columns the Calculate pass makes, so they go in a second save in this
+                        // same push. The preview counts them as going: the source holds every column they use.
+                        foreach (var dh in st.Hierarchies.Cast<TOM.Hierarchy>())
+                        { hier++; changes.Add($"add hierarchy:{st.Name}/{dh.Name}"); syncedRefs.Add(AlmRef.Child("hierarchy", st.Name, dh.Name)); }
+                        foreach (var dc in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && c.SortByColumn != null))
+                        { sortBy++; changes.Add("sortBy " + AlmRef.Child("column", st.Name, dc.Name)); syncedRefs.Add(AlmRef.Child("column", st.Name, dc.Name)); }
+                        if (st.Calendars.Count > 0) { metadata++; changes.Add("calendars " + tableRef); }
+                        newCalcNames.Add(st.Name);
                         added++; calcTablesAdded.Add(st.Name); changes.Add("add calcTable:" + st.Name); syncedRefs.Add(tableRef);
                         if (calcUncarried) heldRefs.Add(tableRef);   // an authored child couldn't be carried — don't claim a full apply
                     }
@@ -816,7 +985,7 @@ namespace Semanticus.Engine
                         // RESIDUAL guards (BLOCKER 2): the DL branch used to silently drop authored table/column metadata
                         // the clone can't carry (a table IsPrivate, a column IsKey). Mirror the calc-table + new-column
                         // paths: an uncarryable residual REFUSES the whole table (not half-created), named + ref withheld.
-                        if (!JsonSemanticEqual(ModelCompare.LiveTableState(st).Residual, ModelCompare.LiveTableState(nt).Residual)
+                        if (!JsonSemanticEqual(ModelCompare.LiveTableState(st, carryCalendars: false).Residual, ModelCompare.LiveTableState(nt, carryCalendars: false).Residual)
                             || !RefreshPolicyEqual(st.RefreshPolicy, nt.RefreshPolicy))
                         {
                             unmatched.Add(tableRef + " (carries authored table metadata this live push cannot create; deploy via TMDL/XMLA)");
@@ -1317,6 +1486,18 @@ namespace Semanticus.Engine
                 foreach (var lh in lt.Hierarchies.Cast<TOM.Hierarchy>().Where(h => !matchedHiers.Contains(h)))
                     liveOnlyChildren.Add((lt, "hierarchy", lh.Name));   // ref built post-rename (follows the table's final name)
 
+                // CALENDARS (the Plan's calendar step): copied whole, bound to the live table's own columns, after every column
+                // and hierarchy above exists. Dry-run counts it; only a real push copies (a column made in this same push does not exist in a dry run).
+                if (!ModelCompare.CalendarsEqual(st, lt))
+                {
+                    try
+                    {
+                        if (apply) ModelCompare.CopyCalendars(st, lt);
+                        metadata++; changes.Add("calendars " + tid); syncedRefs.Add(sourceTableRef);
+                    }
+                    catch (Exception ex) { unmatched.Add(sourceTableRef + " (" + ex.Message + ")"); heldRefs.Add(sourceTableRef); }
+                }
+
                 // Live-only children on this matched table — reported, left untouched. Deferred so the ref follows the
                 // table's FINAL name (the table may be renamed in the renames loop below).
                 foreach (var lc in lt.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && !matchedCols.Contains(c)))
@@ -1378,6 +1559,15 @@ namespace Semanticus.Engine
                 // NEW: only a single-column relationship carries endpoints we can resolve in the live tree.
                 if (srel is TOM.SingleColumnRelationship ssc && ssc.FromColumn != null && ssc.ToColumn != null)
                 {
+                    // An endpoint on a calculated table this push creates has no live column until the Calculate pass: the relationship
+                    // is made in the second save (FinishNewCalcTables). The other end must already resolve.
+                    var fromWaits = fromCol == null && newCalcNames.Contains(ssc.FromColumn.Table?.Name ?? "");
+                    var toWaits = toCol == null && newCalcNames.Contains(ssc.ToColumn.Table?.Name ?? "");
+                    if ((fromCol != null || fromWaits) && (toCol != null || toWaits) && (fromWaits || toWaits))
+                    {
+                        rel++; changes.Add("add relationship:" + RelDisplay(srel)); syncedRefs.Add("relationship:" + syncedSig);
+                        continue;
+                    }
                     if (fromCol == null || toCol == null)
                     {
                         unmatched.Add("relationship:" + RelDisplay(srel) + " (an endpoint column has no live counterpart - not created; add via TMDL/XMLA)");
@@ -1425,6 +1615,13 @@ namespace Semanticus.Engine
                     cult++; changes.Add("linguistic schema (synonyms + AI instructions) culture:" + sCult.Name); syncedRefs.Add(AlmRef.Top("culture", sCult.Name));
                 }
             }
+
+            // Roles: create or update (permission, members, RLS filters, column permissions). Matched by NAME (a role has no
+            // lineage tag). A live-only role is left alone here; removing one is the explicit delete channel's job.
+            roleCount += SyncRoles(src, live, apply, changes, unmatched, syncedRefs, Mark);
+            // A live-only role is listed, so a renamed role's old name can be ticked for removal (hero17 P6). Nothing is removed unless ticked.
+            foreach (var lrole in live.Roles.Cast<TOM.ModelRole>().Where(r => src.Roles.Find(r.Name) == null))
+                liveOnly.Add(AlmRef.Top("role", lrole.Name));
 
             // Shared M expressions / parameters (model.Expressions): an M parameter or shared query edited in the session
             // must deploy like measure DAX does. NamedExpression IS taggable (implements IMetadataObjectWithLineage —
@@ -1503,11 +1700,11 @@ namespace Semanticus.Engine
 
             rep.Descriptions = desc; rep.Renames = ren; rep.Visibility = vis; rep.DataCategories = cat;
             rep.Formats = fmt; rep.Folders = fold; rep.Expressions = expr; rep.SummarizeBy = sum; rep.Cultures = cult;
-            rep.Partitions = part; rep.NamedExpressions = nexpr; rep.CalcGroup = calc;
+            rep.Partitions = part; rep.NamedExpressions = nexpr; rep.CalcGroup = calc; rep.Roles = roleCount;
             rep.Metadata = metadata;
             rep.Added = added;
             rep.SortBy = sortBy; rep.Hierarchies = hier; rep.Relationships = rel; rep.Annotations = ann;
-            rep.TotalChanges = desc + ren + vis + cat + fmt + fold + expr + sum + cult + part + nexpr + added + calc + metadata
+            rep.TotalChanges = desc + ren + vis + cat + fmt + fold + expr + sum + cult + part + nexpr + added + calc + metadata + roleCount
                 + sortBy + hier + rel + ann;
             rep.Changes = changes.Take(80).ToArray();
             rep.ChangeFingerprint = ReviewFence.Fingerprint(changes.Basis);
@@ -1640,6 +1837,100 @@ namespace Semanticus.Engine
         {
             if (!string.Equals(obj.Name, srcName, StringComparison.Ordinal))
                 renames.Add((obj, obj.Name, srcName, findSibling, id));
+        }
+
+        // ---- Roles. The server owns memberId (it hands one back on every read and never needs ours), so a member is
+        // identified by provider, type and name only. Source wins on an update: a live member the source lacks is removed,
+        // like an RLS filter the source cleared. ----
+        // A member saved without a provider reads "default" (an older Semanticus wrote that); Power BI takes only AzureAD.
+        private static string RoleProvider(TOM.ExternalModelRoleMember e) =>
+            string.IsNullOrWhiteSpace(e.IdentityProvider) || string.Equals(e.IdentityProvider, "default", StringComparison.OrdinalIgnoreCase) ? "AzureAD" : e.IdentityProvider;
+
+        private static string RoleMemberKey(TOM.ModelRoleMember m) => m switch
+        {
+            TOM.ExternalModelRoleMember e => "ext|" + RoleProvider(e) + "|" + e.MemberType + "|" + e.MemberName,
+            _ => "win|" + m.MemberName,
+        };
+
+        private static string RoleSignature(TOM.ModelRole r)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.Append(r.ModelPermission).Append('\n').Append(string.IsNullOrEmpty(r.Description) ? "" : r.Description);
+            foreach (var m in r.Members.Select(RoleMemberKey).OrderBy(k => k, StringComparer.Ordinal)) sb.Append("\nM:").Append(m);
+            foreach (var tp in r.TablePermissions.Cast<TOM.TablePermission>().OrderBy(t => t.Name, StringComparer.Ordinal))
+            {
+                sb.Append("\nT:").Append(tp.Name).Append('=').Append(tp.FilterExpression ?? "").Append('|').Append(tp.MetadataPermission);
+                foreach (var cp in tp.ColumnPermissions.Cast<TOM.ColumnPermission>().OrderBy(c => c.Name, StringComparer.Ordinal))
+                    sb.Append("\nC:").Append(tp.Name).Append('.').Append(cp.Name).Append('=').Append(cp.MetadataPermission);
+            }
+            return sb.ToString();
+        }
+
+        private static TOM.ModelRoleMember CopyRoleMember(TOM.ModelRoleMember m) => m switch
+        {
+            TOM.ExternalModelRoleMember e => new TOM.ExternalModelRoleMember { MemberName = e.MemberName, IdentityProvider = RoleProvider(e), MemberType = e.MemberType },
+            _ => new TOM.WindowsModelRoleMember { MemberName = m.MemberName },
+        };
+
+        // Returns the number of roles created or changed. A role whose table (or column) is absent from live is named in
+        // `unmatched` and left unwritten, so a half-built role never goes out as a full one.
+        private static int SyncRoles(TOM.Model src, TOM.Model live, bool apply, ChangeLog changes, List<string> unmatched, HashSet<string> syncedRefs, Action<TOM.MetadataObject> mark)
+        {
+            var count = 0;
+            foreach (var sr in src.Roles.Cast<TOM.ModelRole>())
+            {
+                var refId = AlmRef.Top("role", sr.Name);
+                var lr = live.Roles.Find(sr.Name);
+                var before = lr == null ? null : RoleSignature(lr);
+                var after = RoleSignature(sr);
+                if (lr != null && before == after) continue;
+
+                // Every table the role filters must exist live (or be created by this same deploy: the tables pass ran first).
+                var missing = sr.TablePermissions.Cast<TOM.TablePermission>()
+                    .Select(tp => tp.Name).FirstOrDefault(n => live.Tables.Find(n) == null && !(!apply && src.Tables.Find(n) != null));
+                if (missing != null) { unmatched.Add(refId + " (its filter names table '" + missing + "', which is not in the live model)"); continue; }
+                string missingCol = null;
+                foreach (var tp in sr.TablePermissions.Cast<TOM.TablePermission>())
+                    foreach (var cp in tp.ColumnPermissions.Cast<TOM.ColumnPermission>())
+                        if (missingCol == null && live.Tables.Find(tp.Name)?.Columns.Find(cp.Name) == null && !(!apply && src.Tables.Find(tp.Name)?.Columns.Find(cp.Name) != null))
+                            missingCol = tp.Name + "'[" + cp.Name;
+                if (missingCol != null) { unmatched.Add(refId + " (its column permission names '" + missingCol + "], which is not in the live model)"); continue; }
+
+                if (apply)
+                {
+                    if (lr == null) { lr = new TOM.ModelRole { Name = sr.Name }; live.Roles.Add(lr); }
+                    lr.ModelPermission = sr.ModelPermission;
+                    lr.Description = string.IsNullOrEmpty(sr.Description) ? null : sr.Description;
+
+                    var want = sr.Members.Cast<TOM.ModelRoleMember>().Select(m => (key: RoleMemberKey(m), m)).GroupBy(x => x.key).ToDictionary(g => g.Key, g => g.First().m);
+                    foreach (var m in lr.Members.Cast<TOM.ModelRoleMember>().Where(m => !want.ContainsKey(RoleMemberKey(m))).ToList()) lr.Members.Remove(m);
+                    var have = new HashSet<string>(lr.Members.Cast<TOM.ModelRoleMember>().Select(RoleMemberKey), StringComparer.Ordinal);
+                    foreach (var kv in want) if (!have.Contains(kv.Key)) lr.Members.Add(CopyRoleMember(kv.Value));
+
+                    var wantTables = new HashSet<string>(sr.TablePermissions.Cast<TOM.TablePermission>().Select(t => t.Name), StringComparer.Ordinal);
+                    foreach (var tp in lr.TablePermissions.Cast<TOM.TablePermission>().Where(t => !wantTables.Contains(t.Name)).ToList()) lr.TablePermissions.Remove(tp);
+                    foreach (var stp in sr.TablePermissions.Cast<TOM.TablePermission>())
+                    {
+                        var ltp = lr.TablePermissions.Find(stp.Name);
+                        if (ltp == null) { ltp = new TOM.TablePermission { Table = live.Tables.Find(stp.Name) }; lr.TablePermissions.Add(ltp); }
+                        ltp.FilterExpression = string.IsNullOrEmpty(stp.FilterExpression) ? null : stp.FilterExpression;
+                        ltp.MetadataPermission = stp.MetadataPermission;
+                        var wantCols = new HashSet<string>(stp.ColumnPermissions.Cast<TOM.ColumnPermission>().Select(c => c.Name), StringComparer.Ordinal);
+                        foreach (var cp in ltp.ColumnPermissions.Cast<TOM.ColumnPermission>().Where(c => !wantCols.Contains(c.Name)).ToList()) ltp.ColumnPermissions.Remove(cp);
+                        foreach (var scp in stp.ColumnPermissions.Cast<TOM.ColumnPermission>())
+                        {
+                            var lcp = ltp.ColumnPermissions.Find(scp.Name);
+                            if (lcp == null) { var col = ltp.Table?.Columns.Find(scp.Name); if (col == null) continue; lcp = new TOM.ColumnPermission { Column = col }; ltp.ColumnPermissions.Add(lcp); }
+                            lcp.MetadataPermission = scp.MetadataPermission;
+                        }
+                    }
+                    mark(lr);
+                }
+                count++;
+                NoteDelta(changes, (before == null ? "add " : "update ") + "role:" + sr.Name, before, after);
+                syncedRefs.Add(refId);
+            }
+            return count;
         }
 
         private sealed class ChangeLog : List<string>
@@ -2009,15 +2300,19 @@ namespace Semanticus.Engine
         // selective push cannot reconcile the table Create as fully applied while an authored child (e.g. a measure) is
         // absent (BLOCKER 2 — the false-success family). The table shell + the columns/partition it DID carry stay
         // counted/logged; only the object-level ref is withheld.
-        private static bool ReportUncarriedNewTableChildren(TOM.Table st, List<string> unmatched)
+        private static bool ReportUncarriedNewTableChildren(TOM.Table st, List<string> unmatched, bool secondPass = false)
         {
             int before = unmatched.Count;
             foreach (var sm in st.Measures.Cast<TOM.Measure>())
                 unmatched.Add(AlmRef.Child("measure", st.Name, sm.Name) + " (measure on a newly created table - not carried here; deploy via TMDL/XMLA)");
-            foreach (var sh in st.Hierarchies.Cast<TOM.Hierarchy>())
-                unmatched.Add(AlmRef.Child("hierarchy", st.Name, sh.Name) + " (hierarchy on a newly created table - not carried here; deploy via TMDL/XMLA)");
-            foreach (var sc in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && c.SortByColumn != null))
-                unmatched.Add(AlmRef.Child("column", st.Name, sc.Name) + " (sort-by on a newly created table - not carried here; deploy via TMDL/XMLA)");
+            // A calculated table takes its hierarchies and sort-by in the second pass; any other new table does not carry them.
+            if (!secondPass)
+            {
+                foreach (var sh in st.Hierarchies.Cast<TOM.Hierarchy>())
+                    unmatched.Add(AlmRef.Child("hierarchy", st.Name, sh.Name) + " (hierarchy on a newly created table - not carried here; deploy via TMDL/XMLA)");
+                foreach (var sc in st.Columns.Cast<TOM.Column>().Where(c => c.Type != TOM.ColumnType.RowNumber && c.SortByColumn != null))
+                    unmatched.Add(AlmRef.Child("column", st.Name, sc.Name) + " (sort-by on a newly created table - not carried here; deploy via TMDL/XMLA)");
+            }
             var items = st.CalculationGroup?.CalculationItems;
             if (items != null)
                 foreach (var ci in items.Cast<TOM.CalculationItem>())

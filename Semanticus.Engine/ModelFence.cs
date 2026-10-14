@@ -89,6 +89,7 @@ namespace Semanticus.Engine
             ["GetStartWordsAsync"] = "A read of the start plan's open words.",
             ["ShowInStudioAsync"] = "A note for the person: it changes nothing in the model.",
             ["SuggestNextAsync"] = "Buttons for the person: they change nothing in the model.",
+            ["SetNextStepAsync"] = "The person's suggestion preference: it changes nothing in the model.",
             ["NoteAgentCallAsync"] = "A signal that a call began: it changes nothing in the model.",
             ["SetStudioDriverAsync"] = "The Studio reports its own screen: it writes nothing in the model.",
         };
@@ -159,6 +160,8 @@ namespace Semanticus.Engine
                 else if (RequestModelIdentity.Strict && !ModelFence.Unnamed.ContainsKey(target.Name) && _hasOpen())
                     return Refused(target.ReturnType);
             }
+            // The person's door is where a press is told apart from everything the page starts by itself (SignInPress): only a press may open a sign-in window.
+            using var press = SignInPress.IsPress(target, args) ? SignInPress.Press() : null;
             try { return target.Invoke(_inner, args); }
             catch (TargetInvocationException ex) when (ex.InnerException != null) { ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
         }

@@ -27,13 +27,13 @@ namespace Semanticus.Engine
             string folder,
             string name,
             string storageMode = "import",
-            string authMode = "azcli",
+            string authMode = null,
             string tenantId = null)
             => engine.StartModelFromSqlAsync(new StartModelRequest
             {
                 Server = server, Database = database, Folder = folder, Name = name,
                 StorageMode = string.IsNullOrWhiteSpace(storageMode) ? "import" : storageMode,
-                AuthMode = string.IsNullOrWhiteSpace(authMode) ? "azcli" : authMode,
+                AuthMode = string.IsNullOrWhiteSpace(authMode) ? null : authMode,
                 TenantId = tenantId,
             }, "agent");
 

@@ -97,11 +97,16 @@ export function offeredKinds(all, rule) {
  * @param {{ isDate: boolean; ordered?: boolean; distinct: number }[]} dims
  * @param {number} measures
  * @param {string} viz
+ * @param {boolean} [chosen] the person put the two fields in their places themselves (Queries' wells): a bar keeps their order.
+ *   Otherwise (an answer in Ask your data) a bar puts the field with MORE values along the axis and the one with FEWER in
+ *   the series, so month by year is 12 months with 3 year bars, not 3 years with 12 colours (Kane, 13 Oct). A line always
+ *   follows the date.
  * @returns {{ axis: 0 | 1; series: 0 | 1 } | null} */
-export function twoSplitAxes(dims, measures, viz) {
+export function twoSplitAxes(dims, measures, viz, chosen = false) {
   if (measures !== 1 || dims?.length !== 2) return null;
   const time = (d) => d.isDate && d.ordered !== false;
-  const axis = time(dims[1]) ? 1 : time(dims[0]) ? 0 : 0;
+  let axis = time(dims[1]) ? 1 : 0;
+  if (!chosen && viz === 'bar' && dims[0].distinct !== dims[1].distinct) axis = dims[1].distinct > dims[0].distinct ? 1 : 0;
   const series = axis === 0 ? 1 : 0;
   if (viz === 'bar' && dims[series].distinct > 12) return null;
   return { axis, series };

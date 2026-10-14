@@ -2248,7 +2248,7 @@ namespace Semanticus.Engine
 
         public async Task<WorkflowRunView> AbortWorkflowAsync(string runId, string reason, string origin)
         {
-            RequireProFeature();
+            // Free on purpose: a run that was active when a trial or Pro ended must still be stoppable. Stopping starts nothing.
             // Stopping a draft's guided sub-run stops the draft with it (lane l9-finish): nothing after it runs.
             if (DraftOfGuidedRun(runId) is string draftId)
                 return await AbortDraftGuidedRunAsync(draftId, runId.Trim(), reason, origin);
@@ -2308,6 +2308,7 @@ namespace Semanticus.Engine
             if (ReferenceEquals(_sessions.CurrentContext, context)) _sessions.Bus.PublishWorkflow(view);
             if (run.Status != "active")
             {
+                if (run.Status == "completed") NoteTrialWorkflowRun(run.RunId);
                 RecordRunReport(context, run, view);
                 context.WorkflowAux.Remove(run.RunId);
                 _ = PublishActivityAsync(new ActivityEvent

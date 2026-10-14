@@ -46,6 +46,7 @@ namespace Semanticus.Tests
             const string m = "let Source = 42 in Source";
             await McpTools.CreateNamedExpression(engine, "Shared Source", m);
             var table = await McpTools.CreateTable(engine, "Sales");
+            await McpTools.CreateColumn(engine, table, "Amount", "Decimal");   // the measure names a column that must exist (m15/run-waits: a column of a table that has none is refused)
             await McpTools.CreateMeasure(engine, table, "Total", "SUM(Sales[Amount])");
             await McpTools.CreateCalculatedColumn(engine, table, "Band", "\"All\"");
 

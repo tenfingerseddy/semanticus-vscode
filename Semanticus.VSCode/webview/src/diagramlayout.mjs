@@ -10,7 +10,7 @@ import { busGrid, busOrder, routeAll } from './diagramroute.mjs';
 /** @typedef {{ x: number, y: number }} XY */
 /** @typedef {{ w: number, h: number }} Size */
 /** @typedef {{ rel: string, kind: 'source' | 'target', side: Side, frac: number }} Anchor */
-/** @typedef {'free' | 'hierarchy' | 'busmatrix' | 'layered'} LayoutMode */
+/** @typedef {'free' | 'hierarchy' | 'busmatrix' | 'layered' | 'matrix'} LayoutMode */
 
 export const NODE_W = 190;   // minimum node width (collapsed)
 export const NODE_H = 92;    // minimum node height (collapsed)
@@ -26,15 +26,16 @@ export const SLOT = 30;
 // keeping the rendered node, its handle spread, and the layout spacing in perfect agreement.
 /** @param {Anchor[]} anchors @returns {Size} */
 export function sizeForAnchors(anchors) {
-  let top = 0, bottom = 0, left = 0, right = 0;
+  // Ends that share one point on a side (the matrix puts every link of a fact on ONE lane) need no extra room.
+  const top = new Set(), bottom = new Set(), left = new Set(), right = new Set();
   for (const a of anchors) {
-    if (a.side === 'top') top++;
-    else if (a.side === 'bottom') bottom++;
-    else if (a.side === 'left') left++;
-    else right++;
+    if (a.side === 'top') top.add(a.frac);
+    else if (a.side === 'bottom') bottom.add(a.frac);
+    else if (a.side === 'left') left.add(a.frac);
+    else right.add(a.frac);
   }
-  const horiz = Math.max(top, bottom);   // anchors along a horizontal edge → need WIDTH to separate
-  const vert = Math.max(left, right);    // anchors along a vertical edge → need HEIGHT to separate
+  const horiz = Math.max(top.size, bottom.size);   // anchors along a horizontal edge → need WIDTH to separate
+  const vert = Math.max(left.size, right.size);    // anchors along a vertical edge → need HEIGHT to separate
   return { w: Math.max(NODE_W, (horiz + 1) * SLOT), h: Math.max(NODE_H, (vert + 1) * SLOT) };
 }
 
@@ -98,6 +99,180 @@ export function busMatrixPositions(tables, rels, sizeOf, aspect) {
   return m;
 }
 
+// ---- The matrix (Kane, 12 Oct: "the hero shot needs to be a bus matrix layout") --------------------------------------
+// A true bus matrix, as Kimball draws it: lookup tables in ONE row across the top, facts in ONE column down the left,
+// and a dot where a fact uses a lookup table. Every link of a fact runs along its row and every link of a lookup table
+// down its column, so lines never cross each other and nothing is routed. The row starts with the date table, then the
+// lookup tables the most facts share, so the shared ones read first. A lookup table only other lookup tables use sits
+// beside the one it hangs off. Unlinked tables go in rows under the facts, never in the row of lookup tables.
+export const MATRIX_FACT_W = NODE_W;
+export const MATRIX_GAP = 20;            // between two lookup tables
+export const MATRIX_CHILD_GAP = 36;      // between a lookup table and an outrigger beside it (a line and its ends fit)
+export const MATRIX_LEFT = 48;           // from the fact column to the first lookup table (room for the row lines)
+export const MATRIX_TOP = 44;            // from the row of lookup tables to the first fact (room for the column lines)
+export const MATRIX_ROW_GAP = 20;        // between two facts
+export const MATRIX_FACT_H = 72;         // a fact's card in the matrix: a name and one line, so its rows sit close
+export const MATRIX_LANE = MATRIX_FACT_H / 2;   // a fact's row runs this far below its top edge, open or not
+/** A lookup table's width: the more of them, the narrower, so a whole model fits one screen at a readable size. */
+export function matrixDimWidth(count) { return count <= 6 ? NODE_W : count <= 9 ? 164 : count <= 12 ? 140 : 108; }
+/** The gap between two lookup tables: tighter once there are many. */
+export function matrixGap(count) { return count <= 9 ? MATRIX_GAP : 10; }
+
+/**
+ * A header table: the "one" end of a link from a fact (an Order Header over Order Line) that also has links of its own
+ * to lookup tables a fact uses (Date, Customer). It belongs with the facts, so those links are dots in its own row.
+ * @param {{ name: string }[]} tables @param {any[]} rels @returns {Set<string>}
+ */
+export function matrixHeaders(tables, rels) {
+  const names = new Set(tables.map((t) => t.name));
+  const links = rels.filter((r) => names.has(r.fromTable) && names.has(r.toTable) && r.fromTable !== r.toTable).map(roleOf);
+  const ones = new Set(links.map((l) => l.oneT)), manys = new Set(links.map((l) => l.manyT));
+  const pure = new Set([...manys].filter((n) => !ones.has(n)));
+  const primary = new Set(links.filter((l) => pure.has(l.manyT)).map((l) => l.oneT));
+  return new Set([...ones].filter((h) => links.some((l) => l.oneT === h && pure.has(l.manyT))
+    && links.filter((l) => l.manyT === h && l.oneT !== h && primary.has(l.oneT)).length >= 2));
+}
+
+/** The links that are dots: a fact (never a lookup table) to a lookup table. @param {{ name: string }[]} tables @param {any[]} rels */
+export function cellRels(tables, rels) {
+  const names = new Set(tables.map((t) => t.name));
+  const shown = rels.filter((r) => names.has(r.fromTable) && names.has(r.toTable));
+  const headers = matrixHeaders(tables, rels);
+  const ones = new Set(shown.map((r) => roleOf(r).oneT).filter((n) => !headers.has(n)));
+  return new Set(shown.filter((r) => { const { manyT, oneT } = roleOf(r); return !headers.has(oneT) && !ones.has(manyT); }).map((r) => r.name));
+}
+
+/**
+ * Where each dot sits in its cell. Two or more links between the same fact and lookup table (OrderDate on, ShipDate off)
+ * sit side by side, the active ones first, so none hides another. @param {{ name: string }[]} tables @param {any[]} rels
+ * @returns {Map<string, { i: number, n: number }>}
+ */
+export function cellSlots(tables, rels) {
+  const cells = cellRels(tables, rels);
+  /** @type {Map<string, any[]>} */ const by = new Map();
+  for (const r of rels) if (cells.has(r.name)) { const { manyT, oneT } = roleOf(r); const k = manyT + '|' + oneT; const g = by.get(k); if (g) g.push(r); else by.set(k, [r]); }
+  /** @type {Map<string, { i: number, n: number }>} */ const out = new Map();
+  for (const g of by.values()) {
+    [...g].sort((a, b) => (b.isActive === false ? 0 : 1) - (a.isActive === false ? 0 : 1)).forEach((r, i) => out.set(r.name, { i, n: g.length }));
+  }
+  return out;
+}
+
+/**
+ * The links that are not dots and do not run straight between two neighbours: a header to its lines (fact to fact), and two
+ * lookup tables that are not next to each other in the row. The grid draws no long line for these. Two facts one under the
+ * other get a short mark between them (`near`); every other one is a small tag on each card that names the partner on hover.
+ * `from` and `to` are each end's place among the tags on its card, so two tags never sit on one spot.
+ * @param {{ name: string, isDateTable?: boolean }[]} tables @param {any[]} rels
+ * @returns {Map<string, { kind: 'left' | 'top', near: boolean, from: number, to: number }>}
+ */
+export function matrixMarks(tables, rels) {
+  const names = new Set(tables.map((t) => t.name));
+  const cells = cellRels(tables, rels);
+  const { dims, facts } = matrixOrder(tables, rels);
+  const ri = new Map(dims.map((d, i) => [d, i])), fi = new Map(facts.map((f, i) => [f, i]));
+  /** @type {{ r: any, kind: 'left' | 'top', near: boolean }[]} */ const found = [];
+  for (const r of rels) {
+    if (!names.has(r.fromTable) || !names.has(r.toTable) || cells.has(r.name) || r.fromTable === r.toTable) continue;
+    const a = r.fromTable, b = r.toTable;
+    if (fi.has(a) && fi.has(b)) found.push({ r, kind: 'left', near: Math.abs(fi.get(a) - fi.get(b)) === 1 });
+    else if (ri.has(a) && ri.has(b) && Math.abs(ri.get(a) - ri.get(b)) !== 1) found.push({ r, kind: 'top', near: false });
+  }
+  /** @type {Map<string, number>} */ const used = new Map();
+  const place = (/** @type {string} */ card, /** @type {string} */ kind) => { const k = card + '|' + kind; const n = used.get(k) ?? 0; used.set(k, n + 1); return n; };
+  /** @type {Map<string, { kind: 'left' | 'top', near: boolean, from: number, to: number }>} */ const out = new Map();
+  for (const f of [...found].sort((x, y) => (x.r.name < y.r.name ? -1 : 1))) {
+    out.set(f.r.name, { kind: f.kind, near: f.near, from: place(f.r.fromTable, f.kind), to: place(f.r.toTable, f.kind) });
+  }
+  return out;
+}
+
+/**
+ * The short mark between two cards one under the other (boxes { x, y, w, h }): a straight run through the gap, on the left
+ * of the cards. Null when the cards have been moved apart, so the grid never draws a long line (the tags take over).
+ * @param {{ x: number, y: number, w: number, h: number }} a @param {{ x: number, y: number, w: number, h: number }} b
+ */
+export function nearMarkPoints(a, b) {
+  const [up, down] = a.y <= b.y ? [a, b] : [b, a];
+  const gap = down.y - (up.y + up.h), x = Math.max(up.x, down.x) + 24;
+  if (gap < 0 || gap > 48 || x > Math.min(up.x + up.w, down.x + down.w) - 8) return null;
+  return a === up ? [{ x, y: up.y + up.h }, { x, y: down.y }] : [{ x, y: down.y }, { x, y: up.y + up.h }];
+}
+
+/** Where a tag sits: just outside its card's edge (never under the card), fact cards on the left, lookup cards on top, `place` apart each. @param {'left' | 'top'} kind @param {{ x: number, y: number, w: number, h: number }} box @param {number} place */
+export function tagPoint(kind, box, place) {
+  return kind === 'left' ? { x: box.x - 12, y: box.y + 14 + place * 18 } : { x: box.x + 14 + place * 18, y: box.y - 12 };
+}
+
+/** Who is who in the matrix, in reading order. @param {{ name: string, isDateTable?: boolean }[]} tables @param {any[]} rels */
+export function matrixOrder(tables, rels) {
+  const headers = matrixHeaders(tables, rels);
+  // A link INTO a header is fact to fact: it takes no part in who is a lookup table.
+  const links = rels.map((r) => { const { manyT, oneT } = roleOf(r); return { many: manyT, one: oneT }; }).filter((l) => !headers.has(l.one));
+  const { dims, facts, iso, parent } = busOrder(tables.map((t) => t.name), links);
+  const byName = new Map(tables.map((t) => [t.name, t]));
+  const pos = new Map(tables.map((t, i) => [t.name, i]));
+  const factSet = new Set(facts);
+  const used = new Map();   // lookup table -> how many facts use it
+  const count = new Map();  // fact -> how many lookup tables it uses
+  for (const l of links) if (factSet.has(l.many)) {
+    used.set(l.one, (used.get(l.one) ?? 0) + 1); count.set(l.many, (count.get(l.many) ?? 0) + 1);
+  }
+  const date = (/** @type {string} */ n) => (byName.get(n)?.isDateTable ? 0 : 1);
+  const top = dims.filter((d) => parent[d] === undefined)
+    .sort((a, b) => date(a) - date(b) || (used.get(b) ?? 0) - (used.get(a) ?? 0) || pos.get(a) - pos.get(b));
+  const kids = new Map();
+  for (const d of dims) if (parent[d] !== undefined) { const k = kids.get(parent[d]); if (k) k.push(d); else kids.set(parent[d], [d]); }
+  /** @type {string[]} */ const row = [];
+  const emit = (/** @type {string} */ d) => { row.push(d); for (const k of kids.get(d) ?? []) emit(k); };
+  top.forEach(emit);
+  const orderedFacts = [...facts].sort((a, b) => (count.get(b) ?? 0) - (count.get(a) ?? 0) || pos.get(a) - pos.get(b));
+  for (const h of headers) {   // a header sits right above its first lines, so the link between them is short
+    const lines = rels.map(roleOf).filter((l) => l.oneT === h).map((l) => orderedFacts.indexOf(l.manyT)).filter((i) => i >= 0);
+    const at = orderedFacts.indexOf(h);
+    if (at < 0 || !lines.length) continue;
+    orderedFacts.splice(at, 1);
+    orderedFacts.splice(Math.min(...lines.map((i) => (i > at ? i - 1 : i))), 0, h);
+  }
+  return { dims: row, facts: orderedFacts, iso, parent };
+}
+
+/** Each card's box in the matrix: lookup tables share one narrower width, everything else keeps its own. */
+export function matrixSizer(tables, rels, /** @type {(name: string) => Size} */ own) {
+  const { dims, facts } = matrixOrder(tables, rels);
+  const w = matrixDimWidth(dims.length);
+  const dimSet = new Set(dims), factSet = new Set(facts);
+  return (/** @type {string} */ n) => {
+    const b = own(n);
+    return dimSet.has(n) ? { w, h: b.h } : factSet.has(n) ? { w: Math.max(MATRIX_FACT_W, b.w), h: MATRIX_FACT_H } : { w: Math.max(MATRIX_FACT_W, b.w), h: b.h };   // unlinked tables keep a full card
+  };
+}
+
+/** @param {{ name: string, isDateTable?: boolean }[]} tables @param {any[]} rels @param {(name: string) => Size} sizeOf @returns {Map<string, XY>} */
+export function matrixPositions(tables, rels, sizeOf) {
+  const { dims, facts, iso, parent } = matrixOrder(tables, rels);
+  /** @type {Map<string, XY>} */ const m = new Map();
+  const factW = Math.max(MATRIX_FACT_W, ...facts.map((f) => sizeOf(f).w));
+  const rowH = Math.max(NODE_H, ...dims.map((d) => sizeOf(d).h));
+  const gap = matrixGap(dims.length);
+  let x = factW + MATRIX_LEFT;
+  dims.forEach((d, i) => { m.set(d, { x, y: 0 }); x += sizeOf(d).w + (dims[i + 1] !== undefined && parent[dims[i + 1]] === d ? MATRIX_CHILD_GAP : gap); });
+  const right = dims.length ? x - gap : factW;
+  let y = (dims.length ? rowH + MATRIX_TOP : 0);
+  for (const f of facts) { m.set(f, { x: 0, y }); y += sizeOf(f).h + MATRIX_ROW_GAP; }
+  if (iso.length) {   // under the facts, in rows as wide as the matrix
+    const left = dims.length ? factW + MATRIX_LEFT : 0;   // under the first lookup table, clear of the zoom controls and the counts
+    let cx = left, rowBottom = 0;
+    y += MATRIX_ROW_GAP;
+    for (const n of iso) {
+      const b = sizeOf(n);
+      if (cx > left && cx + b.w > Math.max(right, left + 640)) { cx = left; y += rowBottom + MATRIX_ROW_GAP; rowBottom = 0; }
+      m.set(n, { x: cx, y }); cx += b.w + MATRIX_GAP; rowBottom = Math.max(rowBottom, b.h);
+    }
+  }
+  return m;
+}
+
 // Many/One role of a relationship's two ends — mirrors busMatrixPositions's classification so handle sides agree.
 /** @param {{ fromTable: string, toTable: string, fromCardinality: string, toCardinality: string }} r */
 export function roleOf(r) {
@@ -131,7 +306,11 @@ export function computeAnchors(members, rels, layout, centers) {
   /** @type {{ table: string, other: string, rel: string, kind: 'source' | 'target', side: Side }[]} */
   const ends = [];
   // Dimensions: the one side of some shown link (the bus matrix lays them in its row).
-  const oneSides = new Set(rels.filter((r) => names.has(r.fromTable) && names.has(r.toTable)).map((r) => roleOf(r).oneT));
+  // The matrix leaves a header's links into it out of "lookup table", so a header's own links to lookups are dots (matrixHeaders).
+  const headers = layout === 'matrix' ? matrixHeaders(members, rels) : new Set();
+  const brackets = layout === 'matrix' ? matrixMarks(members, rels) : new Map();
+  const oneSides = new Set(rels.filter((r) => names.has(r.fromTable) && names.has(r.toTable) && !headers.has(roleOf(r).oneT)).map((r) => roleOf(r).oneT));
+  const cells = new Set(rels.filter((r) => names.has(r.fromTable) && names.has(r.toTable) && !headers.has(roleOf(r).oneT) && !oneSides.has(roleOf(r).manyT)).map((r) => r.name));
   for (const r of rels) {
     if (!names.has(r.fromTable) || !names.has(r.toTable)) continue;
     /** @type {Side} */ let fromSide;
@@ -142,13 +321,16 @@ export function computeAnchors(members, rels, layout, centers) {
       const { oneT } = roleOf(r);
       fromSide = r.fromTable === oneT ? 'bottom' : 'top';
       toSide = r.toTable === oneT ? 'bottom' : 'top';
-    } else if (layout === 'busmatrix') {
+    } else if (layout === 'busmatrix' || layout === 'matrix') {
       // Bus matrix (dims top, facts left): the fact (many-side) joins on its RIGHT, the dimension (one-side) connects
       // from its BOTTOM — an orthogonal L-route between the left fact column and the top dim row. A link between two
       // dimensions (an outrigger, which sits in the row beside the table it hangs off) runs side to side along the row:
       // the facing sides, left one's RIGHT to right one's LEFT (Kane, 8 Oct). With no positions yet, many RIGHT.
       const { manyT, oneT } = roleOf(r);
-      if (oneSides.has(manyT)) {
+      const bracket = brackets.get(r.name);
+      if (bracket) {   // a short mark or a tag on the open side (matrixMarks); never a long line
+        fromSide = toSide = bracket.kind;
+      } else if (oneSides.has(manyT) || headers.has(oneT)) {
         const m = centers?.get(manyT), o = centers?.get(oneT);
         const manyLeft = !m || !o || m.x <= o.x;
         fromSide = (r.fromTable === manyT) === manyLeft ? 'right' : 'left';
@@ -177,7 +359,10 @@ export function computeAnchors(members, rels, layout, centers) {
     // attach points run sequentially along the edge instead of in arbitrary relationship order.
     if (centers) g.sort((a, b) => anchorKey(a.side, centers, a.table, a.other) - anchorKey(b.side, centers, b.table, b.other));
     g.forEach((e, i) => {
-      /** @type {Anchor} */ const a = { rel: e.rel, kind: e.kind, side: e.side, frac: (i + 1) / (g.length + 1) };
+      // The matrix: a fact's links all leave on one lane (its row) and a lookup table's all drop on one column, so every
+      // link of a fact or lookup table shares ONE point. A link between two lookup tables keeps its own spread.
+      const shared = layout === 'matrix' && (e.side === 'right' || e.side === 'bottom') && cells.has(e.rel);
+      /** @type {Anchor} */ const a = { rel: e.rel, kind: e.kind, side: e.side, frac: shared ? 0.5 : (i + 1) / (g.length + 1) };
       const arr = out.get(e.table); if (arr) arr.push(a); else out.set(e.table, [a]);
     });
   }

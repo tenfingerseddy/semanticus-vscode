@@ -26,7 +26,7 @@ const ts = req('typescript');
 
 const cache = new Map();
 function load(file) {
-  const full = /\.(ts|tsx)$/.test(file) ? file : existsSync(file + '.ts') ? file + '.ts' : file + '.tsx';
+  const full = /\.(ts|tsx|mjs|js)$/.test(file) ? file : existsSync(file + '.ts') ? file + '.ts' : file + '.tsx';
   if (cache.has(full)) return cache.get(full);
   const js = ts.transpileModule(readFileSync(full, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true }, fileName: full,

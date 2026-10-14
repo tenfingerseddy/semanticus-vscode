@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { claimConsentAsk, onDidChange, rpc } from './bridge';
+import { claimConsentAsk, onDidChange, onReconnect, rpc } from './bridge';
 import { useTier } from './pro';
 import { whenFirstRunClosed } from './firstrun-gate';
 import { useLearn } from './studio/learn-state';
@@ -285,8 +285,8 @@ function useCardState(): CardState {
  * The engine's word on permission, and whether it raises the card now. True when it did. Exported so the
  * once-per-model rules run in test/assistant-swap-quiet.test.mjs without a page around them.
  *
- * The host decides whether this model may be asked about (src/consentAsks.ts): once per model in the window's run,
- * and never because of the assistant's swap (coordinator, 26 Sep, verifier r2 O1), only after the person's own open.
+ * The host decides whether this model may be asked about (src/consentAsks.ts): once per model in the window's run. A model the assistant
+ * opened is asked about like any other (hero 20 D10); the card only asks, and permission is given by the person's press on it.
  */
 export async function raiseConsentCardFor(consent: ConsentInfoW | null | undefined, reask?: () => void): Promise<boolean> {
   if (!consent) return false;
@@ -295,6 +295,33 @@ export async function raiseConsentCardFor(consent: ConsentInfoW | null | undefin
   if (!await claimConsentAsk(consent.appliesTo)) return false;
   raiseCard(reask ?? (() => undefined), consent.appliesTo);   // waits for What Pro decides when that panel is open (L6)
   return true;
+}
+
+/**
+ * A model is open and nobody has decided about Jev for it: raise the card at once. True when it did. The pages ask only when
+ * their own Pro answer is missing; a model the assistant opened has no page waiting, so without this Jev stayed silent until the
+ * person found Pro > Turn on (hero 20 D10). Someone who turned permission off for the model has decided, so it never asks them.
+ * It only asks: permission is given by the person's press on the card.
+ */
+export async function raiseConsentCardForOpenModel(): Promise<boolean> {
+  const consent = await rpc<ConsentInfoW>('getConsent');
+  if (!consent || consent.current || consent.withdrawnUtc || !consent.appliesTo) return false;
+  return raiseConsentCardFor(consent);
+}
+
+/** Mounted once in Studio: asks for the model open now, and for each model the assistant opens afterwards. */
+export function useAskForOpenModel(): void {
+  const tier = useTier();
+  const { runtime: learn } = useLearn();
+  useEffect(() => {
+    if (tier !== 'pro' || learn.phase !== 'idle') return;
+    let live = true;
+    watchModelChanges();
+    const ask = () => { void whenFirstRunClosed().then(() => live ? raiseConsentCardForOpenModel() : false).catch(() => { /* a failed read is not a reason to interrupt somebody */ }); };
+    ask();
+    const off = onReconnect((by) => { if (by === 'otherDoor') ask(); });
+    return () => { live = false; off(); };
+  }, [tier, learn.phase]);
 }
 
 /**
@@ -603,7 +630,7 @@ export function ConsentCard() {
 // ---- the permission line in Your assistant > What Pro decides --------------------------------------
 
 const NEVER_SAVED_LINE = 'Save this model before you can let Pro decide for it. Permission is kept for one model at a time.';
-const FOOTNOTE = 'Every other model you open asks you again, on its own.';
+const FOOTNOTE = 'Each model you open asks you once, whoever opens it.';
 
 /** "21 Sep", in the reader's own zone. A date with no day in it reads as a different promise. */
 function shortDate(when: string | null | undefined): string | null {

@@ -53,8 +53,11 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "model_overview"), Description("Summarize the open semantic model: name, source, sessionId, table/measure counts, and whether there are unsaved changes. A cheap check of which model is open. For session-start orientation (connection, tier, grade, in-flight work, next actions) use get_model_summary.")]
         public static Task<SessionInfo> ModelOverview(IEngine engine) => engine.SessionInfoAsync();
 
-        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids for the TABS this installation may open: today that is workflows and askData (Ask your data: ask_data, list_data_questions and pick_chart_kind), so a Pro session reports [\"workflows\",\"askData\"] and a free session reports []. Two more things are paid and carry no wire id because neither is a tab: route_ask, and the ranked and run model plan. Read the tier for those. Everything else is free, every read and every bulk apply included. Check this before calling a workflow tool, ask_data or route_ask, so a refusal is never a surprise. `assistant` names the assistant attached to this session (key, name, initials) once it has made a call; the Studio shows it in its driver bar.")]
+        [McpServerTool(Name = "get_entitlement"), Description("Get the current Semanticus tier (free | pro) and the features it grants. `features` carries the wire ids for the TABS this installation may open: today that is workflows and askData (Ask your data: ask_data, list_data_questions and pick_chart_kind), so a Pro session reports [\"workflows\",\"askData\"] and a free session reports []. Two more things are paid and carry no wire id because neither is a tab: route_ask, and the ranked and run model plan. Read the tier for those. Everything else is free, every read and every bulk apply included. Check this before calling a workflow tool, ask_data or route_ask, so a refusal is never a surprise. A free Pro month (a trial) reports tier pro with isTrial true, trialEndsAt (unix seconds) and trialDaysLeft (whole days, rounded up); it has no grace, so the second after its end the tier is free with trialEnded true and a reason naming the day. get_trial_tally reads what was done during it. `assistant` names the assistant attached to this session (key, name, initials) once it has made a call; the Studio shows it in its driver bar.")]
         public static Task<Entitlement.EntitlementInfo> GetEntitlement(IEngine engine) => engine.GetEntitlementAsync();
+
+        [McpServerTool(Name = "get_trial_tally"), Description("What the person has done during their free Pro month, counted on this computer from what really happened since the trial started: startedAt (unix seconds), changesApplied (objects changed by applied edits, by anyone), steps (edits on the undo timeline that made them; undo and redo are not counted), jevChoices (choices the hosted decision service made), workflowsRun (workflow runs that finished). All zeros when the licence is not a trial. After the month ends the numbers stay readable. Read-only.")]
+        public static Task<Entitlement.TrialTally> GetTrialTally(IEngine engine) => engine.GetTrialTallyAsync();
 
         [McpServerTool(Name = "get_verified_mode"), Description("Is Record verified edits on? This tool keeps its older name so existing assistants and scripts still work. The switch only adds an audit record: every DAX write (update_measure, apply_dax_script, and creating a measure, calculated column, calculated table, calculation item or function) is checked offline whether it is on or off, and malformed syntax, arity problems and unknown table, column or measure references are refused before anything is written. When on, each single-object DAX write that passes is also recorded in the Verified Edits audit trail (list_verified_edits). The record states validity only, not an equivalence or drift proof. Session-scoped (resets on reconnect). 'available' is always true: Record verified edits is free.")]
         public static Task<VerifiedModeState> GetVerifiedMode(IEngine engine) => engine.GetVerifiedModeAsync();
@@ -187,7 +190,7 @@ namespace Semanticus.Engine
         /// <summary>The graph counts: get_model_graph with detail='summary'.</summary>
         public static async Task<ModelGraphSummary> ModelGraphSummary(IEngine engine) => Semanticus.Engine.ModelGraphSummary.From(await engine.GetModelGraphAsync());
 
-        [McpServerTool(Name = "get_model_summary"), Description("Session-start orientation for a fresh session, after a context compaction, or at a handoff. One round-trip, token-budgeted (≤~2k tokens), giving connection state · entitlement · model overview · a compact excerpt from the model's declared Primer · AI-readiness · structural graph · in-flight work · recent activity · deterministic next actions. Drill down with get_model_primer, connection_status, get_entitlement, ai_readiness_scan, get_model_graph, get_workflow_run, get_plan, get_spec and list_calendars. It omits full findings, object detail and DAX bodies.")]
+        [McpServerTool(Name = "get_model_summary"), Description("Session-start orientation for a fresh session, after a context compaction, or at a handoff. One round-trip, token-budgeted (≤~2k tokens), giving connection state · entitlement (tier, plus the days left in a free Pro month, or that it ended) · model overview · a compact excerpt from the model's declared Primer · AI-readiness · structural graph · in-flight work · recent activity · deterministic next actions. Drill down with get_model_primer, connection_status, get_entitlement, ai_readiness_scan, get_model_graph, get_workflow_run, get_plan, get_spec and list_calendars. It omits full findings, object detail and DAX bodies.")]
         public static Task<ModelSummary> GetModelSummary(IEngine engine) => engine.GetOrientationAsync();
 
         [McpServerTool(Name = "get_dax"), Description("Get the DAX expression of a measure or calculated column/table by ref (e.g. 'measure:Sales/Total Sales').")]
@@ -362,7 +365,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "get_source_schema"), Description("Update-Schema step 1: re-read a table's SOURCE columns (names + data types) schema-only, WITHOUT importing data, by probing the SQL/Fabric endpoint its partition query reads (server/database/schema/table parsed from the partition M, or read off a Direct-Lake entity partition) over TDS. Returns the source columns mapped to TOM types (String|Int64|Decimal|Double|DateTime|Boolean). Needs a reachable source: for an OFFLINE snapshot, a non-SQL source, or a native-query partition it returns Reachable=false with a clear message (never throws). Use diff_schema to compare against the model.")]
         public static Task<SourceSchema> GetSourceSchema(IEngine engine,
             [Description("Table ref or name, e.g. 'table:Sales'")] string tableRef,
-            [Description("Entra auth mode for the SQL endpoint: azcli (default) | interactive | devicecode | serviceprincipal | token")] string authMode = "azcli",
+            [Description("Entra auth mode for the SQL endpoint: Leave empty to use the saved sign-in. Or: interactive | devicecode | serviceprincipal | azcli | token")] string authMode = null,
             [Description("Optional Entra tenant id/domain to target")] string tenantId = null)
             => engine.GetSourceSchemaAsync(tableRef, authMode, tenantId, "agent");
 
@@ -370,7 +373,7 @@ namespace Semanticus.Engine
         public static Task<SchemaDiff> DiffSchema(IEngine engine,
             [Description("Table ref or name, e.g. 'table:Sales'")] string tableRef,
             [Description("Optional SUPPLIED source columns to diff against (skips the live probe). Each: {name, dataType (TOM type), sqlType?}. Omit/empty to probe the live source.")] SourceColumn[] sourceColumns = null,
-            [Description("Entra auth mode when probing live: azcli (default) | interactive | devicecode | serviceprincipal | token")] string authMode = "azcli",
+            [Description("Entra auth mode when probing live: Leave empty to use the saved sign-in. Or: interactive | devicecode | serviceprincipal | azcli | token")] string authMode = null,
             [Description("Optional Entra tenant id/domain to target when probing live")] string tenantId = null)
             => engine.DiffSchemaAsync(tableRef, sourceColumns, authMode, tenantId, "agent");
 
@@ -520,7 +523,7 @@ namespace Semanticus.Engine
         public static Task<Lineage.ReportScopeResult> CheckReports(IEngine engine,
             [Description("Chosen report ids to read; empty = every report chosen for this model")] string[] ids = null,
             [Description("Must be true to read a PUBLISHED report: the sign-in asks for permission that can also edit reports. Semanticus uses it only to read.")] bool consent = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode. Published reports only.")] string authMode = null,
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli. Published reports only.")] string authMode = null,
             [Description("Optional Entra tenant id or domain. Published reports only.")] string tenantId = null,
             CancellationToken cancellationToken = default)
             => engine.CheckReportsAsync(ids, consent, authMode, tenantId, null, "agent", cancellationToken);
@@ -528,7 +531,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_reports"), Description("List the published reports in a Fabric/Power BI workspace (id, name, datasetId, reportType, webUrl) via the non-admin per-workspace path. The datasetId tells you which reports bind to a given semantic model. Match it to the open model to find the reports that use it. reportType 'PaginatedReport' = RDL (its field usage can't be parsed). Live read against api.powerbi.com using your Entra identity. Read-only. Pair with analyze_cloud_reports to close the safe-to-remove blind spot using real published-report usage.")]
         public static Task<CloudReport[]> ListReports(IEngine engine,
             [Description("Workspace (group) id")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null,
             CancellationToken cancellationToken = default)
             => engine.ListReportsAsync(workspaceId, authMode, tenantId, "agent", cancellationToken);
@@ -538,7 +541,7 @@ namespace Semanticus.Engine
             [Description("Workspace (group) id the reports live in")] string workspaceId,
             [Description("Report ids to analyze; empty = every non-paginated report in the workspace")] string[] reportIds,
             [Description("Must be true to acknowledge getDefinition needs a write-capable Fabric scope + Contributor role (behaviour stays read-only)")] bool consent = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             [Description("Optional Entra tenant id or domain (cross-tenant / guest override; default = the signed-in tenant)")] string tenantId = null,
             CancellationToken cancellationToken = default)
             => engine.AnalyzeCloudReportsAsync(workspaceId, reportIds, consent, authMode, tenantId, runId: null, origin: "agent", cancellationToken: cancellationToken);
@@ -590,12 +593,8 @@ namespace Semanticus.Engine
         public static Task<UndoState> RedoChange(IEngine engine, [Description("Optional: the undone get_plan_history entry id to redo up to, including it. Omit for one step.")] string toEntry = null) =>
             string.IsNullOrWhiteSpace(toEntry) ? engine.RedoAsync("agent") : engine.RedoToEntryAsync(toEntry, "agent");
 
-        [McpServerTool(Name = "get_plan_history"), Description("The model's History, newest first: every edit with who made it (By: you, assistant, semanticus, workflow), what it changed with before and after values (secrets and Power Query text hidden), and what it served (Cause: a plan item, workflow run, draft or task, whose edits nest under one parent row); Plan decisions that changed nothing; saved and restored versions; finished workflow runs with their report. Each row says whether it is Undoable (pass its Id to undo_change toEntry), how many later changes that would also take back (LaterCount), its Verified word, and whether it is from before this session (never undoable). Filters: by, objectRef (one object), before (a row's When, to page back), limit (default 50). Kept=false means the model has nowhere to keep history yet (save it) and it lasts this session. Free. Read-only.")]
-        public static Task<PlanHistoryView> GetPlanHistory(IEngine engine,
-            [Description("Optional: only rows by 'you', 'assistant', 'semanticus' or 'workflow'.")] string by = null,
-            [Description("Optional: only rows that touched this object, e.g. 'measure:Sales/Total'.")] string objectRef = null,
-            [Description("Optional: only rows older than this When (ISO time from an earlier page).")] string before = null,
-            [Description("Optional: how many rows, default 50, at most 500.")] int limit = 50) =>
+        // Not a tool itself: get_plan_history is GetPlanHistoryOp (McpTools.History.cs), which describes these parameters.
+        public static Task<PlanHistoryView> GetPlanHistory(IEngine engine, string by = null, string objectRef = null, string before = null, int limit = 50) =>
             engine.GetPlanHistoryAsync(by, objectRef, before, limit);
 
         // ---- Best Practice Analyzer (general-purpose) ------------------------------------------
@@ -1081,7 +1080,7 @@ namespace Semanticus.Engine
         public static async Task<ConnectionStatus> ConnectXmla(IEngine engine,
             [Description("XMLA endpoint, e.g. powerbi://api.powerbi.com/v1.0/myorg/<Workspace>")] string endpoint,
             [Description("Dataset / database name")] string database,
-            [Description("interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env) | azcli | devicecode")] string authMode = "azcli",
+            [Description("interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env) | azcli | devicecode")] string authMode = null,
             [Description("Optional Entra tenant id or domain to authenticate against")] string tenantId = null,
             [Description("Optional saved account profile id (from list_account_profiles) to connect AS, for THIS connection only, and never changes the tenant default. Must be an already-signed-in profile; adding a new account is a human action (you will be refused).")] string accountProfileId = null)
         {
@@ -1092,11 +1091,11 @@ namespace Semanticus.Engine
             return s;
         }
 
-        [McpServerTool(Name = "open_live"), Description("LOAD the full editable model from a Power BI / Fabric / Azure AS XMLA endpoint into the session, so the WHOLE workbench (AI-readiness scan, BPA, the change-plan, and every edit) operates on the LIVE deployed model. Unlike connect_xmla (which only enables read-only DAX/DMV), this loads the model's metadata via TOM, exactly as Tabular Editor attaches to a deployed model. Edits stay IN-MEMORY and undoable; push them back with deploy_live (the write half, dry-run by default) or persist to a TMDL folder with save_model for review/deployment. endpoint e.g. 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>'. Leave database empty to load the workspace's only/first dataset. authMode: interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env, most reliable for Fabric) | azcli (default) | devicecode. tenantId optional: target a specific Entra tenant when your `az login` is a different tenant than the model's.")]
+        [McpServerTool(Name = "open_live"), Description("LOAD the full editable model from a Power BI / Fabric / Azure AS XMLA endpoint into the session, so the WHOLE workbench (AI-readiness scan, BPA, the change-plan, and every edit) operates on the LIVE deployed model. Unlike connect_xmla (which only enables read-only DAX/DMV), this loads the model's metadata via TOM, exactly as Tabular Editor attaches to a deployed model. Edits stay IN-MEMORY and undoable; push them back with deploy_live (the write half, dry-run by default) or persist to a TMDL folder with save_model for review/deployment. endpoint e.g. 'powerbi://api.powerbi.com/v1.0/myorg/<Workspace>'. Leave database empty to load the workspace's only/first dataset. authMode: interactive (browser/MFA via Azure.Identity) | serviceprincipal (AZURE_*/FABRIC_* env, most reliable for Fabric) | azcli | devicecode; leave it out and the sign-in that is ready is used. tenantId optional: target a specific Entra tenant when your `az login` is a different tenant than the model's.")]
         public static async Task<OpenResult> OpenLive(IEngine engine,
             [Description("XMLA endpoint, e.g. powerbi://api.powerbi.com/v1.0/myorg/<Workspace>")] string endpoint,
             [Description("Dataset / database name; empty = the workspace's first/only dataset")] string database = null,
-            [Description("interactive | serviceprincipal | azcli | devicecode")] string authMode = "azcli",
+            [Description("interactive | serviceprincipal | azcli | devicecode. Leave out to use the sign-in that is ready (the person's saved sign-in, then a ready service principal, az last)")] string authMode = null,
             [Description("Optional Entra tenant id or domain to authenticate against")] string tenantId = null,
             [Description("Optional saved account profile id (from list_account_profiles) to open AS, for THIS open only, and never changes the tenant default. Must be an already-signed-in profile; adding a new account or an interactive sign-in is a human action (you will be refused).")] string accountProfileId = null,
             [Description("true = throw away unsaved edits and open anyway; default false refuses while unsaved")] bool discardUnsaved = false,
@@ -1106,26 +1105,52 @@ namespace Semanticus.Engine
             return await engine.OpenLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, accountProfileId: accountProfileId, origin: "agent", discardUnsaved: discardUnsaved, silentOnly: silentOnly);
         }
 
-        [McpServerTool(Name = "deploy_live"), Description("DEPLOY the session's metadata edits back to the live Power BI / Fabric / Azure AS model over XMLA (the write half of open_live). Metadata only (names/descriptions/visibility/categories/format strings/folders/summarize-by, measure + calc-column DAX, partition sources (M / calc-table DAX / legacy), shared expressions, and the linguistic schema) via Model.SaveChanges(), matched by LineageTag so renames land on the right object. NO data refresh. Absence never deletes: an object that is only on the live model is reported in LiveOnly and left alone unless you pass it in deleteRefs (the opt-in tick). A NEW CALCULATED table IS created (and Calculate-recalced on commit); other structural changes (new DATA/import tables, new data columns, new partitions, source-type or Direct Lake rebinds, incremental-refresh policy) are reported in Unmatched/LiveOnly, never silently dropped. Empty endpoint = deploy back to the model this session opened (the round-trip); or pass endpoint + database. DRY RUN by default: commit=true writes, and that write needs the review token the preview returned. A committed write first saves a restore point of the live model's metadata (list_restore_points) so rollback_push can undo it; if that snapshot fails, a write with deleteRefs is refused and a write without deletes goes ahead with a warning. Needs a Read-Write XMLA endpoint and a write principal (authMode=serviceprincipal is the reliable one).")]
-        public static Task<DeployReport> DeployLive(IEngine engine,
+        [McpServerTool(Name = "deploy_live"), Description("DEPLOY the session's metadata edits back to the live Power BI / Fabric / Azure AS model over XMLA (the write half of open_live). Metadata only (names/descriptions/visibility/categories/format strings/folders/summarize-by, measure + calc-column DAX, partition sources (M / calc-table DAX / legacy), shared expressions, and the linguistic schema) via Model.SaveChanges(), matched by LineageTag so renames land on the right object. NO data refresh. Absence never deletes: an object that is only on the live model is reported in LiveOnly and left alone unless you pass it in deleteRefs (the opt-in tick). A NEW CALCULATED table IS created (and Calculate-recalced on commit); other structural changes (new DATA/import tables, new data columns, new partitions, source-type or Direct Lake rebinds, incremental-refresh policy) are reported in Unmatched/LiveOnly, never silently dropped. Empty endpoint = deploy back to the model this session opened (the round-trip); or pass endpoint + database. DRY RUN by default: commit=true writes, and that write needs the review token the preview returned. A committed write first saves a restore point of the live model's metadata (list_restore_points) so rollback_push can undo it; if that snapshot fails, a write with deleteRefs is refused and a write without deletes goes ahead with a warning. Needs a Read-Write XMLA endpoint and a write principal (authMode=serviceprincipal is the reliable one). The preview keeps its connection to the live model for the commit that follows, so the commit does not read the live model a second time; the result's steps and timing say where the time went, so pass that on when the person asks why it was slow.")]
+        public static async Task<DeployReport> DeployLive(IEngine engine,
             [Description("XMLA endpoint; empty = deploy back to the live model this session was opened from (open_live)")] string endpoint = null,
             [Description("Dataset / database name; ignored when endpoint is empty (the bound source's dataset is used)")] string database = null,
             [Description("serviceprincipal (recommended) | azcli | interactive | devicecode")] string authMode = "serviceprincipal",
             [Description("Optional Entra tenant id or domain")] string tenantId = null,
             [Description("false = DRY RUN (report the change set, write nothing); true = COMMIT the live write")] bool commit = false,
-            [Description("why you are shipping past a RED deploy gate: required to override; recorded in the model's append-only audit trail")] string overrideReason = null,
+            [Description("the person's words from chat saying to ship past a RED deploy gate: required to override (ask them in chat if you have none); recorded in the model's append-only audit trail")] string overrideReason = null,
             [Description("the review token returned by the preview; required to write, and it must still match")] string confirmToken = null,
             [Description("object refs from the preview LiveOnly list to remove; omit to leave extra live objects alone. Never a flag that means remove everything missing.")] string[] deleteRefs = null)
-            => engine.DeployLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, commit: commit, origin: "agent", overrideReason: overrideReason, confirmToken: confirmToken, deleteRefs: deleteRefs);
+        {
+            // The Link waits on a result for a slow call: without this one it would hold its open call for two minutes after the answer came back (h17 P3).
+            try
+            {
+                var r = await engine.DeployLiveAsync(endpoint, database, authMode, rawToken: null, tenantId: tenantId, commit: commit, origin: "agent", overrideReason: overrideReason, confirmToken: confirmToken, deleteRefs: deleteRefs);
+                Emit(engine, new ActivityEvent { Kind = "deploy_live", Origin = "agent", Label = commit ? (r.Committed ? "Published to the live model" : "Publish refused or failed") : "Previewed a publish", Ok = string.IsNullOrEmpty(r.Error), Error = r.Error });
+                return r;
+            }
+            catch (Exception ex)
+            {
+                Emit(engine, new ActivityEvent { Kind = "deploy_live", Origin = "agent", Label = "Publish refused or failed", Ok = false, Error = XmlaAuthHint.Scrub(ex.Message) });
+                throw;
+            }
+        }
 
-        [McpServerTool(Name = "publish_new_model"), Description("PUBLISH the open model as a NEW semantic model in a Power BI / Fabric workspace, load its data, and make it this model's publish destination (the next deploy_live or apply_model_diff updates it) and the model Tests and queries read. The person's Publish page does the same with its 'New model in a workspace' card. Use it when the model has no published copy yet (a model built with start_model_from_sql, a new local file); to update a model that already exists, use deploy_live or apply_model_diff. Nothing is overwritten: a name already taken in the workspace is refused before anything is written. A model whose source is a Fabric SQL endpoint is published as Direct Lake, so its data loads with no sign-in step, and the local copy turns Direct Lake in the same undoable step. Any other source is published as an import model; its result says to set the data source sign-in in the Power BI service, then refresh, so pass that line on. DRY RUN by default: commit=false names the workspace, the name and Direct Lake or Import, and contacts nothing; commit=true creates the model. The write follows the person's permission settings like every live write. list_workspaces gives workspace names.")]
-        public static Task<NewModelResult> PublishNewModel(IEngine engine,
+        [McpServerTool(Name = "publish_new_model"), Description("PUBLISH the open model as a NEW semantic model in a Power BI / Fabric workspace, load its data, and make it this model's publish destination (the next deploy_live or apply_model_diff updates it) and the model Tests and queries read. The person's Publish page does the same with its 'New model in a workspace' card. Use it when the model has no published copy yet (a model built with start_model_from_sql, a new local file); to update a model that already exists, use deploy_live or apply_model_diff. Nothing is overwritten: a name already taken in the workspace is refused before anything is written. A model whose source is a Fabric SQL endpoint is published as Direct Lake, so its data loads with no sign-in step, and the local copy turns Direct Lake in the same undoable step. Any other source is published as an import model; its result says to set the data source sign-in in the Power BI service, then refresh, so pass that line on. DRY RUN by default: commit=false names the workspace, the name and Direct Lake or Import, and contacts nothing; commit=true creates the model. The write follows the person's permission settings like every live write. It shows the person its steps with the time on the Publish page, and gives up after about 4 minutes with a plain line (look in the workspace before you try again). If no sign-in is saved it says so in one line: pass that to the person (press Connect in Studio) and do not run az login or open any sign-in yourself. list_workspaces gives workspace names.")]
+        public static async Task<NewModelResult> PublishNewModel(IEngine engine,
             [Description("The workspace's name, as list_workspaces shows it")] string workspace,
             [Description("The new model's name; empty = the open model's name")] string name = null,
-            [Description("serviceprincipal | azcli | interactive | devicecode; empty = the sign-in the model's SQL source was read with")] string authMode = null,
+            [Description("Leave empty. The saved sign-in is used (the start plan's, the person's saved account, a ready service principal). You never open a browser or device-code sign-in; with none saved the result tells the person to press Connect in Studio. Pass serviceprincipal only to name that sign-in")] string authMode = null,
             [Description("Optional Entra tenant id or domain")] string tenantId = null,
             [Description("false = DRY RUN (say what would be created, contact nothing); true = create the model and load its data")] bool commit = false)
-            => engine.PublishNewModelAsync(workspace, name, authMode, tenantId, origin: "agent", workspaceId: null, commit: commit);
+        {
+            // A commit that works already ends with the engine's own publish_new_model activity; the preview and every failure still owe the Link an end (h17 P3).
+            try
+            {
+                var r = await engine.PublishNewModelAsync(workspace, name, authMode, tenantId, origin: "agent", workspaceId: null, commit: commit);
+                if (!commit) Emit(engine, new ActivityEvent { Kind = "publish_new_model", Origin = "agent", Label = "Previewed a new model", Ok = true });
+                return r;
+            }
+            catch (Exception ex)
+            {
+                Emit(engine, new ActivityEvent { Kind = "publish_new_model", Origin = "agent", Label = "Publish refused or failed", Ok = false, Error = XmlaAuthHint.Scrub(ex.Message) });
+                throw;
+            }
+        }
 
         [McpServerTool(Name = "list_refresh_types"), Description("List the partition refresh ('process') options, each with a plain-language explanation: Full (reload + recalc), DataOnly (reload, no recalc), Calculate (recalc only), ClearValues (empty it), Automatic (refresh if stale), Add (append rows), plus the table-level Defragment / Indexes. Read-only. Use it to pick a type for refresh_partition.")]
         public static Task<RefreshTypeInfo[]> ListRefreshTypes(IEngine engine) => engine.ListRefreshTypesAsync();
@@ -1167,6 +1192,14 @@ namespace Semanticus.Engine
         public static Task<AccountProfile[]> SetDefaultAccountProfile(IEngine engine,
             [Description("Saved, signed-in account id from list_account_profiles")] string profileId)
             => engine.SetDefaultAccountProfileAsync(profileId, "agent");
+
+        [McpServerTool(Name = "connect_assistant"), Description("Connect another assistant to Semanticus: write Semanticus into that assistant's own settings file so it can use this open folder's model. The assistants are claude-desktop, codex, cursor and claude-code (the terminal). Leave 'assistant' empty to list them: each says whether it is found on this machine, whether it is already connected, and which file would change. Name one to connect it. Only the semanticus entry in that file changes; every other setting stays exactly as it was, and the first change leaves a copy of the file beside it (name ending .semanticus-bak). If the file is not valid JSON, nothing is written and the answer says so. When the person has a Pro licence, it is saved to the user licence file too so the other assistant runs as Pro with VS Code closed. The answer's 'nextStep' is the one thing the person does next, for example 'Quit Claude Desktop fully and open it again.' Tell them that sentence.")]
+        public static async Task<object> ConnectAssistant(IEngine engine,
+            [Description("claude-desktop | codex | cursor | claude-code. Empty lists the assistants without changing anything.")] string assistant = null)
+        {
+            if (string.IsNullOrWhiteSpace(assistant)) return await engine.ListAssistantsAsync().ConfigureAwait(false);
+            return await engine.ConnectAssistantAsync(assistant, "agent").ConfigureAwait(false);
+        }
 
         [McpServerTool(Name = "disconnect"), Description("Close the live query connection (the one connect_xmla, connect_local, open_live or open_local attached). The open model, its unsaved edits and its undo history stay in the session; run_dax, run_dmv and the other live tools need a new connection afterwards. Returns the resulting connection status.")]
         public static async Task<ConnectionStatus> Disconnect(IEngine engine)
@@ -1273,7 +1306,7 @@ namespace Semanticus.Engine
             [Description("Member-row cap (default 100000). A truncated run is marked incomplete, never a pass.")] int maxRows = 100000,
             [Description("Optional Fabric SQL endpoint override; derived from the model's SQL source when omitted")] string server = null,
             [Description("Optional database override")] string database = null,
-            [Description("SQL Entra auth mode (default azcli)")] string authMode = null,
+            [Description("SQL Entra auth mode. Leave empty to use the saved sign-in.")] string authMode = null,
             [Description("Optional tenant id for the SQL token")] string tenantId = null)
         {
             var req = new ReconcileRequest
@@ -1675,7 +1708,7 @@ namespace Semanticus.Engine
             return await engine.SkipWorkflowStepAsync(runId, stepId, reason, "agent");
         }
 
-        [McpServerTool(Name = "abort_workflow"), Description("WORKFLOWS: abort a run. The partial record (steps passed, answers, declines, evidence so far) is preserved and appended to the experience log. An abandoned run is data, not a deletion. Workflows is a Semanticus Pro feature.")]
+        [McpServerTool(Name = "abort_workflow"), Description("WORKFLOWS: abort a run. The partial record (steps passed, answers, declines, evidence so far) is preserved and appended to the experience log. An abandoned run is data, not a deletion. Free on every tier, so a run left active when Pro ended can still be stopped.")]
         public static Task<WorkflowRunView> AbortWorkflow(IEngine engine,
             [Description("The run id (omit for the most recent run)")] string runId = null,
             [Description("Why the run is being abandoned")] string reason = null)
@@ -2051,12 +2084,12 @@ namespace Semanticus.Engine
             return v;
         }
 
-        [McpServerTool(Name = "autogenerate_spec_from_fabric"), Description("Auto-generate a starter model SPEC by introspecting a FABRIC SQL ENDPOINT (Warehouse / Lakehouse SQL analytics endpoint) over TDS: reads INFORMATION_SCHEMA (tables, columns + types, declared PK/FK) using your Entra identity (a deterministic, read-only schema read; no data is copied). Classifies fact/dimension from FK topology, maps SQL types to TOM types, hides key columns, and proposes additive measures + a time-intelligence set. storageMode 'import' (M) or 'directLake'. authMode: azcli (default) | serviceprincipal | interactive | devicecode. If the endpoint rejects the sign-in with an authentication error, the workspace is usually in a DIFFERENT tenant than your az login. Pass tenantId. To reuse a SQL endpoint the person already saved on Connections (same sign-in, no password stored), read it with list_sql_sources and pass its server, database, authMode and tenantId. Which links are drafted INACTIVE, each with a plain note on the relationship saying why (a measure can still use it with USERELATIONSHIP): a fact table's own links always stay on (to the date table and to each dimension it references); when two of a fact's links reach the same table (an invoice date and a due date), the one listed first among the fact's columns stays on and the rest are off; any other link (a snowflake hop, a dimension's own date key) that would give a table a second path is off; a table linked to itself is off and not built. A source date table (a non-fact table named like date or calendar with a date column) is set as dateTable and MARKED as the date table on build, keyed on its date column; only a source with none gets a CALENDAR table. The result is a FIRST DRAFT. Refine it, then create_model + build_model_from_spec. (Fabric often declares no enforced keys, so relationships may be empty. Add them in the spec.) Returns the spec view. For a NEW model with nothing in it yet, use start_model_from_sql instead: it reads the same source, decides the spec on a hidden draft and builds it in one step once the person approves one plan. This tool is the two-step path, for a model that is already open.")]
+        [McpServerTool(Name = "autogenerate_spec_from_fabric"), Description("Auto-generate a starter model SPEC by introspecting a FABRIC SQL ENDPOINT (Warehouse / Lakehouse SQL analytics endpoint) over TDS: reads INFORMATION_SCHEMA (tables, columns + types, declared PK/FK) using your Entra identity (a deterministic, read-only schema read; no data is copied). Classifies fact/dimension from FK topology, maps SQL types to TOM types, hides key columns, and proposes additive measures + a time-intelligence set. storageMode 'import' (M) or 'directLake'. authMode: Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli. If the endpoint rejects the sign-in with an authentication error, the workspace is usually in a DIFFERENT tenant than your az login. Pass tenantId. To reuse a SQL endpoint the person already saved on Connections (same sign-in, no password stored), read it with list_sql_sources and pass its server, database, authMode and tenantId. Which links are drafted INACTIVE, each with a plain note on the relationship saying why (a measure can still use it with USERELATIONSHIP): a fact table's own links always stay on (to the date table and to each dimension it references); when two of a fact's links reach the same table (an invoice date and a due date), the one listed first among the fact's columns stays on and the rest are off; any other link (a snowflake hop, a dimension's own date key) that would give a table a second path is off; a table linked to itself is off and not built. A source date table (a non-fact table named like date or calendar with a date column) is set as dateTable and MARKED as the date table on build, keyed on its date column; only a source with none gets a CALENDAR table. The result is a FIRST DRAFT. Refine it, then create_model + build_model_from_spec. (Fabric often declares no enforced keys, so relationships may be empty. Add them in the spec.) Returns the spec view. For a NEW model with nothing in it yet, use start_model_from_sql instead: it reads the same source, decides the spec on a hidden draft and builds it in one step once the person approves one plan. This tool is the two-step path, for a model that is already open.")]
         public static async Task<SpecView> AutogenerateSpecFromFabric(IEngine engine,
             [Description("Fabric SQL endpoint, e.g. 'xxxxx.datawarehouse.fabric.microsoft.com'")] string server,
             [Description("Warehouse / Lakehouse database name")] string database,
             [Description("import | directLake")] string storageMode = "import",
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             [Description("Entra tenant id or domain that owns the Fabric workspace; leave blank to use your az CLI default. Needed when your az login is in a different tenant than the workspace.")] string tenantId = null)
         {
             var v = await engine.AutogenerateSpecFromFabricAsync(server, database, authMode, storageMode, "agent", tenantId);
@@ -2169,17 +2202,23 @@ namespace Semanticus.Engine
                 : new ModelRef { Kind = "file", Path = sourceFile }, "agent");   // an agent never pops UI; a workspace ref (if ever passed) is refused
 
         // ---- Model compare (ALM Toolkit / BISM Normalizer grade) + the deploy gate --------------------
-        [McpServerTool(Name = "model_diff"), Description("ALM-Toolkit-grade SEMANTIC compare of the open model against another version, by default the git ref 'HEAD' (i.e. what you changed since the last commit). Returns an object-level diff (per table/column/measure/relationship/role/...: Create/Update/Delete) with each object's before/after text. Pass a different gitRef to compare against a branch/commit, or targetFile to compare against a model on disk, or sourceFile to compare two files. Read-only. To compare the working copy with the LIVE (published) model: in Studio open Publish > Published > Changes, which already takes the publish destination as the other side; through MCP call apply_model_diff with targetEndpoint and targetDatabase and commit=false. That is a dry run, it changes nothing, and it lists the objects that differ.")]
+        [McpServerTool(Name = "model_diff"), Description("ALM-Toolkit-grade SEMANTIC compare of the open model against another version, by default the git ref 'HEAD' (i.e. what you changed since the last commit). Returns an object-level diff (per table/column/measure/relationship/role/...: Create/Update/Delete) with each object's before/after text. Pass a different gitRef to compare against a branch/commit, or targetFile to compare against a model on disk, or sourceFile to compare two files. To compare the working copy with the LIVE (published) model, pass targetEndpoint (the XMLA address) and targetDatabase; authMode and targetTenantId are optional, as on apply_model_diff. Read-only in every case: it reads the live model and changes nothing, there or here. In Studio the same compare is Publish > Published > Changes.")]
         public static async Task<ModelDiff> ModelDiff(IEngine engine,
             [Description("Compare the open model against this git ref (default 'HEAD'); ignored if targetFile is set")] string gitRef = "HEAD",
             [Description("Compare against a model on disk (TMDL/PBIP folder or .bim) instead of git")] string targetFile = null,
-            [Description("Compare THIS file (left/source) instead of the open model")] string sourceFile = null)
+            [Description("Compare THIS file (left/source) instead of the open model")] string sourceFile = null,
+            [Description("Compare against a PUBLISHED model on this XMLA endpoint (e.g. powerbi://api.powerbi.com/v1.0/myorg/Workspace); requires targetDatabase. Read-only")] string targetEndpoint = null,
+            [Description("Dataset (database) name on the endpoint: required with targetEndpoint")] string targetDatabase = null,
+            [Description("Auth mode for the published model (leave empty to use the saved sign-in; e.g. 'serviceprincipal')")] string authMode = null,
+            [Description("Optional Entra tenant id or domain when the published model lives in a different tenant than your default az login")] string targetTenantId = null)
         {
+            if (!string.IsNullOrWhiteSpace(targetEndpoint) && !string.IsNullOrWhiteSpace(targetFile))
+                return new ModelDiff { Error = "Ambiguous target: pass EITHER targetFile OR targetEndpoint + targetDatabase, not both." };
             ModelRef left = !string.IsNullOrWhiteSpace(sourceFile) ? new ModelRef { Kind = "file", Path = sourceFile } : new ModelRef { Kind = "session" };
-            ModelRef right = !string.IsNullOrWhiteSpace(targetFile) ? new ModelRef { Kind = "file", Path = targetFile } : new ModelRef { Kind = "gitref", GitRef = gitRef };
-            // origin="agent": model_diff only ever targets a gitref/file (never a workspace), so it can't reach the
-            // interactive-sign-in path — but pass the honest origin anyway so the fail-closed contract holds if that
-            // ever changes (an agent must never trigger a browser sign-in; it gets a teaching refusal instead).
+            ModelRef right = !string.IsNullOrWhiteSpace(targetEndpoint) ? new ModelRef { Kind = "workspace", Endpoint = targetEndpoint, Database = targetDatabase, AuthMode = authMode, TenantId = targetTenantId }
+                : !string.IsNullOrWhiteSpace(targetFile) ? new ModelRef { Kind = "file", Path = targetFile } : new ModelRef { Kind = "gitref", GitRef = gitRef };
+            // origin="agent": a workspace target reaches the sign-in path, and an agent must never trigger a browser
+            // sign-in; it gets a teaching refusal instead (connect_xmla first).
             var d = await engine.CompareModelsAsync(left, right, false, "agent");
             Emit(engine, new ActivityEvent { Kind = "model_diff", Origin = "agent", Label = "Compared the model", Ok = string.IsNullOrEmpty(d.Error), Result = d });
             return d;
@@ -2194,7 +2233,7 @@ namespace Semanticus.Engine
             [Description("Merge FROM this model on disk (TMDL/PBIP or .bim) instead of the open model")] string sourceFile = null,
             [Description("...or merge FROM this git ref of the open model's repo (e.g. 'main', a commit hash)")] string sourceGitRef = null,
             [Description("Accountable override for the drift guard on a published-model push: the reason you're pushing despite the target having changed since the diff. Recorded in the audit trail.")] string overrideReason = null,
-            [Description("Auth mode for a published-model target (default 'azcli'; e.g. 'serviceprincipal', 'interactive')")] string authMode = null,
+            [Description("Auth mode for a published-model target (leave empty to use the saved sign-in; e.g. 'serviceprincipal', 'interactive')")] string authMode = null,
             [Description("Optional Entra tenant id or domain for a published-model target. Set it when the target lives in a different tenant than your default az login, so the read AND the write both authenticate against that tenant")] string targetTenantId = null,
             [Description("false = preview (default); true = write the target")] bool commit = false,
             [Description("the review token returned by the preview; required to write a file or the open model, and it must still match")] string confirmToken = null)
@@ -2259,7 +2298,11 @@ namespace Semanticus.Engine
         public static async Task<SqlSourceTestResult> TestSqlSource(
             IEngine engine,
             [Description("Source id from list_sql_sources")] string id)
-            => await engine.TestSqlSourceAsync(id, "agent");
+        {
+            var r = await engine.TestSqlSourceAsync(id, "agent");
+            McpToolsTesting.Note(engine, "test_sql_source", r.Ok ? "Tested a SQL source: it answered." : "Tested a SQL source: it did not answer.", r.Ok, r.Ok ? null : r.Note, null);
+            return r;
+        }
 
         [McpServerTool(Name = "delete_sql_source"), Description("Remove a saved SQL source. REFUSED while any model uses it as its SQL endpoint (the refusal names those models; clear them with set_model_sql_endpoint first), and while the open model's saved checks or table mappings still point at it, and the refusal SAYS HOW MANY of each, so 'still in use' is never an unexplained no. Change or remove those first. Returns deleted=false with a plain note rather than throwing. Honest limit: this can only see the model that is OPEN. A source used by a model that is not open can still be removed, and those checks then report that the source they were set to use is no longer saved rather than quietly running somewhere else. Next: list_tests to see which checks use a source.")]
         public static async Task<SqlSourceDeleteResult> DeleteSqlSource(
@@ -2301,9 +2344,9 @@ namespace Semanticus.Engine
 
         [McpServerTool(Name = "probe_auth_prerequisites"), Description("PREVIEW whether an ADVANCED sign-in mode (serviceprincipal | azcli) can actually authenticate on this machine, so you can warn the user BEFORE a connect attempt instead of failing after one. Returns PRESENCE + NAMES ONLY, NEVER a secret value: for serviceprincipal, which of the client id / client secret / tenant env vars (each with its accepted alias names) are set; for azcli, whether a signed-in CLI session was detected (and its account/tenant when so). 'ready' is the overall verdict; 'detail' is an honest, actionable note when NOT ready (e.g. 'Run az login'). This is a LOCAL-ONLY probe: no interactive prompt, no network sign-in beyond a local `az account show`. Read-only and free. Next: connect_xmla / open_live to actually connect once ready is true.")]
         public static async Task<AuthPrerequisites> ProbeAuthPrerequisites(IEngine engine,
-            [Description("serviceprincipal (or sp) | azcli (default)")] string mode = "azcli",
+            [Description("serviceprincipal (or sp) | azcli. Leave empty for serviceprincipal.")] string mode = null,
             [Description("Optional Entra tenant id or domain to target")] string tenantId = null)
-            => await engine.ProbeAuthPrerequisitesAsync(mode, tenantId);
+            => await engine.ProbeAuthPrerequisitesAsync(string.IsNullOrWhiteSpace(mode) ? "serviceprincipal" : mode, tenantId);
 
         [McpServerTool(Name = "list_account_profiles"), Description("The saved Microsoft identities on THIS device: the multi-account profile store. Device-local and credential-free (username, tenant, sign-in method, last sign-in, last use), a local read with no network and no prompt; it holds NO token or secret (tokens stay only in the encrypted Microsoft cache). 'isDefault' marks the account an UNQUALIFIED open of that tenant uses; 'signedIn' is whether a saved sign-in RECORD exists here (the strongest a no-network read can prove: the cached token may still need a silent refresh, and if it has aged out YOUR acquisition fails with an honest error, never a prompt). A signed-out profile has no record and needs an interactive sign-in, a human action. Pass a profile 'id' as accountProfileId to open_live / connect_xmla to open AS that account for one open WITHOUT changing the tenant default. You may SELECT a signed-in profile, but adding a NEW account, an interactive sign-in, and making an account the default are all HUMAN actions done from Connections. Read-only and free. Next: open_live/connect_xmla with accountProfileId; list_connections for the target list.")]
         public static async Task<AccountProfile[]> ListAccountProfiles(IEngine engine)
@@ -2314,7 +2357,7 @@ namespace Semanticus.Engine
             [Description("XMLA endpoint")] string endpoint,
             [Description("Optional model/database name")] string database = null,
             [Description("Optional display model name")] string modelName = null,
-            [Description("azcli | interactive | serviceprincipal")] string authMode = "azcli")
+            [Description("azcli | interactive | serviceprincipal")] string authMode = null)
             => await engine.RememberXmlaConnectionAsync(endpoint, database, modelName, authMode, "agent");
 
         [McpServerTool(Name = "connection_context"), Description("Explain the model identity currently being EDITED and the model identity currently answering QUERIES. They may deliberately be two copies: for example, a safe local working copy for edits while the published model answers real-data queries. Returns relationship=sameInstance only when that is proven; workingCopyAndPublished and twoModels explicitly mean two model contexts are in play. Read this before comparing, testing, or deploying so you never assume the query target is the write target. 'sqlEndpoint' is the open model's SQL endpoint (the saved SQL source its checks read from unless a check names its own), null when it has none; 'sqlEndpointSuggestion' is what the model's own sources read from, offered when no endpoint is set. Holds no credentials. Read-only and free. Next: list_connections to choose a remembered model, connect_xmla/connect_local to change only the query model, or open_live/open_local to edit and query one live model.")]
@@ -2389,7 +2432,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "rollback_push"), Description("Undo a push to a PUBLISHED model by restoring it to a pre-push snapshot (see list_restore_points). DRY RUN by default: commit=false reports exactly what would be restored and (critically) what would be REMOVED, i.e. every object that exists on the target now but not in the snapshot. That includes anything the push added AND anything anyone else added since, so READ RemovedRefs before committing. Pass commit=true to write. Restores the object kinds a redeploy cannot: relationships, roles (RLS), perspectives, hierarchies, partitions, cultures, datasources and data tables. Resolution is by lineage identity, so an object republished under you is refused rather than overwritten. Recorded in the audit trail. FREE at both tiers. The undo for an irreversible write is never gated. Next: run list_restore_points to find the id; run rollback_push(id) to preview; then rollback_push(id, commit=true).")]
         public static async Task<RollbackResult> RollbackPush(IEngine engine,
             [Description("Restore point id from list_restore_points (e.g. '20260710T031500Z-3f9c1a')")] string restorePointId,
-            [Description("Auth mode for the endpoint (default 'azcli'; e.g. 'serviceprincipal', 'interactive')")] string authMode = null,
+            [Description("Auth mode for the endpoint (leave empty to use the saved sign-in; e.g. 'serviceprincipal', 'interactive')")] string authMode = null,
             [Description("false = preview what would change (default); true = write the target")] bool commit = false)
         {
             var r = await engine.RollbackPushAsync(restorePointId, commit, authMode, "agent");
@@ -2425,18 +2468,18 @@ namespace Semanticus.Engine
 
         // ---- Fabric REST (the cloud ALM lane — read-only discovery) -----------------------------------
         // Live GETs against api.fabric.microsoft.com using the user's OWN Entra identity (the engine holds no
-        // Anthropic/Fabric credentials). Read-only — no deploy/write here. authMode defaults to azcli; a service
+        // Anthropic/Fabric credentials). Read-only — no deploy/write here. authMode defaults to the saved sign-in (never az unless named); a service
         // principal (AZURE_CLIENT_ID/SECRET/TENANT env) is the reliable headless path.
         [McpServerTool(Name = "list_workspaces"), Description("List the Fabric workspaces you can access (id, displayName, type, capacity). Live read against api.fabric.microsoft.com using your Entra identity. Read-only.")]
         public static Task<FabricWorkspace[]> ListWorkspaces(IEngine engine,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.ListWorkspacesAsync(authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "list_workspace_models"), Description("List the semantic models in one Fabric workspace (id, displayName, description). Pair with list_workspaces to find the workspace id, then connect_xmla or open_live with the workspace address and the model's displayName as the database. Live read against api.fabric.microsoft.com using your Entra identity. Read-only.")]
         public static Task<FabricSemanticModel[]> ListWorkspaceModels(IEngine engine,
             [Description("Workspace id, from list_workspaces")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.ListWorkspaceModelsAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
@@ -2450,14 +2493,14 @@ namespace Semanticus.Engine
 
         [McpServerTool(Name = "list_deployment_pipelines"), Description("List the Fabric deployment pipelines you can access (id, displayName, description). Use get_pipeline_stages then get_stage_items to drill into a pipeline's Dev/Test/Prod stages. Live read; read-only.")]
         public static Task<DeploymentPipeline[]> ListDeploymentPipelines(IEngine engine,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.ListDeploymentPipelinesAsync(authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "get_pipeline_stages"), Description("List a deployment pipeline's stages in order (Dev=0, Test=1, Prod=2…) with each stage's assigned workspace. Needs an Admin role on the pipeline. Live read; read-only.")]
         public static Task<PipelineStage[]> GetPipelineStages(IEngine engine,
             [Description("Deployment-pipeline id (from list_deployment_pipelines)")] string pipelineId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.GetPipelineStagesAsync(pipelineId, authMode, null, "agent", cancellationToken);
 
@@ -2465,7 +2508,7 @@ namespace Semanticus.Engine
         public static Task<StageItem[]> GetStageItems(IEngine engine,
             [Description("Deployment-pipeline id")] string pipelineId,
             [Description("Stage id (from get_pipeline_stages)")] string stageId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.GetStageItemsAsync(pipelineId, stageId, authMode, null, "agent", cancellationToken);
 
@@ -2475,7 +2518,7 @@ namespace Semanticus.Engine
             [Description("Deployment-pipeline id")] string pipelineId,
             [Description("Source stage id (e.g. Dev)")] string sourceStageId,
             [Description("Target stage id (e.g. Test)")] string targetStageId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.PreviewDeployAsync(pipelineId, sourceStageId, targetStageId, authMode, null, "agent", cancellationToken);
 
@@ -2489,7 +2532,7 @@ namespace Semanticus.Engine
             [Description("false = DRY RUN preview (default); true = deploy")] bool commit = false,
             [Description("The confirmToken from a human dry-run (production only; an agent cannot obtain it)")] string confirmToken = null,
             [Description("Ignored. The readiness gate no longer applies to a stage move.")] bool forceOverride = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             [Description("Ignored. The readiness gate no longer applies to a stage move.")] string overrideReason = null,
             CancellationToken cancellationToken = default)
         {
@@ -2501,7 +2544,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "deployment_history"), Description("List a deployment pipeline's recent deployments (status, source→target stages, item counts, who deployed). Read-only.")]
         public static Task<DeploymentHistoryEntry[]> DeploymentHistory(IEngine engine,
             [Description("Deployment-pipeline id")] string pipelineId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.DeploymentHistoryAsync(pipelineId, authMode, null, "agent", cancellationToken);
 
@@ -2509,14 +2552,14 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "fabric_git_connection"), Description("The workspace's Fabric Git connection: provider (Azure DevOps / GitHub), repo/branch/directory, connection state, last-synced commit. Read-only.")]
         public static Task<FabricGitConnection> FabricGitConnection(IEngine engine,
             [Description("Workspace id")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.FabricGitConnectionAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
         [McpServerTool(Name = "fabric_git_status"), Description("The workspace ⇄ git diff: each changed item (workspace change vs remote change vs conflict), plus the workspace + remote commit hashes. Read-only.")]
         public static Task<FabricGitStatus> FabricGitStatus(IEngine engine,
             [Description("Workspace id")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.FabricGitStatusAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
@@ -2526,7 +2569,7 @@ namespace Semanticus.Engine
             [Description("Commit message")] string comment = null,
             [Description("Item objectIds to commit; empty = all workspace changes")] string[] items = null,
             [Description("false = DRY RUN (default); true = commit to git")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.FabricGitCommitAsync(workspaceId, comment, items, commit, authMode, null, "agent", cancellationToken);
@@ -2540,7 +2583,7 @@ namespace Semanticus.Engine
             [Description("PreferRemote (default) | PreferWorkspace")] string conflictPolicy = "PreferRemote",
             [Description("Allow overwriting items that have workspace changes")] bool allowOverride = false,
             [Description("false = DRY RUN (default); true = update the workspace from git")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.FabricGitUpdateAsync(workspaceId, conflictPolicy, allowOverride, commit, authMode, null, "agent", cancellationToken);
@@ -2559,7 +2602,7 @@ namespace Semanticus.Engine
             [Description("Directory within the repo (default /)")] string directory = null,
             [Description("A configured-connection id (required for GitHub; optional for ADO which can use automatic creds)")] string connectionId = null,
             [Description("false = DRY RUN (default); true = connect")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.FabricGitConnectAsync(workspaceId, provider, organization, project, repository, branch, directory, connectionId, commit, authMode, null, "agent", cancellationToken);
@@ -2571,7 +2614,7 @@ namespace Semanticus.Engine
         public static async Task<FabricGitResult> FabricGitDisconnect(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("false = DRY RUN (default); true = disconnect")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.FabricGitDisconnectAsync(workspaceId, commit, authMode, null, "agent", cancellationToken);
@@ -2584,7 +2627,7 @@ namespace Semanticus.Engine
             [Description("Target workspace id")] string workspaceId = null,
             [Description("Target semantic-model item id (in that workspace)")] string itemId = null,
             [Description("false = DRY RUN (default); true = publish (refused for the agent door)")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
         {
             var r = await engine.CicdPublishAsync(workspaceId, itemId, commit, authMode, null, "agent", cancellationToken);
@@ -2611,7 +2654,7 @@ namespace Semanticus.Engine
         [McpServerTool(Name = "list_data_agents"), Description("List the Fabric data agents in a workspace (id, name, description, type). Live read against api.fabric.microsoft.com with your Entra identity; read-only. [verify-at-build]: the item type string isn't documented yet, so this filters items whose type CONTAINS 'dataagent' (case-insensitive). If none match, ObservedItemTypes lists every item type in the workspace so you can confirm the real one.")]
         public static Task<DataAgentList> ListDataAgents(IEngine engine,
             [Description("Workspace id (from list_workspaces)")] string workspaceId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.ListDataAgentsAsync(workspaceId, authMode, null, "agent", cancellationToken);
 
@@ -2619,7 +2662,7 @@ namespace Semanticus.Engine
         public static Task<DataAgentDetail> GetDataAgent(IEngine engine,
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id (from list_data_agents)")] string agentId,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.GetDataAgentAsync(workspaceId, agentId, authMode, null, "agent", cancellationToken);
 
@@ -2634,7 +2677,7 @@ namespace Semanticus.Engine
             [Description("Data agent display name")] string name,
             [Description("AI instructions for the agent (<=15000 chars; empty allowed)")] string aiInstructions = null,
             [Description("false = DRY RUN (default, sends nothing); true = create")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.CreateDataAgentAsync(workspaceId, name, aiInstructions, commit, authMode, null, "agent", cancellationToken);
 
@@ -2647,7 +2690,7 @@ namespace Semanticus.Engine
             [Description("datasource.json content (from generate_data_agent_config); null = keep")] string datasourceJson = null,
             [Description("fewshots.json content; null = keep. NOTE: few-shots aren't supported for semantic-model sources yet ([verify-at-build]).")] string fewshotsJson = null,
             [Description("false = DRY RUN (default, sends nothing); true = update")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.UpdateDataAgentAsync(workspaceId, agentId, aiInstructions, datasourceFolder, datasourceJson, fewshotsJson, commit, authMode, null, "agent", null, null, cancellationToken);
 
@@ -2657,7 +2700,7 @@ namespace Semanticus.Engine
             [Description("Data agent item id")] string agentId,
             [Description("Publish description")] string description = null,
             [Description("false = DRY RUN (default, sends nothing); true = publish")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.PublishDataAgentAsync(workspaceId, agentId, description, commit, authMode, null, "agent", cancellationToken);
 
@@ -2666,7 +2709,7 @@ namespace Semanticus.Engine
             [Description("Workspace id")] string workspaceId,
             [Description("Data agent item id")] string agentId,
             [Description("false = DRY RUN (default, sends nothing); true = delete")] bool commit = false,
-            [Description("azcli (default) | serviceprincipal | interactive | devicecode")] string authMode = "azcli",
+            [Description("Leave empty to use the saved sign-in. Or: serviceprincipal | interactive | devicecode | azcli")] string authMode = null,
             CancellationToken cancellationToken = default)
             => engine.DeleteDataAgentAsync(workspaceId, agentId, commit, authMode, null, "agent", cancellationToken);
     }
@@ -2906,6 +2949,10 @@ namespace Semanticus.Engine
     {
         public string Tier { get; set; }   // "free" | "pro"
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string Reason { get; set; }
+        /// <summary>Whole days left in a free Pro month (rounded up); null when the licence is not a running trial.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? TrialDaysLeft { get; set; }
+        /// <summary>True when the session is free because a free Pro month ended (the Reason names the day); else null.</summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? TrialEnded { get; set; }
     }
 
     /// <summary>What is mid-flight this session — each sub-summary omitted when absent (drill:

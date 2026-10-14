@@ -43,6 +43,56 @@ namespace Semanticus.Tests
             Assert.NotEqual("first group", await f.Sessions.Current.ReadAsync(m => m.Tables["Sales"].Measures["Total Sales"].Description));
         }
 
+        // D3 (launch video, 12 Oct): get_plan_history(limit 15) returned 617,866 characters. The assistant's answer is one summary line per row,
+        // says what it left out, and gives one row's changes on request. The engine's own answer keeps every value.
+        [Fact]
+        public async Task The_assistants_history_is_summary_lines_that_say_what_they_left_out_and_one_row_opens_on_request()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("LeanHistory.bim");
+            for (var i = 0; i < 26; i++)
+                await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", new string((char)('a' + i), 1500), "agent");
+            var full = await McpTools.GetPlanHistory(f.Engine);
+            var fullSize = System.Text.Json.JsonSerializer.Serialize(full).Length;
+
+            var lean = (PlanHistoryLeanView)await McpTools.GetPlanHistoryOp(f.Engine);
+
+            var leanSize = System.Text.Json.JsonSerializer.Serialize(lean).Length;
+            Assert.True(fullSize > 30000, "the fixture must be big enough to matter: " + fullSize);
+            Assert.True(leanSize < 12500, "the summary must fit a tool result: " + leanSize);
+            Assert.Contains("left out", lean.LeftOut);
+            var row = lean.Rows.First(r => r.Kind == "edit");
+            Assert.True(row.Changes > 0);
+
+            var opened = (PlanHistoryEntryView)await McpTools.GetPlanHistoryOp(f.Engine, entry: row.Id);
+            Assert.Equal(row.Id, opened.Entry.Id);
+            Assert.Contains(opened.Entry.Deltas, d => d.After != null && d.After.Length >= 300);
+
+            var asked = (PlanHistoryView)await McpTools.GetPlanHistoryOp(f.Engine, detail: true, limit: 50);
+            Assert.Equal(full.Rows.Length, asked.Rows.Length);
+            await Assert.ThrowsAsync<ArgumentException>(() => McpTools.GetPlanHistoryOp(f.Engine, entry: "no-such-row"));
+        }
+
+        // D7 (launch video, 12 Oct): after Redo the footer said unsaved while the saved copy equalled the model. The session's own answer follows the saved state.
+        [Fact]
+        public async Task After_undo_and_redo_the_model_reads_saved_exactly_when_it_equals_the_saved_copy()
+        {
+            using var f = await ChangeCauseTests.PlanModelAsync("UndoSaved.bim");
+            await f.Engine.SetDescriptionAsync("measure:Sales/Total Sales", "first", "agent");
+            await f.Engine.SetDescriptionAsync("column:Sales/Amount", "second", "agent");
+            await f.SaveAsAsync("UndoSaved.bim");
+            Assert.False((await f.Engine.SessionInfoAsync()).HasUnsavedChanges);
+
+            await f.Engine.UndoAsync("human");
+            await f.Engine.UndoAsync("human");
+            Assert.True((await f.Engine.SessionInfoAsync()).HasUnsavedChanges);   // the model differs from the saved copy
+
+            await f.Engine.RedoAsync("human");
+            await f.Engine.RedoAsync("human");
+            var info = await f.Engine.SessionInfoAsync();
+            Assert.False(info.HasUnsavedChanges);                                 // the model equals the saved copy again
+            Assert.False(info.HasUnsavedEdits);
+        }
+
         [Theory]
         [InlineData("agent", "measure:Sales/Total Sales")]
         [InlineData("human", "column:Sales/Amount")]

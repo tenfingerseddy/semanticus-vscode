@@ -50,7 +50,7 @@ for (const text of [runProgressText(null), runProgressText(state)]) assert.ok(!/
 
 // ---- the wiring -----------------------------------------------------------------------------------------
 const page = readFileSync(resolve(root, 'webview/src/tests.tsx'), 'utf8');
-assert.match(page, /rpc<TestRunW>\('runTests', options\.persist \?\? false, 'human', options\.only \?\? null, options\.sections \?\? null, runId\)/, 'the page names its own run');
+assert.match(page, /rpcPressed<TestRunW>\('runTests', options\.persist \?\? false, 'human', options\.only \?\? null, options\.sections \?\? null, runId\)/, 'the page names its own run');
 assert.match(page, /onProgress\(\(event\) => setProgress\(\(current\) => foldRunProgress\(current, event, ownRunId\.current\)\)\)/, 'progress events fold through the model');
 assert.match(page, /ownRunId\.current = null; setProgress\(null\); setBusy\(false\)/, 'a finished run clears the count');
 assert.match(page, /<StatusLine run=\{run\} busy=\{busy \|\| assistantRun\.phase === 'running'\} progress=\{progress\}/, 'the status line shows it, and shows the assistant\'s run as busy too');

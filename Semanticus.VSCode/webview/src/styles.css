@@ -13,15 +13,10 @@
      named on Publish and fixed there by moving the state next to the name. Wider than a paragraph, because a row
      carries a name, its chips and its detail on one line. */
   --sem-row-max: 120ch;
-  /* The storage engine's colour. The two query engines are always shown side by side (the Performance split
-     bar, the timing figures, the storage stat table), so they are never the same hue: the formula engine takes
-     the jade, the storage engine the dictionary blue already used for storage in Size by table. These are data
-     colours, like the diff palette below, not the UI accent: a chart keeps its hues in every theme. The -on-
-     tokens are the ink for text sitting ON that fill; each is picked for contrast per theme. */
-  --sem-engine-fe: #3CC08F;
-  --sem-on-engine-fe: #04241A;   /* 7.2:1 on the jade */
-  --sem-engine-se: #5b8ff9;      /* same dictionary blue as VPAQ_COMPONENT_COLORS.dict */
-  --sem-on-engine-se: #04182e;   /* 5.7:1 on the dictionary blue */
+  /* The two query engines are always shown side by side (the Performance split bar, the timing figures, the storage stat
+     table), so they never share a hue: the formula engine is chart step 1 (green) and the storage engine step 2 (blue),
+     the same two steps Size by table uses for Data and Dictionary (--sem-series-N, tokens.css). The ink for text on a
+     step is --sem-on-series. The diff palette below is the one other set of data colours: added and removed are status. */
   /* Diff palette, deliberately NOT the accent. In a diff body, green must read as "added", not "the primary
      action", so additions use a forest diff-green distinct from --sem-accent (see the Model Diff view decision).
      Removals use a diff-red slightly deeper than --sem-bad so the two never blur.
@@ -49,13 +44,8 @@
   /* Not-verifiable: a deliberately colourless slate (Tests-tab I1), so an unknown never reads as pass or fail. */
   --sem-nv: color-mix(in srgb, var(--sem-muted) 62%, var(--sem-bg) 38%);
 }
-/* Light VS Code themes: the dictionary blue is too pale on a light surface, so the storage engine darkens and
-   its ink flips to white; the diff hues take the darker, higher-contrast GitHub-light pair. */
+/* Light VS Code themes: the diff hues take the darker, higher-contrast GitHub-light pair. */
 body.vscode-light, body.vscode-high-contrast-light {
-  --sem-engine-fe: #0A7A55;
-  --sem-on-engine-fe: #FFFFFF;   /* 5.3:1 on the darkened jade */
-  --sem-engine-se: #1F5FCC;
-  --sem-on-engine-se: #ffffff;   /* 5.9:1 on the darkened blue */
   --sem-diff-add: #116329;
   --sem-diff-add-bg: color-mix(in srgb, #1A7F37 13%, transparent);
   --sem-diff-add-word: color-mix(in srgb, #1A7F37 26%, transparent);
@@ -146,7 +136,12 @@ body {
 .sem-page > .sem-span-11, .sem-grid > .sem-span-11 { grid-column: span 11; }
 .sem-page > .sem-span-12, .sem-grid > .sem-span-12 { grid-column: span 12; }
 .sem-subgrid { display: grid; grid-template-columns: subgrid; column-gap: var(--sem-gap); }
+/* A page whose main card comes first in the document but whose rail reads first on the left (Ask: the answer, then "Asked before"). Narrow, the rail
+   falls under the main card because the document order is the stacking order. */
+.sem-page > .sem-rail-left { grid-column: 1 / span 3; grid-row: 1; }
+.sem-page > .sem-main-right { grid-column: 4 / span 9; grid-row: 1; }
 @media (max-width: 900px) {
+  .sem-page > .sem-rail-left, .sem-page > .sem-main-right { grid-row: auto; }
   /* Below 900px a half-width card is too narrow to read, so every span becomes the full row. */
   .sem-page > [class*="sem-span-"], .sem-grid > [class*="sem-span-"] { grid-column: 1 / -1; }
 }
@@ -255,24 +250,24 @@ body {
 .sem-chip-bad::before { background: var(--sem-bad); }
 .sem-chip-ok::before { background: var(--sem-fg); }
 /* Colour level B (24 September 2026): who does a step, as a dot in that doer's hue beside the owner word. */
-.sem-chip-doer-engine::before { background: var(--sem-doer-engine); }
-.sem-chip-doer-you::before { background: var(--sem-doer-you); }
-.sem-chip-doer-agent::before { background: var(--sem-doer-agent); }
+.sem-chip-doer-engine::before { background: var(--sem-actor-semanticus); }
+.sem-chip-doer-you::before { background: var(--sem-actor-you); }
+.sem-chip-doer-agent::before { background: var(--sem-actor-assistant); }
 /* A doer named in words (History's who column): a small square mark, and the name, in the doer's hue. */
 .sem-doer { display: inline-flex; align-items: center; gap: var(--sem-space-1); }
 .sem-doer::before { content: ""; flex: none; width: var(--sem-space-2); height: var(--sem-space-2); background: currentColor; }
-.sem-doer-engine { color: var(--sem-doer-engine); }
-.sem-doer-you { color: var(--sem-doer-you); }
-.sem-doer-agent { color: var(--sem-doer-agent); }
+.sem-doer-engine { color: var(--sem-actor-semanticus); }
+.sem-doer-you { color: var(--sem-actor-you); }
+.sem-doer-agent { color: var(--sem-actor-assistant); }
 /* The three soft tints, as the surfaces the Plan strip is built from: a track per doer, the Needs you band, and
    a selected row. High contrast has no tints (tokens.css sets them to the page), so the band and the selected
    row are outlined instead and a track keeps its rule. */
-.sem-track-engine { background: var(--sem-tint-engine); }
+.sem-track-engine { background: var(--sem-tint-semanticus); }
 .sem-track-you { background: var(--sem-tint-you); }
-.sem-track-agent { background: var(--sem-tint-agent); }
-.sem-needs-band { background: var(--sem-tint-warn); }
+.sem-track-agent { background: var(--sem-tint-assistant); }
+.sem-needs-band { background: var(--sem-tint-you); }
 .sem-row-selected { background: var(--sem-tint-select); }
-body.vscode-high-contrast .sem-needs-band { outline: var(--sem-hairline) dashed var(--sem-warn); outline-offset: calc(-1 * var(--sem-hairline)); }
+body.vscode-high-contrast .sem-needs-band { outline: var(--sem-hairline) dashed var(--sem-actor-you); outline-offset: calc(-1 * var(--sem-hairline)); }
 body.vscode-high-contrast .sem-row-selected { outline: var(--sem-hairline) solid var(--sem-strong-border); outline-offset: calc(-1 * var(--sem-hairline)); }
 .sem-chip-neutral { color: var(--sem-muted); }
 /* The one boxed marker: a hairline outline, for a fact that is a thing you could pick (a filter, a tag). */
@@ -450,7 +445,7 @@ body.vscode-reduce-motion .sem-flash { animation: none; }
    both rings. Inside, it is 4px wide in the 8px of right padding, so it keeps 3px clear of the words. */
 .studio-feed-mark-host { position: relative; }
 .studio-feed-mark { position: absolute; top: calc(var(--sem-space-1) * 0.25); right: calc(var(--sem-space-1) * 0.25); width: var(--sem-space-1); height: var(--sem-space-1); pointer-events: none; }
-.studio-feed-mark::before { content: ""; display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--sem-fg); }
+.studio-feed-mark::before { content: ""; display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--sem-actor-assistant); }
 .studio-feed-mark:not([data-live]) { visibility: hidden; }
 
 /* 1 — the model identity detail goes first: the name beside the brand and the source line under it. */
@@ -980,6 +975,11 @@ textarea.sem-wf-input { min-height: calc(var(--sem-row-2) * 1.5); resize: vertic
 /* A group inside the form card is a flat inset, never a second box. */
 .sem-wf-nested { margin-top: var(--sem-space-3); padding: var(--sem-inset-pad); border: 0; border-radius: var(--sem-radius-inner); background: var(--sem-surface-2); }
 .sem-wf-map-row { display: grid; grid-template-columns: minmax(100px, .5fr) minmax(160px, 1fr) auto; gap: var(--sem-space-2); align-items: center; margin-top: var(--sem-space-2); }
+.sem-wf-arg-label { color: var(--sem-fg); font-size: var(--sem-text-body); }
+.sem-wf-chip { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-width: 0; padding: var(--sem-space-1) var(--sem-space-3); border: 1px solid var(--sem-border); border-radius: var(--sem-radius-control); background: var(--sem-surface-2); font-size: var(--sem-text-body); }
+.sem-wf-chip-answer { color: var(--sem-actor-you, var(--sem-fg)); }
+.sem-wf-chip-part { color: var(--sem-actor-assistant, var(--sem-fg)); }
+.sem-wf-chip button { margin-left: auto; }
 .sem-wf-map-row button, .sem-wf-item-actions button, .sem-wf-op-editor button { color: var(--sem-fg); font-size: var(--sem-text-meta); text-decoration: underline; text-decoration-color: var(--sem-faint); text-underline-offset: 3px; }
 .sem-wf-item-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: var(--sem-space-3); }
 .sem-wf-item-actions button:disabled { opacity: .35; }
@@ -1245,57 +1245,33 @@ body.vscode-high-contrast .plan-item-open { outline: var(--sem-hairline) solid v
 .pw-page { gap: var(--sem-gap); }
 .pw-trunc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pw-ico { flex: none; width: 12px; height: 12px; }
-.pw-doer-semanticus { color: var(--sem-doer-engine); }
-.pw-doer-you { color: var(--sem-doer-you); }
-.pw-doer-assistant { color: var(--sem-doer-agent); }
+.pw-doer-semanticus { color: var(--sem-actor-semanticus); }
+.pw-doer-you { color: var(--sem-actor-you); }
+.pw-doer-assistant { color: var(--sem-actor-assistant); }
 .pw-quiet { border-color: transparent; background: transparent; color: var(--sem-muted); font-weight: var(--sem-weight); }
 .pw-quiet:hover { color: var(--sem-fg); }
 
 /* the head */
 .pw-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-4); }
-.pw-switch { display: inline-flex; align-items: center; gap: var(--sem-stack); margin-left: auto; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 
 /* the strip */
-.pw-strip { display: flex; flex-direction: column; font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
-.pw-strip-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2) var(--sem-space-4); min-height: var(--sem-row); }
 .pw-grade { font-weight: var(--sem-weight-strong); }
-.pw-latest { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-width: 0; max-width: 60%; margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--sem-fg); font: inherit; cursor: pointer; }
-.pw-latest-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--sem-good); }
-.pw-track { --ph-hue: var(--sem-fg); display: grid; grid-template-columns: 144px minmax(0, 1fr) minmax(max-content, 380px); align-items: center; column-gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-row); padding: 0 var(--sem-space-3); border: 0; border-top: var(--sem-hairline) solid var(--sem-bg); background: transparent; color: var(--sem-fg); font: inherit; text-align: left; cursor: pointer; }
-.pw-track-semanticus { --ph-hue: var(--sem-doer-engine); background: var(--sem-tint-engine); }
-.pw-track-you { --ph-hue: var(--sem-doer-you); background: var(--sem-tint-you); }
-.pw-track-assistant { --ph-hue: var(--sem-doer-agent); background: var(--sem-tint-agent); }
-.pw-track[aria-pressed="true"] { box-shadow: inset 0 0 0 var(--sem-hairline) var(--sem-strong-border); }
-body.vscode-high-contrast .pw-track[aria-pressed="true"], body.vscode-high-contrast-light .pw-track[aria-pressed="true"] { outline: 2px solid var(--sem-focus); outline-offset: -2px; }
-.pw-track-who { display: inline-flex; align-items: center; gap: var(--sem-stack); color: var(--ph-hue); font-weight: var(--sem-weight-strong); }
-.pw-track-who .pw-ico { color: var(--ph-hue); }
-.pw-bar { display: flex; align-items: center; gap: var(--sem-space-1); min-width: 0; overflow: hidden; }
 /* A block is a thirteenth of the bar, the same in every track, so twelve rows fill it (plus room for the +N count) and
    the blocks grow with the window instead of leaving 70% of a wide track empty (the space rule). */
-.pw-seg { flex: 0 1 calc((100% - 12 * var(--sem-space-1)) / 13); min-width: 8px; box-sizing: border-box; height: var(--sem-space-3); }
-.pw-seg-done { background: var(--ph-hue); }
-.pw-seg-on_it { background: repeating-linear-gradient(135deg, var(--ph-hue) 0 1.5px, transparent 1.5px 4.5px); box-shadow: inset 0 0 0 1px var(--ph-hue); }
-.pw-seg-ready { box-shadow: inset 0 0 0 1px var(--ph-hue); }
-.pw-seg-needs_you { background: var(--sem-tint-warn); box-shadow: inset 0 0 0 2px var(--sem-warn); }
-.pw-seg-waiting { border: 1px dashed var(--sem-faint); }
-.pw-bar-more { flex: none; color: var(--sem-muted); }
 /* The counts use the Studio's own UI font with tabular figures (not the monospace the number class gives), keep a lane's counts on one line
    while they fit, and when they cannot fit they break between counts, never inside one ("4 ready first" stays whole). */
-.pw-counts { display: flex; flex-wrap: wrap; justify-content: flex-end; column-gap: var(--sem-space-4); row-gap: 0; font-family: var(--sem-font-ui); font-variant-numeric: tabular-nums; text-align: right; }
-.pw-counts > span { white-space: nowrap; }
-.pw-count-warn { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
-.pw-legend { display: grid; grid-template-columns: 144px minmax(0, 1fr) auto; align-items: center; column-gap: var(--sem-space-3); min-height: var(--sem-row); padding: 0 var(--sem-space-3); }
-.pw-legend-keys { display: inline-flex; flex-wrap: wrap; gap: var(--sem-space-1) var(--sem-space-4); }
-.pw-legend-keys > span { display: inline-flex; align-items: center; gap: var(--sem-space-1); }
+.pw-count-you { color: var(--sem-actor-you); font-weight: var(--sem-weight-strong); }
 .pw-key { --ph-hue: var(--sem-muted); flex: none; width: var(--sem-space-3); }
 
+/* The reading card (Kane's pick A, 12 Oct 2026): the grade, the top three issues and Fix them, on the Plan where "No grade yet" was.
+   Who fixes what (Kane, 12 Oct): Semanticus green, the person blue, assistants purple. The three tokens below are the ONLY place to switch:
+   --rc-semanticus, --rc-assistant and --rc-person point at the three actor tokens (--sem-actor-semanticus, --sem-actor-assistant,
+   --sem-actor-you), so a change to an actor colour reaches the card with no change here. */
+@keyframes rc-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rc-issue { animation: none; } }
+
 /* the facts line and the one field */
-.pw-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sem-space-1) var(--sem-space-6); color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
-.pw-facts b { color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
-.pw-facts > span:first-child { color: var(--sem-fg); }
-.pw-facts-r { margin-left: auto; }
 /* Raise compatibility level, under the facts line (moved from the Overview, contract 11.1). */
-.pw-raise { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack); color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 /* The picked object's actions under the "Showing <object>" line: a flat row inside the list, never a box in it. */
 .pw-object { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sem-stack) var(--sem-space-3); padding: var(--sem-space-2) var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); }
 .pw-object-buttons { display: flex; flex-wrap: wrap; gap: var(--sem-stack); }
@@ -1323,10 +1299,10 @@ body.vscode-high-contrast .pw-track[aria-pressed="true"], body.vscode-high-contr
 .pw-start-text { display: flex; flex-direction: column; gap: var(--sem-space-1); min-width: 0; }
 .pw-grp-n { margin-left: var(--sem-space-2); color: var(--sem-muted); font-size: var(--sem-text-meta); }
 .pw-grp-r { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sem-stack) var(--sem-space-3); margin-left: auto; font-size: var(--sem-text-meta); }
-.pw-needs { background: var(--sem-tint-warn); }
+.pw-needs { background: var(--sem-tint-you); }
 .pw-needs .pw-grp { border-bottom-color: var(--sem-border); }
 .pw-item { border-bottom: var(--sem-hairline) solid var(--sem-rule); }
-.pw-row { display: grid; grid-template-columns: 112px minmax(0, 1fr) 136px 196px 220px 184px; align-items: center; column-gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-row-2); padding: var(--sem-space-1) var(--sem-space-3); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.pw-row { display: grid; grid-template-columns: 148px minmax(0, 1fr) 136px 196px 220px 184px; align-items: center; column-gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-row-2); padding: var(--sem-space-1) var(--sem-space-3); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 /* The opened row and its detail are ONE panel on the selection tint, so the inset is measured once. */
 .pw-item-open { background: var(--sem-tint-select); }
 /* In the Needs you band the band's tint is already the row's ground, and a second fill there would be a box in a
@@ -1344,8 +1320,8 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pw-waits .pw-why { flex: none; }
 .pw-state { display: inline-flex; align-items: baseline; gap: var(--sem-stack); min-width: 0; white-space: nowrap; }
 .pw-state-mark { flex: none; align-self: center; box-sizing: border-box; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--sem-fg); }
-.pw-state-warn .pw-state-mark { border: 0; background: var(--sem-warn); }
-.pw-state-warn .pw-state-w { color: var(--sem-warn); font-weight: var(--sem-weight-strong); }
+.pw-state-you .pw-state-mark { border: 0; background: var(--sem-actor-you); }
+.pw-state-you .pw-state-w { color: var(--sem-actor-you); font-weight: var(--sem-weight-strong); }
 .pw-state-good .pw-state-mark { border: 0; background: var(--sem-good); }
 .pw-state-faint .pw-state-mark { border-color: var(--sem-faint); }
 .pw-state-faint .pw-state-w { color: var(--sem-muted); }
@@ -1361,7 +1337,7 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pw-lead { margin-right: var(--sem-space-2); color: var(--sem-muted); font-weight: var(--sem-weight); }
 
 /* an opened row */
-.pw-detail { display: grid; grid-template-columns: 112px minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--sem-space-3); padding: var(--sem-space-2) var(--sem-space-3) var(--sem-space-4); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+.pw-detail { display: grid; grid-template-columns: 148px minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--sem-space-3); padding: var(--sem-space-2) var(--sem-space-3) var(--sem-space-4); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 .pw-detail-l, .pw-detail-r { display: flex; flex-direction: column; gap: var(--sem-space-3); min-width: 0; }
 .pw-kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--sem-space-2) var(--sem-space-3); margin: 0; }
 .pw-kv dt { display: inline-flex; align-items: center; gap: var(--sem-stack); color: var(--sem-muted); }
@@ -1374,7 +1350,7 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pw-input:focus { border-color: var(--sem-focus); }
 .pw-field-row { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sem-space-1); }
 .pw-meta { font-size: var(--sem-text-meta); }
-.pw-changes { display: grid; grid-template-columns: 112px minmax(0, 1fr); column-gap: var(--sem-space-3); padding: 0 var(--sem-space-3) var(--sem-space-3); }
+.pw-changes { display: grid; grid-template-columns: 148px minmax(0, 1fr); column-gap: var(--sem-space-3); padding: 0 var(--sem-space-3) var(--sem-space-3); }
 
 /* the assistant's track and what it sees */
 .pw-split { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: var(--sem-gap); }
@@ -1393,13 +1369,8 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
   .pw-detail-lbl { display: none; }
   .pw-split > .pw-list, .pw-sees { grid-column: span 12; }
   /* The counts stay on the track's one line at 900 wide; they used to drop under the name. */
-  .pw-track { grid-template-columns: 120px minmax(0, 1fr) auto; }
 }
 /* On a narrow window the lane stacks: who, then the bar, then the counts, which wrap between counts. */
-@media (max-width: 640px) {
-  .pw-track { grid-template-columns: minmax(0, 1fr); row-gap: var(--sem-space-1); padding-top: var(--sem-space-2); padding-bottom: var(--sem-space-2); }
-  .pw-track .pw-counts { justify-content: flex-start; text-align: left; }
-}
 /* ==== end m9/u1: THE PLAN AT THE HEART ==== */
 
 /* ==== m10/u5: THE COMPOSER DRAFT (composer-draft.tsx, inside a Plan row; askbox.tsx AskBar) =================
@@ -1558,12 +1529,13 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .sem-rowmenu-pop {
   position: fixed; z-index: 60;
   display: flex; flex-direction: column; gap: var(--sem-space-1);
-  min-width: 168px; max-width: 320px; max-height: 60vh; overflow: auto;
+  min-width: 168px; max-width: 320px; max-height: 60vh; overflow-y: auto; overflow-x: hidden;
   padding: var(--sem-space-2);
   border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card);
   background: var(--sem-surface);
   box-shadow: var(--sem-shadow-pop);
 }
+.sem-rowmenu-pop-wide { width: 300px; }
 .sem-rowmenu-pop .sem-btn { justify-content: flex-start; width: 100%; }
 
 /* A chip is a note ON the picture, not another bar: the lifted surface, a hairline, the meta size. It never sits
@@ -1700,6 +1672,34 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .pp-decides { margin-top: var(--sem-space-6); }
 .pp-decides > .pp-h3 { margin-top: 0; }
 .pp-decides .pp-m { color: var(--sem-muted); font-size: var(--sem-text-meta); }
+/* The free month (trial option B). */
+.pp-sheet, .pp-note { margin: 0 0 var(--sem-gap); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); padding: var(--sem-card-pad); }
+.pp-sheet { border-color: var(--sem-accent); }
+.pp-sheet h2, .pp-note h2 { margin: 0 0 var(--sem-space-1); font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
+.pp-sheet p, .pp-note p { margin: 0 0 var(--sem-space-3); font-size: var(--sem-text-body); line-height: var(--sem-lh-body); color: var(--sem-fg); }
+.pp-sheet p.pp-fine { margin: var(--sem-space-3) 0 0; color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.pp-trialrow .pp-keyrow { flex-wrap: wrap; }
+.pp-trialrow .pp-field { letter-spacing: normal; font-family: var(--sem-font-ui); font-size: var(--sem-text-body); flex-basis: 220px; }
+.pp-note .pp-h3 { margin-top: 0; }
+.pp-note .pp-acts, .pp-main > .pp-acts { margin-top: var(--sem-space-4); display: flex; align-items: center; gap: var(--sem-space-3); flex-wrap: wrap; }
+.pp-main > .pp-acts .pp-m { color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.pp-tally { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sem-gap); margin: 0 0 var(--sem-space-2); }
+.pp-tally > div { border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); padding: var(--sem-card-pad); min-width: 0; }
+.pp-big { display: block; font-size: var(--sem-text-page); line-height: var(--sem-lh-page); font-weight: var(--sem-weight-strong); font-variant-numeric: tabular-nums; }
+.pp-lbl { display: block; margin-top: var(--sem-space-1); color: var(--sem-muted); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
+@media (max-width: 560px) { .pp-tally { grid-template-columns: 1fr; } }
+.pp-week { margin: 0 0 var(--sem-gap); }
+.pp-week .pp-h3 { margin-top: 0; }
+.pp-weekrow { display: grid; grid-template-columns: var(--sem-space-4) minmax(0, 1fr) auto; gap: var(--sem-space-3); align-items: start; padding: var(--sem-space-2) 0; border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.pp-weektext b { display: block; font-weight: var(--sem-weight-strong); }
+.pp-weekrow .pp-m { color: var(--sem-muted); font-size: var(--sem-text-meta); }
+.pp-tick { width: var(--sem-space-4); height: var(--sem-space-4); margin-top: calc((var(--sem-lh-body) - var(--sem-space-4)) / 2); border-radius: 50%; border: var(--sem-hairline) solid var(--sem-faint); display: grid; place-items: center; box-sizing: border-box; }
+.pp-tick-on { background: var(--sem-accent); border-color: var(--sem-accent); color: var(--sem-on-accent); }
+.pp-tick svg { width: 10px; height: 10px; }
+.trial-line { display: flex; align-items: center; gap: var(--sem-space-3); flex-wrap: wrap; margin: 0 0 var(--sem-space-3); padding: var(--sem-space-2) var(--sem-space-3); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
+.trial-line-text { flex: 1; min-width: 0; }
+.trial-line.trial-band { margin: 0; border: 0; border-bottom: var(--sem-hairline) solid var(--sem-border); border-radius: 0; padding: var(--sem-space-2) var(--sem-space-6); }
+@media (max-width: 600px) { .trial-line.trial-band { padding: var(--sem-space-2) var(--sem-space-3); } }
 
 /* ---- Connections (connectionshub.tsx), one page, slice C lane C2, 24 September 2026 ---------------------------
    The frame is the 12-column grid of One Visual Language, and every row of it spans all twelve: the head (title,
@@ -1926,9 +1926,9 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .sem-wf-menu-view { display: flex; align-items: center; gap: var(--sem-space-2); padding: var(--sem-space-1) var(--sem-space-2); }
 .sem-wf-summary { margin: 0; max-width: 880px; font-size: var(--sem-text-body); line-height: var(--sem-lh-body); }
 .sem-wf-hue { font-weight: var(--sem-weight-strong); }
-.sem-wf-hue-semanticus { color: var(--sem-doer-engine); }
-.sem-wf-hue-you { color: var(--sem-doer-you); }
-.sem-wf-hue-assistant { color: var(--sem-doer-agent); }
+.sem-wf-hue-semanticus { color: var(--sem-actor-semanticus); }
+.sem-wf-hue-you { color: var(--sem-actor-you); }
+.sem-wf-hue-assistant { color: var(--sem-actor-assistant); }
 .sem-wf-notice-line { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); padding: var(--sem-space-2) var(--sem-space-3); border-left: 2px solid var(--sem-warn); background: var(--sem-tint-warn); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 .sem-wf-notice-line .sem-wf-diff { flex-basis: 100%; }
 .sem-wf-checkres { display: flex; flex-direction: column; gap: var(--sem-space-1); padding: var(--sem-card-pad); border: var(--sem-hairline) solid var(--sem-border); border-radius: var(--sem-radius-card); }
@@ -1954,8 +1954,8 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 /* The step form, in the composer's order. */
 .sem-wf-tag { display: inline-flex; align-items: center; gap: var(--sem-space-1); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 .sem-wf-tag svg { flex: none; width: 12px; height: 12px; }
-.sem-wf-tag-you { color: var(--sem-doer-you); }
-.sem-wf-tag-asst { color: var(--sem-doer-agent); }
+.sem-wf-tag-you { color: var(--sem-actor-you); }
+.sem-wf-tag-asst { color: var(--sem-actor-assistant); }
 .sem-wf-sf { display: flex; flex-direction: column; gap: var(--sem-space-3); }
 .sem-wf-sf-h { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-3); }
 .sem-wf-sf-title { min-width: 0; flex: 1; padding: 0; border: 0; border-bottom: var(--sem-hairline) solid transparent; background: transparent; color: var(--sem-fg); font: inherit; font-size: var(--sem-text-title); line-height: var(--sem-lh-title); font-weight: var(--sem-weight-strong); }
@@ -1968,13 +1968,15 @@ body.vscode-high-contrast .pw-item-open, body.vscode-high-contrast-light .pw-ite
 .sem-wf-v3 { display: flex; flex-direction: column; gap: var(--sem-space-3); }
 .sem-wf-v3list { display: flex; flex-direction: column; gap: var(--sem-space-2); }
 .sem-wf-v3list > .sem-wf-nested { margin-top: 0; }
+/* The check rows sit straight in their group, which already adds its own gap: the rest of the one gap between cards. */
+.sem-wf-grp > .sem-wf-nested { margin-top: calc(var(--sem-gap) - var(--sem-space-2)); }
 .sem-wf-q, .sem-wf-chk { display: flex; align-items: center; gap: var(--sem-space-2); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 .sem-wf-q > :last-child, .sem-wf-chk > :last-child { margin-left: auto; }
 .sem-wf-blank-row { display: grid; grid-template-columns: repeat(var(--sem-grid-columns), minmax(0, 1fr)); column-gap: var(--sem-gap); }
 .sem-wf-blank-row > div { grid-column: span 6; display: flex; flex-direction: column; gap: var(--sem-space-1); min-width: 0; }
 .sem-wf-area-wait, .sem-wf-area-brief { box-sizing: border-box; min-height: var(--sem-row-2); padding: var(--sem-inset-pad); border-radius: var(--sem-radius-control); background: var(--sem-surface-2); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
 .sem-wf-area-wait { color: var(--sem-muted); }
-.sem-wf-area-brief { border-left: 2px solid var(--sem-doer-agent); white-space: pre-wrap; }
+.sem-wf-area-brief { border-left: 2px solid var(--sem-actor-assistant); white-space: pre-wrap; }
 .sem-wf-more-step { display: flex; flex-direction: column; gap: var(--sem-space-3); }
 
 /* A run and a draft, as the detail of their Plan row (R3; Codex F-275). */
@@ -2075,16 +2077,13 @@ body.vscode-high-contrast .sem-well, body.vscode-high-contrast-light .sem-well {
    to Done just now, a press leaves a receipt at the top. The doer on a row is the menu that says who does it. Rows only the
    person can do sit last in a closed fold, dimmed, and full again on hover. Tokens only. */
 /* Only in the fold: a track or object filter lists your rows whole, and those stay readable. */
-.pw-fold .pw-row-you { opacity: 0.62; }
-.pw-fold .pw-row-you:hover, .pw-fold .pw-row-you:focus-within, .pw-fold .pw-row-you.pw-row-open, .pw-fold .pw-item-open .pw-row-you { opacity: 1; }
-.pw-fold .pw-row-you .pw-title > b { font-weight: var(--sem-weight); }
 /* A row being worked on carries the engine tint; the tint is on the item (the row and the hairline under it). */
-.pw-item-live:not(.pw-item-open) { background: var(--sem-tint-engine); }
+.pw-item-live:not(.pw-item-open) { background: var(--sem-tint-semanticus); }
 /* Done just now is one band, as the Needs you band was: the tint is on the group, not on each row. */
 [data-testid="plan-just-done"] { background: var(--sem-tint-good); }
 [data-testid="plan-just-done"] .pw-item-open { background: var(--sem-tint-select); }
-.pw-state-run .pw-state-mark { border-color: var(--sem-doer-engine) var(--sem-doer-engine) var(--sem-faint) var(--sem-faint); animation: sem-spin-kf 0.8s linear infinite; }
-.pw-state-run .pw-state-w { color: var(--sem-doer-engine); font-weight: var(--sem-weight-strong); }
+.pw-state-run .pw-state-mark { border-color: var(--sem-actor-semanticus) var(--sem-actor-semanticus) var(--sem-faint) var(--sem-faint); animation: sem-spin-kf 0.8s linear infinite; }
+.pw-state-run .pw-state-w { color: var(--sem-actor-semanticus); font-weight: var(--sem-weight-strong); }
 @media (prefers-reduced-motion: reduce) { .pw-state-run .pw-state-mark { animation-duration: 2s; } }
 body.vscode-high-contrast .pw-item-live, body.vscode-high-contrast-light .pw-item-live { outline: var(--sem-hairline) solid var(--sem-strong-border); outline-offset: calc(-1 * var(--sem-hairline)); }
 
@@ -2101,10 +2100,10 @@ body.vscode-high-contrast .pw-item-live, body.vscode-high-contrast-light .pw-ite
 
 /* the run area, in the Next header */
 .pw-run { position: relative; overflow: hidden; min-width: 148px; justify-content: center; }
-.pw-run-live { border-color: var(--sem-doer-engine); background: var(--sem-tint-engine); color: var(--sem-doer-engine); cursor: default; font-weight: var(--sem-weight-strong); }
-.pw-run-bar { position: absolute; left: 0; bottom: 0; height: var(--sem-space-1); background: var(--sem-doer-engine); transition: width var(--sem-t-slow) var(--sem-ease-out); }
+.pw-run-live { border-color: var(--sem-actor-semanticus); background: var(--sem-tint-semanticus); color: var(--sem-actor-semanticus); cursor: default; font-weight: var(--sem-weight-strong); }
+.pw-run-bar { position: absolute; left: 0; bottom: 0; height: var(--sem-space-1); background: var(--sem-actor-semanticus); transition: width var(--sem-t-slow) var(--sem-ease-out); }
 .pw-runsay { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sem-space-2); }
-.pw-mark-agent { border: 0; background: var(--sem-doer-agent); }
+.pw-mark-agent { border: 0; background: var(--sem-actor-assistant); }
 
 /* the receipt */
 .pw-receipt { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sem-space-2) var(--sem-space-3); min-height: var(--sem-bar-h); box-sizing: border-box; padding: 0 var(--sem-space-3); border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); line-height: var(--sem-lh-meta); }
@@ -2112,13 +2111,6 @@ body.vscode-high-contrast .pw-item-live, body.vscode-high-contrast-light .pw-ite
 .pw-receipt-ok { color: var(--sem-good); font-weight: var(--sem-weight-strong); }
 
 /* the fold: rows only the person can do */
-.pw-fold-h { display: flex; align-items: center; gap: var(--sem-space-3); box-sizing: border-box; min-height: var(--sem-control-h); padding: 0 var(--sem-card-pad); border-bottom: var(--sem-hairline) solid var(--sem-rule); font-size: var(--sem-text-meta); }
-.pw-fold-btn { display: inline-flex; align-items: center; gap: var(--sem-space-2); min-height: var(--sem-control-h); padding: 0; border: 0; background: transparent; color: var(--sem-muted); font: inherit; text-align: left; cursor: pointer; }
-.pw-fold-btn:hover { color: var(--sem-fg); }
-.pw-fold-btn b { color: var(--sem-fg); }
-.pw-fold-warn { flex: none; width: var(--sem-space-2); height: var(--sem-space-2); border-radius: 50%; background: var(--sem-warn); }
-.pw-fold > .pw-item:last-child { border-bottom: 0; }
-.pw-list > .pw-fold:last-child > .pw-fold-h:last-child { border-bottom: 0; }
 
 /* A narrow window keeps the doer, because the doer is the control that says who does a row. */
 @media (max-width: 1100px) {
@@ -2127,3 +2119,11 @@ body.vscode-high-contrast .pw-item-live, body.vscode-high-contrast-light .pw-ite
 }
 .pw-split .pw-row { grid-template-columns: minmax(0, 1fr) 132px 196px 184px; }
 .pw-split .pw-row .pw-doer { display: inline-flex; }
+/* Help: Personality and Sounds (1.5), two rows like Text size. The one that is on carries the accent. */
+.studio-chip-menu .studio-help-switch button { font-family: var(--sem-font-ui); }
+.studio-chip-menu .studio-help-switch button.is-on { color: var(--sem-accent); box-shadow: inset 0 0 0 var(--sem-hairline) currentColor; }
+/* The dot grid: pointing at a link tag outlines the card on the other end of that link. */
+.react-flow__node.sem-link-partner > div { outline: 2px solid var(--sem-accent); outline-offset: 2px; }
+/* The dot grid's counts and legend: one row, the legend wraps above the counts when the canvas is narrow, so neither covers or cuts the other. */
+.xe-canvas > .sem-chip-row { position: absolute; z-index: 5; left: calc(var(--sem-page-margin) + var(--sem-control-h) + var(--sem-space-2)); right: var(--sem-page-margin); bottom: calc(var(--sem-page-margin) + var(--sem-canvas-inset, 0px)); display: flex; flex-wrap: wrap-reverse; justify-content: space-between; align-items: flex-end; gap: var(--sem-space-2); pointer-events: none; }
+.sem-chip-row > .sem-canvas-chip { position: static; max-width: 100%; flex-wrap: wrap; white-space: normal; overflow: visible; pointer-events: auto; }

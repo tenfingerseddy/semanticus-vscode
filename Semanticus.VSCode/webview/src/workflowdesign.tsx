@@ -3,6 +3,7 @@ import { rpc, onPlanChange, loadState, saveState, postToHost, keptByTheExtension
 import { Banner, Panel, type WorkflowDef, type WorkflowInfo, type WorkflowPolicy, type WorkflowRunView } from './workflow-ui';
 import { RowMenu } from './toolrow';
 import { WorkflowCanvas } from './workflowcanvas';
+import { canvasCounts } from './workflowboxes.mjs';
 import { applyTextareaChange, type WorkflowUpgradeResult } from './workflowdocument.mjs';
 import { WorkflowEmptySteps, WorkflowSettingsFields, WorkflowStepForm, TagMark } from './workflowforms';
 import { LockMark, OfferedControl, RequiredForControl, SideDrawer, requiredWords } from './workflow-rules';
@@ -748,8 +749,7 @@ export function DesignMode({ info, def, creating, seed = null, library, libraryR
   const drawerStep = drawerIndex == null ? null : steps[drawerIndex];
   const addFirstStep = () => addStepAfter(null, 0);
   const addStepAtEnd = () => addStepAfter(steps.length ? steps[steps.length - 1].key : null, steps.length);
-  const counts = { steps: steps.length, actions: steps.reduce((sum, item) => sum + (item.ops?.length ?? 0), 0),
-    checks: steps.reduce((sum, item) => sum + (item.gate?.verify?.length ?? 0), 0) };
+  const counts = canvasCounts(boxes);
   const savedDoc = draft.base;
   const repeatRow = { id: `workflow:${draft.base.name}`, title: workflowTitle, source: 'workflow-def', doer: 'you', stateWord: 'ready' };
 

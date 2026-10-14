@@ -137,3 +137,50 @@ export function boxesView(def) {
     lossy: lossyReasons(def),
   };
 }
+
+// ---- What a box says (1.5 visuals) ---------------------------------------------------------------------------------
+// A format 3 step carries who does it (performer), one action Semanticus runs, and its checks. The box and the chip
+// counted only the format 1 fields (ops, gate.verify), so a format 3 step with an action and three checks read as "0 actions".
+
+const ACRONYMS = new Set(['dax', 'bpa', 'sql', 'rls', 'xmla', 'tmdl', 'pbi']);
+
+/** An engine id in plain words: "create_measure" is "Create measure", "tableRef" is "Table ref". Same rule as copy.ts uiLabel. */
+export function plainWords(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  return raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((word, index) => /^[A-Z0-9]{2,}$/.test(word) || ACRONYMS.has(word.toLowerCase()) ? (ACRONYMS.has(word.toLowerCase()) ? word.toUpperCase() : word) : index === 0 ? word.charAt(0).toUpperCase() + word.slice(1).toLowerCase() : word.toLowerCase())
+    .join(' ');
+}
+
+const WHO_WORDS = { semanticus: 'Semanticus does it', assistant: 'Your assistant does it', person: 'You do this one' };
+
+/** Who does a step: the format 3 performer, else a format 1 step is guided and the assistant does it. */
+export function stepSummary(box) {
+  const who = box.performer === 'semanticus' || box.performer === 'person' ? box.performer : 'assistant';
+  const ops = Array.isArray(box.ops) ? box.ops : [];
+  const action = box.action ? plainWords(box.action)
+    : ops.length ? plainWords(ops[0]) + (ops.length > 1 ? ` and ${ops.length - 1} more` : '')
+    : null;
+  const asks = box.questions ?? 0, parts = box.blanks ?? 0;
+  const detail = action ? null
+    : who === 'person' ? (asks > 0 ? `Asks ${asks} ${asks === 1 ? 'question' : 'questions'}` : 'Waits for you')
+    : who === 'assistant' ? (parts > 0 ? `Writes ${parts} ${parts === 1 ? 'part' : 'parts'}` : 'Follows the step text')
+    : 'No action chosen yet';
+  return { who, whoWords: WHO_WORDS[who], action, detail, checks: box.checks ?? 0 };
+}
+
+/** The canvas chip: steps, actions (a format 3 action counts once, a format 1 step counts its ops) and checks. */
+export function canvasCounts(boxes) {
+  return {
+    steps: boxes.length,
+    actions: boxes.reduce((sum, b) => sum + (b.action ? 1 : (b.ops?.length ?? 0)), 0),
+    checks: boxes.reduce((sum, b) => sum + (b.checks ?? 0), 0),
+  };
+}

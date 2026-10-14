@@ -453,9 +453,16 @@ namespace Semanticus.Tests
                 .Concat(SalesRows.Select(r => ((long)r[0]).ToString(CultureInfo.InvariantCulture)))
                 .Distinct().ToArray();
             Assert.True(literals.Length > 40, "the scan must cover the fixture, not a handful of values");
+            // A bare number (an order id such as 1012) can sit by chance inside the model identity (8 hex characters hashed from a random temp path) or inside the
+            // clock stamp's fraction (30.1012345Z), which is not a value. A number counts as leaked only when it stands alone: no letter, digit, dot or dash on either side.
+            // CI run 4, Windows: "leaked a raw value: 1012" was one of those chance matches.
+            static bool Leaks(string text, string literal) =>
+                literal.All(char.IsDigit)
+                    ? System.Text.RegularExpressions.Regex.IsMatch(text, @"(?<![\w.\-])" + literal + @"(?![\w.])")
+                    : text.Contains(literal, StringComparison.OrdinalIgnoreCase);
             foreach (var text in texts)
                 foreach (var literal in literals)
-                    Assert.False(text.Contains(literal, StringComparison.OrdinalIgnoreCase), "The snapshot leaked a raw value: " + literal);
+                    Assert.False(Leaks(text, literal), "The snapshot leaked a raw value: " + literal);
         }
 
         [Fact]

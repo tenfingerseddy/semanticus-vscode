@@ -177,6 +177,8 @@ namespace Semanticus.Engine
                         if (c == null) { skipped.Add($"{i.Column}: not found in the model"); continue; }
                         if (c is CalculatedColumn) { skipped.Add($"{i.Column}: calculated column. Remove it explicitly, not via schema sync"); continue; }
                         c.Delete(); removed++; applied.Add($"remove {i.Column}");
+                        // The validator keeps no history: say that this table lost its last column, so a formula over that column is still refused.
+                        if (!t.Columns.Any(x => x.Type != ColumnType.RowNumber)) DaxValidator.NoteEmptied(t);
                     }
                     catch (Exception ex) { skipped.Add($"{i.Column}: {ex.Message}"); }
                 }

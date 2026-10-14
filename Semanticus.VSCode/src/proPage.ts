@@ -42,7 +42,14 @@ export interface ProPageState {
     message?: string;
     key?: { result: KeyResult; licensedTo?: string };
     account?: ProAccount;
+    /// The free month's start, from the page. Absent until the person presses Start free month.
+    trial?: TrialStartState;
 }
+
+/// sending: the email is on its way to the worker. waiting: the email went out; the page waits for the link
+/// to be pressed. used: this email had its free month. error: a plain sentence in `message`.
+/// on: the trial licence is in and the engine said Pro (the moment, like purchase 'done').
+export interface TrialStartState { step: 'sending' | 'waiting' | 'used' | 'error' | 'on'; email?: string; message?: string }
 
 export function initialProPageState(): ProPageState { return { purchase: 'idle' }; }
 

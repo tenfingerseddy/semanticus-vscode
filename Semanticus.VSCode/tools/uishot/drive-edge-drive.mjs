@@ -80,18 +80,18 @@ try {
     const n = await animations();
     if (reduced) {
       assert.equal(n, 0, 'reduced motion: a still line, nothing animated');
-      assert.equal(Math.round((await opacity()) * 100), 40, 'reduced motion: the still line is at rest strength');
+      assert.equal(Math.round((await opacity()) * 100), 85, 'reduced motion: the still line is at rest strength');
       await shot('rest'); await strip('rest');
     } else {
       assert.equal(n, 2, 'one fade in and one breath');
       await freeze(150);
-      assert.ok((await opacity()) > 0 && (await opacity()) < 0.25, 'mid fade in');
+      assert.ok((await opacity()) > 0 && (await opacity()) < 0.7, 'mid fade in');
       await strip('fade-in');
       await freeze(300);
-      assert.equal(Math.round((await opacity()) * 100), 25, 'the trough of the breath');
+      assert.equal(Math.round((await opacity()) * 100), 70, 'the trough of the breath');
       await shot('trough'); await strip('trough');
       await freeze(300 + 1800);
-      assert.equal(Math.round((await opacity()) * 100), 50, 'the top of the breath');
+      assert.equal(Math.round((await opacity()) * 100), 100, 'the top of the breath');
       await shot('peak'); await strip('peak');
     }
     const withLine = await barRect();
@@ -104,7 +104,7 @@ try {
       border: getComputedStyle(document.querySelector('.sc-edge')).borderTopWidth,
     }));
     assert.equal(probe.style, 'none');
-    assert.equal(probe.border, '1px');
+    assert.equal(probe.border, '2px');
     assert.ok(!probe.corner.includes('sc-edge'), 'the pointer sees what is under the line');
     const size = await page.$eval('.sc-edge', (e) => [e.offsetWidth, e.offsetHeight]);
     assert.deepEqual(size, [width, 900], 'the frame covers the Studio and is not resized');

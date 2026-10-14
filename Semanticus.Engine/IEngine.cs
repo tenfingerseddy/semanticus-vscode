@@ -44,6 +44,9 @@ namespace Semanticus.Engine
         // Pro entitlement (offline-verified license) — read-only, both doors. The free tier is fully usable; Pro
         // unlocks the one-click BULK apply (apply_change_plan >1 item, apply_safe_fixes for either system). See Entitlement/.
         Task<Entitlement.EntitlementInfo> GetEntitlementAsync();
+        // The free Pro month's tally, counted on this computer from what really happened: both doors (getTrialTally /
+        // get_trial_tally). All zeros when the licence is not a trial token.
+        Task<Entitlement.TrialTally> GetTrialTallyAsync();
         // Record verified edits: read + set the human-controlled audit switch (it adds a record; every DAX write is checked anyway).
         Task<VerifiedModeState> GetVerifiedModeAsync();
         Task<VerifiedModeState> SetVerifiedModeAsync(bool on, string origin);
@@ -89,6 +92,10 @@ namespace Semanticus.Engine
         Task<Scorecard> AiReadinessScanAsync();
         Task<Scorecard> AiReadinessScanLiveAsync();
         Task<SafeFixResult> ApplySafeFixesAsync(string origin);
+        /// <summary>The reading card: the grade, the grade after the safe fixes (when asked for) and the top three issues in plain words (Kane 12 Oct 2026).</summary>
+        Task<ReadingCardView> ReadingCardAsync(bool withAfter = true);
+        /// <summary>Fix them: every safe fix as one undo step, then the writing as jobs for the assistant.</summary>
+        Task<FixThemResult> FixThemAsync(string origin);
         Task<SetResult> ApplyFixAsync(string ruleId, string objRef, string origin);
         Task<FixPrompt> GetFixPromptAsync(string ruleId, string objRef);
         Task<GroundingBundle> GetGroundingAsync(string objRef);
@@ -484,6 +491,9 @@ namespace Semanticus.Engine
         // doors). SetDefault changes the tenant default through either door under the local-write policy.
         Task<AccountProfile[]> ListAccountProfilesAsync();
         Task<AccountProfile[]> SetDefaultAccountProfileAsync(string profileId, string origin = "human");
+        // Connect another assistant (1.5): the assistants Semanticus can write a connection for, and the one write that connects one.
+        Task<ConnectableAssistant[]> ListAssistantsAsync();
+        Task<AssistantConnectResult> ConnectAssistantAsync(string assistant, string origin = "human");
         Task<ModelConnectionRecord> RememberXmlaConnectionAsync(string endpoint, string database, string modelName, string authMode, string origin = "agent");
         Task<WorkingCopyResult> PrepareWorkingCopyAsync(string connectionId, string parentFolder, bool commit, string queryConnectionId = null, string publishConnectionId = null, string origin = "agent");
         /// <summary>Link the open model to an XMLA publish destination, or with <paramref name="clear"/> let go of the
@@ -599,7 +609,7 @@ namespace Semanticus.Engine
         Task<ModelPlanView> SetPlanItemDoerAsync(string id, string doer, string origin = "human");
         Task<ModelPlanView> MovePlanTaskUpAsync(string id);
         Task<ModelPlanView> SetAssistantQueueAsync(string state);
-        Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text);
+        Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text, string origin = "human");
 
         // ---- Plan at the heart: repeat cards (lane RP, contract 1.7). Both doors, like the controls above: create,
         // change (edit, pause, resume) and delete. Add and change
@@ -692,10 +702,15 @@ namespace Semanticus.Engine
         Task<StudioSuggestResult> SuggestNextAsync(StudioSuggestRequest request);
         /// <summary>The session's notes (100 at most, newest last) and current suggestion. The Studio reads it on mount.</summary>
         Task<StudioNotesView> GetStudioNotesAsync(string sessionId);
+        /// <summary>The Next line (1.5): the one suggested next step and the journey stage. Never waits for Jev.</summary>
+        Task<NextStepView> GetNextStepAsync();
+        /// <summary>The person's own suggestion preference: hide / unhide (arg = step id, this session only), stopKind / resumeKind
+        /// (arg = kind, kept), turnOff / turnOn (kept). Changes nothing in the model.</summary>
+        Task<NextStepView> SetNextStepAsync(string action, string arg);
         /// <summary>The Studio reports its own screen: the mode (claudeDrives or iDrive) and the state (idle, claudeDriving or personHasWheel).</summary>
         Task SetStudioDriverAsync(string mode, string state);
         /// <summary>An assistant tool call began. The MCP success filter calls it first thing, for every tool, owner or attached.</summary>
         /// <summary>When the tool writes or shows something the Studio has a place for, the engine also narrates it (follow). <paramref name="focus"/> is the object ref in the call's arguments, if any.</summary>
-        Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null);
+        Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null, bool? commit = null);
     }
 }

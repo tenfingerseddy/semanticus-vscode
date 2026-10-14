@@ -165,7 +165,12 @@ interface DaxLabTabState {
   sentFormats: SentFormats | null;
   noteSent: (res: ResultSet, sent: SentFormats) => void;
   speedQuery: string | null;
-  speedFor: (query: string | null | undefined) => void;
+  speedFor: (query: string | null | undefined, byAssistant?: boolean) => void;
+  /** True while the numbers on Speed are ones an assistant measured on purpose, for a query that is not the result on screen. */
+  speedByAssistant: boolean;
+  /** The DAX an assistant last ran on this page. The page shows it, read-only, for as long as its rows are the result on screen. */
+  assistantDax: string | null;
+  setAssistantDax: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 const DaxLabTabStateContext = createContext<DaxLabTabState | null>(null);
@@ -204,15 +209,17 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
   const [busy, setBusy] = useState<DaxLabBusy>(null);
   const [err, setErr] = useState<string | null>(null);
   const [claudeEvent, setClaudeEvent] = useState<ActivityEvent | null>(null);
+  const [assistantDax, setAssistantDax] = useState<string | null>(null);
   // The query every number on Speed describes. Each speed tool stamps it before its numbers land, and numbers about a
   // different query are put away first, so one Speed view never shows two queries' numbers as one answer (a person's
   // cold and warm runs beside an assistant's profile of another query, verify-queries-redesign D7).
   const [speedQuery, setSpeedQuery] = useState<string | null>(null);
   const speedRef = useRef<string | null>(null);
-  const speedFor = (query: string | null | undefined) => {
+  const [speedByAssistant, setSpeedByAssistant] = useState(false);
+  const speedFor = (query: string | null | undefined, byAssistant = false) => {
     const q = query ?? null;
     if (squash(speedRef.current) !== squash(q)) { setCw(null); setBench(null); setTimings(null); setPlan(null); }
-    speedRef.current = q; setSpeedQuery(q);
+    speedRef.current = q; setSpeedQuery(q); setSpeedByAssistant(byAssistant);
   };
 
   // Keep the evidence context byte-for-byte equivalent to the old in-view calculation. Generic results retain the
@@ -243,7 +250,11 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
     // where it is. The banner says what the assistant tried and why it did not run; the result area never shows an
     // empty result or an approval line written for the assistant, and Speed never times a query that did not run.
     if (!r || e.error || r.error || (r as { policyRefused?: boolean }).policyRefused || r.cancelled) { setClaudeEvent(e); return; }
+    // The assistant's rows are the result now: Result is the view, whatever the person was looking at before (Kane, 13 Oct).
     setRes(r); setResQuery(r.query ?? e.query ?? null); setLogs(null); setErr(null); setClaudeEvent(e);
+    setAssistantDax(r.query ?? e.query ?? null); setTab('result');
+    // Numbers an assistant measured for some other query do not stay beside this result.
+    if (squash(speedRef.current) !== squash(r.query ?? e.query ?? null)) setSpeedByAssistant(false);
   });
   useClaudeReflection('evaluate_and_log', (e) => {
     const r = e.result as EvalLogResult | undefined; const rows = r?.resultRows ?? [];
@@ -251,10 +262,10 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
     setResQuery(e.query ?? null);
     setLogs(r?.entries ?? null); setLogNote(r?.note ?? null); setErr(e.error ?? null); setClaudeEvent(e); setSheet('steps');
   });
-  useClaudeReflection('profile_dax', (e) => { if (e.result) { speedFor(e.query); setTimings(e.result as ServerTimings); setClaudeEvent(e); setTab('speed'); } });
-  useClaudeReflection('benchmark_dax', (e) => { if (e.result) { const r = e.result as BenchmarkResult; speedFor(e.query); setBench(measuredBench(r)); setErr(r.error ?? e.error ?? null); setClaudeEvent(e); setTab('speed'); } });
-  useClaudeReflection('benchmark_coldwarm', (e) => { if (e.result) { speedFor(e.query); setCw(e.result as ColdWarmBenchmark); setClaudeEvent(e); setTab('speed'); } });
-  useClaudeReflection('capture_query_plan', (e) => { if (e.result) { speedFor(e.query); setPlan(e.result as QueryPlanResult); setClaudeEvent(e); setTab('speed'); setPlanOpen(true); } });
+  useClaudeReflection('profile_dax', (e) => { if (e.result) { speedFor(e.query, true); setTimings(e.result as ServerTimings); setClaudeEvent(e); setTab('speed'); } });
+  useClaudeReflection('benchmark_dax', (e) => { if (e.result) { const r = e.result as BenchmarkResult; speedFor(e.query, true); setBench(measuredBench(r)); setErr(r.error ?? e.error ?? null); setClaudeEvent(e); setTab('speed'); } });
+  useClaudeReflection('benchmark_coldwarm', (e) => { if (e.result) { speedFor(e.query, true); setCw(e.result as ColdWarmBenchmark); setClaudeEvent(e); setTab('speed'); } });
+  useClaudeReflection('capture_query_plan', (e) => { if (e.result) { speedFor(e.query, true); setPlan(e.result as QueryPlanResult); setClaudeEvent(e); setTab('speed'); setPlanOpen(true); } });
   useClaudeReflection('clear_cache', (e) => { const r = e.result as ClearCacheResult | undefined; if (r) { setClearMsg(r.cleared ? `Cleared the cache (${r.elapsedMs} ms)` : (r.error ?? 'Clear cache failed')); setClaudeEvent(e); } });
   useClaudeReflection('verify_equivalence', (e) => { if (e.result) { setEqEv({ result: e.result as EquivalenceResult, gridCount: null, requestKey: null, contextKey: execContextKey }); setVErr(e.error ?? null); setClaudeEvent(e); setSheet('compare'); } });
 
@@ -262,7 +273,7 @@ export function DaxLabTabStateProvider({ children }: { children: React.ReactNode
     <DaxLabTabStateContext.Provider value={{
       tab, setTab, sheet, setSheet, planOpen, setPlanOpen, res, setRes, resQuery, setResQuery, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
       plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
-      busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey, formatScopeKey, sentFormats, noteSent, speedQuery, speedFor,
+      busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey, formatScopeKey, sentFormats, noteSent, speedQuery, speedFor, assistantDax, setAssistantDax, speedByAssistant,
     }}>
       {children}
     </DaxLabTabStateContext.Provider>
@@ -326,7 +337,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
   const {
     tab, setTab, sheet, setSheet, planOpen, setPlanOpen, res, setRes, resQuery, setResQuery, logs, setLogs, logNote, setLogNote, bench, setBench, cw, setCw,
     plan, setPlan, timings, setTimings, clearMsg, setClearMsg, eqEv, setEqEv, vErr, setVErr,
-    busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey, formatScopeKey, sentFormats, noteSent, speedQuery, speedFor,
+    busy, setBusy, err, setErr, claudeEvent, setClaudeEvent, execContextKey, formatScopeKey, sentFormats, noteSent, speedQuery, speedFor, assistantDax, setAssistantDax, speedByAssistant,
   } = useDaxLabTabState();
   const [fieldsOpen, setFieldsOpen] = usePersistedState('lab.fieldsOpen', false);
   useEffect(() => { if (res && !res.error) notesStore.setListOpen(false); }, [res]);
@@ -377,7 +388,9 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
   const shared = conn?.connected && conn.kind !== 'local';
   const idle = busy !== null;
   // Build view runs the wells' query, unless a question's parts hold the query, which lives in the editor.
-  const currentQuery = () => (mode === 'visual' && !chipsHere ? buildQuery(config) : query);
+  const personQuery = () => (mode === 'visual' && !chipsHere ? buildQuery(config) : query);
+  // While an assistant's rows are the result on screen, Run and Measure speed work on the query that made them.
+  const currentQuery = () => (assistantShown && assistantDax ? assistantDax : personQuery());
   // The wells already hold everything a result needs, so the next step is Run, not "add a measure".
   const wellsReady = config.values.length > 0;
   // What Compare a rewrite tests across: the question's split and its own filters while a question holds the query,
@@ -466,7 +479,8 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
     setBusy(null);
     setErr('The query was stopped.');
   }
-  function run() { setTab('result'); void runQuery(currentQuery()); }
+  // Run is the person's own: over an assistant's result it brings their query back and runs it, as Back to my fields does.
+  function run() { if (assistantShown) { backToMine(); return; } setTab('result'); void runQuery(personQuery()); }
   async function debug(q?: string) {
     const gen = ++runGen.current;
     const ran = q ?? (mode === 'visual' && !chipsHere ? buildInstrumentedQuery(config) : currentQuery());
@@ -603,6 +617,14 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
   const formatMeasures = useMemo(() => sentFormatsNow(sentFormats, formatScopeKey), [sentFormats, formatScopeKey]);
   const formattedRes = useMemo(() => (res ? withMeasureFormats(res, resQuery ?? res.query, formatMeasures) : res), [res, resQuery, formatMeasures]);
   const producedBy = producedByOf(res, resQuery);
+  // The page shows the assistant's query, not the person's wells, for exactly as long as its rows are the result on screen.
+  const assistantShown = !!assistantDax && !!res && producedBy === squash(assistantDax);
+  // The person's own query comes back as it was left: nothing here wrote to the wells or the editor.
+  function backToMine() {
+    setAssistantDax(null); setTab('result');
+    if (conn?.connected && personQuery().trim() && (mode === 'query' || chipsHere || wellsReady)) void runQuery(personQuery());
+    else { runGen.current++; setRes(null); setResQuery(null); }
+  }
   // The question's statement holds only over rows its own query produced; the same comparison the chart below uses.
   const answerRows = answerOwnsResult({ askOwns, chipDax: ask.chipDax, res, resQuery });
   const chartConfig: PivotConfig | null = !res ? null
@@ -658,6 +680,10 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
   const measuredMs = cw?.warmTotal?.n ? cw.warmTotal.avgMs : bench ? bench.warmMinMs : timings ? timings.totalMs : null;
   const speedMs = measuredMs != null && (speedIsShown || !res) ? measuredMs : res ? res.elapsedMs : null;
   const speedLabel = speedMs != null ? timingAnnouncement(speedMs) : null;
+  // Numbers measured for another query are not shown at all: Speed names this result's own, or says there are none.
+  const ownSpeed = speedIsShown || !res;
+  // With nothing measured the Speed panel ends after its own content, not at the page bottom.
+  const speedHasContent = ownSpeed && !!(timings || cw || plan || bench);
   const measureName = (exprA.match(/^\[(.+)\]$/)?.[1]) ?? config.values[0]?.name ?? 'this formula';
   // The fields the result on screen is built from, marked in the Fields list (option C's inventory).
   const fieldsInUse = useMemo(() => {
@@ -674,9 +700,9 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
       ? (mode === 'query' || chipsHere ? 'Press Run to see the rows here.' : wellsReady ? 'Press Run to build this result.' : 'Add a measure to build a result.')
       : 'Choose a test model below, then choose your fields or write a query.'}</Empty>
     : !chartConfig || viz === 'table'
-      ? <ResultGrid columns={shownRes!.columns} rows={shownRes!.rows} height={canvasH} truncated={res.truncated} framed={false} friendly
+      ? <ResultGrid columns={shownRes!.columns} rows={shownRes!.rows} height={canvasH} truncated={res.truncated} framed={false} friendly countElsewhere
           onCellMenu={chartConfig ? (row, ci) => { const p = explainPayloadFromRow(chartConfig, row, ci, shownRes!.columns[ci]?.format); if (p) { onExplainNumber(p); return true; } return false; } : undefined} />
-      : <DaxVisual res={shownRes!} config={chartConfig} viz={viz} height={canvasH} onExplain={onExplainNumber} across={dateAcross} />;
+      : <DaxVisual res={shownRes!} config={chartConfig} viz={viz} height={canvasH} onExplain={onExplainNumber} across={dateAcross} chosenOrder />;
 
   return (
     // The run key (Ctrl+Enter, Cmd+Enter on mac) anywhere in Queries = Run. Bubble-phase, so a CodeMirror keymap that
@@ -725,7 +751,15 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
       <div className="flex items-start gap-3 shrink-0 flex-wrap">
         <button type="button" className="sem-btn sem-btn-sm shrink-0" aria-expanded={fieldsOpen} onClick={() => setFieldsOpen(!fieldsOpen)}>{fieldsOpen ? '‹ Fields' : 'Fields ›'}</button>
         <div className="flex-1 min-w-0 flex flex-col gap-2">
-          {chipsHere
+          {assistantShown
+            ? <div className="sem-inset flex items-start gap-3" data-testid="queries-assistant-box">
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  <span className="sem-text-meta">The query your assistant ran. Your own {mode === 'query' ? 'query is' : 'fields are'} kept.</span>
+                  <pre className="font-mono text-xs m-0 overflow-auto whitespace-pre-wrap" style={{ maxHeight: 96 }} data-testid="queries-assistant-dax">{assistantDax}</pre>
+                </div>
+                <button type="button" className="sem-btn sem-btn-sm shrink-0" disabled={idle} onClick={backToMine}>{mode === 'query' ? 'Back to my query' : 'Back to my fields'}</button>
+              </div>
+            : chipsHere
             ? <AskChips ask={ask} owns={askOwns} disabled={idle} onRebuild={() => ask.askParts(ask.parts!)} onLeave={() => leaveQuestion()} />
             : mode === 'visual'
               ? <QueryWells config={config} onConfig={onWells} onCompare={compareValue} compareBadge={compareBadge} model={model} disabled={busy === 'ask'} />
@@ -755,7 +789,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
       <div className="sr-only" aria-live="polite" data-testid="queries-ask-announce">{ask.announce}</div>
 
       {checkSaved && <div className="shrink-0"><Banner color="var(--sem-good)">Check saved.{onOpenTests && <button type="button" className="ml-2 xe-link" onClick={onOpenTests}>Open Validation</button>}</Banner></div>}
-      {claudeEvent && <div className="shrink-0"><ClaudeRanBanner event={claudeEvent} onClear={() => setClaudeEvent(null)} /></div>}
+      {claudeEvent && <div className="shrink-0"><ClaudeRanBanner event={claudeEvent} onClear={() => setClaudeEvent(null)} queryShownAbove={assistantShown && claudeEvent.kind === 'run_dax'} /></div>}
 
       {/* body: the Fields drawer (when open) | the work. The result fills everything it is given. */}
       <div className="sem-grid flex-1 min-h-0" style={{ gridTemplateRows: 'minmax(0, 1fr)' }}>
@@ -776,7 +810,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
         )}
 
         <div className="flex flex-col min-w-0 min-h-0" style={{ gridColumn: `span ${fieldsOpen ? 12 - fieldsSpan : 12}` }}>
-          {mode === 'query' && <>
+          {mode === 'query' && !assistantShown && <>
             <div className="sem-card shrink-0 flex flex-col min-h-0 overflow-hidden" style={{ height: editorH }} data-testid="queries-editor">
               <DaxEditor ref={editorRef} fill value={query} onChange={setQuery} model={model} minHeight={40} placeholder="EVALUATE TOPN(100, 'Sales')   ·   Ctrl+Space for suggestions" />
             </div>
@@ -784,7 +818,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
           </>}
 
           {/* the result card: Result and Speed, one row of views above one result shown once */}
-          <div className="sem-card sem-card-flush flex-1 flex flex-col min-h-0" data-primary="result">
+          <div className={`sem-card sem-card-flush flex flex-col min-h-0 ${tab === 'speed' && !speedHasContent ? 'shrink-0' : 'flex-1'}`} data-primary="result">
             <div className="sem-card-head shrink-0 flex items-center">
               <div className="flex items-center flex-wrap xe-tabs" role="group" aria-label="Result views">
                 {WB_TABS.map((t) => {
@@ -856,7 +890,7 @@ export function DaxLabView({ navTarget, onNavConsumed, onOpenTests }: { navTarge
                 )}
                 <div ref={canvasRef} className="flex-1 min-h-0 px-4 pb-4" data-testid="queries-result">{resultBody}</div>
               </>}
-              {tab === 'speed' && <SpeedView {...{ runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared: !!shared, connected: !!conn?.connected, idle, busy, clearCache, measureSpeed, runProfile, runQuick, runPlan, clearThenPlan, timings, cw, plan, bench, clearMsg, planOpen, setPlanOpen, stale: measuredMs != null && !!res && !speedIsShown }} />}
+              {tab === 'speed' && <SpeedView {...{ runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared: !!shared, connected: !!conn?.connected, idle, busy, clearCache, measureSpeed, runProfile, runQuick, runPlan, clearThenPlan, timings: ownSpeed ? timings : null, cw: ownSpeed ? cw : null, plan: ownSpeed ? plan : null, bench: ownSpeed ? bench : null, clearMsg, planOpen, setPlanOpen, timedByAssistant: speedByAssistant && speedIsShown && !!res }} />}
             </div>
           </div>
         </div>
@@ -892,9 +926,9 @@ function SpeedView(p: {
   runs: number; setRuns: (n: number) => void; clearOnRun: boolean; setClearOnRun: (b: boolean) => void; confirmShared: boolean; setConfirmShared: (b: boolean) => void;
   shared: boolean; connected: boolean; idle: boolean; busy: DaxLabBusy; clearCache: () => void; measureSpeed: () => void; runProfile: () => void; runQuick: () => void;
   runPlan: () => void; clearThenPlan: () => void; timings: ServerTimings | null; cw: ColdWarmBenchmark | null; plan: QueryPlanResult | null; bench: BenchmarkResult | null;
-  clearMsg: string | null; planOpen: boolean; setPlanOpen: (b: boolean) => void; stale: boolean;
+  clearMsg: string | null; planOpen: boolean; setPlanOpen: (b: boolean) => void; timedByAssistant: boolean;
 }) {
-  const { runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared, connected, idle, busy, clearCache, measureSpeed, runProfile, runQuick, runPlan, clearThenPlan, timings, cw, plan, bench, clearMsg, planOpen, setPlanOpen, stale } = p;
+  const { runs, setRuns, clearOnRun, setClearOnRun, confirmShared, setConfirmShared, shared, connected, idle, busy, clearCache, measureSpeed, runProfile, runQuick, runPlan, clearThenPlan, timings, cw, plan, bench, clearMsg, planOpen, setPlanOpen, timedByAssistant } = p;
   const off = !connected || idle;
   const [options, setOptions] = useState(false);
   const measured = !!(cw || bench || timings);
@@ -929,8 +963,9 @@ function SpeedView(p: {
         {shared && <label className="flex items-center gap-2 cursor-pointer sem-text-meta" style={{ color: 'var(--sem-fg)' }}><span className="xe-dot xe-dot-warn" aria-hidden="true" /><input type="checkbox" checked={confirmShared} onChange={(e) => setConfirmShared(e.target.checked)} /> Shared endpoint: clearing the cache affects all users</label>}
         {clearMsg && <div className="text-(length:--sem-text-label) xe-dot xe-dot-good">{clearMsg}</div>}
       </div>
-      <div className="flex-1 min-h-0 overflow-auto px-4 pb-3 flex flex-col gap-3" data-testid="queries-speed-numbers">
-        {stale && <div className="xe-msg" style={{ '--xe-dot': 'var(--sem-warn)' } as React.CSSProperties} data-testid="queries-speed-stale">These numbers are for a query you measured before, not the result on screen. Measure again to time this result.</div>}
+      <div className="min-h-0 overflow-auto px-4 pb-3 flex flex-col gap-3" data-testid="queries-speed-numbers">
+        {timedByAssistant && <div className="sem-text-meta" data-testid="queries-speed-timed">Timed by your assistant</div>}
+        {!measured && !plan && <div className="sem-text-meta" data-testid="queries-speed-none">Not measured yet. Press Measure speed to time this result.</div>}
         {head.length > 0 && (
           <div className="flex items-baseline flex-wrap gap-x-6 gap-y-2" data-testid="queries-speed-answer">
             {head.map(([v, l]) => <span key={l} className="inline-flex items-baseline gap-2"><b className="text-(length:--sem-text-page) sem-num" style={{ fontWeight: 'var(--sem-weight-strong)' }}>{v}</b><span className="sem-text-meta">{l}</span></span>)}
@@ -938,8 +973,8 @@ function SpeedView(p: {
         )}
         {timings && <ServerTimingsView t={timings} />}
         {cw && <ColdWarmView cw={cw} />}
-        {(cw?.detail.length || bench) ? (
-          <details className="sem-inset">
+        {(cw?.detail.length || bench?.runsMs?.length) ? (
+          <details className="sem-inset shrink-0">
             <summary className="cursor-pointer select-none flex items-center"><b className="text-xs">Every run</b><span className="ml-auto sem-text-meta">{[cw?.detail.length ? `${cw.detail.length} measured` : '', bench ? `${bench.runs} quick` : ''].filter(Boolean).join(' · ')} runs</span></summary>
             <div className="mt-2 flex flex-col gap-4">
               {cw && cw.detail.length > 0 && <RunDetail cw={cw} />}
@@ -958,7 +993,7 @@ function SpeedView(p: {
           </details>
         ) : null}
       </div>
-      <details className="sem-inset shrink-0 mx-4 mb-4" open={planOpen} onToggle={(e) => setPlanOpen((e.currentTarget as HTMLDetailsElement).open)} data-testid="queries-server-steps">
+      <details className="sem-inset shrink-0 mx-4 mb-4 mt-1" open={planOpen} onToggle={(e) => setPlanOpen((e.currentTarget as HTMLDetailsElement).open)} data-testid="queries-server-steps">
         <summary className="cursor-pointer select-none flex items-center"><b className="text-xs">Server steps</b><span className="ml-auto sem-text-meta">{plan ? `recorded ${plan.logicalTree.length + plan.physicalTree.length} steps` : ''}</span></summary>
         <div className="mt-2 flex flex-col gap-3">
           <div className="flex items-center gap-2 flex-wrap">
@@ -1166,22 +1201,22 @@ function ServerTimingsView({ t }: { t: ServerTimings }) {
         <>
           {t.seQueries > 0 && <>
             <div className="flex h-5 rounded overflow-hidden text-(length:--sem-text-label)" style={{ background: 'var(--sem-surface)' }} title={`Formula engine ${t.feMs} ms · storage engine ${t.seMs} ms`}>
-              <div className="flex items-center justify-center" style={{ width: `${fePct}%`, background: 'var(--sem-engine-fe)', color: 'var(--sem-on-engine-fe)', minWidth: fePct > 0 ? 28 : 0 }}>{fePct > 14 ? `Formula ${fePct}%` : ''}</div>
-              <div className="flex items-center justify-center" style={{ width: `${sePct}%`, background: 'var(--sem-engine-se)', color: 'var(--sem-on-engine-se)', minWidth: sePct > 0 ? 28 : 0 }}>{sePct > 14 ? `Storage ${sePct}%` : ''}</div>
+              <div className="flex items-center justify-center" style={{ width: `${fePct}%`, background: 'var(--sem-series-1)', color: 'var(--sem-on-series)', minWidth: fePct > 0 ? 28 : 0 }}>{fePct > 14 ? `Formula ${fePct}%` : ''}</div>
+              <div className="flex items-center justify-center" style={{ width: `${sePct}%`, background: 'var(--sem-series-2)', color: 'var(--sem-on-series)', minWidth: sePct > 0 ? 28 : 0 }}>{sePct > 14 ? `Storage ${sePct}%` : ''}</div>
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>
-              <EngineKey color="var(--sem-engine-fe)">Formula engine</EngineKey>
-              <EngineKey color="var(--sem-engine-se)">Storage engine</EngineKey>
+              <EngineKey color="var(--sem-series-1)">Formula engine</EngineKey>
+              <EngineKey color="var(--sem-series-2)">Storage engine</EngineKey>
             </div>
           </>}
           <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-(length:--sem-text-label) tnum" style={{ color: 'var(--sem-muted)' }}>
             <span><b style={{ color: 'var(--sem-fg)' }}>{t.totalMs} ms</b> server query</span>
             {t.wallMs != null && <span>{t.wallMs} ms round trip</span>}
             {t.setupMs != null && t.setupMs >= 0 && <span>{t.setupMs} ms trace setup</span>}
-            {t.seQueries > 0 && <><span><b style={{ color: 'var(--sem-engine-fe)' }}>{t.feMs} ms</b> formula engine, estimated</span>
-            <span><b style={{ color: 'var(--sem-engine-se)' }}>{t.seMs} ms</b> storage engine</span></>}
+            {t.seQueries > 0 && <><span><b style={{ color: 'var(--sem-series-1)' }}>{t.feMs} ms</b> formula engine, estimated</span>
+            <span><b style={{ color: 'var(--sem-series-2)' }}>{t.seMs} ms</b> storage engine</span></>}
             <span><b style={{ color: 'var(--sem-fg)' }}>{t.seQueries}</b> storage {t.seQueries === 1 ? 'query' : 'queries'}</span>
-            {t.seCacheHits != null && <span><b style={{ color: 'var(--sem-engine-se)' }}>{t.seCacheHits}</b> from the storage cache</span>}
+            {t.seCacheHits != null && <span><b style={{ color: 'var(--sem-series-2)' }}>{t.seCacheHits}</b> from the storage cache</span>}
             <span>{t.seCpuMs} ms storage CPU</span>
             {t.seParallelism > 0 && <span>{t.seParallelism}× parallelism</span>}
           </div>
@@ -1200,7 +1235,7 @@ function ServerTimingsView({ t }: { t: ServerTimings }) {
                       <tr key={i}>
                         <td className="text-left px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{s.line ?? i + 1}</td>
                         <td className="text-left px-2 py-1" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{scanKind(s.subclass)}</td>
-                        <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-engine-se)' }}>{s.durationMs} ms</td>
+                        <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-series-2)' }}>{s.durationMs} ms</td>
                         <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{s.cpuMs}</td>
                         <td className="text-right px-2 py-1 tnum" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)' }}>{s.rows.toLocaleString()}</td>
                         <td className="text-left px-2 py-1 font-mono truncate" style={{ borderBottom: '1px solid var(--sem-border)', color: 'var(--sem-muted)', maxWidth: 320 }} title={s.query}>{s.query ?? ''}</td>
@@ -1252,7 +1287,7 @@ function ColdWarmView({ cw }: { cw: ColdWarmBenchmark }) {
       {cw.cacheClearAvailable && cw.note && <div className="text-(length:--sem-text-label)" style={{ color: 'var(--sem-muted)' }}>{cw.note}</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {statTable('Whole query', cw.coldTotal, cw.warmTotal)}
-        {cw.traceAvailable && statTable('Storage engine', cw.coldSe, cw.warmSe, 'var(--sem-engine-se)')}
+        {cw.traceAvailable && statTable('Storage engine', cw.coldSe, cw.warmSe, 'var(--sem-series-2)')}
       </div>
     </div>
   );

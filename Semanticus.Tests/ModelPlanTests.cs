@@ -852,8 +852,9 @@ namespace Semanticus.Tests
         {
             using var f = await GappyModelAsync("PlanApproveFirst.bim");
             var plan = await f.Engine.GetModelPlanAsync();
-            var yours = plan.Items.Where(i => i.Who != ModelPlanOwners.Auto && i.Who != ModelPlanOwners.Assistant
-                                              && i.Status != ModelPlanStatuses.Skipped).ToArray();
+            // The assistant owns every row a tool can do now (doer lane, 13 Oct), so no gappy row is the person's: a row Semanticus does not run is told to its
+            // assistant, and a row only the person decides still points at approve.
+            var yours = plan.Items.Where(i => i.Who != ModelPlanOwners.Auto && i.Status != ModelPlanStatuses.Skipped).ToArray();
             Assert.NotEmpty(yours);
 
             foreach (var item in yours)
@@ -861,7 +862,7 @@ namespace Semanticus.Tests
                 var result = await f.Engine.ModelPlanActionAsync(item.Id, "start", "human");
                 Assert.False(result.Performed);
                 Assert.DoesNotContain("not built yet", result.Sentence, StringComparison.Ordinal);
-                Assert.Contains("approve", result.Sentence, StringComparison.Ordinal);
+                Assert.Contains(item.Who == ModelPlanOwners.You ? "approve" : "assistant", result.Sentence, StringComparison.Ordinal);
             }
         }
 
@@ -1022,7 +1023,9 @@ namespace Semanticus.Tests
             AssertTableDetail(item);
             var total = TouchedCount(item.Touches);
             Assert.NotNull(total);
-            Assert.Equal(total!.Value, item.Tables.Sum(t => t.Count));
+            // The model itself (obj:Model/Model) is on no table's block, so a row that touches it files one object fewer than it counts (coverage-fix, 13 Oct).
+            var onNoTable = (item.Objects ?? Array.Empty<string>()).Count(o => o.StartsWith("obj:Model/", StringComparison.Ordinal));
+            Assert.Equal(total!.Value, item.Tables.Sum(t => t.Count) + onNoTable);
         }
 
         [Trait(TestCost.Key, TestCost.Sweep)]

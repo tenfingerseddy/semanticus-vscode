@@ -1,10 +1,10 @@
 {
-  "version": "1.4.0",
+  "version": "1.5.0",
   "skills": [
     {
       "name": "semanticus",
       "path": "plugins/semanticus/skills/semanticus/SKILL.md",
-      "sha256": "6f525486116e35224219c903a7535eeeeffae464f4dfb00e45ff158a3fc753e2"
+      "sha256": "28a41399d64ad0ab54cf0c5d82f5b992f3712da5f6fd4999bbfe1b6257f6b03e"
     },
     {
       "name": "semanticus-optimize-dax",
@@ -14,7 +14,7 @@
     {
       "name": "semanticus-ai-ready",
       "path": "plugins/semanticus/skills/semanticus-ai-ready/SKILL.md",
-      "sha256": "2e8814c59fb71cec293309dd7b8218e588fd9539cd61286a12cbe35f5477078b"
+      "sha256": "ccb73e7eb3c75560b2883c16e77cfbab9fbcd98da4718979af19422b5e904233"
     },
     {
       "name": "semanticus-interview-model",

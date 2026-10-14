@@ -367,7 +367,9 @@ namespace Semanticus.Tests
             var all = string.Join(", ", plan.Items.Select(i => i.Id + "=" + i.StateWord));
             Assert.NotEmpty(row.ChangeSet.Lines);
             Assert.All(row.ChangeSet.Lines, l => Assert.False(l.Kept));
-            Assert.True(row.StateWord != "ready", "the row is offered to Run the plan with every line dropped: " + all);
+            // Not offered to Run the plan: with every line dropped it is the assistant's to ask about (Kane, 13 Oct 2026), not a Semanticus row.
+            Assert.False(row.StateWord == "ready" && row.Doer == PlanDoers.Semanticus, "the row is offered to Run the plan with every line dropped: " + all);
+            Assert.DoesNotContain(PlanReadySet.Rows(plan.Items), r => r.Id == row.Id);
             Assert.False(string.IsNullOrWhiteSpace(row.StateNote), "the row says why it is not ready");
 
             // Run the plan never takes it, and never names it as a row it left out.

@@ -102,6 +102,194 @@ namespace Semanticus.Tests
             finally { File.Delete(src); }
         }
 
+        // Kane, 13 Oct: Publish showed "Publish 5 changes", then refused on the Date table. The Plan raised the level and added a calendar and a
+        // hierarchy. Now the preview names only what cannot go, per row, and the level goes up with the rest.
+        private static TOM.Database DateDb(int level, bool withCalendar)
+        {
+            var db = new TOM.Database("t") { CompatibilityLevel = level, Model = new TOM.Model() };
+            var t = new TOM.Table { Name = "Date", LineageTag = "tag-date", DataCategory = "Time" };
+            t.Partitions.Add(new TOM.Partition { Name = "Date", Source = new TOM.MPartitionSource { Expression = "let Source = 1 in Source" } });
+            var d = new TOM.DataColumn { Name = "Date", DataType = TOM.DataType.DateTime, LineageTag = "tag-d", IsKey = true };
+            var y = new TOM.DataColumn { Name = "Year", DataType = TOM.DataType.Int64, LineageTag = "tag-y" };
+            t.Columns.Add(d); t.Columns.Add(y);
+            if (withCalendar)
+            {
+                var cal = new TOM.Calendar { Name = "Gregorian", LineageTag = "cal-1" };
+                cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Date) { PrimaryColumn = d });
+                t.Calendars.Add(cal);
+                var h = new TOM.Hierarchy { Name = "Calendar", LineageTag = "tag-h" };
+                h.Levels.Add(new TOM.Level { Name = "Year", Ordinal = 0, Column = y, LineageTag = "tag-ly" });
+                t.Hierarchies.Add(h);
+            }
+            db.Model.Tables.Add(t);
+            return db;
+        }
+
+        [Fact]
+        public async Task A_date_table_with_a_calendar_and_a_higher_level_previews_clean_and_pushes_the_level_with_it()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var src = WriteBim(DateDb(1701, true));
+            try
+            {
+                var refs = new[] { "compatibility", "table:Date", "hierarchy:Date/Calendar" };
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(DateDb(1600, false));
+                var pushedBim = (string)null;
+                engine.WorkspacePushHook = (bim, _) => { pushedBim = File.ReadAllText(bim); return OkReport(3, synced: refs); };
+
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: false, "human");
+                Assert.Empty(preview.FailedRefs);                        // nothing is refused, so the page can tick all three
+                Assert.Equal(refs.OrderBy(r => r), preview.AppliedRefs.OrderBy(r => r));
+                Assert.Contains("3 object(s) would be pushed", preview.Note);
+
+                var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: true, "human");
+                Assert.True(r.Applied, r.Error);
+                var pushed = TOM.JsonSerializer.DeserializeDatabase(pushedBim, null, AS.CompatibilityMode.PowerBI);
+                Assert.Equal(1701, pushed.CompatibilityLevel);
+                Assert.Single(pushed.Model.Tables["Date"].Calendars);
+            }
+            finally { File.Delete(src); }
+        }
+
+        [Fact]
+        public async Task The_preview_names_only_the_row_that_cannot_go_and_in_plain_words()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var db = DateDb(1701, true);
+            typeof(TOM.Model).GetProperty("DisableAutoExists").SetValue(db.Model, 1);   // a model setting a push cannot carry
+            var src = WriteBim(db);
+            try
+            {
+                var refs = new[] { "compatibility", "table:Date", "model" };
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(DateDb(1600, false));
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: false, "human");
+                var failed = Assert.Single(preview.FailedRefs);
+                Assert.StartsWith("model (", failed);
+                Assert.DoesNotContain("TMDL", failed); Assert.DoesNotContain("XMLA", failed);
+            }
+            finally { File.Delete(src); }
+        }
+
+        // Verifier (v-publish-shell, 13 Oct): Kane's exact screen. 1701 copy over a 1600 live model; Date gets a calendar whose
+        // association uses a column that arrives in the same push; three hierarchies changed; one partition changed. The push
+        // runs the REAL LiveDeploy.SyncAndApply against an in-memory live model, so what is checked is what landed.
+        private static TOM.Database KaneShape(bool source)
+        {
+            var db = new TOM.Database("t") { CompatibilityLevel = source ? 1701 : 1600, Model = new TOM.Model() };
+            TOM.Table T(string name, string tag)
+            {
+                var t = new TOM.Table { Name = name, LineageTag = tag };
+                t.Partitions.Add(new TOM.Partition { Name = name, Source = new TOM.MPartitionSource { Expression = "let Source = 1 in Source" } });
+                db.Model.Tables.Add(t); return t;
+            }
+            TOM.DataColumn C(TOM.Table t, string name, string tag, TOM.DataType type = TOM.DataType.String)
+            { var c = new TOM.DataColumn { Name = name, DataType = type, LineageTag = tag }; t.Columns.Add(c); return c; }
+            void H(TOM.Table t, string name, string tag, params TOM.Column[] cols)
+            {
+                var h = new TOM.Hierarchy { Name = name, LineageTag = tag };
+                for (var i = 0; i < cols.Length; i++) h.Levels.Add(new TOM.Level { Name = cols[i].Name, Ordinal = i, Column = cols[i], LineageTag = tag + "-" + i });
+                t.Hierarchies.Add(h);
+            }
+
+            var cust = T("Customer", "tag-cust");
+            var country = C(cust, "Country", "tag-country"); var city = C(cust, "City", "tag-city");
+            if (source) H(cust, "Geography", "tag-geo", country, city); else H(cust, "Geography", "tag-geo", country);
+
+            var date = T("Date", "tag-date"); date.DataCategory = "Time";
+            var d = C(date, "Date", "tag-d", TOM.DataType.DateTime); d.IsKey = true;
+            var y = C(date, "Year", "tag-y", TOM.DataType.Int64);
+            if (source)
+            {
+                var label = C(date, "Year Label", "tag-yl");                 // a column that arrives in the same push
+                var weekend = C(date, "Is Weekend", "tag-we", TOM.DataType.Boolean);
+                var cal = new TOM.Calendar { Name = "Gregorian", LineageTag = "cal-1", Description = "Calendar year" };
+                cal.CalendarColumnGroups.Add(new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Date) { PrimaryColumn = d });
+                var ya = new TOM.TimeUnitColumnAssociation(TOM.TimeUnit.Year) { PrimaryColumn = y };
+                ya.AssociatedColumns.Add(label);
+                cal.CalendarColumnGroups.Add(ya);
+                var rel = new TOM.TimeRelatedColumnGroup(); rel.Columns.Add(weekend);
+                cal.CalendarColumnGroups.Add(rel);
+                date.Calendars.Add(cal);
+                H(date, "Calendar", "tag-cal-h", y, d);
+            }
+            else
+            {
+                C(date, "Is Weekend", "tag-we", TOM.DataType.Boolean);
+                H(date, "Calendar", "tag-cal-h", y);
+            }
+
+            var prod = T("Product", "tag-prod");
+            var cat = C(prod, "Category", "tag-cat"); var name = C(prod, "Product", "tag-pname");
+            if (source) H(prod, "Products", "tag-ph", cat, name); else H(prod, "Products", "tag-ph", cat);
+            var dax = T("DaxBook Product", "tag-daxbook");
+            ((TOM.MPartitionSource)dax.Partitions[0].Source).Expression = source ? "let Source = 2 in Source" : "let Source = 1 in Source";
+            C(dax, "Key", "tag-dk");
+            return db;
+        }
+
+        [Fact]
+        public async Task Verifier_Kanes_exact_shape_previews_clean_then_lands_whole_on_the_live_model()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var srcDb = KaneShape(source: true);
+            var src = WriteBim(srcDb);
+            var live = KaneShape(source: false);
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(TOM.JsonSerializer.DeserializeDatabase(TOM.JsonSerializer.SerializeDatabase(live), null, AS.CompatibilityMode.PowerBI));
+                engine.WorkspacePushHook = (bim, dels) =>
+                {
+                    var merged = TOM.JsonSerializer.DeserializeDatabase(File.ReadAllText(bim), null, AS.CompatibilityMode.PowerBI);
+                    return LiveDeploy.SyncAndApply(merged.Model, live.Model, commit: true, "ep", "DS", dels, () => { }, _ => { }, identityStrict: true);
+                };
+
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: false, "human");
+                Assert.True(preview.FailedRefs.Length == 0, "preview refused: " + string.Join(" | ", preview.FailedRefs));
+                foreach (var r in new[] { "compatibility", "table:Date", "hierarchy:Customer/Geography", "hierarchy:Date/Calendar", "hierarchy:Product/Products" })
+                    Assert.Contains(r, preview.AppliedRefs);
+                Assert.Contains(preview.AppliedRefs, r => r.StartsWith("partition:", StringComparison.Ordinal) && r.Contains("DaxBook Product"));
+                Assert.Contains($"{preview.AppliedRefs.Length} object(s) would be pushed", preview.Note);
+
+                var pushed = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), null, commit: true, "human");
+                Assert.True(pushed.Applied, pushed.Error + " " + pushed.Note);
+                Assert.True(pushed.FailedRefs.Length == 0, "push failed rows: " + string.Join(" | ", pushed.FailedRefs));
+                Assert.Equal(preview.AppliedRefs.OrderBy(r => r), pushed.AppliedRefs.OrderBy(r => r));
+
+                Assert.Equal(1701, live.CompatibilityLevel);
+                Assert.True(ModelCompare.CalendarsEqual(srcDb.Model.Tables["Date"], live.Model.Tables["Date"]), "calendars differ after the push");
+                var cal = Assert.Single(live.Model.Tables["Date"].Calendars);
+                Assert.Equal("cal-1", cal.LineageTag); Assert.Equal("Calendar year", cal.Description);
+                var lt = live.Model.Tables["Date"];
+                var ya = (TOM.TimeUnitColumnAssociation)cal.CalendarColumnGroups[1];
+                Assert.Same(lt.Columns["Year"], ya.PrimaryColumn);
+                Assert.Same(lt.Columns["Year Label"], Assert.Single(ya.AssociatedColumns));
+                Assert.Same(lt.Columns["Is Weekend"], Assert.Single(((TOM.TimeRelatedColumnGroup)cal.CalendarColumnGroups[2]).Columns));
+                Assert.Equal(2, live.Model.Tables["Customer"].Hierarchies["Geography"].Levels.Count);
+                Assert.Equal(2, live.Model.Tables["Product"].Hierarchies["Products"].Levels.Count);
+                Assert.Equal("let Source = 2 in Source", ((TOM.MPartitionSource)live.Model.Tables["DaxBook Product"].Partitions[0].Source).Expression);
+                var left = ModelCompare.Diff(srcDb.Model, live.Model, "src", "live").Items.Where(i => i.Action != "Equal").Select(i => i.Ref).ToArray();
+                Assert.True(left.Length == 0, "still different after the push: " + string.Join(", ", left));
+            }
+            finally { File.Delete(src); }
+        }
+
+        [Fact]
+        public async Task Verifier_a_calendar_without_its_level_row_is_named_in_the_preview_and_never_counted()
+        {
+            using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
+            var src = WriteBim(DateDb(1701, true));
+            try
+            {
+                engine.WorkspaceSnapshotHook = () => Task.FromResult(DateDb(1600, false));
+                var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), new[] { "table:Date", "hierarchy:Date/Calendar" }, commit: false, "human");
+                var failed = Assert.Single(preview.FailedRefs);
+                Assert.StartsWith("table:Date (", failed);
+                Assert.Contains("compatibility level", failed);
+                Assert.Contains("1 object(s) would be pushed", preview.Note);
+            }
+            finally { File.Delete(src); }
+        }
+
         // ---- (b) a multi-object commit is free (Kane retired the >1 push gate on 2026-09-15) ----
         // The selective push is free at every size now, so the whole point of this pair is that the size of the
         // push changes nothing: two objects reach live exactly like one.
@@ -125,7 +313,7 @@ namespace Semanticus.Tests
             finally { File.Delete(src); }
         }
 
-        // ---- Power BI takes no role change over this path: the preview says so, and the other changes still go ----
+        // ---- A role added or changed (members, permission, filter) goes with the other ticked changes ----
         private static TOM.Database WithRole(TOM.Database db, params string[] members)
         {
             var role = new TOM.ModelRole { Name = "Readers", ModelPermission = TOM.ModelPermission.Read };
@@ -135,7 +323,7 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task A_role_members_change_is_named_before_the_press_and_the_other_ticked_changes_still_publish()
+        public async Task A_role_members_change_is_previewed_and_published_with_the_other_ticked_changes()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(WithRole(Db(m => Measure(m, "Total", "2", "tag-total")), "a@contoso.com", "b@contoso.com"));
@@ -145,28 +333,26 @@ namespace Semanticus.Tests
                 TOM.Database Live() => WithRole(Db(m => Measure(m, "Total", "1", "tag-total")), "a@contoso.com");
                 engine.WorkspaceSnapshotHook = () => Task.FromResult(Live());
                 var pushedBim = (string)null;
-                engine.WorkspacePushHook = (bim, _) => { pushedBim = File.ReadAllText(bim); return OkReport(1, synced: new[] { "measure:Sales/Total" }); };
+                engine.WorkspacePushHook = (bim, _) => { pushedBim = File.ReadAllText(bim); return OkReport(2, synced: refs); };
 
                 var preview = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: false, "human");
-                Assert.Equal(new[] { "measure:Sales/Total" }, preview.AppliedRefs);
-                var named = Assert.Single(preview.FailedRefs);
-                Assert.StartsWith("role:Readers (", named);
-                Assert.Contains("cannot publish role changes yet", named);
+                Assert.Equal(refs.OrderBy(r => r), preview.AppliedRefs.OrderBy(r => r));
+                Assert.Empty(preview.FailedRefs);
                 Assert.Null(pushedBim);
 
                 var sent = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), refs, commit: true, "human");
                 Assert.True(sent.Applied, sent.Error);
-                Assert.Equal(new[] { "measure:Sales/Total" }, sent.AppliedRefs);
-                Assert.Contains("cannot publish role changes yet", Assert.Single(sent.FailedRefs));
-                // The pushed model keeps the live role as it was: the role change was never merged into it.
+                Assert.Equal(refs.OrderBy(r => r), sent.AppliedRefs.OrderBy(r => r));
+                Assert.Empty(sent.FailedRefs);
+                // The pushed model carries the role as the source has it: both members.
                 var pushed = TOM.JsonSerializer.DeserializeDatabase(pushedBim, null, AS.CompatibilityMode.PowerBI).Model;
-                Assert.Single(pushed.Roles["Readers"].Members);
+                Assert.Equal(2, pushed.Roles["Readers"].Members.Count);
             }
             finally { File.Delete(src); }
         }
 
         [Fact]
-        public async Task A_publish_of_only_a_role_members_change_writes_nothing_and_says_why()
+        public async Task A_publish_of_only_a_role_members_change_is_pushed()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(WithRole(Db(), "a@contoso.com", "b@contoso.com"));
@@ -174,13 +360,13 @@ namespace Semanticus.Tests
             {
                 var pushed = false;
                 engine.WorkspaceSnapshotHook = () => Task.FromResult(WithRole(Db(), "a@contoso.com"));
-                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(0); };
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1, synced: new[] { "role:Readers" }); };
 
                 var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src }, Ws(), new[] { "role:Readers" }, commit: true, "human");
 
-                Assert.False(r.Applied);
-                Assert.False(pushed);
-                Assert.Contains("cannot publish role changes yet", Assert.Single(r.FailedRefs));
+                Assert.True(r.Applied, r.Error);
+                Assert.True(pushed);
+                Assert.Empty(r.FailedRefs);
             }
             finally { File.Delete(src); }
         }
@@ -1033,11 +1219,11 @@ namespace Semanticus.Tests
             Assert.Contains("measure:Sales/Total", rep.SyncedRefs);
         }
 
-        // Finding #3 (end-to-end): a merged object of a type a metadata deploy does NOT carry (e.g. a role) must be
-        // reported in FailedRefs, never counted as a live success — the result describes the LIVE model, not the temp
-        // .bim. Against the pre-fix code the role read as Applied; here it is honestly reported as not-synced.
+        // Finding #3 (end-to-end): a merged object the live deploy did NOT sync must be reported in FailedRefs, never
+        // counted as a live success — the result describes the LIVE model, not the temp .bim. Roles are carried now
+        // (1.5); the fake push here reports an empty SyncedRefs, as a deploy that dropped the role would.
         [Fact]
-        public async Task Push_of_a_type_the_deploy_does_not_carry_is_reported_failed()
+        public async Task Push_of_a_ref_the_deploy_did_not_sync_is_reported_failed()
         {
             using var engine = new LocalEngine(new SessionManager(), new Fake(pro: false));
             var src = WriteBim(Db(m => m.Roles.Add(new TOM.ModelRole { Name = "Reader" })));   // source adds a role
@@ -1045,12 +1231,12 @@ namespace Semanticus.Tests
             {
                 var pushed = false;
                 engine.WorkspaceSnapshotHook = () => Task.FromResult(Db());   // A==B, no role live → role:Reader is a Create
-                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };   // real SyncModels never syncs a role → SyncedRefs empty
+                engine.WorkspacePushHook = (_, __) => { pushed = true; return OkReport(1); };   // a deploy that dropped the role → SyncedRefs empty
 
                 var r = await engine.ApplyDiffAsync(new ModelRef { Kind = "file", Path = src },
                     Ws(), new[] { "role:Reader" }, commit: true, "human");
 
-                Assert.False(pushed);                                       // a role is named as not going before any live work, never attempted
+                Assert.True(pushed);                                        // the role is attempted like any other object
                 Assert.False(r.Applied);                                    // and nothing reached live
                 Assert.Equal(0, r.Count);
                 Assert.DoesNotContain("role:Reader", r.AppliedRefs ?? Array.Empty<string>());

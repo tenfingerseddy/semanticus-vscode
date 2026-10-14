@@ -72,6 +72,7 @@ namespace Semanticus.Engine
             {
                 ReadScope = DecisionConsentScopeAsync,
                 StillEntitled = () => Entitlement.FeatureGrants.IsProTier(_entitlement),
+                OracleAnswered = NoteTrialJevChoices,
             };
 
         /// <summary>The verified licence token, when this session has one a hosted service would accept.
@@ -96,6 +97,7 @@ namespace Semanticus.Engine
                 {
                     service.ReadScope = DecisionConsentScopeAsync;
                     service.StillEntitled = () => Entitlement.FeatureGrants.IsProTier(_entitlement);
+                    service.OracleAnswered = NoteTrialJevChoices;
                 }
                 _decisions = service;
             }
@@ -322,6 +324,8 @@ namespace Semanticus.Engine
             // constant), so it is live. It can only untick a column the rule ticked, and the person reviews every line before
             // anything is removed; its live run over the ten sealed models is in that lane's report.
             DecisionRegistry.CleanupSuggest => true,
+            // 1.5, the Next line: it only chooses among the steps the rules already found eligible, and every word is the rules'.
+            DecisionRegistry.NextStep => NextStepJevLive,
             _ => null,
         };
 
@@ -911,6 +915,7 @@ namespace Semanticus.Engine
             // Permission is kept on this machine under the scope read above and never written into the model (K19).
             var stamped = scope;
             var consent = DecisionConsentStore.Grant(stamped, fields, schemaVersion, DateTimeOffset.UtcNow, grantedBy);
+            if (grantedBy == "human") NoteWindowGrant(fields, schemaVersion);   // this window has the person's OK (hero19 D11)
             PublishConsentChanged(origin, "permission given");
             TellThePlanConsentMoved();
             return DescribeConsent(consent, stamped);
@@ -1077,6 +1082,7 @@ namespace Semanticus.Engine
         {
             var scope = await DecisionConsentScopeAsync().ConfigureAwait(false);
             var consent = DecisionConsentStore.Withdraw(scope, DateTimeOffset.UtcNow);
+            ForgetWindowGrant();   // the person's no beats the OK this window carried (hero19 D11)
             // What the person let a start plan's source disclose goes with the permission it was given under (the generation
             // already moved, so the record would not count; this also takes the plan's own copy and its Deciding state back).
             await RevokeStartDisclosureAsync(scope, origin).ConfigureAwait(false);
@@ -1185,9 +1191,14 @@ namespace Semanticus.Engine
             var scope = await DecisionConsentScopeAsync().ConfigureAwait(false);
             if (string.IsNullOrEmpty(scope)) throw new InvalidOperationException(DecisionConsentStore.NoScopeReason);
             var consent = Decisions.ReadConsent(scope);
-            var standing = DescribeConsent(consent, scope);
-            if (!standing.Current)
-                throw new InvalidOperationException("Give permission for this model first, then say which tables Pro may see." + (string.IsNullOrWhiteSpace(standing.Reason) ? "" : " (" + char.ToUpperInvariant(standing.Reason.Trim()[0]) + standing.Reason.Trim().Substring(1).TrimEnd('.') + ".)"));
+            // D2 (launch video, 12 Oct): one "allow" gave nothing until the model's own permission was given too, so the person was asked twice. The yes
+            // covers what the build needs: the model's permission (the same grant set_consent writes, with its giver on record) and the tables of this plan.
+            if (!DescribeConsent(consent, scope).Current)
+            {
+                await SetConsentAsync(DecisionRegistry.DeclaredFields.ToArray(), DecisionRegistry.ConsentSchemaVersion, origin).ConfigureAwait(false);
+                scope = await DecisionConsentScopeAsync().ConfigureAwait(false);   // as the grant's own read below does, after the stamp the permission may write
+                consent = Decisions.ReadConsent(scope);
+            }
 
             // The sample of rows is part of what the person agrees to see. While it is still being read the plan is not the plan it will be, so a grant now
             // would be for a picture that is about to change (the digest moves when the sample lands, and the person would be asked again anyway).

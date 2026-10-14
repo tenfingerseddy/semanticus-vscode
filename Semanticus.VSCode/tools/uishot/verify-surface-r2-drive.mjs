@@ -9,7 +9,7 @@
 //      your assistant; the stock-theme doer colours are in this lane's brief). The You track's label ink has
 //      oklch chroma 0.05 or more, as Semanticus's and your assistant's do. Abyss's find highlight, which VS Code
 //      hands a webview as charts.orange, is grey (#eeeeee44), so its You orange comes out grey; the lane fixed the
-//      same trap for Quiet Light's pink one with --sem-you-src and left Abyss.
+//      same trap for Quiet Light's pink one with a source of its own and left Abyss (since retired: the person is blue now).
 //   F. Text on a card holds 4.5:1 in the stock themes too (coordinator's D6 ruling names Solarized Light and Quiet
 //      Light). The Optimize page's before and after chips (the old and new value of each fix, a 12% red or 14% green
 //      wash over the card) carry muted text; in those two themes it reads 4.40 to 4.44:1 off the pixels.

@@ -342,6 +342,7 @@ namespace Semanticus.Tests
             await f.Engine.CreateColumnAsync("table:Customer", "Legacy Code", "String", "Legacy Code", "human");
             await Mutate(f, m => m.Tables["Customer"].Columns["Legacy Code"].IsHidden = true);
 
+            await f.Engine.SetReportScopeAsync(Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // the model has no reports: report-aware over an empty set
             var u = await CallToolAsync(f.Engine, "unused_objects");
             var items = u.GetProperty("items").EnumerateArray().ToDictionary(i => i.GetProperty("ref").GetString(), i => i);
 
@@ -542,6 +543,7 @@ namespace Semanticus.Tests
         public async Task A_visible_attribute_row_never_denies_the_removal_the_card_offers()
         {
             using var f = await NorthstarAsync();
+            await f.Engine.SetReportScopeAsync(Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // the model has no reports: report-aware over an empty set
 
             var u = await CallToolAsync(f.Engine, "unused_objects");
             var city = u.GetProperty("items").EnumerateArray().Single(i => i.GetProperty("ref").GetString() == "column:Customer/City");

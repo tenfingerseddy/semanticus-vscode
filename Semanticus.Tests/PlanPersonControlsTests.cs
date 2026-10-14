@@ -66,10 +66,10 @@ namespace Semanticus.Tests
             return string.Join(";", parts);
         }
 
-        private static void OthersUnchanged(ModelPlanView before, ModelPlanView after, string id)
+        private static void OthersUnchanged(ModelPlanView before, ModelPlanView after, string id, params string[] except)
         {
-            var b = before.Items.Where(i => i.Id != id).ToDictionary(i => i.Id, i => Face(i));
-            var a = after.Items.Where(i => i.Id != id).ToDictionary(i => i.Id, i => Face(i));
+            var b = before.Items.Where(i => i.Id != id).ToDictionary(i => i.Id, i => Face(i, except));
+            var a = after.Items.Where(i => i.Id != id).ToDictionary(i => i.Id, i => Face(i, except));
             Assert.Equal(b, a);
         }
 
@@ -238,11 +238,13 @@ namespace Semanticus.Tests
             Assert.Equal(PlanStateWords.Ready, Row(paused, id).StateWord);
             Assert.Equal(PlanTasks.PausedByYouNote, Row(paused, id).StateNote);
             Assert.Equal(Face(Row(before, id), "StateNote"), Face(Row(paused, id), "StateNote"));
-            OthersUnchanged(before, paused, id);
+            // Every assistant row carries the offer wording now (doer lane, 13 Oct), so the switch moves its note on all of them and nothing else.
+            OthersUnchanged(before, paused, id, "StateNote");
 
             var on = await f.Engine.SetAssistantQueueAsync("On");
             Assert.Equal(PlanAssistantQueue.On, on.AssistantQueue);
-            Assert.Equal(PlanTasks.OnNextCallNote, Row(on, id).StateNote);
+            // No assistant is connected here, so the offer says to ask it (hands-off D16, 13 Oct), not "when it next checks".
+            Assert.Equal(PlanTasks.AskAssistantNote, Row(on, id).StateNote);
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetAssistantQueueAsync("off"));
         }
 
@@ -306,7 +308,7 @@ namespace Semanticus.Tests
             Assert.Equal(PlanAssistantQueue.On, (await McpTools.SetAssistantQueue(gated, "on")).AssistantQueue);
 
             // set_plan_task_note
-            Assert.Equal("Start with Amount", Row(await McpTools.SetPlanTaskNote(gated, id, "Start with Amount"), id).Note);
+            Assert.Equal("Start with Amount", Row(await McpTools.SetPlanTaskNote(gated, id, "Start with Amount"), id).AssistantNote);   // the assistant's note is its own, beside the person's
 
             // remove_plan_row and restore_plan_row
             var removed = await McpTools.RemovePlanRow(gated, id);
@@ -367,13 +369,13 @@ namespace Semanticus.Tests
                 Assert.Equal(PlanStateWords.Paused, Row(await agent.InvokeAsync<ModelPlanView>("holdPlanItem", byAgent.ItemId, true), byAgent.ItemId).StateWord);
                 Assert.False(Row(await agent.InvokeAsync<ModelPlanView>("holdPlanItem", byAgent.ItemId, false), byAgent.ItemId).Held);
                 Assert.Equal(PlanDoers.You, Row(await agent.InvokeAsync<ModelPlanView>("setPlanItemDoer", byAgent.ItemId, "you"), byAgent.ItemId).Doer);
-                Assert.Equal("note", Row(await agent.InvokeAsync<ModelPlanView>("setPlanTaskNote", byAgent.ItemId, "note"), byAgent.ItemId).Note);
+                Assert.Equal("note", Row(await agent.InvokeAsync<ModelPlanView>("setPlanTaskNote", byAgent.ItemId, "note"), byAgent.ItemId).AssistantNote);
                 Assert.Equal(PlanAssistantQueue.Paused, (await agent.InvokeAsync<ModelPlanView>("setAssistantQueue", "paused")).AssistantQueue);
 
                 // The attached assistant's own engine reaches the same methods.
                 Assert.Equal(PlanDoers.Assistant, Row(await remote.SetPlanItemDoerAsync(byAgent.ItemId, "assistant"), byAgent.ItemId).Doer);
                 Assert.Equal(PlanAssistantQueue.On, (await remote.SetAssistantQueueAsync("on")).AssistantQueue);
-                Assert.Equal("again", Row(await remote.SetPlanTaskNoteAsync(byAgent.ItemId, "again"), byAgent.ItemId).Note);
+                Assert.Equal("again", Row(await remote.SetPlanTaskNoteAsync(byAgent.ItemId, "again"), byAgent.ItemId).AssistantNote);
 
                 // The person's own claim, Mark done and Could not, and the Permissions page, are not on the agent connection.
                 async Task Refused(Func<Task> call)

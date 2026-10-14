@@ -1,4 +1,4 @@
-# Semanticus assistant skills 1.4.0
+# Semanticus assistant skills 1.5.0
 
 Seven guides for the Semanticus MCP connection: getting started, DAX optimisation, AI readiness, model interviews, change lists, reusable workflows and model knowledge.
 

@@ -50,7 +50,9 @@ namespace Semanticus.Tests
 
                 var unused = await engine.UnusedObjectsAsync();
 
-                Assert.DoesNotContain(unused.Items, i => string.Equals(i.Table, "My Parameter", StringComparison.OrdinalIgnoreCase));
+                // No COLUMN of the parameter table is offered (the formula makes them). The table itself may be a candidate since finish3 (hero 21 N3):
+                // nothing uses it, and it is only "safe" once the reports are checked.
+                Assert.DoesNotContain(unused.Items, i => i.Kind != "table" && string.Equals(i.Table, "My Parameter", StringComparison.OrdinalIgnoreCase));
             }
         }
 

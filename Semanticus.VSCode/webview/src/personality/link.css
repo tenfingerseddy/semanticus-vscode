@@ -1,0 +1,23 @@
+/* The Link (1.5). Tokens only. Every moving part is driven by Web Animations from link.tsx: transform and opacity, plus the dash and
+   width of three thin strokes in a 24 unit drawing. Nothing here animates by itself. */
+.linkchar { display: block; flex: none; overflow: visible; pointer-events: none; }
+.linkchar-base { fill: none; stroke: var(--sem-fg); stroke-width: var(--linkchar-sw); stroke-linecap: round; stroke-linejoin: round; }
+.linkchar-lit { fill: none; stroke: var(--sem-accent); stroke-width: var(--linkchar-sw); stroke-linecap: round; stroke-linejoin: round; }
+.linkchar-bar { fill: none; stroke: var(--sem-accent); stroke-width: var(--linkchar-sw); stroke-linecap: round; opacity: .6; }
+.linkchar-trail { fill: none; stroke: var(--sem-accent); stroke-width: var(--linkchar-sw); stroke-linecap: round; stroke-dasharray: 0 3; }
+.linkchar-ring { fill: none; stroke: var(--sem-accent); stroke-width: .5; }
+.linkchar-dot { fill: var(--sem-accent); }
+/* Error: grey and still. The words say what broke. */
+.linkchar.is-error .linkchar-base, .linkchar.is-error .linkchar-bar { stroke: var(--sem-muted); }
+.linkchar.is-error .linkchar-dot { fill: var(--sem-muted); }
+
+/* The status line: the right end of the bottom bar. contain keeps a changing verb from re-laying out the bar around it. */
+.sem-status-link { margin-left: auto; display: flex; align-items: center; gap: var(--sem-space-2); min-width: 0; max-width: 50%;
+  padding: var(--sem-space-1) 0; contain: layout paint; white-space: nowrap; }
+/* The sync word already takes the free space; the Link sits right after it at the bar's end. */
+.studio-contextbar .connection-sync + .sem-status-link { margin-left: 0; }
+.sem-status-words { position: relative; display: block; min-width: 0; overflow: hidden; height: var(--sem-lh-meta); }
+.sem-status-word { display: block; text-align: right; overflow: hidden; text-overflow: ellipsis; line-height: var(--sem-lh-meta); color: var(--sem-fg); font-weight: var(--sem-weight-strong); }
+.sem-status-word.is-leaving { position: absolute; right: 0; top: 0; }
+.sem-status-link[data-link-work="error"] .sem-status-word { color: var(--sem-muted); font-weight: var(--sem-weight); }
+.sem-status-meta { flex: none; color: var(--sem-muted); }

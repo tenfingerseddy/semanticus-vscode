@@ -24,7 +24,7 @@ const { renderToStaticMarkup } = req('react-dom/server');
 
 const cache = new Map();
 function load(file) {
-  const full = /\.(ts|tsx)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
+  const full = /\.(ts|tsx|mjs|js)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
   if (cache.has(full)) return cache.get(full);
   const js = ts.transpileModule(readFileSync(full, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX, esModuleInterop: true },

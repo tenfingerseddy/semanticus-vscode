@@ -64,10 +64,10 @@ namespace Semanticus.Engine
             const string reads = "A read: it changes nothing in the model, its files or the engine's settings.";
             Pass(reads,
                 "ListRefreshTypesAsync", "ListTreeAsync", "GetObjectAsync", "GetDaxAsync", "SessionInfoAsync", "ConnectionContextAsync",
-                "GetEntitlementAsync", "GetVerifiedModeAsync", "GetModelGraphAsync", "GetOrientationAsync", "HarnessReportAsync",
+                "GetEntitlementAsync", "GetTrialTallyAsync", "GetVerifiedModeAsync", "GetModelGraphAsync", "GetOrientationAsync", "HarnessReportAsync",
                 "GetLayoutAsync", "SearchModelAsync", "ListMeasuresAsync", "ListColumnsAsync", "GetModelObjectsAsync",
                 "GetPlanHistoryAsync", "BpaScanAsync", "BpaGetFixPromptAsync", "ValidateRuleAsync", "GetCustomRulesAsync",
-                "AiReadinessScanAsync", "AiReadinessScanLiveAsync", "GetFixPromptAsync", "GetGroundingAsync", "ListWaiversAsync",
+                "AiReadinessScanAsync", "AiReadinessScanLiveAsync", "ReadingCardAsync", "GetFixPromptAsync", "GetGroundingAsync", "ListWaiversAsync",
                 "ValidateDaxAsync", "LintDaxAsync", "ListFunctionsAsync", "ListPartitionsAsync", "GetPartitionMAsync",
                 "ListNamedExpressionsAsync", "GetNamedExpressionAsync", "ListCalculationGroupsAsync", "GetPerspectivesAsync",
                 "ListFormatTemplatesAsync", "GetObjectPropertiesAsync", "GetDependentsAsync", "GetDependenciesAsync", "GetLineageAsync",
@@ -95,7 +95,7 @@ namespace Semanticus.Engine
                 "GetPipelineStagesAsync", "GetStageItemsAsync", "PreviewDeployAsync", "DeploymentHistoryAsync", "FabricGitConnectionAsync",
                 "FabricGitStatusAsync", "ListDataAgentsAsync", "GetDataAgentAsync", "GenerateDataAgentConfigFromModelAsync",
                 "ListReportsAsync", "AnalyzeReportsAsync", "AnalyzeCloudReportsAsync", "CheckReportsAsync", "ListLocalInstancesAsync",
-                "ConnectionStatusAsync");
+                "ConnectionStatusAsync", "ListAssistantsAsync");
             Pass("A measurement or a trace on the model or a live copy of it: it computes and returns, and writes nothing.",
                 "VertiPaqScanAsync", "BenchmarkDaxAsync", "ProfileDaxAsync", "VerifyEquivalenceAsync", "BenchmarkColdWarmAsync",
                 "CaptureQueryPlanAsync", "ProbeMeasureAsync", "BlameValueAsync", "ExplainValueAsync", "ListValueHistoryAsync",
@@ -130,6 +130,7 @@ namespace Semanticus.Engine
             // A setting of how the engine reaches things (accounts, SQL sources, publish destination, working folder) is written to the
             // engine's home, and engine settings are held: asked about under Locked, the Allow of every other preset unchanged.
             Settings("SetDefaultAccountProfileAsync", "make the saved account {profileId:raw} the default for its tenant");
+            Settings("ConnectAssistantAsync", "connect the assistant {assistant:raw} to Semanticus by adding Semanticus to its settings file");
             Add(SettingWitnessed("RememberXmlaConnectionAsync", "remember the connection to {database:raw} at {endpoint:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connections it updates"));
             Add(SettingWitnessed("ForgetConnectionAsync", "forget the connection {id:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it removes"));
             Add(SettingWitnessed("SetConnectionWorkingFolderAsync", "put the working copy of the connection {id:raw} in {folder:raw}", c => c.Engine.GateBasisStoreFileAsync("connections"), "the saved connection it changes"));
@@ -249,6 +250,7 @@ namespace Semanticus.Engine
                 ? "restore the kept unsaved changes to the file model as one undo step"
                 : "delete the recovery copy for the file model. Undo does not restore the deleted copy"));
             EditNoPreview("ApplySafeFixesAsync", "apply every fix the AI-readiness check calls safe", c => c.Engine.GateDescribeSafeFixes());
+            EditNoPreview("FixThemAsync", "fix everything Semanticus can fix on its own as one undo step, and give the writing to the assistant as plan tasks");
             Edit("BpaFixAllAsync", "apply every Best Practice fix that can be made safely", c => c.Engine.GateDescribeBpaFixAll());
             EditNoPreview("MakeAiReadyAsync", "make the model AI ready: write the safe fixes and queue the descriptions that need words");
             // The plan's lines live in the session's memory, so the model's revision does not move when one is edited: the grant is bound to
@@ -610,6 +612,8 @@ namespace Semanticus.Engine
             Add(Passing("SuggestNextAsync", "It offers the person next steps as buttons; it changes nothing in the model, its files or the settings.", preview: false));
             Add(Passing("NoteAgentCallAsync", "It tells the Studio an assistant call began; it changes nothing and is never written to History.", preview: false));
             Add(Passing("GetStudioNotesAsync", "A read of the notes the assistant has shown this session."));
+            Add(Passing("GetNextStepAsync", "A read of the Next line: the one suggested step and where the person is."));
+            Add(Passing("SetNextStepAsync", "The person's own suggestion preference (hide, stop a kind, turn off); it changes nothing in the model, its files or the Permissions page.", preview: false));
             Person("The Studio reports its own screen; the assistant reads it in show_in_studio's result.", "SetStudioDriverAsync");
 
             return d;

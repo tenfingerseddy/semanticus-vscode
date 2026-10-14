@@ -13,14 +13,25 @@
 // removed here.
 
 export const LIMITS = {
-    /** The whole request body. The engine caps its snapshot at 64 KB (JevDecisionOracle.MaxSnapshotBytes);
-     *  this leaves the same again for questions, criteria and framing. */
-    maxRequestBytes: 131_072,
+    /** The whole request body. The engine caps its snapshot at 64 KB (JevDecisionOracle.MaxSnapshotBytes).
+     *  Kane, 13 Oct 2026: 30 questions per request. A question is a name plus a small schema, about 150 bytes
+     *  (the largest declared shape is a choice with a few options), so 30 of them are under 5 KB; with the
+     *  64 KB snapshot and the criteria and framing text that is about 75 KB. 192 KB leaves a 2.5x margin and
+     *  is still a small body for a worker. */
+    maxRequestBytes: 196_608,
     maxSnapshotBytes: 65_536,
-    maxQuestions: 8,
-    /** In-flight calls per licence. Matches JevDecisionOracle.MaxConcurrent so a single well-behaved client
-     *  never trips it; it exists for the client that is not well behaved. */
-    perSidConcurrency: 6,
+    maxQuestions: 30,
+    /** In-flight calls per licence: OFF (0). Kane, 13 Oct 2026: 1,000 Jev requests cost about 80 cents, so a
+     *  limit on requests at once protects nothing and refused real work (a three-table model stopped with
+     *  "too many advice requests"). The monthly token budget below is the only runaway guard. The ledger
+     *  still honours a positive value, which is how a future limit would be turned back on. The engine's own
+     *  gate (JevDecisionOracle.MaxConcurrent, lane jev-busy) is set on its side. */
+    perSidConcurrency: 0,
+    /** How long past the vendor deadline a hold may stay "running". The worker's own fetch is cut at
+     *  upstreamTimeoutMs, so a hold older than that plus this grace belongs to a worker that died without
+     *  settling it. It no longer blocks anything (not a concurrency limit when one is set, not a retry of
+     *  its own key); it still holds its estimate for the budget until the sweep. */
+    inFlightGraceMs: 10_000,
     /** Input tokens per licence per calendar month, on the server clock. Kane, 1 Oct 2026: USD 2 a month per user, which at Jev's
      *  USD 0.042 per million input tokens (output free) is 47,600,000 input tokens (USD 1.9992). */
     licenceMonthlyTokens: 47_600_000,
@@ -60,10 +71,10 @@ export const TEMPLATES = {
         schemaVersion: 2,
         fields: ['measure_name', 'measure_formula_facts', 'references_measures', 'table_name', 'table_columns', 'sibling_measures', 'measures'],
         questions: ['display_folder', 'format_family'],
-        // m11/jev-batch: the Plan asks a table's measures in one request, up to MeasuresFamily.ChunkSize (12) measures, a folder
+        // m11/jev-batch: the Plan asks a table's measures in one request, up to MeasuresFamily.ChunkSize (15) measures, a folder
         // and a format question for each. propose_measure_defaults still asks one measure (two questions).
         batched: true,
-        maxQuestions: 24,
+        maxQuestions: 30,
     },
     'plan.rank': {
         schemaVersion: 1,
@@ -124,6 +135,13 @@ export const TEMPLATES = {
         fields: ['question_words', 'result_shape'],
         questions: ['chart_kind'],
     },
+    'next.step': {
+        // 1.5, the Next line: which of the rules' eligible next steps to show. Counts, yes-or-no facts and step ids only;
+        // every word on the line is the engine's (Semanticus.Engine/NextStepRules.cs).
+        schemaVersion: 1,
+        fields: ['journey_stage', 'journey_counts', 'journey_flags', 'candidate_kinds', 'plan_top_kind'],
+        questions: ['next_kind'],
+    },
     'column.format': {
         // T268, columns first: one number or date column per call, names and types only. The format string is the engine's.
         schemaVersion: 1,
@@ -161,9 +179,9 @@ export const TEMPLATES = {
         schemaVersion: 1,
         fields: ['table_name', 'column_name', 'column_facts', 'table_columns', 'model_tables', 'table_facts', 'columns'],
         questions: ['summarize_by'],
-        // m11/jev-batch: a table's columns in one request, up to ColumnSummarizeFamily.ChunkSize (20), one question each.
+        // m11/jev-batch: a table's columns in one request, up to ColumnSummarizeFamily.ChunkSize (30), one question each.
         batched: true,
-        maxQuestions: 20,
+        maxQuestions: 30,
     },
     'cleanup.suggest': {
         // m11/plan-harm round 5: the Plan's cleanup row. One question per unused column that would start ticked, all in a

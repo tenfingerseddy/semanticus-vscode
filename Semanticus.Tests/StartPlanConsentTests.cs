@@ -161,16 +161,30 @@ namespace Semanticus.Tests
             }
         }
 
-        [Trait(TestCost.Key, TestCost.Sweep)]
+        // D2 (launch video, 12 Oct): one "allow" took two chat asks, because the grant refused until the model's own permission was given.
+        // The person's yes in chat is enough: one grant gives the model's permission and the tables in the plan, and records who gave it.
         [Fact]
-        public async Task The_grant_needs_the_models_own_permission_first_and_a_pro_session_and_the_digest_the_person_saw()
+        public async Task One_allow_gives_the_models_permission_and_the_tables_in_the_plan()
         {
             using (var r = await Rig.StartAsync(consent: false))
             {
-                var noConsent = await Assert.ThrowsAsync<InvalidOperationException>(() => r.GrantAsync());
-                Assert.Contains("Give permission for this model first", noConsent.Message, StringComparison.Ordinal);
+                Assert.False((await r.Engine.GetConsentAsync()).Current);
 
-                await r.F.ConsentAsync();
+                var view = await r.GrantAsync("agent");
+
+                Assert.NotNull(view);
+                Assert.True((await r.Engine.GetConsentAsync()).Current);
+                Assert.Equal("agent", (await r.Engine.GetConsentAsync()).GrantedBy);
+                Assert.Equal(new[] { "dbo.Customer", "dbo.Sales" }, r.Host.Current().Disclosure.IncludedTables.OrderBy(t => t, StringComparer.Ordinal).ToArray());
+            }
+        }
+
+        [Trait(TestCost.Key, TestCost.Sweep)]
+        [Fact]
+        public async Task The_grant_needs_a_pro_session_and_the_digest_the_person_saw()
+        {
+            using (var r = await Rig.StartAsync(consent: false))
+            {
                 var stale = await Assert.ThrowsAsync<InvalidOperationException>(() => r.Engine.GrantStartDisclosureAsync("not-the-digest", "human"));
                 Assert.Contains("changed after you looked", stale.Message, StringComparison.Ordinal);
 

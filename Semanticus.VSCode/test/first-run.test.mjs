@@ -36,7 +36,7 @@ const STUBS = {
 };
 const cache = new Map();
 function load(file, stubs = STUBS) {
-  const full = /\.(ts|tsx)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
+  const full = /\.(ts|tsx|mjs|js)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
   if (stubs === STUBS && cache.has(full)) return cache.get(full);
   const module = { exports: {} };
   if (stubs === STUBS) cache.set(full, module.exports);
@@ -134,7 +134,7 @@ const readable = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&quot;/g, '"')
   const t = G.tourSteps(false);
   assert.equal(t.length, 7, 'a person who has not connected gets one more step');
   const i = t.findIndex((s) => s.title === 'Connect your assistant');
-  assert.ok(i > 0, 'it is there'); assert.equal(t[i + 1].anchor[0], 'queue-switch', 'just before the step about its tasks');
+  assert.ok(i > 0, 'it is there'); assert.equal(t[i + 1].anchor[0], 'drive-switch', 'just before the step about its tasks');
   assert.deepEqual(t[i].anchor, ['assistant-chip'], 'anchored to the header Your assistant button');
   assert.ok(t[i].body && !/—/.test(t[i].body) && !/one[- ]click/i.test(t[i].body));
   assert.deepEqual(t.map((_, k) => G.tourView(k, t)).slice(-1), ['history'], 'the last step still opens History');

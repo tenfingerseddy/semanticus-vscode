@@ -378,7 +378,16 @@ namespace Semanticus.Engine
                 Console.Error.WriteLine($"[mcp] no running engine; became owner on pipe {pipe}.");
             }
 
-            var builder = Host.CreateApplicationBuilder(args);
+            // No file watching from the host. The default builder makes the working folder its content root and watches it
+            // recursively (inotify) for appsettings.json changes; Claude Desktop starts this door in HOME, which cost two doors
+            // about 165,000 watches each and made VS Code fail to open a model (ENOSPC). The door has no settings file, so it
+            // roots at its own install folder, loads no configuration files, and adds back only the logging it uses.
+            var builder = Host.CreateEmptyApplicationBuilder(new HostApplicationBuilderSettings
+            {
+                Args = args,
+                ContentRootPath = AppContext.BaseDirectory,
+                DisableDefaults = true,
+            });
             builder.Logging.AddConsole(o => o.LogToStandardErrorThreshold = LogLevel.Trace);
             // The only engine the assistant holds is the gated one (AssistantEngine): every tool call is looked up in the registry and,
             // when the person's policy asks, answered with a question before the engine sees it. An engine that is a proxy to another
@@ -393,7 +402,8 @@ namespace Semanticus.Engine
                     "(connection, tier, model shape + grade, in-flight work, last-session tail, suggested next actions) " +
                     "and names the drill-down op for each section. Semanticus operates one LIVE semantic model through " +
                     "this MCP surface and the VS Code UI. Model edits are undoable with undo_change; saved files, git " +
-                    "operations and writes to a live destination are not. The VS Code view updates at once; " +
+                    "operations and writes to a live destination are not. An edit changes Semanticus's working copy on this computer only, " +
+                    "also for a model opened from a Power BI workspace: nothing reaches the workspace until the model is saved back to it or published. The VS Code view updates at once; " +
                     "the AI Assistant sees the change on its next call. When someone else changed the model since your " +
                     "previous call, the result ends with one line, 'changed since your last call (in Studio): <refs>; rev N'; " +
                     "re-read those objects before relying on them. When a result starts a line with 'Plan:', the person " +
@@ -404,7 +414,17 @@ namespace Semanticus.Engine
                     "grade change, new lists rule ids of new findings on the objects the edit touched, findings counts " +
                     "them, and impact counts the downstream objects the edit reaches. Semanticus has one writer. On Pro use " +
                     "write_words, edit_objects, waive_findings and create_measures: one bulk call per page of work. " +
-                    "Send these one after another. Parallel calls wait for the same writer and are not faster.")
+                    "Send these one after another. Parallel calls wait for the same writer and are not faster. " +
+                    "When asked to work the Plan or improve the model, do every row a tool can do in one go and do not ask: " +
+                    "anything undo_change can take back (renames, hiding, removing unused objects with remove_safe_objects, removing duplicates with remove_safe_objects once no report or measure uses them (hiding one that is used), synonyms, descriptions, " +
+                    "a compatibility level raise, a calculated date table) is done first and reported after. Ask the person only for a sign-in or permission, " +
+                    "a fact no tool can find, or a step undo cannot take back. Never write over the person's only copy: save to the same file only if it is in git " +
+                    "or you made a backup, else save a copy next to it and say so. " +
+                    "Keep going until the Plan has no Ready row a tool can do ('Fix N best-practice issues' and 'Remove N unused columns' are tool rows: do them). " +
+                    "First find the model's reports (local folders and published ones), then set_report_scope and check_reports; if the model has none, call set_report_scope with an empty list, which counts as checked. Remove an unused generic column with unused_objects then remove_safe_objects (it re-checks each one and the chosen reports, and never removes a column a hierarchy, sort-by, role, calculation item, measure, relationship or report uses); hide a column when something uses it and say why on the row; delete_object a visibleAttribute column only when unused_objects marks it, which it does only after at least one report is chosen and every chosen report is checked (or the model has no reports); with no report checked, hide the column and say why on the row. A table nothing uses (no relationship, no measure, no role, no checked report) is removed the same way once the reports are checked, then reported, and you never ask whether to keep it because undo_change takes it back; a table something uses is kept and left out of what Copilot sees, with the reason on the row. " +
+                    "Then read BOTH grades again (ai_readiness_scan and bpa_scan with detail='summary'), work any finding your own changes caused, and report both grades at the end. " +
+                    "A row you leave or cannot do carries its reason on the row (decline_request or complete_request with a reason), in plain words, for example 'Needs a date column: none exists in this model'. " +
+                    "Never say a tool name to the person.")
                 .WithStdioServerTransport()
                 .WithToolsFromAssembly()
                 // A failed tool call must carry the engine's TEACHING message (scrubbed), not the SDK's opaque

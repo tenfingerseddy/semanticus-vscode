@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { onProState, openExternal, postProAction, rpc } from './bridge';
-import { useProPlan, useTier, upgradeToPro } from './pro';
+import { useProPlan, useTier, upgradeToPro, peekPendingRun, takePendingRun, takeKeepAsked, clearPendingRun } from './pro';
+import { navigateInStudio, onEntitlementChange, onReconnect } from './bridge';
 import { DecisionSettingsSection } from './decisions-settings';
-import { chipOf, jevStateOf, longDate, PLAN_PRICE, proPageView, type BillingPlan, type JevBudgetW, type JevConsentW, type JevStateView, type ProAccount, type ProPageState } from './propage-model';
+import { chipOf, countWords, firstWeekOf, jevStateOf, longDate, PLAN_PRICE, proPageView, trialEndingLine, trialSpan, trialViewOf, type TallyW, type TrialW, type BillingPlan, type JevBudgetW, type JevConsentW, type JevStateView, type ProAccount, type ProPageState } from './propage-model';
 
 // The Semanticus Pro page (Kane approved the design on 23 September 2026). A Studio page like Assistant
 // permissions: a detour with Done, reached from the header chip, Help and every Unlock Pro.
@@ -89,6 +90,132 @@ export interface ProPageViewProps {
   onManage: () => void;
   onRemove: () => void;
   keyRef?: React.Ref<HTMLInputElement>;
+  /** The free month: the engine's trial fields and the tally counted on this computer. */
+  trial?: TrialW | null;
+  tally?: TallyW | null;
+  trialEmail?: string;
+  onTrialEmail?: (value: string) => void;
+  onTrialStart?: () => void;
+  onTrialCancel?: () => void;
+  /** The end card was put away with Not now; the page shows the plain used note instead. */
+  endPutAway?: boolean;
+  onPutAway?: () => void;
+  /** Keep Pro during a trial: the plans and Buy Pro show on the month page. */
+  keepOpen?: boolean;
+  onKeep?: () => void;
+  /** What the person pressed on a locked button, which runs once Pro is on. */
+  pendingLabel?: string;
+  nowSeconds?: number;
+}
+
+// ---- the free month (trial option B) ---------------------------------------------------------------
+
+function Tally({ tally }: { tally?: TallyW | null }) {
+  const t = tally ?? {};
+  return <div className="pp-tally" data-testid="trial-tally">
+    <div><span className="pp-big">{countWords(t.changesApplied)}</span><span className="pp-lbl">changes applied in {countWords(t.steps)} {t.steps === 1 ? 'step' : 'steps'}</span></div>
+    <div><span className="pp-big">{countWords(t.jevChoices)}</span><span className="pp-lbl">things Jev chose for you</span></div>
+    <div><span className="pp-big">{countWords(t.workflowsRun)}</span><span className="pp-lbl">{t.workflowsRun === 1 ? 'workflow run' : 'workflows run'}</span></div>
+  </div>;
+}
+
+function TrialOffer(p: ProPageViewProps) {
+  const sending = p.state.trial?.step === 'sending';
+  const err = p.state.trial?.step === 'error' ? p.state.trial.message : undefined;
+  return <div className="pp-sheet" data-testid="trial-offer">
+    <h2>Try Pro free for 30 days</h2>
+    <p>{p.pendingLabel ? <><b>{p.pendingLabel}</b> is part of Pro. It runs as soon as Pro is on. </> : null}Type your email and Pro turns on in this app. It switches itself off after 30 days.</p>
+    <form className="pp-trialrow" onSubmit={(e) => { e.preventDefault(); if ((p.trialEmail ?? '').trim() && !sending) p.onTrialStart?.(); }}>
+      <label htmlFor="trial-email" className="pp-keylabel">Your email</label>
+      <div className="pp-keyrow">
+        <input id="trial-email" data-testid="trial-email" className={`pp-field${err ? ' pp-bad' : ''}`} type="email" autoComplete="email" spellCheck={false}
+          placeholder="you@contoso.com" value={p.trialEmail ?? ''} onChange={(e) => p.onTrialEmail?.(e.target.value)} />
+        <button type="submit" data-testid="trial-start" className="sem-btn sem-btn-primary" disabled={!(p.trialEmail ?? '').trim() || sending}>Start free month</button>
+      </div>
+    </form>
+    {err && <div className="pp-result pp-bad" role="status" data-testid="trial-error">{Icon.x}<span>{err}</span></div>}
+    <p className="pp-fine">{Icon.info}<span>Email only. No card. We use it for this one free month and to send you a link to press. One free month for each email.</span></p>
+  </div>;
+}
+
+function TrialWaiting(p: ProPageViewProps) {
+  return <div className="pp-waitbox" role="status" data-testid="trial-waiting">
+    <div className="pp-l1"><svg className="pp-spin" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" /></svg>Check your email and press the link. This page updates by itself.</div>
+    <div className="pp-l2">{p.state.trial?.email ? <>We sent it to <b>{p.state.trial.email}</b>. </> : null}{p.pendingLabel ? <><b>{p.pendingLabel}</b> runs as soon as Pro is on. </> : null}You can keep working while you wait.</div>
+    <div className="pp-acts"><button type="button" className="sem-btn sem-btn-sm" data-testid="trial-cancel" onClick={p.onTrialCancel}>Cancel</button></div>
+  </div>;
+}
+
+function TrialUsed(p: ProPageViewProps) {
+  const span = trialSpan(p.tally?.startedAt, p.trial?.trialEndsAt);
+  const changes = p.tally?.changesApplied ?? 0;
+  return <div className="pp-note" data-testid="trial-used">
+    <h2>Your free month is used</h2>
+    <p>{span ? `It ran from ${span}. ` : 'This email already had its free month. '}{changes > 0 ? `In it Pro applied ${countWords(changes)} changes in ${countWords(p.tally?.steps)} steps. ` : ''}Pro is USD 10 a month or USD 100 a year. Pick a plan below.</p>
+  </div>;
+}
+
+function WhatDifferent() {
+  return <ul className="pp-adds">
+    <li><b>Run the plan</b> goes back to one change at a time.</li>
+    <li><b>Jev tidying and ranking</b> and the <b>Plan field</b> switch off.</li>
+    <li><b>Workflows</b> are locked again. The ones you saved stay in your folder.</li>
+    <li><b>Your models, Plan and every change you made</b> stay exactly as they are. Undo still works.</li>
+  </ul>;
+}
+
+function TrialEnd(p: ProPageViewProps) {
+  const span = trialSpan(p.tally?.startedAt, p.trial?.trialEndsAt);
+  return <div className="pp-main" data-testid="trial-end">
+    <h1>Your Pro month</h1>
+    <p className="pp-status">{span ? `${span}. ` : ''}You are back on Semanticus Free. Nothing you made is lost.</p>
+    <Tally tally={p.tally} />
+    <div className="pp-note">
+      <div className="pp-h3">What is different now</div>
+      <WhatDifferent />
+      <div className="pp-acts">
+        <button type="button" className="sem-btn sem-btn-primary" data-testid="trial-keep" onClick={p.onPutAway}>Keep Pro</button>
+        <button type="button" className="sem-btn" data-testid="trial-notnow" onClick={() => navigateInStudio('plan')}>Not now</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function FirstWeek({ tally, now }: { tally?: TallyW | null; now: number }) {
+  const items = firstWeekOf(tally, now);
+  if (!items) return null;
+  return <div className="pp-week" data-testid="trial-week">
+    <div className="pp-h3">Your first week with Pro</div>
+    {items.map((i) => <div key={i.key} className="pp-weekrow" data-done={i.done ? 'yes' : 'no'}>
+      <span className={`pp-tick${i.done ? ' pp-tick-on' : ''}`}>{i.done ? Icon.check : null}</span>
+      <span className="pp-weektext"><b>{i.title}</b>{!i.done && i.hint ? <span className="pp-m">{i.hint}</span> : null}</span>
+      {i.done ? <span className="pp-m">Done</span> : null}
+    </div>)}
+  </div>;
+}
+
+function MonthBody(p: ProPageViewProps & { justOn: boolean }) {
+  const ends = p.trial?.trialEndsAt ? longDate(p.trial.trialEndsAt) : null;
+  const who = (p.trial?.licensedTo ?? p.state.account?.licensedTo ?? '').trim();
+  const ending = trialEndingLine(p.trial);
+  const left = p.trial?.trialDaysLeft;
+  const days = left != null && left > 0 ? ` ${left === 1 ? '1 day' : `${left} days`} left.` : '';
+  return <div className="pp-main" data-testid="trial-month">
+    {ending && <div className="trial-line" role="status" data-testid="trial-ending-line"><span className="trial-line-text">{ending}</span>
+      {!p.keepOpen && <button type="button" className="sem-btn sem-btn-sm" data-testid="trial-ending-keep" onClick={p.onKeep}>Keep Pro</button>}</div>}
+    <h1>Your Pro month</h1>
+    {p.justOn
+      ? <div className="pp-done" role="status" data-testid="pro-on"><span className="pp-ok">{Icon.check}</span>Pro is on for this computer.<span className="pp-m">{ends ? `Your free month runs until ${ends}.` : ''}</span></div>
+      : <p className="pp-status">{who ? `Pro trial for ${who}. ` : 'Pro trial. '}{ends ? `Runs until ${ends}.` : ''}{days}</p>}
+    <FirstWeek tally={p.tally} now={p.nowSeconds ?? Math.floor(Date.now() / 1000)} />
+    <Tally tally={p.tally} />
+    <p className="pp-fine">{Icon.info}<span>Counted on this computer from what you did. Nothing here is sent anywhere.</span></p>
+    {p.keepOpen
+      ? <><div className="pp-h3">Keep Pro</div><Purchase {...p} waiting={p.state.purchase === 'waiting'} notice={p.state.purchase === 'notOpen' || p.state.purchase === 'error' ? p.state.purchase : null} /></>
+      : <div className="pp-acts"><button type="button" className="sem-btn sem-btn-primary" data-testid="trial-keep" onClick={p.onKeep}>Keep Pro</button><span className="pp-m">Optional, any day. Paid Pro starts the day you buy.</span></div>}
+    <div className="pp-remove"><button type="button" className="pp-link pp-plain" data-testid="pro-remove" onClick={p.onRemove}>Remove license from this computer</button></div>
+    <DecisionSettingsSection />
+  </div>;
 }
 
 function Adds() {
@@ -123,7 +250,7 @@ function KeyZone(p: ProPageViewProps & { open: boolean }) {
   );
 }
 
-function FreeBody(p: ProPageViewProps & { waiting: boolean; notice: 'notOpen' | 'error' | null; keyOpen: boolean }) {
+function Purchase(p: ProPageViewProps & { waiting: boolean; notice: 'notOpen' | 'error' | null }) {
   const chosen = p.state.purchase === 'waiting' && p.state.plan ? p.state.plan : p.plan;
   const card = (id: BillingPlan) => {
     const x = PLAN_PRICE[id];
@@ -138,9 +265,6 @@ function FreeBody(p: ProPageViewProps & { waiting: boolean; notice: 'notOpen' | 
     );
   };
   return <>
-    <div className="pp-main">
-      <h1>Semanticus Pro</h1>
-      <p className="pp-status">You are on Semanticus Free.</p>
       <div className={`pp-plans${p.waiting ? ' pp-dim' : ''}`} role="radiogroup" aria-label="Plan">{card('monthly')}{card('yearly')}</div>
       {p.waiting ? (
         <div className="pp-waitbox" role="status" data-testid="pro-waiting">
@@ -157,6 +281,20 @@ function FreeBody(p: ProPageViewProps & { waiting: boolean; notice: 'notOpen' | 
         {p.notice === 'notOpen' && <div className="pp-notice" role="status" data-testid="pro-not-open">{Icon.info}<span>Buying in the app is not open yet. If you have a license key, activate it below.</span></div>}
         {p.notice === 'error' && <div className="pp-notice" role="status" data-testid="pro-error">{Icon.info}<span>{p.state.message}</span></div>}
       </>}
+  </>;
+}
+
+function FreeBody(p: ProPageViewProps & { waiting: boolean; notice: 'notOpen' | 'error' | null; keyOpen: boolean }) {
+  const view = trialViewOf(p.tier === 'pro' ? 'pro' : 'free', p.trial, p.state.trial, !!p.endPutAway);
+  if (view === 'end') return <TrialEnd {...p} />;
+  return <>
+    <div className="pp-main">
+      <h1>Semanticus Pro</h1>
+      <p className="pp-status">You are on Semanticus Free.</p>
+      {view === 'offer' && !p.waiting && <TrialOffer {...p} />}
+      {view === 'waiting' && <TrialWaiting {...p} />}
+      {view === 'used' && <TrialUsed {...p} />}
+      {view !== 'waiting' && <Purchase {...p} />}
       <Adds />
       <KeyZone {...p} open={p.keyOpen} />
     </div>
@@ -182,8 +320,8 @@ function ProBody(p: ProPageViewProps & { justOn: boolean }) {
         <div className="pp-l1">{planWord ? `Semanticus Pro, ${planWord}.` : 'Semanticus Pro.'}</div>
         {l2.length > 0 && <div className="pp-l2">{l2.join(' ')}</div>}
         {a.graceUntil && ends && <div className="pp-l2">Your license ended on {ends}. Pro stays on until {longDate(a.graceUntil)}. Renew it to keep Pro.</div>}
-        {/* The old side card said "Jev: On" or "Not reachable". Only a problem is said now; On is the quiet default. */}
-        {(jev.state === 'unreachable' || jev.state === 'noConsent') && <div className="pp-l2" data-testid="pro-jev" data-jev={jev.state}>{jev.line}</div>}
+        {/* The old side card said "Jev: On" or "Not reachable". Only a problem is said now; On is the quiet default. The just-turned-on line above already says it, so it is said once (hero20 D13). */}
+        {!p.justOn && (jev.state === 'unreachable' || jev.state === 'noConsent') && <div className="pp-l2" data-testid="pro-jev" data-jev={jev.state}>{jev.line}</div>}
         {a.subscription && <div className="pp-acts">
           <button type="button" className="sem-btn" data-testid="pro-manage" onClick={p.onManage}>{Icon.ext}Manage subscription</button>
           <span className="pp-m">Change the plan or card, or cancel, on Stripe.</span>
@@ -204,7 +342,7 @@ export function ProPageView(p: ProPageViewProps) {
   return (
     <div className="pp" data-testid="pro-page" data-state={v.body === 'pro' ? (v.justOn ? 'on' : 'pro') : v.waiting ? 'waiting' : p.state.purchase}>
       {v.body === 'pro'
-        ? <ProBody {...p} justOn={v.justOn} />
+        ? (p.trial?.isTrial ? <MonthBody {...p} justOn={v.justOn || p.state.trial?.step === 'on'} /> : <ProBody {...p} justOn={v.justOn} />)
         : <FreeBody {...p} waiting={v.waiting} notice={v.notice} keyOpen={p.keyOpen || v.forceKeyOpen} />}
     </div>
   );
@@ -227,6 +365,27 @@ function useJevState(tier: string): JevStateView | undefined {
   return jev;
 }
 
+/** The engine's trial fields and the tally, re-read whenever the tier moves or the licence changes. */
+function useTrialState(tier: string): { trial: TrialW | null; tally: TallyW | null } {
+  const [value, setValue] = useState<{ trial: TrialW | null; tally: TallyW | null }>({ trial: null, tally: null });
+  const [bump, setBump] = useState(0);
+  useEffect(() => {
+    const a = onEntitlementChange(() => setBump((n) => n + 1));
+    const b = onReconnect(() => setBump((n) => n + 1));
+    return () => { a(); b(); };
+  }, []);
+  useEffect(() => {
+    if (tier !== 'pro' && tier !== 'free') return;
+    let live = true;
+    void Promise.all([
+      rpc<TrialW>('getEntitlement').catch(() => null),
+      rpc<TallyW>('getTrialTally').catch(() => null),
+    ]).then(([trial, tally]) => { if (live) setValue({ trial, tally }); });
+    return () => { live = false; };
+  }, [tier, bump]);
+  return value;
+}
+
 /** The page with its hooks: the engine's tier, the host's state, and the few things only the page holds (the
  *  plan picked but not yet bought, whether the key field is open, and the key while it is being typed). */
 export function ProPage() {
@@ -240,6 +399,24 @@ export function ProPage() {
   const keyRef = useRef<HTMLInputElement>(null);
   const focusKey = useRef(false);
   const jev = useJevState(tier);
+  const { trial, tally } = useTrialState(tier);
+  const [trialEmail, setTrialEmail] = useState('');
+  const [endPutAway, setEndPutAway] = useState(false);
+  const [keepOpen, setKeepOpen] = useState(() => takeKeepAsked());
+  const pendingLabel = peekPendingRun()?.label;
+  // A pending run belongs to this visit. Leaving with nothing in flight drops it, so a buy days later never
+  // replays a press the person has forgotten.
+  const inFlight = useRef(false);
+  inFlight.current = state.purchase === 'waiting' || state.trial?.step === 'waiting' || state.trial?.step === 'sending';
+  useEffect(() => () => { if (!inFlight.current) clearPendingRun(); }, []);
+  // The thing pressed on a locked button runs once, as soon as the engine says Pro, and Studio goes back to it.
+  useEffect(() => {
+    if (tier !== 'pro') return;
+    const pending = takePendingRun();
+    if (!pending) return;
+    if (pending.tab) navigateInStudio(pending.tab);
+    window.setTimeout(() => { try { pending.run(); } catch { /* the page it came from reports its own failure */ } }, 0);
+  }, [tier]);
 
   useEffect(() => {
     const off = onProState((next) => {
@@ -259,6 +436,11 @@ export function ProPage() {
   });
 
   return <ProPageView tier={tier} state={state} known={known.current} plan={plan} keyOpen={keyOpen} keyValue={keyValue} keyRef={keyRef} jev={jev}
+    trial={trial} tally={tally} trialEmail={trialEmail} onTrialEmail={(value) => { setTrialEmail(value); if (state.trial?.step === 'error') setState({ ...state, trial: undefined }); }}
+    onTrialStart={() => postProAction('trialStart', { email: trialEmail.trim() })}
+    onTrialCancel={() => postProAction('trialCancel')}
+    endPutAway={endPutAway} onPutAway={() => setEndPutAway(true)}
+    keepOpen={keepOpen} onKeep={() => setKeepOpen(true)} pendingLabel={pendingLabel}
     onPlan={setPlan}
     onBuy={() => postProAction('buy', { plan })}
     onReopen={() => postProAction('reopen')}

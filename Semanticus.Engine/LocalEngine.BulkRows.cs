@@ -74,7 +74,7 @@ namespace Semanticus.Engine
                             {
                                 case "pause": await HoldPlanItemAsync(key, true); break;
                                 case "resume": await HoldPlanItemAsync(key, false); break;
-                                case "note": await SetPlanTaskNoteAsync(key, item.Text); break;
+                                case "note": await SetPlanTaskNoteAsync(key, item.Text, origin); break;
                                 case "doer": await SetPlanItemDoerAsync(key, item.Doer, origin); break;
                                 case "skip": await SkipModelPlanItemAsync(key, item.Text, origin); break;
                                 case "unskip": await UnskipModelPlanItemAsync(key, origin); break;

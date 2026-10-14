@@ -22,7 +22,7 @@ namespace Semanticus.Engine
             var overview = await SessionInfoAsync();               // safe with no session (returns an empty SessionInfo)
             var hasSession = _sessions.Current != null;
             var conn = ConnectionBrief.From(await ConnectionStatusAsync());
-            var ent = _entitlement?.Info;
+            var ent = StampedInfo(_entitlement);
 
             ReadinessSummary readiness = null;
             ModelGraphSummary graph = null;
@@ -46,6 +46,8 @@ namespace Semanticus.Engine
                 {
                     Tier = ent?.Tier ?? "free",
                     Reason = ent != null && !string.Equals(ent.Tier, "pro", StringComparison.Ordinal) ? ent.Reason : null,
+                    TrialDaysLeft = ent != null && ent.IsTrial ? ent.TrialDaysLeft : null,
+                    TrialEnded = ent != null && ent.TrialEnded ? true : null,
                 },
                 Readiness = readiness,
                 Graph = graph,

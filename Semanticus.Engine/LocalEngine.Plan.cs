@@ -383,7 +383,7 @@ namespace Semanticus.Engine
             }
 
             var fixes = await ApplyPlanSafeFixesAsync(s, item, readAt, origin).ConfigureAwait(false);
-            NoteProFixes(s.Id, item, fixes.Applied.Length);
+            NoteProFixes(s.Id, item, fixes.Applied.Length, origin: origin);
 
             // A start that ran and changed nothing is "started", not "done". It started; it finished no work,
             // and a timeline that called it done would report work nobody did.
@@ -669,8 +669,18 @@ namespace Semanticus.Engine
         /// has been exchanged, and the honest cost is small and worth naming: a refresh that raced a model
         /// swap does not record its item list, so the next refresh note for that model says it was drawn for
         /// the first time. That is better than a note about one model written into another's file.</summary>
-        private bool TryWritePlanMemory(PlanMemoryBinding binding, Action<PlanMemoryState> change) =>
-            PlanMemoryStillOpen(binding) && PlanMemory.Mutate(binding.File, binding.Identity, change);
+        private bool TryWritePlanMemory(PlanMemoryBinding binding, Action<PlanMemoryState> change)
+        {
+            if (!PlanMemoryStillOpen(binding)) return false;
+            if (binding.Nowhere)
+            {
+                // No file yet: what the plan saw and saw finish is kept for as long as the model is open, and moves into the file at the first save.
+                var held = _sessionPlanTasks.GetOrCreateValue(binding.Context);
+                lock (held) { change(held); PlanTasks.Trim(held); }
+                return true;
+            }
+            return PlanMemory.Mutate(binding.File, binding.Identity, change);
+        }
 
         // ---- composing the plan ----------------------------------------------------------------------
 
@@ -743,6 +753,7 @@ namespace Semanticus.Engine
                 // ONE DECISION PER COLUMN'S BASE MEASURE. While column.summarize is live it picks every number column's
                 // explicit base measure (ColumnSummarizeFamily), so the starter rule's items stand aside, exactly as they
                 // did for measure.starter (which lost its replay and stays off).
+                facts.HeldClaims = new HashSet<string>(PlanTasks.HeldClaimsOf(memory.Tasks.Where(t => SkipFor(memory, t) == null)), StringComparer.OrdinalIgnoreCase);
                 facts.StarterByJev = jev.StarterLive || jev.LivePoints.Contains(DecisionRegistry.ColumnSummarize);
                 // ONE OWNER PER FORMAT. A kept line of a live Jev point that sets an object's format owns that object, and so does
                 // a SUGGESTION Jev made with some confidence (a format the rules cannot prove, unticked until the person ticks it): the
@@ -809,6 +820,7 @@ namespace Semanticus.Engine
                 StampJevRefusals(candidates, s.Id);
                 StampJevColumnNotes(candidates, s.Id);
                 StampJevProgress(candidates, s.Id);
+                StampRowWorth(binding, s, candidates, linesByItem);
 
                 // Source, doer and what the person decided about each derived row (contract 1.2 and 2.1).
                 foreach (var item in candidates) StampDerived(item, memory);
@@ -842,9 +854,17 @@ namespace Semanticus.Engine
                 // A found row the person gave to someone (lane m11/plan-gaps, contract 3.2 and 4) is carried by the task
                 // it became: that task is the one row on the Plan and in the queue, so the found row neither waits nor
                 // blocks, and it is not shown while the task is open. It comes back if the task is set aside.
-                var given = PlanTasks.GivenRows(memory.Tasks.Where(t => SkipFor(memory, t) == null));
+                var given = PlanTasks.GivenRows(memory.Tasks.Where(t => SkipFor(memory, t) == null), ordered);
+                // The open tasks' objects as they are now: renamed, or gone (UAT S12-5-006, S12-6-002). Read here, before the footprints, because a
+                // task whose objects are gone is Needs you and changes nothing, so it must not hold the rows after it (hero run 20, J2, Probe4).
+                var taskGrounds = await GroundsNowAsync(s, AllGroundsOf(memory.Tasks.Where(PlanTasks.IsOpenTask))).ConfigureAwait(false);
+                var taskHistory = HistoryForTasks(s);
+                var goneTasks = memory.Tasks.Where(t => PlanTasks.IsOpenTask(t) && GoneOfTask(t, taskGrounds, taskHistory) is { Length: > 0 })
+                                     .Select(t => t.Id).ToHashSet(StringComparer.Ordinal);
                 PlanFootprint.Stamp(ordered.Concat(asks).ToList(), await FootprintInputsAsync(s, facts).ConfigureAwait(false),
-                    i => IsOpen(i) && !given.Contains(i.Id));
+                    i => IsOpen(i) && !given.Contains(i.Id) && !goneTasks.Contains(i.Id));
+                // The rows' writes are known now: a given row that lists something its task never carried is the row's work again (D1).
+                given = PlanTasks.GivenRows(memory.Tasks.Where(t => SkipFor(memory, t) == null), ordered);
 
                 var unproven = UnprovenFamilies(facts);
                 var kept = unproven.Count == 0 ? new List<ModelPlanItem>() : memory.LastItems
@@ -874,20 +894,42 @@ namespace Semanticus.Engine
                 // Undo back to the saved model or a discard too (a restart's Discard, a re-open). Every fact it is judged
                 // on was read in a dispatcher turn, never late: the save count read WITH the facts (D14), the count the
                 // row was last seen at, and the count each save recorded as it marked the model clean (D15, D16).
+                var heldRows = PlanTasks.RowsHeldByClaims(memory.Tasks.Where(t => SkipFor(memory, t) == null));
                 var saved = SavedSinceUnsavedRowSeen(memory, facts.SavesSessionId, facts.Saves);
                 var unsavedOnPlan = ordered.Any(i => string.Equals(i.Id, UnsavedItemId, StringComparison.Ordinal));
+                // A row whose findings the person ALL declined is off the plan because they said leave it, not because the gap went: it is
+                // dropped, never recorded as done. Worked out by building the rows again with the accepted findings counted, so it can
+                // never disagree with what BuildItems left out.
+                var declinedAway = new HashSet<string>(
+                    BuildItems(facts, JevDecidedFinding, countDeclined: true).Select(i => i.Id), StringComparer.Ordinal);
+                var edits = LiveEditsOnHistory(s);
+                var ownedIds = new HashSet<string>(edits.SelectMany(e => e.Cause?.Ids ?? Array.Empty<string>()).Where(id => id != null), StringComparer.Ordinal);
+                // A change that carried the row's own id closed it, so that credit stands (the row may also hold findings the person did
+                // not decline). Declining writes no such change, and an unrelated edit is not a fix.
+                // The findings the row held when it was last seen decide it: declined only when EVERY one of them is waived now. One that is
+                // gone is work done (it keeps the credit), and a waiver already off the row before it was last seen is not its business
+                // (Saved_one_key_declined_earlier_then_the_assistant_fixes_what_the_row_still_asks_counts_done). A row that remembers no
+                // findings (an older file, a row built from none) falls back to the rebuild above.
+                var waivedNow = new HashSet<string>(
+                    (facts.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Where(x => x.Waived).Select(x => ClaimKey(x.RuleId, x.ObjectRef)),
+                    StringComparer.OrdinalIgnoreCase);
+                bool DeclinedNotFixed(PlanSeenItem seen) =>
+                    !ownedIds.Contains(seen.ItemId)
+                    && (seen.Claims is { Length: > 0 } ? seen.Claims.All(waivedNow.Contains) : declinedAway.Contains(seen.ItemId));
                 var leaving = memory.LastItems
                     .Where(seen => !ordered.Any(i => string.Equals(i.Id, seen.ItemId, StringComparison.Ordinal)))
                     .Where(seen => IsPlansOwnRow(seen.ItemId))
                     .Where(seen => !StoodAside(seen.ItemId))
+                    .Where(seen => !DeclinedNotFixed(seen))
+                    // A coverage or cleanup row whose findings a task took leaves the list because the task holds them, not because they are fixed:
+                    // the task is the job and the one place it is done (a row stamped Done beside its own Ready task counted a job that was not done).
+                    .Where(seen => !heldRows.Contains(seen.ItemId))
                     .Where(seen => saved || !string.Equals(seen.ItemId, UnsavedItemId, StringComparison.Ordinal))
                     .Where(seen => !memory.Done.Any(d => string.Equals(d.ItemId, seen.ItemId, StringComparison.Ordinal)))
                     .ToList();
                 // WHO GETS THE CREDIT (UAT-R2-S10b-004). A row leaves because its gap went, and the owner on the row is only who was
                 // to do it. Credit stays with the row only when a change that carried this row's id is on the edit history; an
                 // assistant's row that a sibling row's change closed says so, and names that row when the history does.
-                var edits = LiveEditsOnHistory(s);
-                var ownedIds = new HashSet<string>(edits.SelectMany(e => e.Cause?.Ids ?? Array.Empty<string>()).Where(id => id != null), StringComparer.Ordinal);
                 // The assistant's usual way is plain edit tools or a task, so its credit is any edit from its door since the row was last seen
                 // open, or an edit that carries the row's id. A row that has no seen time (an older file) is credited on the id alone.
                 bool AssistantWorked(PlanSeenItem seen) => ownedIds.Contains(seen.ItemId)
@@ -968,6 +1010,7 @@ namespace Semanticus.Engine
                         {
                             ItemId = i.Id, Title = i.Title, Section = i.Section, Doer = i.Doer,
                             SeenUtc = !planMoved && before.TryGetValue(i.Id, out var was) && was.HasValue ? was : now,
+                            Claims = i.Claims ?? Array.Empty<string>(),
                         })
                         .ToList();
                     // Only against the last DRAW, not the last entry of any kind: a start or a skip sits
@@ -1061,8 +1104,13 @@ namespace Semanticus.Engine
                 // "draft/<id>" and "run/<wfr id>", after the asked rows. Each carries its own state word, read off the
                 // draft or the run; a draft's parts waiting for the assistant are tasks above, each linked back to it.
                 var drafts = DraftPlanRows(binding, memory).Concat(RunPlanRows(binding)).ToList();
-                var rows = view.Items.Where(i => !given.Contains(i.Id)).ToList();
+                // ONE LIST (fix-coverage3): what the tasks hide is worked out once, here, and the rows, the tasks and the strip below all follow it.
+                // The checks come first because a task that holds findings is "checking" only while its findings stand.
+                var checks = await TaskChecksAsync(s, memory.Tasks, facts, ordered, binding.Context?.Plans.Current).ConfigureAwait(false);
+                var hidden = PlanTasks.HiddenBy(memory.Tasks.Where(t => SkipFor(memory, t) == null), ordered, checks);
+                var rows = view.Items.Where(i => !given.Contains(i.Id) && !(i.Status == ModelPlanStatuses.Done && hidden.DoneEntries.Contains(i.Id))).ToList();
                 var firstDone = rows.FindIndex(i => i.Status == ModelPlanStatuses.Done);
+                asks = asks.Where(i => !hidden.Tasks.Contains(i.Id)).ToList();
                 var openAsks = asks.Where(i => i.Status != ModelPlanStatuses.Done)
                                    .Concat(drafts.Where(i => i.Status != ModelPlanStatuses.Done)).ToList();
                 if (firstDone < 0) rows.AddRange(openAsks); else rows.InsertRange(firstDone, openAsks);
@@ -1070,29 +1118,32 @@ namespace Semanticus.Engine
                 rows.AddRange(drafts.Where(i => i.Status == ModelPlanStatuses.Done));
                 // Refresh plan took these finished rows off the list. Their record stays in Done, the tasks and History.
                 view.Items = ClearedOut(rows, memory.ClearedDone).ToArray();
+                var vanishedApplies = VanishedApplies(s, memory, view.Items.Select(i => i.Id).ToHashSet(StringComparer.Ordinal), undoneApplies);
 
                 // LAST: the state word on every row, once every fact it reads is on the row. Anything that fills
                 // WaitsFor (lane E2) runs before this line.
-                var checks = await TaskChecksAsync(s, memory.Tasks, facts, ordered, binding.Context?.Plans.Current).ConfigureAwait(false);
-                // The open tasks' objects as they are now: renamed, or gone (UAT S12-5-006, S12-6-002).
-                var taskGrounds = await GroundsNowAsync(s, AllGroundsOf(memory.Tasks.Where(PlanTasks.IsOpenTask))).ConfigureAwait(false);
-                var taskHistory = HistoryForTasks(s);
                 // A rename seen here is kept, so the object is named by its name now from here on. Best effort, like the
                 // compose's other writes; the rows below follow the rename either way.
                 var renamed = taskGrounds.Concat(repeatGrounds).Where(p => !p.Value.Gone && p.Value.Current != p.Key)
                     .GroupBy(p => p.Key, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First().Value, StringComparer.Ordinal);
                 if (renamed.Count > 0) WriteRepeatsFromCompose(binding, state => FollowRenamesIn(state, renamed));
+                // Rows added after BuildItems (Jev, assistant lines, the words row) get their done-when and default here; a task is the person's own words and gets none.
+                AssistantDefaults.Apply(view.Items.Where(i => !PlanTasks.IsTaskId(i.Id)));
+                var away = new Lazy<bool>(() => !AnyAssistantConnected());   // read only when a waiting assistant row asks
+                Func<bool> assistantAway = () => away.Value;
                 foreach (var item in view.Items)
                 {
                     if (Composer.DraftRows.IsDraftRow(item.Id) || IsRunRow(item.Id)) continue;   // stamped from the draft or run itself
                     var task = PlanTasks.IsTaskId(item.Id) ? memory.FindTask(item.Id) : null;
                     if (task == null && item.Source == null) StampDerived(item, memory);   // done and unchecked rows
                     if (task != null) PlanTasks.FollowRenames(item, task, taskGrounds);
+                    if (task != null) RetitleCoverageTask(item, task, facts);
                     PlanTasks.StampState(item, task, task != null && checks.Contains(task.Id), memory.AssistantQueue,
-                        task == null ? null : GoneOfTask(task, taskGrounds, taskHistory));
+                        task == null ? null : GoneOfTask(task, taskGrounds, taskHistory), assistantAway);
                 }
                 view.AssistantQueue = memory.AssistantQueue;
                 StampEvents(s, view.Items);
+                MarkRowsTheAssistantIsWorking(s, view.Items, memory.AssistantQueue);
                 // The repeats, read off the rows as stamped: fix repeats settle and mark their row (lane RP).
                 FoldRepeats(binding, view, memory, repeatGrounds);
 
@@ -1102,6 +1153,8 @@ namespace Semanticus.Engine
                 view.AssistantSees = offer.Switch == PlanAssistantQueue.Paused
                     ? Jev.PlanTaskQueue.PausedLine(offer.Claimed.Select(t => t.Title))
                     : Jev.PlanTaskQueue.OfferLine(offer);
+                var briefs = view.Items.Where(i => !string.IsNullOrEmpty(i.Brief)).ToDictionary(i => i.Id, i => i.Brief, StringComparer.Ordinal);
+                view.AssistantBriefs = briefs.Count > 0 ? briefs : null;
                 var numbers = offer.Numbers();
                 foreach (var item in view.Items)
                     item.OfferNumber = item.Id != null && numbers.TryGetValue(item.Id, out var number) ? number : (int?)null;
@@ -1111,6 +1164,9 @@ namespace Semanticus.Engine
                 view.Strip = PlanStripBuilder.Build(view.Items, view.Worth, new PlanStripInputs
                 {
                     DoneWhen = DoneTimes(view.Items, stillDone.Concat(doneNow), memory.Tasks),
+                    // A done id whose row is not listed (hidden behind its task) is not counted: the task is the one Done entry.
+                    DoneIds = stillDone.Concat(doneNow).Select(d => d.ItemId).Concat(memory.ClearedDone).Concat(vanishedApplies)
+                        .Where(id => !hidden.DoneEntries.Contains(id) && !given.Contains(id)),
                     Latest = LatestLedgerEntryForStrip(s),
                     // Jev ran only when this run heard back: a live point whose every ask failed did not update anything.
                     // JEV UPDATED THE PLAN, OR IT DID NOT. Answers alone are not an update: a run can hear back
@@ -1122,10 +1178,51 @@ namespace Semanticus.Engine
                     Bpa = await BpaForChecksAsync(s).ConfigureAwait(false),
                 });
                 view.StartPlan = await StartPlanPointerAsync().ConfigureAwait(false);   // M11: where a start plan is, if there is one
+                NoteNextStepPlan(view, s?.Id);   // 1.5: the Next line reads the Plan's ready and done counts off every compose
                 return view;
             }
             finally { _modelPlanGate.Release(); }
         }
+
+        /// <summary>How long after its latest edit an assistant still counts as working on a row (its gaps between calls run long; the header uses the same minute).</summary>
+        internal static readonly TimeSpan AssistantAtWorkWindow = TimeSpan.FromSeconds(60);
+
+        /// <summary>A row the assistant's own tool calls touched a moment ago is flagged for the page to draw as On it, in the assistant's colour, and not "Waiting, ask your assistant"
+        /// (hero20 D3: it wrote 213 descriptions under a row that said it waited). Read off the edit history, so a direct tool counts as much as a claimed task.
+        /// An open assistant row only: a row that is Done, set aside, paused or the person's own keeps its word.</summary>
+        private void MarkRowsTheAssistantIsWorking(Session s, IEnumerable<ModelPlanItem> items, string queue)
+        {
+            if (string.Equals(queue, PlanAssistantQueue.Paused, StringComparison.Ordinal)) return;
+            var since = DateTimeOffset.UtcNow - AssistantAtWorkWindow;
+            var refs = LiveEditsOnHistory(s).Where(e => string.Equals(e.Origin, "agent", StringComparison.Ordinal) && e.When >= since)
+                .SelectMany(e => e.Deltas ?? Array.Empty<ChangeDelta>()).Select(d => d?.Ref).Where(r => !string.IsNullOrEmpty(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (refs.Length == 0) return;
+            bool Touches(string obj)
+            {
+                if (string.IsNullOrEmpty(obj)) return false;
+                if (refs.Contains(obj, StringComparer.OrdinalIgnoreCase)) return true;
+                // A table's row is worked by its columns and measures.
+                var colon = obj.IndexOf(':');
+                return colon > 0 && obj.Substring(0, colon) == "table" && refs.Any(r => r.Contains(":" + obj.Substring(colon + 1) + "/", StringComparison.OrdinalIgnoreCase));
+            }
+            foreach (var i in items)
+            {
+                if (i == null || i.Doer != PlanDoers.Assistant) continue;
+                if (i.StateWord != PlanStateWords.Ready && i.StateWord != PlanStateWords.Waiting) continue;
+                var objects = (i.Objects ?? Array.Empty<string>())
+                    .Concat((i.Claims ?? Array.Empty<string>()).Select(c => c.Substring(c.IndexOf('|') + 1)));
+                if (!objects.Any(Touches)) continue;
+                i.AssistantAtWork = true;
+                // The page draws On it beside the note. A note that says what the row waits for (Jev, "step x of y", another task) stays; only the
+                // lines that tell the person to ask the assistant are dropped, because the assistant is already at it.
+                if (AsksTheAssistant(i.StateNote)) i.StateNote = null;
+            }
+        }
+
+        private static bool AsksTheAssistant(string note) =>
+            !string.IsNullOrWhiteSpace(note) && (note == PlanTasks.WaitingForAssistantNote || note == PlanTasks.AskAssistantNote || note == PlanTasks.PausedByYouNote
+                || note.StartsWith("Waiting for your assistant", StringComparison.Ordinal) || note.StartsWith("Ask your assistant", StringComparison.Ordinal));
 
         /// <summary>A person's skip on a task, found by the task's id or by any old id it answers to, so a skip
         /// recorded against a migrated target's old id still sets the aim aside.</summary>
@@ -1161,6 +1258,7 @@ namespace Semanticus.Engine
                 if (residue.Doer != null) item.Doer = residue.Doer;
                 item.Held = residue.Held;
                 item.Note = residue.Note;
+                item.AssistantNote = residue.AssistantNote;
             }
         }
 
@@ -1178,6 +1276,13 @@ namespace Semanticus.Engine
             foreach (var t in tasks.Where(t => t.DoneWhen == PlanDoneWhen.ModelCheck))
             {
                 var link = t.OriginLink;
+                // A row that listed findings or objects (a coverage row, the cleanup) hands over THOSE: the task is done when they are gone, and
+                // whatever appears later is on a row of its own (D1). A removal is done when the objects are gone, not refused for it (D2).
+                if (link?.Kind == PlanOriginKinds.Item && t.Claims is { Length: > 0 })
+                {
+                    if (!t.Claims.Any(c => ClaimStands(facts, c))) passed.Add(t.Id);
+                    continue;
+                }
                 // A found row the person gave away: done when the gap it named is gone, which is when the compose no
                 // longer derives that row as open work.
                 if (link?.Kind == PlanOriginKinds.Item && !string.IsNullOrWhiteSpace(link.Ref))
@@ -1261,18 +1366,18 @@ namespace Semanticus.Engine
         /// <summary>Item families that are derived from evidence OUTSIDE the model, with where a person goes
         /// to look at that evidence. An item in one of these vanishes when its evidence cannot be read, which
         /// looks exactly like the gap being closed and is not the same thing at all.</summary>
-        private static readonly (string Prefix, string Tool, string Label)[] EvidenceBackedFamilies =
+        private static readonly (string Prefix, string Tool, string Label, string Who)[] EvidenceBackedFamilies =
         {
-            ("check/", "tests", "Validation"),
+            ("check/", "tests", "Validation", ModelPlanOwners.Assistant),
         };
 
         /// <summary>Which of those families cannot be proven on THIS call. A check item needs both the report
         /// reading (which measures the reports use) and the saved checks (which of them are covered); either
         /// one missing and the family cannot be computed, which is why CheckItems yields nothing.</summary>
-        private static IReadOnlyList<(string Prefix, string Tool, string Label)> UnprovenFamilies(PlanFacts f) =>
+        private static IReadOnlyList<(string Prefix, string Tool, string Label, string Who)> UnprovenFamilies(PlanFacts f) =>
             f.MeasuresInReports == null || f.CheckedMeasures == null
                 ? EvidenceBackedFamilies
-                : Array.Empty<(string Prefix, string Tool, string Label)>();
+                : Array.Empty<(string Prefix, string Tool, string Label, string Who)>();
 
         /// <summary>Whether a row is the PLAN'S OWN: the rows it writes down, compares itself against next time, and
         /// may record as finished. Nearly every row is on the plan because the model has a gap, so the row leaving
@@ -1298,7 +1403,7 @@ namespace Semanticus.Engine
                 var findings = (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Where(x => !x.Waived).ToArray();
                 // With the DATE-MARK finding left in, DateTableItem draws the date table row when the gap is open and
                 // the calendar row (or nothing) when it is not, so only the first id means a row stood aside.
-                var date = DateTableItem(findings, f.DateMark);
+                var date = DateTableItem(findings, f.DateMark, f.HasDateColumn);
                 if (string.Equals(date?.Id, "datetable/model", StringComparison.Ordinal)) aside.Add(date.Id);
             }
             if (f.StarterByJev)
@@ -1306,17 +1411,17 @@ namespace Semanticus.Engine
             return aside;
         }
 
-        private static (string Prefix, string Tool, string Label) FamilyOf(
-            IReadOnlyList<(string Prefix, string Tool, string Label)> families, string id)
+        private static (string Prefix, string Tool, string Label, string Who) FamilyOf(
+            IReadOnlyList<(string Prefix, string Tool, string Label, string Who)> families, string id)
         {
             foreach (var family in families)
                 if (id != null && id.StartsWith(family.Prefix, StringComparison.Ordinal)) return family;
-            return (null, null, null);
+            return (null, null, null, null);
         }
 
         /// <summary>An item the plan carried last time and cannot look at this time. It is NOT done and it is
         /// NOT gone: it is still work as far as anybody knows, and the row says why nobody knows.</summary>
-        private static ModelPlanItem UncheckableItem(PlanSeenItem seen, (string Prefix, string Tool, string Label) family) =>
+        private static ModelPlanItem UncheckableItem(PlanSeenItem seen, (string Prefix, string Tool, string Label, string Who) family) =>
             new ModelPlanItem
             {
                 Id = seen.ItemId,
@@ -1324,12 +1429,16 @@ namespace Semanticus.Engine
                 Title = seen.Title,
                 Sub = "could not be checked this time",
                 Status = ModelPlanStatuses.Proposed,
-                Who = ModelPlanOwners.You,
+                // The family's doer, never the person's by default: the only family kept this way is the checks, which the
+                // assistant writes with save_test (CheckItems). Falling to "you" put every check row in the person's group
+                // after a restart lost the report reading (Kane, 13 Oct 2026, on the 1.4.101 test build).
+                Who = family.Who ?? ModelPlanOwners.Assistant,
                 Value = string.Empty,
                 Why = new[]
                 {
                     "This task was on the Plan last time.",
                     "Semanticus could not look at what it is about this time, so it cannot tell if it is finished.",
+                    "Your assistant can read the reports again and then do it.",
                 },
                 Diff = Array.Empty<string>(),
                 Jump = new ModelPlanJump { Tool = family.Tool, Label = family.Label },
@@ -1375,6 +1484,7 @@ namespace Semanticus.Engine
         {
             if (string.IsNullOrEmpty(id)) return PlanGoals.Quality;
             if (PlanTasks.IsTaskId(id) || id.StartsWith(AssistantItemPrefix, StringComparison.Ordinal)) return PlanGoals.Aims;
+            if (string.Equals(id, CoverageBpaItemId, StringComparison.Ordinal)) return PlanGoals.Quality;
             foreach (var prefix in new[] { "safefix/", "words/", "describe/", "proposal/", "datetable/", "calendar/", "starter/" })
                 if (id.StartsWith(prefix, StringComparison.Ordinal)) return PlanGoals.Ai;
             return JevFamily.IsJevItem(id) ? PlanGoals.Ai : PlanGoals.Quality;
@@ -1466,6 +1576,18 @@ namespace Semanticus.Engine
             /// (Plan/LocalEngine.PlanBestPractice.cs). Null when the Model quality scan could not run.</summary>
             public List<ChangeItem> BpaLines;
             public int BpaLeftOut;
+            /// <summary>The scored best-practice findings, each marked claimed or not (Plan/LocalEngine.PlanCoverage.cs). Empty when the scan could not run.</summary>
+            public List<BpaCoverFinding> BpaCover = new List<BpaCoverFinding>();
+            /// <summary>True when the coverage read of the Model quality scan ran. A task is done by "its findings are gone" only when this is true.</summary>
+            public bool BpaCoverKnown;
+            /// <summary>The claims (finding keys, object refs) that open tasks handed over from a coverage or cleanup row carry. A held claim is the task's
+            /// work, so the row leaves it out; anything that is not held is the row's.</summary>
+            public HashSet<string> HeldClaims = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            /// <summary>The model's compatibility level, 0 when unknown. "Raise compatibility level" is a row only while it blocks a named capability.</summary>
+            public int CompatibilityLevel;
+            /// <summary>Score points per readiness finding (ReadinessAnalyzer.Lifts), read only when a finding no row claims is likely, so the
+            /// coverage row can name what each rule is worth. Null when not read.</summary>
+            public IReadOnlyDictionary<string, double> AirLifts;
             /// <summary>The best-practice format findings the words row hands the assistant beside the readiness words: measures the
             /// row cannot prove a format for and columns no readiness rule asks about (BpaFormatItems). Empty when the scan could not run.</summary>
             public List<WordsQueueItem> BpaFormatWords = new List<WordsQueueItem>();
@@ -1545,6 +1667,13 @@ namespace Semanticus.Engine
             /// <summary>Jev decides the date table (Plan/JevFamilies/DateTableFamily.cs), so the rule's "Mark the date
             /// table" half of DateTableItem stands aside. The calendar half stays: it is not this point's question.</summary>
             public bool DateTableByJev;
+
+            /// <summary>Some table holds a date column. Decides whether the date table row can tell the assistant to add a calculated date table.</summary>
+            public bool HasDateColumn;
+
+            /// <summary>No table is marked as the date table and a real (not auto date/time) table holds a date column. DATE-MARK is dormant
+            /// without time intelligence DAX, so this is what gives such a model its "Add a date table" row (hero 20, 8s-c).</summary>
+            public bool NoDateTable;
 
             /// <summary>The honesty lines the EXPENSIVE half produced. The cheap half adds its own per call,
             /// and <see cref="Note"/> is joined from both.</summary>
@@ -1658,6 +1787,11 @@ namespace Semanticus.Engine
             facts.ReportsUnchecked = basis.Coverage?.Unchecked ?? Array.Empty<string>();
             facts.Tables = WithSizes(facts.Tables, s);
 
+            // The compatibility level is a database setting the edit timeline does not count: raising it leaves the revision where it was, so the
+            // remembered half would go on offering "Raise compatibility level" after it was raised. Read every call, like the saved checks.
+            try { facts.CompatibilityLevel = await s.ReadAsync(m => m.Database?.CompatibilityLevel ?? 0).ConfigureAwait(false); }
+            catch { /* the remembered level stands */ }
+
             // Saved checks are written to the sidecar rather than to the model, so a saved check would never
             // move the revision that keys the cache. Read every call or the plan would go on saying a measure
             // has no check after one was saved. They stopped being Pro on 22 September, so every tier reads
@@ -1698,10 +1832,11 @@ namespace Semanticus.Engine
                     var rules = GetBpaRules(m);
                     var card = BpaAnalyzer.Analyze(m, rules);
                     var sharedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    var (lines, refused) = BpaPlanLines(m, card, ReadinessSafeLines(m, readiness), sharedKeys);
+                    var (lines, refused) = BpaPlanLines(m, card, ReadinessSafeLines(m, readiness, JevDecidedFinding), sharedKeys);
                     // The readiness safe fixes whose write Model quality raises as well: their rows count under both filters.
                     var sharedFindings = (readiness?.Findings ?? Array.Empty<ReadinessFinding>())
                         .Where(x => !x.Waived && string.Equals(x.Fix, nameof(FixKind.SafeFix), StringComparison.Ordinal))
+                        .Where(x => !JevDecidedFinding(x.RuleId, x.ObjectRef))
                         .Where(x => { var l = MapSafeFix(m, x); return l != null && sharedKeys.Contains(BpaKey(l)); })
                         .Select(SharedKeyOf).ToList();
                     // The format findings the words row asks for: the same list get_words_queue ends with, worked out from the same scan.
@@ -1720,8 +1855,24 @@ namespace Semanticus.Engine
                             RuleId = v.RuleId, RuleTitle = v.RuleName, Category = nameof(ReadinessCategory.Relationships), Fix = nameof(FixKind.Proposal),
                             ObjectRef = v.ObjectRef, ObjectName = v.ObjectName, Message = v.Message,
                         }).ToList();
-                    return (lines, refused.Count, formats, only, sharedFindings);
+                    var cover = new List<BpaCoverFinding>();
+                    var coverOk = false;
+                    IReadOnlyDictionary<string, double> lifts = null;
+                    try
+                    {
+                        cover = BpaCoverFindings(m, card, rules, readinessWords, formats, only, ColumnsOnFormatRow(readiness?.Findings), readiness?.Findings ?? Array.Empty<ReadinessFinding>(),
+                            new HashSet<string>((facts.Unused?.Items ?? Array.Empty<UnusedItem>()).Where(i => string.Equals(i.Verdict, "safe", StringComparison.Ordinal)).Select(i => i.Ref ?? ""), StringComparer.OrdinalIgnoreCase));
+                        // What each rule is worth is read (a second scan) only when a finding that no row is likely to claim exists.
+                        if ((readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Any(MayNeedCoverage))
+                            lifts = new ReadinessAnalyzer().Lifts(m, out _);
+                        coverOk = true;
+                    }
+                    catch { /* the coverage rows are the safety net: without them the plan is what it was, never worse */ }
+                    return (lines, refused.Count, formats, only, sharedFindings, cover, lifts, coverOk);
                 }).ConfigureAwait(false);
+                facts.BpaCover = bpa.cover;
+                facts.BpaCoverKnown = bpa.coverOk;
+                facts.AirLifts = bpa.lifts;
                 facts.BpaLines = bpa.lines;
                 facts.BpaLeftOut = bpa.Item2;
                 facts.BpaFormatWords = bpa.formats;
@@ -1761,8 +1912,15 @@ namespace Semanticus.Engine
                 Starter = StarterMeasuresFamily.RuleSummary(m, removedMeasures),
                 StarterColumns = StarterMeasureTemplates.Candidates(m).SelectMany(x => x.Columns).Select(c => ObjectRefs.For(c)).ToArray(),
                 DateMark = PlanDateMark.Candidate(m),
+                HasDateColumn = m.AllColumns.Any(c => c.DataType == TabularEditor.TOMWrapper.DataType.DateTime),
+                NoDateTable = !m.Tables.Any(t => string.Equals(t.DataCategory, "Time", StringComparison.OrdinalIgnoreCase))
+                              && m.Tables.Any(t => !ReadinessRuleSet.IsAutoDateTable(t) && t.Columns.Any(c => c.DataType == TabularEditor.TOMWrapper.DataType.DateTime)),
+                Compat = m.Database?.CompatibilityLevel ?? 0,
             }).ConfigureAwait(false);
             facts.DateMark = shape.DateMark;
+            facts.HasDateColumn = shape.HasDateColumn;
+            facts.NoDateTable = shape.NoDateTable;
+            facts.CompatibilityLevel = shape.Compat;
             facts.Tables_ = shape.Tables;
             facts.Columns_ = shape.Columns;
             facts.Measures_ = shape.Measures;
@@ -1953,14 +2111,20 @@ namespace Semanticus.Engine
 
         private static bool IsSafeFixItem(string id) => id != null && id.StartsWith("safefix/", StringComparison.Ordinal);
 
-        private static List<ModelPlanItem> BuildItems(PlanFacts f, Func<string, string, bool> decidedByJev = null)
+        /// <summary>Whether the scan holds a DATE-MARK finding at all, accepted or not. The "Add a date table" fallback is for a
+        /// model where the rule is dormant; once the rule has fired and the person accepted it, the person's choice stands and
+        /// the fallback must not bring the row back under the same id.</summary>
+        private static bool DateMarkFindingExists(PlanFacts f) =>
+            (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Any(x => string.Equals(x.RuleId, "DATE-MARK", StringComparison.OrdinalIgnoreCase));
+
+        private static List<ModelPlanItem> BuildItems(PlanFacts f, Func<string, string, bool> decidedByJev = null, bool countDeclined = false)
         {
             var items = new List<ModelPlanItem>();
             // A finding whose object a live Jev family decided is not the rule's to act on here (JevDecidedFinding): a safe
             // fix is not its to make and a proposal not its to offer, because the family's row makes that change for the
             // column. The scan itself is never filtered.
-            var findings = (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>())
-                .Where(x => !x.Waived)
+            var open = (f.Readiness?.Findings ?? Array.Empty<ReadinessFinding>()).Where(x => !x.Waived || countDeclined).ToArray();
+            var findings = open
                 .Where(x => decidedByJev == null || !decidedByJev(x.RuleId, x.ObjectRef))
                 .ToArray();
 
@@ -1976,13 +2140,20 @@ namespace Semanticus.Engine
             if (publish != null) items.Add(publish);
             var date = DateTableItem(f.DateTableByJev
                 ? findings.Where(x => !string.Equals(x.RuleId, "DATE-MARK", StringComparison.OrdinalIgnoreCase)).ToArray()
-                : findings, f.DateMark);
+                : findings, f.DateMark, f.HasDateColumn, f.NoDateTable && !f.DateTableByJev && !DateMarkFindingExists(f), f.CompatibilityLevel);
             if (date != null) items.Add(date);
             var recheck = RecheckItem(f);
             if (recheck != null) items.Add(recheck);
             items.AddRange(ProposalItems(findings.Concat(f.BpaOnlyRelationships).ToArray(), f.StarterColumns, f.JevFormatted, f.CollisionNames));
             if (!f.StarterByJev) items.AddRange(StarterRuleItems(f));
 
+            var compat = CompatibilityItem(f);
+            if (compat != null) items.Add(compat);
+
+            // Last: whatever scores and no row above acts on goes to the assistant's coverage row for its page.
+            items.AddRange(CoverageItems(f, open, decidedByJev, items.ToArray()));
+            // Each assistant row says when it is done and what to choose without asking.
+            AssistantDefaults.Apply(items);
             return items;
         }
 
@@ -2144,6 +2315,7 @@ namespace Semanticus.Engine
                         Touches = Objects(g.Count()),
                         Tables = TableDetail(touches),
                         Objects = RefsOf(g),
+                        Claims = ClaimsOf(g),
                         Jump = new ModelPlanJump { Tool = "readiness", Label = "AI readiness" },
                     };
                 });
@@ -2220,8 +2392,10 @@ namespace Semanticus.Engine
 
         private static ModelPlanItem CleanupItem(PlanFacts f)
         {
+            var held = f.HeldClaims;
             var safe = (f.Unused?.Items ?? Array.Empty<UnusedItem>())
                 .Where(i => string.Equals(i.Verdict, "safe", StringComparison.Ordinal))
+                .Where(i => held == null || held.Count == 0 || !held.Contains(i.Ref ?? "\u0001"))   // a column an open task holds is that task's to remove
                 .ToArray();
             var unticked = f.CleanupUnticked;
             var total = safe.Length + unticked;
@@ -2236,6 +2410,7 @@ namespace Semanticus.Engine
             why.Add("Nothing in the model uses " + them + (f.ReportsRead == 0 ? "."
                 : f.ReportsRead == 1 ? ", and neither does the report Semanticus looked at." : ", and neither do the reports Semanticus looked at."));
             why.Add("A version is saved first, so one undo puts " + them + " back.");
+            why.Add("Your assistant reads the lineage first (get_lineage, unused_objects), removes only what nothing uses, and tells you what it removed.");
             if (f.CleanupMeasures > 0)
                 why.Add(CountOf(f.CleanupMeasures, "unused measure is", "unused measures are") + " not on this list. Remove a measure on its own, when you are sure no report needs it.");
             if (!string.IsNullOrWhiteSpace(f.Unused?.Caveat)) why.Add(f.Unused.Caveat);
@@ -2259,11 +2434,15 @@ namespace Semanticus.Engine
                 Sub = safe.Length > 0 ? "Optional: " + Join(safe.Select(i => i.Name), 4) : "Optional: none start ticked",
                 Value = "a smaller, clearer model",
                 Optional = true,
-                Who = ModelPlanOwners.You,
+                // It names the columns it removes: the coverage step leaves the best-practice finding on each of them to this row.
+                Objects = safe.Select(i => i.Ref).Where(r => !string.IsNullOrWhiteSpace(r)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                // The assistant reads the lineage and the reports before it removes anything, says what it removed, and one Undo puts it back
+                // (Kane, 13 Oct 2026: assigning tasks to a human is the last resort).
+                Who = ModelPlanOwners.Assistant,
                 Status = ModelPlanStatuses.Ready,
                 Why = why.ToArray(),
                 Diff = Diff(touches),
-                Touches = safe.Length > 0 ? Objects(safe.Length) : "no change until you choose",
+                Touches = safe.Length > 0 ? Objects(safe.Length) : "your assistant decides which to remove",
                 Tables = TableDetail(touches),
                 Jump = new ModelPlanJump { Tool = "lineage", Label = "Lineage" },
             };
@@ -2360,7 +2539,8 @@ namespace Semanticus.Engine
                 Title = "Save the changes you have made",
                 Sub = f.Session.DiskDiverged ? "the file on disk has changed too" : "they are only in Semanticus so far",
                 Value = "nothing is lost",
-                Who = ModelPlanOwners.You,
+                // Saving is one call (save_model) and one press (Kane, 8 Oct 2026), so the row is the assistant's; the person's Save stays on the row.
+                Who = ModelPlanOwners.Assistant,
                 Status = ModelPlanStatuses.Ready,
                 Why = why.ToArray(),
                 Diff = Array.Empty<string>(),
@@ -2373,15 +2553,22 @@ namespace Semanticus.Engine
         /// (<see cref="PlanDateMark"/>), the row is Semanticus's: the engine can work out the exact change, and Run
         /// the plan does it (lane E5, the mockup's "Mark Date as the date table"). Otherwise it stays yours, because
         /// which table is the date table is a choice.</summary>
-        private static ModelPlanItem DateTableItem(IReadOnlyList<ReadinessFinding> findings, PlanDateMarkCandidate mark = null)
+        internal static ModelPlanItem DateTableItem(IReadOnlyList<ReadinessFinding> findings, PlanDateMarkCandidate mark = null, bool hasDateColumn = true,
+                                                    bool noDateTable = false, int compatibilityLevel = 0)
         {
             var date = findings.FirstOrDefault(x => string.Equals(x.RuleId, "DATE-MARK", StringComparison.OrdinalIgnoreCase));
             var calendar = findings.FirstOrDefault(x => string.Equals(x.RuleId, "CAL-TI-NO-CALENDAR", StringComparison.OrdinalIgnoreCase));
-            if (date == null && calendar == null) return null;
+            if (date == null && calendar == null) return noDateTable ? NoDateTableItem(compatibilityLevel) : null;
 
             var why = new List<string>();
             if (date != null) why.Add(date.DisplayMessage ?? date.Message);
             if (calendar != null) why.Add(calendar.DisplayMessage ?? calendar.Message);
+            // A model with a date column and no date table gets one from a tool; one with no date column says why on the row
+            // (Kane, 13 Oct 2026: the assistant never tried a calculated date table).
+            if (mark == null && date != null)
+                why.Add(hasDateColumn
+                    ? "A table holds a date column but no table is the date table, so your assistant adds a calculated date table (generate_date_table), which also marks it. One Undo takes it back."
+                    : "No table in this model has a date column, so there is nothing to build a date table from. Add a date column at the source, or tell your assistant where the dates are.");
 
             var touches = new List<PlanTouch>();
             if (date != null && mark != null)
@@ -2403,6 +2590,8 @@ namespace Semanticus.Engine
                 Sub = date != null ? "year to date and last year numbers need it" : "the model has year to date style formulas but no calendar",
                 Value = "year to date and last year work",
                 Rules = RuleIdsOf(new[] { date, calendar }.Where(x => x != null)),
+                Claims = ClaimsOf(findings.Where(x => string.Equals(x.RuleId, "DATE-MARK", StringComparison.OrdinalIgnoreCase)
+                                                       || string.Equals(x.RuleId, "CAL-TI-NO-CALENDAR", StringComparison.OrdinalIgnoreCase))),
                 Goal = PlanGoals.Ai,
                 // Semanticus marks it when the model names the one table and column; otherwise the assistant picks one with the person's
                 // words or the model's own DAX to go on, and the person reviews it (Kane, 8 Oct 2026).
@@ -2411,6 +2600,40 @@ namespace Semanticus.Engine
                 Why = why.Where(w => !string.IsNullOrWhiteSpace(w)).ToArray(),
                 Diff = Diff(touches),
                 Touches = date != null && mark != null ? mark.Table : date?.ObjectName ?? "the model",
+                Tables = TableDetail(touches),
+                Jump = new ModelPlanJump { Tool = "advmodels", Label = "Advanced modelling" },
+            };
+        }
+
+        /// <summary>The model has a date column and no date table, and no rule fires because it uses no time intelligence DAX (DATE-MARK is
+        /// dormant then, on purpose: the grade does not mark such a model down). The row is still the useful next step, so it comes from the
+        /// model's facts: add a calculated date table (marked), and at 1701 a calendar with the usual hierarchy (below 1701 a generated table has no
+        /// declared columns yet, so a hierarchy cannot be built on it).</summary>
+        private static ModelPlanItem NoDateTableItem(int compatibilityLevel)
+        {
+            var calendar = compatibilityLevel >= 1701;
+            var touches = new List<PlanTouch> { new PlanTouch { Table = null, Kind = "table", Line = "+ a date table" } };
+            if (calendar) touches.Add(new PlanTouch { Table = null, Kind = "table", Line = "+ a calendar" });
+            return new ModelPlanItem
+            {
+                Id = "datetable/model",
+                Section = ModelPlanSections.Structure,
+                Title = "Add a date table",
+                Sub = "the model has dates but no date table",
+                Value = "year to date and last year work",
+                Rules = Array.Empty<string>(),
+                Goal = PlanGoals.Ai,
+                Who = ModelPlanOwners.Assistant,
+                Status = ModelPlanStatuses.Ready,
+                Why = new[]
+                {
+                    "A table holds a date column but no table is the date table.",
+                    calendar
+                        ? "Your assistant adds a calculated date table with a calendar, marks it, and adds the usual hierarchy (year, quarter, month, day). One Undo takes it back."
+                        : "Your assistant adds a calculated date table and marks it. One Undo takes it back.",
+                },
+                Diff = Diff(touches),
+                Touches = "the model",
                 Tables = TableDetail(touches),
                 Jump = new ModelPlanJump { Tool = "advmodels", Label = "Advanced modelling" },
             };
@@ -2440,9 +2663,10 @@ namespace Semanticus.Engine
                 Title = "Look at " + CountOf(f.ReportsNeedingChecking, "report", "reports") + " again",
                 Sub = Join(f.ReportsUnchecked, 3),
                 Value = "you know what a change would break",
-                // Reading a report again is a choice about which reports, made on the Lineage page. The
-                // engine does not do it for you, so this is not "auto" (F-199).
-                Who = ModelPlanOwners.You,
+                // The reports are already chosen, so reading them again is one call (check_reports): the assistant's row, not the
+                // person's (Kane, 13 Oct 2026: the person is the last resort). A published report needs the person's yes in chat, which
+                // the assistant asks for. The engine does not read reports by itself, so this is not "auto" (F-199).
+                Who = ModelPlanOwners.Assistant,
                 Status = ModelPlanStatuses.Ready,
                 Why = new[]
                 {
@@ -2451,7 +2675,8 @@ namespace Semanticus.Engine
                         + " since the model last changed.",
                     "Until it does, what the plan says a change would break in " + (f.ReportsNeedingChecking == 1 ? "that report" : "those reports")
                         + " may be out of date.",
-                    "Open Lineage and press Check reports or Check again, or ask your assistant to do it.",
+                    "Your assistant reads " + (f.ReportsNeedingChecking == 1 ? "it" : "them") + " again. A published report needs your yes in chat first.",
+                    "To do it yourself, open Lineage and press Check reports or Check again.",
                 },
                 Diff = Array.Empty<string>(),
                 Touches = Join(f.ReportsUnchecked, 3),
@@ -2553,6 +2778,7 @@ namespace Semanticus.Engine
                         Tables = TableDetail(touches, words.CaseOne, words.CaseMany),
                         // The row names what it covers, so its detail never says "Nothing named yet." over its cases (N9).
                         Objects = RefsOf(g),
+                        Claims = ClaimsOf(g),
                         // A line only Model quality raises (its twin on AI readiness is not firing) can be accepted nowhere else, and the
                         // Diagram accepts nothing, so that row opens Model quality.
                         Jump = g.Any(x => PairedAcceptances.AirTwinOf(x.RuleId) != null)
@@ -2564,7 +2790,7 @@ namespace Semanticus.Engine
         /// <summary>The proposal families only the person can do. Copilot limits (the fallback family of the scale rules too) are a
         /// choice about what the model holds, not an edit anyone can propose.</summary>
         private static readonly HashSet<string> PersonOnlyFamilies =
-            new HashSet<string>(StringComparer.Ordinal) { "limits", "in-CopilotLimits" };
+            new HashSet<string>(StringComparer.Ordinal);
 
         /// <summary>The names a collisions row hands Find and replace: every field of every clash it lists (a clash finding is filed
         /// under the clash's key; any other collision finding names its own object), each name once, at most <see cref="FindNameCap"/>.</summary>
@@ -2810,7 +3036,7 @@ namespace Semanticus.Engine
                 Title = n => "Work around " + CountOf(n, "Copilot limit", "Copilot limits"),
                 Lead = n => "This model runs into " + CountOf(n, "published limit", "published limits")
                           + " on what Copilot and data agents can take in at once.",
-                Earns = "Working inside them is what stops Copilot quietly ignoring part of the model.",
+                Earns = "Your assistant trims or splits the part with the least use, without asking, and says what it did. Working inside the limits is what stops Copilot quietly ignoring part of the model.",
                 Value = "Copilot sees the whole model",
                 Section = ModelPlanSections.Trust,
                 CaseOne = "limit", CaseMany = "limits",

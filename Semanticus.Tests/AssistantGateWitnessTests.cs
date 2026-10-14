@@ -54,6 +54,7 @@ namespace Semanticus.Tests
         /// coordinator ordered every gap closed: a row either gets a witness above or says here why it needs none.)</summary>
         private static readonly Dictionary<string, string> ReadsOnlyOwnArguments = new(StringComparer.Ordinal)
         {
+            ["ConnectAssistantAsync"] = "it adds one entry named semanticus to the settings file of the assistant its argument names and keeps a copy of that file; pressing it again changes nothing, so it reads nothing but its argument",
             ["SetDefaultAccountProfileAsync"] = "profileId fixes the saved identity to select; the write uses its current sign-in record, and CAS refuses a competing switch",
             ["RecordTestRunAsync"] = "it names a finished run by its unique id, and a finished run is an immutable snapshot, so the id is the content",
             ["UpgradeWorkflowAsync"] = "it applies only with expectPath and expectByteHash from the reviewed preview, an argument the approval binds, and the engine refuses when the file no longer has that hash",
@@ -114,7 +115,7 @@ namespace Semanticus.Tests
             "CreatePerspectiveAsync", "CreateRelationshipAsync", "CreateRoleAsync", "CreateTableAsync", "DaxLibUninstallAsync",
             "DefineCalendarAsync", "DefineCalendarFromTemplateAsync", "DeleteCalendarAsync", "DeleteObjectAsync",
             "DeleteObjectsAsync", "DeleteRoleAsync", "DuplicateObjectAsync", "GenerateDateTableAsync",
-            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "MarkDateTableAsync", "OptimizeMeasureAsync", 
+            "GenerateTimeIntelligenceAsync", "MakeAiReadyAsync", "FixThemAsync", "MarkDateTableAsync", "OptimizeMeasureAsync", 
             "RemoveIncrementalRefreshPolicyAsync", "RemoveSafeObjectsAsync", "RenameDisplayFolderAsync",
             "RenameObjectAsync", "ReplaceInObjectAsync", "ResetBpaRulesAsync", "ResetReadinessRulesAsync", 
             "SetAiDataSchemaAsync", "SetAiInstructionsAsync", "SetCalcGroupPrecedenceAsync",

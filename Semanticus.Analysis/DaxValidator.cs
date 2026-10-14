@@ -108,7 +108,15 @@ namespace Semanticus.Engine
             public HashSet<string> CalculatedTables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             /// <summary>Calendars: a quoted name may be a calendar, as in TOTALYTD ( [Sales], 'Fiscal Calendar' ).</summary>
             public HashSet<string> Calendars = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            /// <summary>Tables whose last column was deleted in this session: a column read through one is "no such column", where a table that never had columns is not judged.</summary>
+            public HashSet<string> Emptied = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
+
+        // A table object keeps no history of its columns, so the delete path says so here. Weak: it never keeps a table alive, and a reopened model is a new table (not judged).
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Table, object> EmptiedTables = new();
+
+        /// <summary>Called by the delete path once a column's removal has left its table with no columns.</summary>
+        public static void NoteEmptied(Table table) { if (table != null) EmptiedTables.AddOrUpdate(table, EmptiedTables); }
 
         private static void AddTo(Dictionary<string, HashSet<string>> map, string table, string name)
         {
@@ -119,7 +127,7 @@ namespace Semanticus.Engine
         private static Index BuildIndex(Model m)
         {
             var idx = new Index();
-            foreach (var t in m.Tables) idx.Tables.Add(t.Name);
+            foreach (var t in m.Tables) { idx.Tables.Add(t.Name); if (EmptiedTables.TryGetValue(t, out _)) idx.Emptied.Add(t.Name); }
             foreach (var c in m.AllColumns.Where(c => c.Type != ColumnType.RowNumber))
             {
                 AddTo(idx.ColumnsByTable, c.Table?.Name ?? "", c.Name);
@@ -285,7 +293,11 @@ namespace Semanticus.Engine
                     var col = bracket?.Inner;
                     if (string.IsNullOrEmpty(col)) continue;
                     // Table[Name] is a column of the table or a measure of it.
-                    if (idx.ColumnsByTable.TryGetValue(table, out var cols) && !cols.Contains(col) && !(idx.MeasuresByTable.TryGetValue(table, out var ms) && ms.Contains(col)))
+                    // A table with no columns has no entry at all. Two cases: its last column was deleted in this session, which is "no such column" (judged);
+                    // or it never had columns (a calculated table not yet calculated, a table just created, a live table not yet loaded), which is "not judged".
+                    var hasColumns = idx.ColumnsByTable.TryGetValue(table, out var cols);
+                    if (!hasColumns && !idx.Emptied.Contains(table)) continue;
+                    if (!(hasColumns && cols.Contains(col)) && !(idx.MeasuresByTable.TryGetValue(table, out var ms) && ms.Contains(col)))
                         hits.Add((bracket.Start + 1, "warning", $"Table '{table}' has no column '{col}'."));
                     continue;
                 }

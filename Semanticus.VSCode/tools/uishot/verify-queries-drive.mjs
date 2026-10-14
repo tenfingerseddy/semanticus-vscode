@@ -139,7 +139,8 @@ await scene('v3', 'a failed profile does not leave the previous query\'s split a
     window.__uishotHarness.setResponse('profileDax', { error: 'The trace could not be started on this server.', totalMs: 0, feMs: 0, seMs: 0, seCpuMs: 0, seQueries: 0, seParallelism: 0, rowCount: 0, scans: [], traceAvailable: false });
   });
   expect(await clickText(page, 'Speed', '[aria-label="Result views"]'), 'Speed again'); await wait(300);
-  expect(await clickText(page, 'Measure again'), 'Measure again'); await wait(1500);
+  // The result is now another query's, so the first query's numbers are put away and the button reads Measure speed again.
+  expect(await clickText(page, 'Measure'), 'Measure'); await wait(1500);
   const after = await page.evaluate(() => document.querySelector('[data-testid="queries-speed"]')?.textContent || '');
   expect(/1,?810 ms|1\.8\d* s/.test(after), 'the new repeat-run time shows: ' + after.slice(0, 160));
   expect(!/27%/.test(after) && !/SELECT 'Store'\[Store Region\], 'Date'\[Month\]/.test(after),

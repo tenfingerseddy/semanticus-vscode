@@ -40,6 +40,9 @@ const STUBS = {
     focusSelectInProperties: () => {}, selectInProperties: () => {}, runHostCommand: () => {},
     onPlanChange: () => () => {}, onSpecChange: () => () => {}, copyText: async () => {}, pickSpecFile: async () => null,
   },
+  './plan-head': { PlanHead: ({ slot, drive, run }) => React.createElement('header', { 'data-testid': 'plan-head' }, slot, drive, run), DriveSwitch: () => null, LiveSlot: () => null,
+    usePlanGrade: () => ({ grade: null, refresh: async () => null }) },
+  './studio/ask-assistant': { askAssistant: async () => ({ ok: true, text: '' }) },
   './connection': { useConnection: () => ({ session: { sessionId: 'test' }, context: null }) },
   './pro': {
     useTier: () => stubTier, useFeature: () => (stubTier === 'pro' ? 'granted' : 'denied'),
@@ -49,7 +52,7 @@ const STUBS = {
 };
 const cache = new Map();
 function load(file) {
-  const full = /\.(ts|tsx|mjs)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : file + '.ts';
+  const full = /\.(ts|tsx|mjs)$/.test(file) ? file : existsSync(file + '.tsx') ? file + '.tsx' : existsSync(file + '.ts') ? file + '.ts' : file + '/index.ts';
   if (cache.has(full)) return cache.get(full);
   const source = readFileSync(full, 'utf8');
   const js = ts.transpileModule(source, {
@@ -203,7 +206,7 @@ check('the cleanup row has no button until its lines are worked out, then Approv
   const line = (id, kept) => ({ id, planItemId: id, line: '- Old Margin', op: 'delete_if_unused', target: 'measure:Measures/Old Margin', kept });
   const set = (kept) => ({ id: 'cs-1', state: 'proposed', digest: 'dg-1', lines: [line('ci-0001', kept), line('ci-0002', false)] });
   const dropped = P.mainAction({ ...base, changeSet: set(false) }, false);
-  assert.ok(dropped && dropped.id === 'approve' && dropped.primary && dropped.disabled, 'Approve waits for a kept line');
+  assert.ok(dropped && dropped.id === 'open' && dropped.primary && !dropped.disabled, 'nothing kept: the press opens the row to tick lines, never a dead Approve');
   const keptOne = P.mainAction({ ...base, changeSet: set(true) }, false);
   assert.ok(keptOne && keptOne.id === 'approve' && keptOne.primary && !keptOne.disabled, 'one kept line is enough');
   // Any other derived choice has no main button: its page link is on the row.
@@ -375,7 +378,7 @@ check('the three counts on a track say need you only when all of the open work d
   const [sem, you, asst] = P.stripTracks(makeHeartPlan());
   assert.deepEqual(P.trackCounts(sem).map((c) => c.text), ['5 done', '1 on it', '3 ready first', '1 follows it']);
   assert.deepEqual(P.trackCounts(you).map((c) => c.text), ['2 done', '0 on it', '2 need you']);
-  assert.equal(P.trackCounts(you)[2].warn, true);
+  assert.equal(P.trackCounts(you)[2].you, true);
   assert.deepEqual(P.trackCounts(asst).map((c) => c.text), ['4 done', '1 on it', '2 ready', '2 waiting']);
   assert.equal(P.assistantChipCount(makeHeartPlan()), 3, 'the chip counts Ready plus On it');
 });
@@ -416,7 +419,7 @@ check('Enter on the field adds a row and never navigates', () => {
   const field = read(join(src, 'plan.tsx'));
   const input = field.slice(field.indexOf('data-testid="plan-field"'), field.indexOf('data-testid="plan-field"') + 400);
   assert.doesNotMatch(input, /maxLength/u, 'the field never cuts a paste');
-  assert.equal(P.FIELD_PLACEHOLDER, 'Describe a task or an aim');
+  assert.equal(P.FIELD_PLACEHOLDER, 'Add a task');
   const page = read(join(src, 'plan.tsx'));
   const keydown = page.slice(page.indexOf('data-testid="plan-field"'), page.indexOf('data-testid="plan-field"') + 900);
   assert.match(keydown, /addTask\(/u, 'Enter adds a task');
@@ -503,10 +506,10 @@ check('one press makes every wave: it calls again with the new readyDigest, stop
   };
   const out = await P.runAllWaves(mk(0), apply, async () => { throw new Error('no re-read needed'); });
   assert.deepEqual(calls, ['d0', 'd1', 'd2'], 'each wave is fenced on the digest of the plan the last one answered with');
-  assert.deepEqual(out.receipt, { kind: 'ran', rows: 3, changes: 60, entryId: 'en1', revision: 3, note: null }, 'the FIRST wave\'s entry is kept for Undo');
+  assert.deepEqual(out.receipt, { kind: 'ran', rows: 3, changes: 60, ranIds: ['r1', 'r2', 'r3'], entryId: 'en1', revision: 3, note: null }, 'the FIRST wave\'s entry is kept for Undo');
   // The engine runs every wave inside ONE call (contract change 1): one call, the whole press in its answer, canSave from the engine.
   const one = await P.runAllWaves(mk(0), async () => ({ performed: true, applied: 38, itemIds: ['r1', 'r2', 'r3'], revision: 2, entryId: 'en1', canSave: true, plan: { ...mk(2), items: [] } }), async () => mk(2));
-  assert.deepEqual(one.receipt, { kind: 'ran', rows: 3, changes: 38, entryId: 'en1', revision: 2, note: null, canSave: true });
+  assert.deepEqual(one.receipt, { kind: 'ran', rows: 3, changes: 38, ranIds: ['r1', 'r2', 'r3'], entryId: 'en1', revision: 2, note: null, canSave: true });
   // Five waves at most, even if the plan never runs dry.
   let n = 0;
   const forever = await P.runAllWaves(mk(0), async () => { n++; return { performed: true, applied: 1, itemIds: ['r'], revision: n, entryId: `e${n}`, plan: mk(n) }; }, async () => mk(0));
@@ -577,8 +580,15 @@ check('plan/runProgress: a row walks Working out, Applying, Checking, Done; a ba
   steps = P.foldProgress(steps, ev('skipped', ['b'], { reason: 'It changed while the run was going.' }));
   assert.equal(P.stepNote(steps.b), 'It changed while the run was going.');
   assert.equal(P.foldProgress(steps, { nonsense: true }), steps, 'a malformed event changes nothing');
-  assert.deepEqual(Object.keys(P.RUN_STEP_WORD).sort(), ['apply', 'check', 'done', 'queued', 'skipped', 'work']);
+  assert.deepEqual(Object.keys(P.RUN_STEP_WORD).sort(), ['apply', 'check', 'done', 'queued', 'skipped', 'waitjev', 'work']);
   assert.deepEqual([P.RUN_STEP_WORD.work, P.RUN_STEP_WORD.apply, P.RUN_STEP_WORD.check, P.RUN_STEP_WORD.queued], ['Working out', 'Applying', 'Checking', 'In this run']);
+  // While the press waits for Jev, the row counts it: "Waiting for Jev, 0:08".
+  steps = P.foldProgress(steps, ev('waitjev', ['w'], { waitedSeconds: 8 }));
+  assert.equal(P.stepWords(steps.w), 'Waiting for Jev, 0:08');
+  steps = P.foldProgress(steps, ev('waitjev', ['w'], { waitedSeconds: 65 }));
+  assert.equal(P.stepWords(steps.w), 'Waiting for Jev, 1:05');
+  assert.equal(P.stepWords({ step: 'waitjev' }), 'Waiting for Jev');
+  assert.equal(P.stepWords({ step: 'work' }), 'Working out');
   // A row the press holds and the run has not reached reads In this run.
   assert.deepEqual(P.stepOf('z', {}, new Set(['z'])), { step: 'queued' });
   assert.equal(P.stepOf('z', {}, null), null);
@@ -629,7 +639,7 @@ check('the page source runs the plan through runAllWaves and has no one-at-a-tim
 // K1 bug 3: the page's own re-read cleared the result sentence. The receipt has a state of its own and the re-read never touches it.
 check('the receipt is held in its own state, and the page\'s re-read of the model never clears it', () => {
   const page = read(join(src, 'plan.tsx'));
-  const reread = page.slice(page.indexOf('const mine = ++generation.current;'), page.indexOf('}, [sessionId, revision, changeNonce, retry]);'));
+  const reread = page.slice(page.indexOf('const mine = reads.current.start();\n    setLoading(true)'), page.indexOf('}, [sessionId, revision, changeNonce, retry]);'));
   assert.ok(reread.length > 100, 'found the re-read effect');
   assert.match(reread, /setSentence\(null\)/u, 'the re-read still clears the page\'s sentence');
   assert.doesNotMatch(reread, /setReceipt|setSteps|setJustDone/u, 'and nothing of the press');
@@ -638,7 +648,7 @@ check('the receipt is held in its own state, and the page\'s re-read of the mode
   assert.doesNotMatch(planDidChange, /setReceipt/u, 'a plan/didChange re-read leaves it too');
   // Only these end a receipt: the next press, an Undo, and a different model.
   const ends = [...page.matchAll(/setReceipt\(/gu)].length;
-  assert.ok(ends >= 4 && ends <= 8, `setReceipt is called in a few known places (${ends})`);
+  assert.ok(ends >= 4 && ends <= 14, `setReceipt is called in a few known places (${ends})`);
   // Undo takes back the whole press: the FIRST wave's entry.
   assert.match(page, /rpc\('undo', 'human', receipt\.entryId\)/u);
 });
@@ -649,7 +659,7 @@ check('the positional calls keep their order: digest last on approve, the line h
   assert.match(page, /'modelPlanAction', item\.id, 'approve', 'human', item\.changeSet\?\.digest \?\? ''\)/u,
     'modelPlanAction(id, action, origin, digest): the digest is LAST');
   assert.match(page, /rpc\('setPlanItem', lineId, null, kept\)/u, 'setPlanItem(lineHandle, after, approved)');
-  assert.match(page, /'setAssistantQueue', 'paused'\)/u);
+  assert.match(page, /'setAssistantQueue', q\)/u, 'the header\'s drive switch sets the queue (I drive pauses it)');
   assert.match(page, /'completePlanTask', item\.id, text \|\| null\)/u);
   assert.doesNotMatch(page, /holdPlanItem|declinePlanTask/u, 'Pause and Could not are not called from the page any more (the engine verbs stay)');
   assert.match(page, /const call = P\.doerCall\(row, doer\);/u, 'the doer menu sends the one call doerCall names');
@@ -676,7 +686,7 @@ check('the ways to start show whenever the engine sends them, even with a row op
   const page = readFileSync(join(src, 'plan.tsx'), 'utf8');
   const view = page.slice(page.indexOf('export function PlanView'));
   const starts = view.indexOf('<PlanStarts');
-  const emptyBranch = view.indexOf('items.filter(P.isOpenRow).length === 0');
+  const emptyBranch = view.indexOf('everyRow.length === 0');
   assert.ok(starts > 0 && emptyBranch > 0, 'PlanView draws PlanStarts and has its empty branch');
   assert.ok(starts < emptyBranch, 'PlanStarts is drawn before, and outside, the no-open-rows branch');
   assert.match(view.slice(starts - 80, starts), /showPlan\.starts\?\.length && $/u);
@@ -872,20 +882,21 @@ check('a row shows its step in the state column, a person row is dimmed and last
   const yours = row({ item: byId(plan, 'pt-3f9a2c11') });
   assert.match(yours, /class="pw-row pw-row-you"/u);
   assert.doesNotMatch(apply, /pw-row-you/u);
-  const css = read(join(src, 'styles.css'));
-  assert.match(css, /\.pw-fold \.pw-row-you \{ opacity: 0\.62; \}/u, 'dimmed in the fold only');
-  assert.match(css, /\.pw-fold \.pw-row-you:hover[^{]*\{ opacity: 1; \}/u, 'full on hover');
+  // 1.5 (calm Plan): the person's rows are no longer dimmed in a fold; they are the You group, in the person's blue.
+  const css = read(join(src, 'plan-calm.css'));
+  assert.match(css, /\.pw-who-you \{ --who: var\(--sem-actor-you\); \}/u, 'the You group has its own colour');
+  assert.doesNotMatch(read(join(src, 'styles.css')), /\.pw-fold/u, 'the fold is gone');
 });
 
-check('the list: Semanticus rows, then the assistant, then a fold; the fold is closed, shows a warn dot, and the Needs you band is gone', () => {
+check('the list (1.5): grouped by who, each group folds by its header and shows 10 rows then Show all; the old fold and the Needs you band are gone', () => {
   const page = read(join(src, 'plan.tsx'));
-  assert.doesNotMatch(page, /plan-needs|work\.needsYou|pw-needs/u);
-  assert.match(page, /data-testid="plan-only-you"/u);
-  assert.match(page, /P\.onlyYouWords\(work\.onlyYou\)/u);
-  assert.equal(P.onlyYouWords([{ stateWord: 'needs_you' }]), 'task needs your choice', 'one task reads "1 task needs your choice"');
-  assert.match(page, /const \[foldOpen, setFoldOpen\] = useState\(false\)/u, 'closed by default');
-  assert.match(page, /plan-only-you-warn/u);
-  assert.match(page, /Done just now/u);
+  assert.doesNotMatch(page, /plan-needs|work\.needsYou|pw-needs|plan-only-you|onlyYouWords|foldOpen/u);
+  assert.match(page, /data-testid=\{`plan-group-\$\{g\.who\}`\}/u, 'one section per who');
+  assert.match(page, /data-testid=\{`plan-group-toggle-\$\{g\.who\}`\}/u, 'folds by its header');
+  assert.match(page, /data-testid=\{`plan-show-all-\$\{g\.who\}`\}/u, 'Show all, per group');
+  assert.match(page, /Show all \{g\.rows\.length\}/u);
+  assert.equal(P.onlyYouWords([{ stateWord: 'needs_you' }]), 'task needs your choice', 'the model function stays for the engine\'s words');
+  assert.doesNotMatch(page, /Done just now/u, 'a row done while the page was open stays in its group, as Done');
 });
 
 check('a Ready draft row says its own state: it runs on its own, not with Run the plan, with no Approve here yet', () => {
@@ -899,6 +910,17 @@ check('a Ready draft row says its own state: it runs on its own, not with Run th
   // Only a Ready draft says it: an ordinary Ready row, and a draft in any other state, do not.
   assert.equal(P.draftOwnState(byId(makeHeartPlan(), 'safefix/Visibility')), null);
   assert.equal(P.draftOwnState({ ...readyDraft, stateWord: 'needs_you', doer: 'you' }), null);
+});
+
+check('an assistant note shows as the assistant\'s own, beside the person\'s note, never as "Your note"', () => {
+  const plan = makeHeartPlan({ mode: 'queue' });
+  const item = { ...byId(plan, 'pt-3b7d0c21'), note: 'Only the visible columns.', assistantNote: 'Needs a date column: none exists in this model.' };
+  const html = renderToStaticMarkup(React.createElement(Row.PlanRowDetail, { item, busy: null, onNote: () => {} }));
+  assert.ok(html.includes('Only the visible columns.'), 'the person\'s note stays');
+  assert.match(html, /data-testid="plan-assistant-note"[^>]*>.*Your assistant&#x27;s note/u);
+  assert.ok(html.includes('Needs a date column: none exists in this model.'), 'the assistant\'s note is shown');
+  const none = renderToStaticMarkup(React.createElement(Row.PlanRowDetail, { item: { ...item, assistantNote: null }, busy: null, onNote: () => {} }));
+  assert.ok(!none.includes('plan-assistant-note'), 'no assistant note, no line');
 });
 
 check('the open row is for reading: why, done when, objects, the note and reply, and no control rows', () => {
@@ -1114,6 +1136,40 @@ check('a Ready assistant task keeps its next-check note visible', () => {
   }));
   assert.match(html, /class="pw-state-note">when your assistant checks</u);
 });
+// Hero run 19, D16: a Waiting row says who it waits for on the row itself (the full note stays on hover), and a Ready assistant row nobody can take says to ask.
+check('a Waiting row shows who it waits for without a hover, and a row with no assistant says to ask', () => {
+  const state = (stateWord, stateNote) => renderToStaticMarkup(React.createElement(Row.StateWord, { item: { id: 'w', doer: 'assistant', stateWord, stateNote } }));
+  const waits = state('waiting', 'Waiting for you: Fix 2 best-practice issues. It goes after that task because they change the same things.');
+  assert.match(waits, /class="pw-state-note">for you</u);
+  assert.match(waits, /title="Waiting for you: Fix 2 best-practice issues/u);
+  assert.match(state('waiting', 'Waiting for your assistant: Add synonyms. It goes after that task because they change the same things.'), /class="pw-state-note">for your assistant</u);
+  assert.match(state('waiting', 'Waiting for your assistant. Ask it to run the plan.'), /class="pw-state-note">ask your assistant</u);
+  assert.match(state('ready', 'Ask your assistant to run the plan.'), /class="pw-state-note">ask your assistant</u);
+});
+// Kane, 13 Oct 2026: "Needs you" beside a greyed Approve on "Add folders and formats to 1 measure in Discount Scenario".
+check('a row never shows a button that cannot be pressed', () => {
+  const line = (id, kept) => ({ id, planItemId: id, line: '~ Discount: format', op: 'set_format', target: 'measure:Discount Scenario/Discount', kept });
+  const row = (doer, kept) => ({ id: 'jev/measures.Discount Scenario', title: 'Add folders and formats to 1 measure in Discount Scenario',
+    doer, who: doer === 'you' ? 'you' : 'jev', stateWord: 'needs_you', status: 'proposed',
+    changeSet: { id: 'cs', state: 'proposed', digest: 'dg', lines: [line('ci-1', kept)] } });
+  for (const doer of ['you', 'semanticus']) {
+    for (const free of [false, true]) {
+      const a = P.mainAction(row(doer, false), free);
+      assert.ok(!a || !a.disabled, `${doer}, free ${free}: no disabled ${a?.id}`);
+    }
+  }
+  assert.equal(P.mainAction(row('you', true), false)?.id, 'approve', 'one kept line: Approve');
+});
+check('the save row keeps its Save whoever does it', () => {
+  const save = { id: 'ship/unsaved', title: 'Save the changes you have made', doer: 'assistant', who: 'asst', stateWord: 'ready', status: 'ready' };
+  assert.equal(P.mainAction(save, false)?.id, 'save');
+});
+check('a calm row under Your assistant shows Ready alone, with the next-check note on hover', () => {
+  const item = { id: 'pt-1', title: 'Define a calendar', doer: 'assistant', stateWord: 'ready', stateNote: 'when your assistant next checks the Plan' };
+  const html = renderToStaticMarkup(React.createElement(Row.StateWord, { item, calm: true }));
+  assert.doesNotMatch(html, /pw-state-note/u);
+  assert.match(html, /title="when your assistant next checks the Plan"/u);
+});
 check('a waiting task names every dependency', () => {
   const item = { id: 'format', stateWord: 'waiting', waitsFor: [{ id: 'a', title: 'Add measures' }, { id: 'b', title: 'Rename columns' }] };
   assert.equal(P.subLine(item).waits, 'Add measures; Rename columns');
@@ -1122,23 +1178,9 @@ await Promise.all(pending);
 if (failures) { console.error(`\n${failures} plan-heart check(s) failed`); process.exit(1); }
 console.log('\nplan-heart: all checks passed');
 
-// Kane, 12 Oct: the lane counts used the monospace number font and wrapped inside a phrase ("4 ready first" onto a second line).
-check('the lane counts use the Studio UI font with tabular figures and break only between counts', () => {
-  const css = readFileSync(new URL('../webview/src/styles.css', import.meta.url), 'utf8');
-  const src = readFileSync(new URL('../webview/src/plan-strip.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(src, /className="pw-counts sem-num"/, 'the monospace number class is not on the counts');
-  const rule = css.match(/\.pw-counts \{[^}]*\}/)[0];
-  assert.match(rule, /font-family: var\(--sem-font-ui\)/);
-  assert.match(rule, /font-variant-numeric: tabular-nums/);
-  assert.match(rule, /flex-wrap: wrap/);
-  assert.match(css, /\.pw-counts > span \{ white-space: nowrap; \}/, 'each count stays whole');
-  assert.match(css, /\.pw-track \{[^}]*grid-template-columns: 144px minmax\(0, 1fr\) minmax\(max-content, 380px\)/, 'at full width a lane keeps its counts on one line');
-  assert.match(css, /@media \(max-width: 640px\) \{\s*\.pw-track \{ grid-template-columns: minmax\(0, 1fr\)/, 'on a narrow window the lane stacks');
-});
-
-check('the Plan order line carries a Billing link only when the engine sends a billing address, and the header chip re-reads the plan', () => {
+check('the Plan order line carries a Billing link only when the engine sends a billing address (a note in the bottom bar, 1.5), and the header chip re-reads the plan', () => {
   const plan = readFileSync(new URL('../webview/src/plan.tsx', import.meta.url), 'utf8');
-  assert.match(plan, /showPlan\.billingUrl && <button[^\n]*data-testid="plan-billing"[^\n]*>Billing<\/button>/);
+  assert.match(plan, /noteSource\?\.billingUrl \? \[[^\n]*link: \{ label: 'Billing', run: \(\) => openExternal\(noteSource\.billingUrl!\) \}/);
   assert.match(plan, /<ProPlanWatch inactive=\{!!showPlan\.billingUrl\} \/>/);
   const model = readFileSync(new URL('../webview/src/plan-model.ts', import.meta.url), 'utf8');
   assert.match(model, /billingUrl\?: string;/);

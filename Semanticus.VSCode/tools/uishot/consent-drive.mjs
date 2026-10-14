@@ -151,24 +151,42 @@ const RANKED_PLAN = `{
  */
 const seed = (state) => `
 window.__consentCalls = [];
+// The harness does not answer the host's first-run and guide questions, so the page waited its 5 s for them before it asked
+// about permission and every scene read the page too early. Answered here: a connected person, no tour.
+{
+  let realApi;
+  Object.defineProperty(window, 'acquireVsCodeApi', { configurable: true,
+    get: () => function () {
+      const api = realApi(); const post = api.postMessage;
+      const reply = (m) => setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: m })), 0);
+      api.postMessage = function (msg) {
+        const t = msg && msg.type;
+        if (t === 'getFirstRun') { reply({ type: 'firstRun', id: msg.id, show: false, connected: true }); return; }
+        if (t === 'getGuideFlags') { reply({ type: 'guideFlags', id: msg.id, planTour: true, whatChanged: true }); return; }
+        return post.call(this, msg);
+      };
+      return api;
+    },
+    set: (v) => { realApi = v; } });
+}
 const __note = (name, params) => window.__consentCalls.push({ call: name, params: params || [] });
 const __fieldsInForce = ${POINTS}.flatMap((p) => p.fields).sort();
 let __consent = ${JSON.stringify(state)} === 'on'
-  ? { granted: true, current: true, schemaVersion: 5, schemaVersionInForce: 5,
+  ? { granted: true, current: true, schemaVersion: 6, schemaVersionInForce: 6,
       fields: __fieldsInForce, fieldsInForce: __fieldsInForce,
       grantedUtc: '2026-09-21T09:15:00Z', withdrawnUtc: null, appliesTo: 'disk:4f2a91bc#8e07d3aa', reason: null }
   : ${JSON.stringify(state)} === 'unsaved'
-    ? { granted: false, current: false, schemaVersion: 0, schemaVersionInForce: 5,
+    ? { granted: false, current: false, schemaVersion: 0, schemaVersionInForce: 6,
         fields: [], fieldsInForce: __fieldsInForce, grantedUtc: null, withdrawnUtc: null, appliesTo: null,
         reason: 'Save this model, or open it live, before agreeing to send its details for advice.' }
   : ${JSON.stringify(state)} === 'old'
     // Agreed under the version 3 card, which did not name the words a person types to describe a task or a workflow.
     // The engine reports that as granted but not current, for the same model, and the card comes back once.
-    ? { granted: true, current: false, schemaVersion: 3, schemaVersionInForce: 5,
+    ? { granted: true, current: false, schemaVersion: 3, schemaVersionInForce: 6,
         fields: ['measure.folder_and_format:measure_expression'], fieldsInForce: __fieldsInForce,
         grantedUtc: '2026-09-21T09:15:00Z', withdrawnUtc: null, appliesTo: 'disk:4f2a91bc#8e07d3aa',
         reason: 'the list of details that would be sent has changed since you agreed, so permission is needed again' }
-    : { granted: false, current: false, schemaVersion: 0, schemaVersionInForce: 5,
+    : { granted: false, current: false, schemaVersion: 0, schemaVersionInForce: 6,
         fields: [], fieldsInForce: __fieldsInForce, grantedUtc: null, withdrawnUtc: null,
         appliesTo: 'disk:4f2a91bc#8e07d3aa',
         reason: "you have not given permission to send this model's details for advice" };
@@ -269,16 +287,16 @@ const JOBS = [
       // Twelve: the three live points' nine, compose.draft's one and date.table's two. Permission covers every declared field,
       // live or not, so a point that turns live later is not asked about again.
       s.setConsentFields?.length !== 12 && `OK sent ${s.setConsentFields?.length} fields, not the twelve the points declare`,
-      s.setConsentVersion !== 5 && `OK sent version ${s.setConsentVersion}`,
+      s.setConsentVersion !== 6 && `OK sent version ${s.setConsentVersion}`,
       !s.setConsentScope && 'the answer did not name the model it was an answer about (Astra 2)',
       s.planReads < 2 && 'the page did not ask its question again after permission was given',
     ],
   },
   { slug: 'card-reshown', q: 'tab=plan&tier=pro&conn=1&live=1', state: 'old', press: ['consent-ok'],
-    desc: 'agreed under the version 3 card: the new card is shown once more, and OK agrees at version 5 for the same model',
+    desc: 'agreed under the version 3 card: the new card is shown once more, and OK agrees at version 6 for the same model',
     must: (s) => [
       !s.calls.includes('setConsent') && 'the card did not come back for a permission given under the old card',
-      s.setConsentVersion !== 5 && `OK sent version ${s.setConsentVersion}`,
+      s.setConsentVersion !== 6 && `OK sent version ${s.setConsentVersion}`,
       s.setConsentScope !== 'disk:4f2a91bc#8e07d3aa' && `the new answer was not kept for the same model: ${s.setConsentScope}`,
       s.card && 'the card is still standing after OK',
     ],
@@ -294,6 +312,24 @@ const JOBS = [
   // A NEW MODEL'S FIRST SAVE (UAT plan statement check, 28 Sep). Before the save there is nothing to keep permission
   // under, so no card; the save gives the model an identity and rides the change bus, and the card must come then.
   // It did not: the page's check ran once, stopped at "never saved", and was never run again.
+  // Hero 20 D10: the assistant opens a model and nobody has decided about Jev for it. No page is waiting on a Pro answer (this is
+  // Review), and the card comes anyway, once, without turning anything on.
+  { slug: 'card-on-open', q: 'tab=bpa&tier=pro&conn=1&live=1', state: 'none',
+    desc: 'Studio open on Review with a model nobody has decided about: the card is up, and nothing was granted',
+    must: (s) => [
+      !s.card && 'the card was not raised for an undecided model on a page that waits for no Pro answer',
+      s.cardTitle !== 'Let Pro decide for this model?' && `the title read ${JSON.stringify(s.cardTitle)}`,
+      s.calls.includes('setConsent') && 'permission was turned on without a press',
+    ],
+  },
+  { slug: 'card-after-assistant-open', q: 'tab=bpa&tier=pro&conn=1&live=1', state: 'on', act: 'assistantOpens',
+    desc: 'the assistant opens another model while Studio is on Review: the card comes for it, and no grant is made',
+    must: (s) => [
+      s.cardBefore && 'the card was up before the assistant opened the model, so this proves nothing',
+      !s.card && 'the card did not come after the assistant opened a model nobody had decided about',
+      s.calls.includes('setConsent') && 'permission was turned on without a press',
+    ],
+  },
   { slug: 'card-after-first-save', q: 'tab=plan&tier=pro&conn=1&live=1', state: 'unsaved', act: 'firstSave',
     desc: 'a new model: no card before its first save, the card right after it',
     must: (s) => [
@@ -614,7 +650,7 @@ for (const job of JOBS) {
       cardBefore = await page.evaluate(() => !!document.querySelector('[data-testid="consent-card"]'));
       await page.evaluate(() => {
         __consent = Object.assign({}, __consent, {
-          granted: true, current: true, schemaVersion: 5, fields: __fieldsInForce, appliesTo: 'disk:4f2a91bc#77aa01ce',
+          granted: true, current: true, schemaVersion: 6, fields: __fieldsInForce, appliesTo: 'disk:4f2a91bc#77aa01ce',
           grantedUtc: '2026-09-22T10:00:00Z', withdrawnUtc: null, reason: null,
         });
         window.dispatchEvent(new MessageEvent('message', { data: { type: 'didChange',
@@ -622,6 +658,19 @@ for (const job of JOBS) {
             deltas: [{ kind: 'update', ref: 'model', property: 'Annotations' }] } } }));
       });
       await wait(1200);
+    }
+
+    // The assistant opens another model: a different identity with no permission, and the host's 'reconnected' word for another door.
+    if (job.act === 'assistantOpens') {
+      cardBefore = await page.evaluate(() => !!document.querySelector('[data-testid="consent-card"]'));
+      await page.evaluate(() => {
+        __consent = { granted: false, current: false, schemaVersion: 0, schemaVersionInForce: 6, fields: [], fieldsInForce: __fieldsInForce,
+          grantedUtc: null, withdrawnUtc: null, appliesTo: 'disk:5d3b17aa#02c4e9f1',
+          reason: "you have not given permission to send this model's details for advice" };
+        window.__openModel('uishot-assistant-model', 'SmallShop');
+        window.dispatchEvent(new MessageEvent('message', { data: { type: 'reconnected', by: 'otherDoor' } }));
+      });
+      await wait(1500);
     }
 
     // A report reading on the other door: the engine's PublishScopeChanged, no deltas, the revision unmoved.

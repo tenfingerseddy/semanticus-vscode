@@ -203,7 +203,7 @@ namespace Semanticus.Engine
             ClaimedBy = task?.Claim?.ClaimedBy,
             ClaimedUtc = task?.Claim?.ClaimedUtc.ToString("o"),
             Note = task?.Note,
-            Brief = task?.Brief,
+            Brief = task?.Brief ?? row?.Brief,
             Objects = task?.Objects ?? Array.Empty<string>(),
             DoneText = row?.DoneText ?? PlanTasks.DoneTextOf(task?.DoneWhen, task?.Objects?.Length ?? 0),
             Order = row?.Order,
@@ -332,7 +332,7 @@ namespace Semanticus.Engine
             var part = await TryDeclineDraftPartAsync(requestId, claimToken, reason, choices, reader).ConfigureAwait(false);
             if (part != null) return part;
             var why = RequireReason(reason);
-            return await AnswerAsync(requestId, claimToken, reader, (t, _) => Decline(t, why),
+            return await AnswerAsync(requestId, claimToken, reader, (t, _) => Decline(t, why, null),
                 _ => "Handed back to the person with your reason. They can give it to you again.").ConfigureAwait(false);
         }
 
@@ -348,8 +348,9 @@ namespace Semanticus.Engine
         }
 
         /// <summary>Back to the person: open, no claim, the reason kept, and theirs to do until they give it again.</summary>
-        private static void Decline(PlanTask t, string why)
+        private static void Decline(PlanTask t, string why, string by)
         {
+            t.DeclinedBy = by;
             t.Claim = null;
             t.State = PlanTaskStates.Open;
             t.DeclineReason = why;
@@ -466,6 +467,7 @@ namespace Semanticus.Engine
                 t.Doer = PlanDoers.You;
                 t.Order = null;
                 t.DeclineReason = null;
+                t.DeclinedBy = null;
                 t.ReleaseNote = null;
             });
 
@@ -495,7 +497,7 @@ namespace Semanticus.Engine
         public Task<ModelPlanView> DeclinePlanTaskAsync(string id, string reason)
         {
             var why = RequireReason(reason);
-            return PersonChangeAsync(id, (t, _) => Decline(t, why));
+            return PersonChangeAsync(id, (t, _) => Decline(t, why, PlanDoers.You));
         }
 
         private async Task<ModelPlanView> PersonChangeAsync(string id, Action<PlanTask, DateTimeOffset> change)

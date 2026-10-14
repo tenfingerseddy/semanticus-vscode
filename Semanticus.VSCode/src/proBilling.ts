@@ -268,6 +268,8 @@ export interface CollectOptions {
     intervalMs?: number;
     timeoutMs?: number;
     now?: () => number;
+    /// The route polled. /stripe/collect for a purchase; the free month's /trial/claim answers with the same arms.
+    path?: string;
 }
 
 /// Poll /stripe/collect until the token lands, the link is spent, the person cancels, or we give up.
@@ -282,7 +284,7 @@ export async function collectProToken(options: CollectOptions): Promise<CollectO
     const now = options.now ?? Date.now;
     const intervalMs = options.intervalMs ?? COLLECT_INTERVAL_MS;
     const deadline = now() + (options.timeoutMs ?? COLLECT_TIMEOUT_MS);
-    const url = billingEndpoint(options.base, '/stripe/collect', { nonce: options.nonce });
+    const url = billingEndpoint(options.base, options.path ?? '/stripe/collect', { nonce: options.nonce });
     let sawPending = false;
     let consecutiveFailures = 0;
 

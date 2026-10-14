@@ -640,6 +640,16 @@ const COVER = 'NO TEST: this fixture is exercising the commit half, so the test 
         4203239586: 'Semanticus.Engine/Decisions/DecisionService.cs',
         // PR #398, the 1.3.0 mirror fix. One comment, the README install table.
         4239456154: 'README.md',
+        // PR #399, the 1.5 join. Two P1 comments: the recovery copy's credential scrub and an assistant's first connection label.
+        4242940056: 'Semanticus.Engine/Session.FileRecovery.cs',
+        4242940063: 'Semanticus.Engine/Connect/ConnectionRegistry.cs',
+        // PR #400, the 1.5.0 release. Five comments, all scheduled for 1.5.1 (T297): the trial worker, the pending trial claim,
+        // the Claude Code entry on a failed replace, the personality settings door and the trial start door.
+        4252831371: 'tools/fulfillment/worker/trial.mjs',
+        4252831376: 'Semanticus.VSCode/src/extension.ts',
+        4252831384: 'Semanticus.Engine/Connect/AssistantConnector.cs',
+        4252831391: 'Semanticus.VSCode/src/personalitySettings.ts',
+        4252831397: 'Semanticus.VSCode/src/extension.ts',
     };
     for (const [pr, rows_] of live)
         for (const [commentId, r] of rows_) {

@@ -114,6 +114,14 @@ namespace Semanticus.Engine
             var database = request.Database?.Trim();
             if (string.IsNullOrWhiteSpace(server)) throw new ArgumentException("A Fabric SQL endpoint is required.");
             if (string.IsNullOrWhiteSpace(database)) throw new ArgumentException("A Fabric warehouse or lakehouse database is required.");
+            // D1 (launch video, 12 Oct): no sign-in named means the one that is ready (the person's saved sign-in, else a ready service principal), the pick the
+            // endpoint listing makes. az is the last choice, kept for a person who has only that. A mode the caller names is theirs.
+            if (string.IsNullOrWhiteSpace(request.AuthMode))
+            {
+                var (pickedMode, pickedTenant) = ResolveSqlListSignIn(null, request.TenantId);
+                request.AuthMode = pickedMode ?? "azcli";
+                request.TenantId = pickedTenant;
+            }
             var storage = string.IsNullOrWhiteSpace(request.StorageMode) ? "import" : request.StorageMode.Trim();
             if (!string.Equals(storage, "import", StringComparison.OrdinalIgnoreCase)
                 && !string.Equals(storage, "directLake", StringComparison.OrdinalIgnoreCase))

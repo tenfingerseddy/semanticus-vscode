@@ -29,7 +29,7 @@ namespace Semanticus.Engine
             if (lower.Contains("codex")) return Known("codex", "Codex", "CX", v);
             if (lower.Contains("copilot")) return Known("copilot", "GitHub Copilot", "GC", v);
             if (lower.Contains("cursor")) return Known("cursor", "Cursor", "CU", v);
-            if (IsPlain(raw))
+            if (IsPlain(raw) && !IsProgramId(raw))
                 return new AssistantInfo { Key = "other", Name = raw, Initials = InitialsOf(raw), Version = v };
             return new AssistantInfo { Key = "unknown", Name = "Your assistant", Initials = null, Version = v };
         }
@@ -41,6 +41,10 @@ namespace Semanticus.Engine
         private static bool IsPlain(string s) =>
             s.Length > 0 && s.Length <= MaxOwnName && s.Any(char.IsLetter)
             && s.All(c => char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_' || c == '.');
+
+        /// <summary>One word joined with dashes or underscores ("local-agent-mode-semanticus") is a program's id, not a name a person
+        /// would read: the bar said "local-agent-mode-semanticus drives" (Kane, 13 Oct 2026). Such a client is "Your assistant".</summary>
+        private static bool IsProgramId(string s) => !s.Contains(' ') && (s.Contains('-') || s.Contains('_'));
 
         private static string InitialsOf(string name)
         {

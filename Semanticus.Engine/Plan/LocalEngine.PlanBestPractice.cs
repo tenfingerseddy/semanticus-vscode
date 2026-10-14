@@ -319,9 +319,12 @@ namespace Semanticus.Engine
         internal static string BpaKey(ChangeItem l) => (l?.ObjectRef ?? "") + "|" + (l?.Target ?? "").ToLowerInvariant();
 
         /// <summary>The readiness safe-fix lines on the model, the same ones the safefix rows propose.</summary>
-        private static IEnumerable<ChangeItem> ReadinessSafeLines(Model m, Scorecard readiness) =>
+        private static IEnumerable<ChangeItem> ReadinessSafeLines(Model m, Scorecard readiness, Func<string, string, bool> decidedByJev = null) =>
             (readiness?.Findings ?? Array.Empty<ReadinessFinding>())
                 .Where(x => !x.Waived && string.Equals(x.Fix, nameof(FixKind.SafeFix), StringComparison.Ordinal))
+                // A finding a Jev family decided has no safe-fix row (BuildItems leaves it out), so its write is NOT taken by that row:
+                // counting it as taken left its best-practice twin (NUMERIC_COLUMN_SUMMARIZE_BY) on no row at all.
+                .Where(x => decidedByJev == null || !decidedByJev(x.RuleId, x.ObjectRef))
                 .Select(x => MapSafeFix(m, x))
                 .Where(x => x != null)
                 .ToList();
@@ -454,6 +457,7 @@ namespace Semanticus.Engine
                 // The readiness words are AI readiness; a row of only best-practice formats is quality.
                 Rules = RuleIdsOf(words).Concat(formats.Select(x => x.RuleId).Where(r => !string.IsNullOrWhiteSpace(r)))
                     .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                Claims = ClaimsOf(words),
                 Goal = words.Length > 0 ? PlanGoals.Ai : PlanGoals.Quality,
                 // The formats are Model quality's own findings, so a row of words and formats is under both filters.
                 Goals = words.Length > 0 && formats.Count > 0 ? new[] { PlanGoals.Ai, PlanGoals.Quality } : null,

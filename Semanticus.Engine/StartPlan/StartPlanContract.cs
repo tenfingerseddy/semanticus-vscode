@@ -59,7 +59,8 @@ namespace Semanticus.Engine.StartPlan
     {
         public string Server { get; set; }
         public string Database { get; set; }
-        public string AuthMode { get; set; } = "azcli";
+        /// <summary>Left out, the engine picks the sign-in that is ready, the way the endpoint listing does (D1); az is the last choice.</summary>
+        public string AuthMode { get; set; }
         public string TenantId { get; set; }
         public string StorageMode { get; set; } = "import";
         /// <summary>The folder the model is created in. It must be empty (or not exist yet): a folder holding anything
@@ -349,6 +350,8 @@ namespace Semanticus.Engine.StartPlan
         public int? AfterBuildBestPracticeOpen { get; set; }
         /// <summary>True until the decide has settled: "after the build" is what the plan would build right now, and it can still move.</summary>
         public bool AfterBuildProvisional { get; set; }
+        /// <summary>True when the plan was built and the build has been undone: the model holds nothing of it now, so "now" is no grade, and the forecast is the plan's.</summary>
+        public bool NowUndone { get; set; }
     }
 
     /// <summary>What both doors render. The Digest covers everything the person approves; any edit moves it.</summary>

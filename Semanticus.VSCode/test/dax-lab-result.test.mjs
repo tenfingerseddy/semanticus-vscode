@@ -256,68 +256,23 @@ console.log('measure check filter scope note passed');
 // in BOTH theme blocks, so the split bar painted one colour twice and the two legend figures matched it.
 // The two engines now own two named tokens, and an engine keeps one colour everywhere Studio draws it.
 // =====================================================================================================
-const styles = read('webview/src/styles.css');
-
-const darkBlock = styles.slice(styles.indexOf(':root {'), styles.indexOf('body.vscode-light'));
-const lightBlock = styles.slice(styles.indexOf('body.vscode-light'), styles.indexOf('html, body, #root'));
-assert.ok(darkBlock.length > 0 && lightBlock.length > 0, 'both theme blocks must be found');
-
-const tokenValue = (block, name) => {
-  const found = block.match(new RegExp('--' + name + ':\\s*([^;]+);'));
-  return found ? found[1].trim() : null;
-};
-
-// Contrast is the whole point of a second colour, so the test measures it rather than trusting the hex.
-const channel = (v) => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-const luminance = (hex) => {
-  const m = /^#([0-9a-f]{6})$/i.exec(hex);
-  assert.ok(m, `a theme colour must be a plain 6-digit hex so contrast can be measured, got ${hex}`);
-  const n = parseInt(m[1], 16);
-  return 0.2126 * channel(((n >> 16) & 255) / 255)
-    + 0.7152 * channel(((n >> 8) & 255) / 255)
-    + 0.0722 * channel((n & 255) / 255);
-};
-const contrast = (a, b) => {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-};
-const rgb = (hex) => {
-  assert.match(hex, /^#[0-9a-f]{6}$/i, `a theme colour must be a plain 6-digit hex, got ${hex}`);
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-};
-const channelGap = (a, b) => Math.max(...rgb(a).map((v, i) => Math.abs(v - rgb(b)[i])));
-
-for (const [theme, block] of [['dark', darkBlock], ['light', lightBlock]]) {
-  const fe = tokenValue(block, 'sem-engine-fe');
-  const se = tokenValue(block, 'sem-engine-se');
-  const onFe = tokenValue(block, 'sem-on-engine-fe');
-  const onSe = tokenValue(block, 'sem-on-engine-se');
-  assert.ok(fe, `the ${theme} theme must define --sem-engine-fe`);
-  assert.ok(se, `the ${theme} theme must define --sem-engine-se`);
-  assert.ok(onFe, `the ${theme} theme must define the ink for the formula-engine fill`);
-  assert.ok(onSe, `the ${theme} theme must define the ink for the storage-engine fill`);
-  assert.notEqual(fe, se, `the two engines must be two different colours in the ${theme} theme`);
-  // Luminance alone would not catch two hues of the same brightness, so the separation is measured
-  // channel-wise: the two engines must be far apart in colour, not merely a shade lighter or darker.
-  assert.ok(channelGap(fe, se) >= 60,
-    `the two engine colours must be told apart in the ${theme} theme, not two shades of one`);
-  assert.ok(contrast(fe, onFe) >= 4.5,
-    `the label on the formula-engine segment must be legible in the ${theme} theme`);
-  assert.ok(contrast(se, onSe) >= 4.5,
-    `the label on the storage-engine segment must be legible in the ${theme} theme`);
-}
+// The two engines are chart steps 1 and 2 (green and blue, tokens.css), so they are never one hue; test/token-contrast.test.mjs
+// measures every step as text and checks that neighbouring steps differ, and that the old --sem-engine-* tokens stay gone.
+const tokensCss = read('webview/src/tokens.css');
+assert.match(tokensCss, /--sem-series-1:\s*var\(--sem-actor-semanticus\)/, 'the formula engine takes chart step 1');
+assert.match(tokensCss, /--sem-series-2:\s*var\(--sem-actor-you\)/, 'the storage engine takes chart step 2');
+assert.match(tokensCss, /--sem-on-series:\s*var\(--sem-bg\)/, 'the ink on a chart step is the page colour');
 
 const timings = daxlab.slice(daxlab.indexOf('function ServerTimingsView'), daxlab.indexOf('function ColdWarmView'));
 assert.ok(timings.length > 0, 'the server timings view must be found');
-assert.match(timings, /background: 'var\(--sem-engine-fe\)'/, 'the FE segment must take the formula-engine colour');
-assert.match(timings, /background: 'var\(--sem-engine-se\)'/, 'the SE segment must take the storage-engine colour');
-assert.match(timings, /color: 'var\(--sem-on-engine-fe\)'/, 'the FE segment label must take its own ink');
-assert.match(timings, /color: 'var\(--sem-on-engine-se\)'/, 'the SE segment label must take its own ink');
-assert.match(timings, /color: 'var\(--sem-engine-fe\)' \}\}>\{t\.feMs\}/, 'the formula-engine figure must match its segment');
-assert.match(timings, /color: 'var\(--sem-engine-se\)' \}\}>\{t\.seMs\}/, 'the storage-engine figure must match its segment');
-assert.match(timings, /color: 'var\(--sem-engine-se\)' \}\}>\{t\.seCacheHits\}/, 'SE cache hits are storage-engine work');
-assert.match(timings, /color: 'var\(--sem-engine-se\)' \}\}>\{s\.durationMs\}/, 'a storage scan is storage-engine work');
+assert.match(timings, /background: 'var\(--sem-series-1\)'/, 'the FE segment must take the formula-engine colour');
+assert.match(timings, /background: 'var\(--sem-series-2\)'/, 'the SE segment must take the storage-engine colour');
+assert.match(timings, /color: 'var\(--sem-on-series\)'/, 'the FE segment label must take its own ink');
+assert.match(timings, /color: 'var\(--sem-on-series\)'/, 'the SE segment label must take its own ink');
+assert.match(timings, /color: 'var\(--sem-series-1\)' \}\}>\{t\.feMs\}/, 'the formula-engine figure must match its segment');
+assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{t\.seMs\}/, 'the storage-engine figure must match its segment');
+assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{t\.seCacheHits\}/, 'SE cache hits are storage-engine work');
+assert.match(timings, /color: 'var\(--sem-series-2\)' \}\}>\{s\.durationMs\}/, 'a storage scan is storage-engine work');
 assert.doesNotMatch(timings, /var\(--sem-good\)/, 'no engine figure may keep the shared pass-green');
 assert.doesNotMatch(timings, /var\(--sem-accent\)/, 'no engine figure may keep the brand accent');
 
@@ -329,7 +284,7 @@ assert.doesNotMatch(timings, /`FE |`SE |\bSE (queries|cache|cpu)\b|'Subclass'|'x
 
 // The storage-engine stat table is the same engine, so it carries the same colour as the bar segment.
 const coldwarm = daxlab.slice(daxlab.indexOf('function ColdWarmView'), daxlab.indexOf('function QueryPlanView'));
-assert.match(coldwarm, /var\(--sem-engine-se\)/, 'the storage-engine table must be marked with the storage-engine colour');
+assert.match(coldwarm, /var\(--sem-series-2\)/, 'the storage-engine table must be marked with the storage-engine colour');
 
 console.log('engine colours passed');
 

@@ -85,7 +85,9 @@ ok('another layout mode is', () => assert.equal(isLayoutChange(view, { ...view, 
 ok('an arrange into another layout places and settles the cards by their new boxes only', () => {
   assert.deepEqual(layoutBox({ w: 190, h: 92 }, { width: 210, height: 92 }, false), { w: 190, h: 92 });   // Sales as Layered drew it
   assert.deepEqual(layoutBox({ w: 190, h: 92 }, { width: 190, height: 330 }, true), { w: 190, h: 330 });    // an open card still reserves its columns
-  assert.match(diagram, /layoutBox\(sizeForAnchors\(anchors\.get\(n\) \?\? EMPTY_ANCHORS\), rf\.getInternalNode\(n\)\?\.measured, !!expanded\[n\]\)/, 'arrangeWith passes whether a card is open');
+  // The matrix sizes its lookup tables itself (matrixSizer), so the anchors' box is `base`, and the open/closed rule is unchanged.
+  assert.match(diagram, /const ownSize: SizeOf = \(n\) => sizeForAnchors\(anchors\.get\(n\) \?\? EMPTY_ANCHORS\);/);
+  assert.match(diagram, /layoutBox\(base\(n\), rf\.getInternalNode\(n\)\?\.measured, !!expanded\[n\]\)/, 'arrangeWith passes whether a card is open');
   const old = new Map([['Sales', { w: 210, h: 92 }], ['Date', { w: 190, h: 92 }]]);
   const placed = [{ id: 'Sales', x: 0, y: 0, w: 190, h: 92 }, { id: 'Date', x: 286, y: 0, w: 190, h: 92 }];   // placed with the bus matrix's boxes
   assert.equal(reflowCards(placed, boxChanges(placed, old).prev, CARD_GAP).Date.x, 266);   // the old comparison pulls Date left by 20 again

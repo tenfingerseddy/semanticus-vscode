@@ -83,6 +83,14 @@ namespace Semanticus.Engine
         /// object, say). While a task with the same page and key is open on this model's plan, asking again
         /// returns that task instead of adding a second (Sol 6 slice 9 review). Null for a typed task.</summary>
         public string SendKey { get; set; }
+
+        /// <summary>For a task handed over from a row that lists findings or objects (the coverage rows, the cleanup): the keys it carries
+        /// (<c>rule|object</c> for a finding, an object ref for a removal). The task is done when ITS claims are gone; a finding that
+        /// appears later is on a row of its own. Null for every other task.</summary>
+        public string[] Claims { get; set; }
+
+        /// <summary>The objects a found row listed when it was given (see PlanTask.Carried).</summary>
+        public string[] Carried { get; set; }
     }
 
     public static class PlanTasks
@@ -104,7 +112,7 @@ namespace Semanticus.Engine
 
         // The state notes of contract 1.4, word for word.
         public const string OnNextCallNote = "when your assistant next checks the Plan";
-        public const string PausedByYouNote = "You paused your assistant's tasks. It gets this one when you turn them back on.";
+        public const string PausedByYouNote = "You paused your assistant's tasks. Ask your assistant to run the plan, or turn them back on.";
         public const string SinceLastCallNote = "since its last call";
         public const string YouTookItNote = "you took it";
 
@@ -164,13 +172,100 @@ namespace Semanticus.Engine
 
         public static bool IsOpenTask(PlanTask task) => task != null && !PlanTaskStates.IsClosed(task.State);
 
+        /// <summary>The claims of the open tasks handed over from a row that lists findings or objects: the work those tasks hold.</summary>
+        internal static IEnumerable<string> HeldClaimsOf(IEnumerable<PlanTask> tasks) =>
+            (tasks ?? Enumerable.Empty<PlanTask>())
+                .Where(t => t != null && IsOpenTask(t) && t.State != PlanTaskStates.SetAside && t.OriginLink?.Kind == PlanOriginKinds.Item)
+                .SelectMany(t => t.Claims ?? Array.Empty<string>());
+
+        /// <summary>A short stable hash of a set of claims, so the same set always has the same Send key (string.GetHashCode changes per process).</summary>
+        internal static string ClaimsHash(IEnumerable<string> claims)
+        {
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var bytes = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(string.Join("\n", claims.OrderBy(c => c, StringComparer.Ordinal))));
+            return BitConverter.ToString(bytes, 0, 6).Replace("-", "").ToLowerInvariant();
+        }
+
         /// <summary>The ids of found rows a task was given from ("Give to your assistant" on a found row). The task
         /// carries the work from then on, so the row is not shown, offered or run by itself, and once done it is Done
         /// once, as the task. A task set aside lets the row come back.</summary>
-        internal static HashSet<string> GivenRows(IEnumerable<PlanTask> tasks) =>
-            new HashSet<string>((tasks ?? Enumerable.Empty<PlanTask>())
-                .Where(t => t != null && t.State != PlanTaskStates.SetAside && t.OriginLink?.Kind == PlanOriginKinds.Item && !string.IsNullOrWhiteSpace(t.OriginLink.Ref))
+        internal static HashSet<string> GivenRows(IEnumerable<PlanTask> tasks, IEnumerable<ModelPlanItem> rows = null)
+        {
+            var current = (rows ?? Enumerable.Empty<ModelPlanItem>()).Where(i => i?.Id != null).GroupBy(i => i.Id, StringComparer.Ordinal).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            var openRows = OpenRowIds(current.Values);
+            return new HashSet<string>((tasks ?? Enumerable.Empty<PlanTask>())
+                // A task that holds claims holds only those: the row stays, minus what the task holds (HeldClaims).
+                // A task still to be done carries the row. So does one that is done and checked: it is the one Done row. Only a task that
+                // said done while the gap still stands ("checking") leaves the row on the Plan, so a finding is never on no open row (D1).
+                .Where(t => t != null && t.State != PlanTaskStates.SetAside && t.OriginLink?.Kind == PlanOriginKinds.Item && !string.IsNullOrWhiteSpace(t.OriginLink.Ref)
+                            && (t.Claims == null || t.Claims.Length == 0)
+                            && (IsOpenTask(t) || !IsChecking(t, openRows)))
+                // A row that lists something the task never carried is the row's work, not the task's (D1): it shows again.
+                .Where(t => t.Carried == null || t.Carried.Length == 0 || !current.TryGetValue(t.OriginLink.Ref, out var row)
+                            || (row.Writes ?? Array.Empty<string>()).Where(LocalEngine.IsObjectWrite).All(w => t.Carried.Contains(w, StringComparer.Ordinal)))
                 .Select(t => t.OriginLink.Ref), StringComparer.Ordinal);
+        }
+
+        /// <summary>What the tasks hide from the Plan list, worked out in ONE place so the rows, the tasks and the strip are counted from the same list
+        /// (fix-coverage3, Kane 13 Oct: "Plan done must show the right number", three patches that each fixed one pairing and broke another).
+        /// Each job is listed once, as a derived row OR as the task that holds it:
+        ///  - <see cref="DoneEntries"/>: rows whose own Done record is not listed or counted. A task that took the row's findings holds them
+        ///    (a coverage row is never stamped Done by a hand-over), and a finished claim-less task is the one Done entry.
+        ///  - <see cref="Tasks"/>: tasks that said done while their gap stands. The row is on the Plan again as the job, so the task is not listed beside it.
+        /// The strip's done ids leave out every id this hides.</summary>
+        internal sealed class Hidden
+        {
+            public readonly HashSet<string> DoneEntries = new HashSet<string>(StringComparer.Ordinal);
+            public readonly HashSet<string> Tasks = new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        /// <param name="derived">The derived rows as they stand now, before the tasks are listed beside them.</param>
+        /// <param name="passed">The ids of the tasks whose check passes on this model right now.</param>
+        internal static Hidden HiddenBy(IEnumerable<PlanTask> tasks, IEnumerable<ModelPlanItem> derived, ISet<string> passed)
+        {
+            var hidden = new Hidden();
+            var all = (tasks ?? Enumerable.Empty<PlanTask>()).Where(t => t != null).ToList();
+            var open = new Dictionary<string, ModelPlanItem>(StringComparer.Ordinal);
+            foreach (var i in derived ?? Enumerable.Empty<ModelPlanItem>())
+                if (i?.Id != null && (i.Status == ModelPlanStatuses.Ready || i.Status == ModelPlanStatuses.Proposed)) open.TryAdd(i.Id, i);
+            foreach (var t in all)
+            {
+                if (t.State == PlanTaskStates.SetAside || t.OriginLink?.Kind != PlanOriginKinds.Item || string.IsNullOrWhiteSpace(t.OriginLink.Ref)) continue;
+                var row = t.OriginLink.Ref;
+                var holds = t.Claims != null && t.Claims.Length > 0;
+                if (holds || t.State == PlanTaskStates.Done) hidden.DoneEntries.Add(row);
+                if (t.State != PlanTaskStates.Done || !(t.DoneWhen == PlanDoneWhen.ModelCheck || t.DoneWhen == PlanDoneWhen.HasWords)) continue;
+                // Said done, not proven. A claim-less task leaves its row on the Plan while the row is open; a task that holds claims leaves it
+                // only when that row lists the very findings the task held (a later finding on the row is another job).
+                // Or when a newer task holds them: the second hand-over of the same findings is the job, and the first is not listed beside it.
+                var checking = holds
+                    ? !(passed?.Contains(t.Id) ?? false)
+                      && ((open.TryGetValue(row, out var r) && Shares(LocalEngine.ClaimsOfRow(r), t.Claims))
+                          || all.Any(u => u != t && IsOpenTask(u) && u.State != PlanTaskStates.SetAside && Shares(u.Claims, t.Claims)))
+                    : open.ContainsKey(row);
+                if (checking) hidden.Tasks.Add(t.Id);
+            }
+            return hidden;
+        }
+
+        /// <summary>The ids of rows whose findings or objects a task holds (a coverage or cleanup row handed over): such a row that leaves the list left because
+        /// the task took its findings, which finishes nothing.</summary>
+        internal static HashSet<string> RowsHeldByClaims(IEnumerable<PlanTask> tasks) =>
+            new HashSet<string>((tasks ?? Enumerable.Empty<PlanTask>())
+                .Where(t => t != null && t.State != PlanTaskStates.SetAside && t.OriginLink?.Kind == PlanOriginKinds.Item && !string.IsNullOrWhiteSpace(t.OriginLink.Ref)
+                            && t.Claims != null && t.Claims.Length > 0)
+                .Select(t => t.OriginLink.Ref), StringComparer.Ordinal);
+
+        private static bool Shares(string[] a, string[] b) =>
+            a != null && b != null && a.Intersect(b, StringComparer.OrdinalIgnoreCase).Any();
+
+        private static HashSet<string> OpenRowIds(IEnumerable<ModelPlanItem> rows) =>
+            new HashSet<string>((rows ?? Enumerable.Empty<ModelPlanItem>()).Where(i => i?.Id != null && (i.Status == ModelPlanStatuses.Ready || i.Status == ModelPlanStatuses.Proposed)).Select(i => i.Id), StringComparer.Ordinal);
+
+        /// <summary>A done task the engine checks whose row is still open: it said done, the gap stands (the "checking" state word).</summary>
+        private static bool IsChecking(PlanTask t, HashSet<string> openRows) =>
+            t.State == PlanTaskStates.Done && (t.DoneWhen == PlanDoneWhen.ModelCheck || t.DoneWhen == PlanDoneWhen.HasWords)
+            && openRows.Contains(t.OriginLink.Ref);
 
         // ---- migration (contract 15) --------------------------------------------------------------------
 
@@ -302,7 +397,7 @@ namespace Semanticus.Engine
         /// compose, after anything that fills WaitsFor, so Waiting is read off the row itself.
         ///
         /// A derived row's facts come from its old status and change state; a task's from the task.</summary>
-        internal static void StampState(ModelPlanItem item, PlanTask task, bool doneByCheck, string queue, string[] gone = null)
+        internal static void StampState(ModelPlanItem item, PlanTask task, bool doneByCheck, string queue, string[] gone = null, Func<bool> assistantAway = null)
         {
             // An open task whose object was deleted needs the person: nobody can do it as it stands (UAT S12-5-006).
             gone = task != null && IsOpenTask(task) && gone is { Length: > 0 } ? gone : null;
@@ -313,6 +408,18 @@ namespace Semanticus.Engine
             var acceptedAll = false;
             // Only a row Semanticus itself runs: an assistant's or a person's row with unticked lines is theirs to finish and is never offered to Run the plan.
             var allDropped = task == null && item.Doer == PlanDoers.Semanticus && EveryLineDropped(item, out acceptedAll);
+            // NOTHING KEPT IS NOT THE PERSON'S BY DEFAULT (Kane, 13 Oct 2026: "Needs you" beside an Approve that could not be pressed). With
+            // every change unticked Semanticus has nothing to run, and choosing which to keep is a question the assistant asks in chat, then
+            // keeps them with set_plan_item and approves. So the row is the assistant's, Ready, and says so. The person can still tick lines
+            // on the row, or move it back to themselves.
+            if (allDropped && !acceptedAll)
+            {
+                item.Doer = PlanDoers.Assistant;
+                item.Who = WhoOf(PlanDoers.Assistant);
+                item.StateNote = string.IsNullOrWhiteSpace(item.ChangeSet?.FailureReason) ? AllUntickedNote
+                    : item.ChangeSet.FailureReason + " " + LocalEngine.OpenRowOnPlanSentence;
+                allDropped = false;
+            }
             if (task == null)
             {
                 facts = new PlanStateFacts
@@ -324,7 +431,7 @@ namespace Semanticus.Engine
                     Checking = item.State == ModelPlanItemStates.Applied,
                     OnIt = item.Status == ModelPlanStatuses.Running,
                     Held = item.Held,
-                    Waiting = waiting,
+                    Waiting = waiting || WaitsOnJev(item),
                     NeedsYou = item.Doer == PlanDoers.You || allDropped,
                 };
             }
@@ -348,17 +455,45 @@ namespace Semanticus.Engine
             }
 
             item.StateWord = StateWordOf(facts);
+            if (task == null && WaitsOnJev(item) && item.StateWord == PlanStateWords.Waiting && string.IsNullOrWhiteSpace(item.StateNote))
+                item.StateNote = JevWaitNote;
             if (allDropped && item.StateWord == PlanStateWords.SetAside && item.Status != ModelPlanStatuses.Skipped) item.StateNote = AllAcceptedNote;
-            else if (allDropped && item.StateWord == PlanStateWords.NeedsYou && item.Doer != PlanDoers.You)
-                item.StateNote = string.IsNullOrWhiteSpace(item.ChangeSet?.FailureReason) ? AllUntickedNote
-                    : item.ChangeSet.FailureReason + " " + LocalEngine.OpenRowOnPlanSentence;
             else item.StateNote = gone != null && item.StateWord == PlanStateWords.NeedsYou
                 ? PlanTaskObjects.GoneSentence(gone)
-                : NoteFor(item, task, queue);
+                : NoteFor(item, task, queue, assistantAway);
+            if (item.StateWord == PlanStateWords.Waiting && (string.IsNullOrWhiteSpace(item.StateNote) || item.StateNote == PlanFootprint.OrderedByPlanNote)) item.StateNote = WaitingNote(item, task, queue, assistantAway);
+            // A row the assistant leaves says why ON THE ROW (hero run 20, J2: four rows read only "Waiting, ask your assistant"). Its note
+            // (set_plan_task_note) leads the state note of an open assistant row, so "Needs a date column: none exists in this model" is what the person reads.
+            var assistants = (task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || item.Who == ModelPlanOwners.Assistant;
+            if (assistants && !string.IsNullOrWhiteSpace(item.AssistantNote)
+                && (item.StateWord == PlanStateWords.Ready || item.StateWord == PlanStateWords.Waiting)
+                && !(item.StateNote ?? string.Empty).StartsWith(item.AssistantNote.Trim(), StringComparison.Ordinal))
+                item.StateNote = (item.AssistantNote.Trim() + " " + item.StateNote).Trim();
         }
 
+        internal const string WaitingForAssistantNote = "Waiting for your assistant. Ask it to run the plan.";
+        internal const string AskAssistantNote = "Ask your assistant to run the plan.";
+
+        /// <summary>A Waiting row always says who it waits for and why (hero run 19, D16). An assistant row whose assistant is not
+        /// connected, or whose queue the person paused (By hand), says that instead of leaving "Waiting" with no one to wait for.</summary>
+        private static string WaitingNote(ModelPlanItem item, PlanTask task, string queue, Func<bool> assistantAway)
+        {
+            var mine = (task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || item.Who == ModelPlanOwners.Assistant;
+            if (mine && (queue == PlanAssistantQueue.Paused || (assistantAway?.Invoke() ?? false))) return WaitingForAssistantNote;
+            var first = item.WaitsFor is { Length: > 0 } ? item.WaitsFor[0] : null;
+            if (first == null) return "Waiting for " + (mine ? "your assistant" : "you") + ".";
+            var who = first.Doer switch { PlanDoers.You => "you", PlanDoers.Assistant => "your assistant", PlanDoers.Semanticus => "Semanticus", _ => "another task" };
+            return "Waiting for " + who + ": " + first.Title + (item.WaitsFor.Length > 1 ? " and " + (item.WaitsFor.Length - 1) + " more" : "")
+                 + ". It goes after " + (item.WaitsFor.Length > 1 ? "them" : "that task") + " because they change the same things.";
+        }
+
+        /// <summary>The row that says Jev stopped before it looked at everything. Nobody works it: Jev tries again after a later change or in the next session.</summary>
+        internal static bool WaitsOnJev(ModelPlanItem item) => item != null && string.Equals(item.Id, AiSchemaFamily.NotFinishedItemId, StringComparison.Ordinal);
+
+        internal const string JevWaitNote = "Jev tries again after the next change to the model, or in the next session. There is nothing for you or your assistant to do.";
+
         internal const string AllAcceptedNote = "You accepted every change on this task, so Semanticus has nothing to do. Take the acceptance off to bring it back.";
-        internal const string AllUntickedNote = "Every change on this task is unticked, so Run the plan skips it. Tick the ones you want, or set the task aside.";
+        internal const string AllUntickedNote = "Every change on this task is unticked, so Run the plan skips it. Your assistant keeps the ones that make sense. You can also tick them yourself.";
 
         /// <summary>The row has a worked-out set with lines, and not one of them is ticked. <paramref name="acceptedAll"/> is true when each of
         /// those lines was left out because the person accepted its finding (the notes the plan puts on such a line), not merely unticked.</summary>
@@ -376,7 +511,7 @@ namespace Semanticus.Engine
         /// <summary>The note beside the word. A note an earlier step already wrote is KEPT unless this word has
         /// a note of its own: lane E2 writes "Semanticus ordered these by the plan's order." on a row whose waits
         /// the plan's order decided, and a model with nowhere to keep things says so (E2's patch, 24 Sep).</summary>
-        private static string NoteFor(ModelPlanItem item, PlanTask task, string queue)
+        private static string NoteFor(ModelPlanItem item, PlanTask task, string queue, Func<bool> assistantAway = null)
         {
             switch (item.StateWord)
             {
@@ -388,8 +523,17 @@ namespace Semanticus.Engine
                     return string.IsNullOrWhiteSpace(task?.DeclineReason) ? item.StateNote : task.DeclineReason;
                 case PlanStateWords.Ready:
                     // Only a task for the assistant is offered, so only it carries the offer's note (contract 3.2).
-                    if (task != null && task.Doer == PlanDoers.Assistant)
-                        return queue == PlanAssistantQueue.Paused ? PausedByYouNote : task.ReleaseNote ?? OnNextCallNote;
+                    // A Ready assistant row with no assistant to take it (none connected, or By hand) says what to do (hero run 19, D16).
+                    // A note already written for the row (a restart, a failed line) keeps its place.
+                    if ((task != null ? task.Doer : item.Doer) == PlanDoers.Assistant || (task == null && item.Who == ModelPlanOwners.Assistant))
+                    {
+                        if (task != null && queue == PlanAssistantQueue.Paused) return PausedByYouNote;
+                        var written = task != null ? task.ReleaseNote : item.StateNote;
+                        if (!string.IsNullOrWhiteSpace(written)) return written;
+                        if (queue == PlanAssistantQueue.Paused) return PausedByYouNote;
+                        if (assistantAway?.Invoke() ?? false) return AskAssistantNote;
+                        if (task != null) return OnNextCallNote;
+                    }
                     return item.StateNote;
                 default:
                     return item.StateNote;
@@ -407,10 +551,16 @@ namespace Semanticus.Engine
             var objects = task.Objects ?? Array.Empty<string>();
             var jump = JumpFor(task);
 
+            var fromRow = task.OriginLink?.Kind == PlanOriginKinds.Item;
             var why = new List<string>
             {
-                task.OriginLink?.Kind == PlanOriginKinds.Item
+                // Hero run 21, N4: a row the assistant could not do says so FIRST, and no row says the person did what they did not.
+                fromRow && !string.IsNullOrWhiteSpace(task.DeclineReason)
+                    ? (task.DeclinedBy == PlanDoers.You ? "You could not do this: " : "Your assistant could not do this: ") + task.DeclineReason.Trim()
+                : fromRow && task.OriginLink.GivenBy == "you"
                     ? "You gave this to your assistant from the Plan on " + Day(task.CreatedUtc) + "."
+                : fromRow
+                    ? "Semanticus found this, and it went to your assistant on " + Day(task.CreatedUtc) + "."
                 : task.Source == PlanSources.You
                     ? "You sent this from " + (jump?.Label ?? "a page") + " on " + Day(task.CreatedUtc) + "."
                     : task.Source == PlanSources.Repeat
@@ -418,6 +568,8 @@ namespace Semanticus.Engine
                         : aim ? "You added this aim on " + Day(task.CreatedUtc) + "."
                         : "You added this on " + Day(task.CreatedUtc) + ".",
             };
+            // A given Fix task: Review lists more than it fixes (the Info notes and findings on other tasks), as the open Fix row says.
+            if (fromRow && task.OriginLink.Ref == LocalEngine.CoverageBpaItemId && !closed) why.Add(LocalEngine.ReviewAlsoListsWords);
             // What an aim always said: the engine cannot read the change out of the words, and where it is done
             // by hand, or that the words name no place (a guessed page would be worse than none).
             if (aim)
@@ -466,10 +618,12 @@ namespace Semanticus.Engine
                 Held = task.Held,
                 Order = task.Doer == PlanDoers.Assistant && !closed ? task.Order : null,
                 Note = task.Note,
+                AssistantNote = task.AssistantNote,
                 Reply = task.Reply,
                 FullText = task.FullText,
                 Claim = task.Claim == null ? null : new PlanClaimView { ClaimedBy = task.Claim.ClaimedBy, Since = task.Claim.ClaimedUtc },
                 OriginLink = task.OriginLink,
+                Claims = task.Claims is { Length: > 0 } ? task.Claims : null,   // the findings it holds, so the Plan can tell one job from another
                 // A row the person asked for. A task sent from a finding still names the rule, so the page that lists findings can say
                 // "On the plan" for it, and never offers to send it a second time.
                 Goal = PlanGoals.Aims,
@@ -511,6 +665,7 @@ namespace Semanticus.Engine
                 ? (task.State == PlanTaskStates.Done
                     ? "You added this aim. You marked it done."
                     : "You added this aim. Nothing in the model does it yet.")
+                : task.OriginLink?.Kind == PlanOriginKinds.Item ? "Found by Semanticus."
                 : task.Source == PlanSources.You ? "You added this." : "Your words.";
         }
 
@@ -641,13 +796,35 @@ namespace Semanticus.Engine
                     state.Residue = new Dictionary<string, PlanRowResidue>(
                         held.Residue.ToDictionary(p => p.Key, p => new PlanRowResidue
                         {
-                            Held = p.Value.Held, Doer = p.Value.Doer, Note = p.Value.Note, Absent = p.Value.Absent,
+                            Held = p.Value.Held, Doer = p.Value.Doer, Note = p.Value.Note, AssistantNote = p.Value.AssistantNote, Absent = p.Value.Absent,
                         }), StringComparer.Ordinal);
                     state.AssistantQueue = held.AssistantQueue;
                     state.Repeats = JsonSerializer.Deserialize<List<PlanRepeat>>(JsonSerializer.Serialize(held.Repeats, TaskCopy), TaskCopy);
                     state.ClearedDone = new List<string>(held.ClearedDone);
+                    // What the plan saw and what it saw finish, so work done on an unsaved model still counts (hero20 D3).
+                    state.Done = JsonSerializer.Deserialize<List<PlanDone>>(JsonSerializer.Serialize(held.Done, TaskCopy), TaskCopy);
+                    state.LastItems = JsonSerializer.Deserialize<List<PlanSeenItem>>(JsonSerializer.Serialize(held.LastItems, TaskCopy), TaskCopy);
                 }
                 return state;
+            }
+
+            // The model got its first file: what the plan kept while it had none moves into the file, once, so the done rows and the
+            // percentage carry over and do not start again at nothing (hero20 D3, the 0% after the assistant saved).
+            if (_sessionPlanTasks.TryGetValue(bound.Context, out var carried))
+            {
+                bool any;
+                lock (carried) any = carried.Done.Count > 0 || carried.LastItems.Count > 0 || carried.ClearedDone.Count > 0;
+                if (any && PlanMemory.Mutate(bound.File, bound.Identity, file =>
+                {
+                    lock (carried)
+                    {
+                        foreach (var d in carried.Done) if (!file.Done.Any(x => x.ItemId == d.ItemId)) file.Done.Add(d);
+                        foreach (var id in carried.ClearedDone) if (!file.ClearedDone.Contains(id)) file.ClearedDone.Add(id);
+                        if (file.LastItems.Count == 0) file.LastItems = carried.LastItems.ToList();
+                        carried.Done.Clear(); carried.ClearedDone.Clear(); carried.LastItems.Clear();
+                    }
+                }))
+                    state = PlanMemory.Read(bound.File, bound.Identity);
             }
 
             // A claim made by an engine run that has ended is released on read, with the restart line (lane E3,
@@ -751,7 +928,11 @@ namespace Semanticus.Engine
         ///
         /// Posting needs no assistant attached: the task is stored in the Plan's own file either way, and the
         /// queue only delivers it. Free on every tier: asking for a task runs no Jev.</summary>
-        public async Task<ModelPlanActionResult> AddPlanTaskAsync(PlanTaskRequest request)
+        public Task<ModelPlanActionResult> AddPlanTaskAsync(PlanTaskRequest request) => AddPlanTaskAsync(request, compose: true);
+
+        /// <summary>The same add. <paramref name="compose"/> false skips working out the whole plan to hand back (seconds on a large model) and the push to the
+        /// page: a caller adding several tasks at once (Fix them) composes and pushes once at the end, and the result's Plan is empty.</summary>
+        internal async Task<ModelPlanActionResult> AddPlanTaskAsync(PlanTaskRequest request, bool compose)
         {
             var words = request?.Words?.Trim();
             if (string.IsNullOrEmpty(words))
@@ -839,12 +1020,15 @@ namespace Semanticus.Engine
                     Id = id,
                     Words = words,
                     FullText = fullText,
-                    Source = page == null || suggested ? PlanSources.Words : PlanSources.You,
+                    Source = origin?.Kind == PlanOriginKinds.Item && !string.IsNullOrWhiteSpace(origin.RowSource) ? origin.RowSource
+                           : page == null || suggested ? PlanSources.Words : PlanSources.You,
                     SourcePage = page,
                     FieldPage = fieldPage,
                     Brief = brief,
                     Doer = doer,
                     Objects = named ?? objects,
+                    Claims = (request.Claims ?? Array.Empty<string>()).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                    Carried = (request.Carried ?? Array.Empty<string>()).Where(c => !string.IsNullOrWhiteSpace(c)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                     Grounds = grounds,
                     DoneWhen = doneWhen,
                     Slot = slot,
@@ -853,6 +1037,8 @@ namespace Semanticus.Engine
                         Kind = origin?.Kind ?? (page == null ? PlanOriginKinds.Words : PlanOriginKinds.Page),
                         Ref = origin != null ? origin.Ref : page,
                         SendKey = sendKey,
+                        GivenBy = origin?.GivenBy,
+                        RowSource = origin?.RowSource,
                     },
                     Order = doer == PlanDoers.Assistant ? PlanTasks.NextOrder(memory) : (int?)null,
                     CreatedUtc = DateTimeOffset.UtcNow,
@@ -860,14 +1046,14 @@ namespace Semanticus.Engine
                 });
             });
 
-            var plan = await ComposeAsync(null, bound).ConfigureAwait(false);
-            TellThePlanMoved(bound);
+            var plan = compose ? await ComposeAsync(null, bound).ConfigureAwait(false) : null;
+            if (compose) TellThePlanMoved(bound);
             return new ModelPlanActionResult
             {
                 ItemId = id,
                 Action = "add",
                 Performed = false,
-                Revision = plan.Revision,
+                Revision = plan?.Revision ?? bound.Session.Revision,
                 Plan = plan,
                 Sentence = existing
                     ? "This is already on the plan. Nothing was added."
@@ -887,12 +1073,14 @@ namespace Semanticus.Engine
         public Task<ModelPlanView> HoldPlanItemAsync(string id, bool held) =>
             ChangeRowAsync(id, task => task.Held = held, residue => residue.Held = held);
 
-        /// <summary>One note from the person on a row, or none. Empty clears it.</summary>
-        public Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text)
+        /// <summary>One note on a row, or none. The person's and the assistant's are kept apart: each writer sets and clears only its own.</summary>
+        public Task<ModelPlanView> SetPlanTaskNoteAsync(string id, string text, string origin = "human")
         {
             var note = string.IsNullOrWhiteSpace(text) ? null : text.Trim();
             if (note != null && note.Length > PlanTasks.MaxNoteChars)
                 throw new ArgumentException("That note is longer than " + PlanTasks.MaxNoteChars + " characters.", nameof(text));
+            if (string.Equals(origin, "agent", StringComparison.Ordinal))
+                return ChangeRowAsync(id, task => task.AssistantNote = note, residue => residue.AssistantNote = note);
             return ChangeRowAsync(id, task => task.Note = note, residue => residue.Note = note);
         }
 
@@ -910,7 +1098,7 @@ namespace Semanticus.Engine
             var key = id?.Trim();
             if (to == PlanDoers.Assistant && !string.IsNullOrEmpty(key) && !PlanTasks.IsTaskId(key)
                 && ReadPlanState(BindPlanMemory()).FindTask(key) == null)
-                return (await GiveRowToAssistantAsync(key).ConfigureAwait(false)).Plan;
+                return (await GiveRowToAssistantAsync(key, string.Equals(origin, "agent", StringComparison.Ordinal) ? "assistant" : "you").ConfigureAwait(false)).Plan;
 
             PlanTask given = null;
             var plan = await ChangeRowAsync(id,
@@ -926,7 +1114,7 @@ namespace Semanticus.Engine
                     if (task.Doer == to && !declined) return;
                     if (task.DoneWhen == PlanTasks.DefaultDoneWhen(task.Doer)) task.DoneWhen = PlanTasks.DefaultDoneWhen(to);
                     task.Doer = to;
-                    task.DeclineReason = null;   // a new claim cycle: no claim, no reason, a place in the order
+                    task.DeclineReason = null; task.DeclinedBy = null;   // a new claim cycle: no claim, no reason, a place in the order
                     task.Claim = null;
                     task.ReleaseNote = null;
                     task.Order = null;
@@ -957,11 +1145,15 @@ namespace Semanticus.Engine
             return plan;
         }
 
+        /// <summary>A row's Writes entry that names an object (a "table:", "column:" ... ref), not the model itself.</summary>
+        internal static bool IsObjectWrite(string w) =>
+            !string.IsNullOrWhiteSpace(w) && w.Contains(':') && !w.StartsWith("model:", StringComparison.OrdinalIgnoreCase);
+
         /// <summary>A found or Jev row, given to the assistant, becomes one task linked back to it (origin "item"). The
         /// task names what the row names, carries the row's own words as its brief, and is checked the way the row is:
         /// descriptions by their words on the named objects, anything else by the row's gap being gone. Giving the same
         /// row again while its task is open is that task (the Send key).</summary>
-        private async Task<ModelPlanActionResult> GiveRowToAssistantAsync(string key)
+        private async Task<ModelPlanActionResult> GiveRowToAssistantAsync(string key, string givenBy = "you")
         {
             var bound = BindPlanMemory();
             var plan = await ComposeAsync(null, bound).ConfigureAwait(false);
@@ -983,17 +1175,21 @@ namespace Semanticus.Engine
                 throw new ArgumentException("That task is done or set aside, so there is nothing to hand over.", "id");
 
             var objects = (row.Writes ?? Array.Empty<string>())
-                .Where(w => !string.IsNullOrWhiteSpace(w) && w.Contains(':') && !w.StartsWith("model:", StringComparison.OrdinalIgnoreCase))
+                .Where(IsObjectWrite)
                 .Distinct(StringComparer.Ordinal).ToArray();
             var words = row.Id.StartsWith("describe/", StringComparison.Ordinal) && objects.Length > 0;
             // The words row's task names the one call that hands over the whole list, first, so no page limit on the
             // brief can cut it: its diff lists only the first objects (verify, 28 Sep, M6).
+            // The row's own Brief (Done when / Default, set by AssistantDefaults) goes right after the title, so the assistant that takes the row by
+            // hand-over or through Run the plan reads when it is done and the choice to make (hands-off verifier line).
             var brief = string.Join("\n", new[] { row.Title + "." }
+                .Concat(string.IsNullOrWhiteSpace(row.Brief) ? Array.Empty<string>() : new[] { row.Brief })
                 .Concat(IsWordsItem(row.Id) ? new[] { WordsTaskLine } : Array.Empty<string>())
                 .Concat(row.Why ?? Array.Empty<string>())
                 .Concat((row.Diff ?? Array.Empty<string>()).Take(40))
                 .Where(x => !string.IsNullOrWhiteSpace(x)));
             var title = row.Title ?? row.Id;
+            var claims = ClaimsOfRow(row);
             return await AddPlanTaskAsync(new PlanTaskRequest
             {
                 Words = title.Length <= PlanTasks.MaxWordsChars ? title : title.Substring(0, PlanTasks.MaxWordsChars - 3).TrimEnd() + "...",
@@ -1002,8 +1198,12 @@ namespace Semanticus.Engine
                 Brief = brief.Length <= PlanTasks.MaxBriefChars ? brief : brief.Substring(0, PlanTasks.MaxBriefChars),
                 Objects = objects,
                 DoneWhen = words ? PlanDoneWhen.HasWords : PlanDoneWhen.ModelCheck,
-                OriginLink = new PlanOriginLink { Kind = PlanOriginKinds.Item, Ref = row.Id },
-                SendKey = "item:" + row.Id,
+                OriginLink = new PlanOriginLink { Kind = PlanOriginKinds.Item, Ref = row.Id, GivenBy = givenBy, RowSource = row.Source },
+                // The coverage rows and the cleanup keep one id while their contents change, so a second hand-over (new findings after
+                // the first) is a second task: the key carries what the task holds.
+                Claims = claims,
+                Carried = claims.Length == 0 ? objects : null,
+                SendKey = "item:" + row.Id + (claims.Length == 0 ? "" : "#" + PlanTasks.ClaimsHash(claims)),
             }).ConfigureAwait(false);
         }
 

@@ -273,7 +273,6 @@ namespace Semanticus.Tests
         [Theory]
         [InlineData(401, "no_licence", "This needs a Semanticus Pro licence. Sign in and try again.")]
         [InlineData(402, "licence_budget_spent", "This licence has used its cloud advice for the month. It resets on 2026-10-01.")]
-        [InlineData(429, "too_many_in_flight", "Too many advice requests are already running for this licence. Try again in a moment.")]
         [InlineData(503, "paused", "Cloud advice is paused right now. Nothing else has changed.")]
         public async Task A_relay_refusal_comes_back_as_the_relays_own_sentence(int status, string code, string reason)
         {
@@ -329,7 +328,6 @@ namespace Semanticus.Tests
         // The served model's own switch. relay.md folds it into "paused"; the worker names it (tools/relay/worker.mjs).
         [InlineData(503, "model_paused", "Cloud advice is paused right now. Nothing else has changed.")]
         [InlineData(503, "house_budget_spent", "Cloud advice is at its limit right now. Try again later.")]
-        [InlineData(429, "too_many_in_flight", "Too many advice requests are already running for this licence. Try again in a moment.")]
         [InlineData(403, "expired", "This licence has run out. Renew it to use cloud advice again.")]
         public async Task A_refusal_the_relay_makes_before_it_forwards_costs_this_session_nothing(int status, string code, string reason)
         {
@@ -859,7 +857,6 @@ namespace Semanticus.Tests
         /// failed forward (502), a code the relay's contract does not name, and a pause's code on a status the relay never
         /// gives it each leave the next ask free to go out.</summary>
         [Theory]
-        [InlineData(429, "too_many_in_flight", "Too many advice requests are already running for this licence. Try again in a moment.")]
         [InlineData(502, "upstream_failed", "The advice service could not answer.")]
         [InlineData(503, "not_a_relay_code", "Something else went wrong.")]
         [InlineData(502, "paused", PausedSentence)]

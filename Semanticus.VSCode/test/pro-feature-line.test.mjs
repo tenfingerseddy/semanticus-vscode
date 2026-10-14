@@ -231,29 +231,19 @@ assert.match(instructionsCard, /rpc<PrimerSuggestionList>\('listPrimerSuggestion
 assert.match(knowledge, /acceptPrimerSuggestion/, 'Accept must exist on a free surface');
 assert.match(knowledge, /rejectPrimerSuggestion/, 'Reject must exist on a free surface');
 assert.doesNotMatch(instructionsCard, /acceptPrimerSuggestion/, 'the Instructions tab does not repeat the decision');
-// set_compatibility_level lost its only control to Pro Advanced Modelling. It is free, so the Overview's model card
-// carried it, and since slice 11 the Plan's facts line does (contract 11.1), only when the level is actually
-// blocking something.
-// Tied to a NAMED blocked capability, not to the number being low. Round one treated every level under
-// 1701 as an active blocker and told the person date calculations needed it, which is false: advmodels.tsx
-// offers the classic date-table approach below 1701 and it works. Calendars are the one thing refused.
-assert.match(planPage, /const LEVEL_BLOCKS: \{ capability: string; floor: number \}\[\]/,
+// set_compatibility_level lost its only control to Pro Advanced Modelling. It is free. Since 13 Oct 2026 the Plan's "Raise compatibility
+// level" row is the ENGINE's (compat/raise, the assistant's row: the raise goes one way, so the assistant asks in chat, then calls the
+// tool), and it exists only while the level blocks a named capability. The page draws no row of its own.
+const planEngine = read('../Semanticus.Engine/Plan/LocalEngine.PlanCoverage.cs');
+assert.match(planEngine, /private static readonly \(string Capability, int Floor\)\[\] LevelBlocks/,
   'what a level blocks is a list of named capabilities, not a bare constant');
-assert.match(planPage, /\{ capability: 'Custom calendars for time calculations', floor: 1701 \}/, 'and custom calendars are the capability 1701 unblocks');   // named in Power BI words by 6343ed4b
-assert.match(planPage, /return LEVEL_BLOCKS\.find\(\(entry\) => level < entry\.floor\) \?\? null;/,
-  'the prompt shows only when a named capability is actually below its floor');
-assert.match(planPage, /if \(typeof level !== 'number' \|\| level <= 0\) return null;/,
-  'an unknown level blocks nothing, because "not known to be blocking" is not "blocking"');
-assert.match(planPage, /\{blocked\.capability\} need level \{blocked\.floor\} or higher\./,   // wording from h16-words
-  'the sentence names the one capability that is refused, and claims nothing wider');
+assert.match(planEngine, /\("Custom calendars for time calculations", 1701\)/, 'and custom calendars are the capability 1701 unblocks');
+assert.match(planEngine, /if \(level <= 0\) return null;/, 'an unknown level blocks nothing, because "not known to be blocking" is not "blocking"');
+assert.match(planEngine, /Raise compatibility level to /, 'the row says what it does');
+assert.match(planEngine, /Who = ModelPlanOwners\.Assistant/, 'and it is the assistant\'s row');
+assert.doesNotMatch(planPage, /plan-raise-level|blockedCapability|LEVEL_BLOCKS/, 'the page keeps no control or list of its own');
 assert.doesNotMatch(planPage, /Calendars and date calculations need/,
   'the old, too-broad claim must be gone: date calculations work below 1701');
-assert.match(planPage, /rpc\('setCompatibilityLevel', blocked\.floor\)/, 'the free control calls the free operation');
-assert.match(planPage, /<RaiseLevelAction key=\{sessionId\} level=\{compatibilityLevel\}/,
-  'and its done state resets per model, because App renders the Plan unkeyed');
-assert.match(app, /compatibilityLevel=\{session\.compatibilityLevel\}/, 'App hands the Plan the session\'s level');
-assert.match(planPage, /data-testid="plan-raise-level"/, 'the driver selects the action by a stable id');
-assert.match(planPage, /Raise compatibility level/, 'the action says what it does');
 
 // ── 7. Connections reads source usage from free reads only ──────────────────────────────────────────
 // Slice C (lane C2, 24 Sep): the SQL sources section left Connections; each model now has one SQL endpoint, and

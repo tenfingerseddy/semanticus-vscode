@@ -11,7 +11,7 @@
 // and it mirrors LicenseEntitlement.Evaluate's expiry POLICY: exp 0 is perpetual, and a lapsed token stays
 // Pro for GraceDays past exp. The engine keeps a paying subscriber working through a failed renewal charge;
 // refusing their cloud advice for the same two weeks would be the relay quietly disagreeing with the
-// product. Revocation is the subscription status check in the worker, not the grace window.
+// product. A token with trial: true gets no grace at all, again matching the engine. Revocation is the subscription status check in the worker, not the grace window.
 
 export const GRACE_DAYS = 14;
 const GRACE_MS = GRACE_DAYS * 86_400_000;
@@ -84,7 +84,9 @@ export async function verifyLicence(token, spkiBase64, nowMs) {
     if (exp !== 0) {
         const expMs = exp * 1000;
         if (nowMs > expMs) {
-            if (nowMs > expMs + GRACE_MS) {
+            // A Pro trial ends exactly at exp, the same instant the engine drops it to Free. Grace exists to
+            // carry a paying subscriber through a failed renewal charge; a trial has no charge to fail.
+            if (claims.trial === true || nowMs > expMs + GRACE_MS) {
                 return refuse('expired', 'This licence has run out. Renew it to use cloud advice again.');
             }
             inGrace = true;

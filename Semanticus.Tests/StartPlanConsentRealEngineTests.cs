@@ -242,19 +242,17 @@ namespace Semanticus.Tests
         }
 
         [Fact]
-        public async Task A_grant_needs_the_models_own_permission_and_the_digest_the_person_saw()
+        public async Task One_grant_gives_the_models_permission_and_needs_the_digest_the_person_saw()
         {
             var r = await StartAsync(consent: false);
-            var noPermission = await Assert.ThrowsAsync<InvalidOperationException>(() => r.Engine.GrantStartDisclosureAsync(r.Digest, "human"));
-            Assert.Contains("permission", noPermission.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Null(r.Engine.StartPlanDocForTest().Disclosure);
-            Assert.False((await AskAsync(r, "Sales")).Asked);
-
-            await r.Engine.SetConsentAsync(DecisionRegistry.DeclaredFields.ToArray(), DecisionRegistry.ConsentSchemaVersion, "human");
+            Assert.False((await r.Engine.GetConsentAsync()).Current);
             await Assert.ThrowsAsync<InvalidOperationException>(() => r.Engine.GrantStartDisclosureAsync("a-digest-nobody-saw", "human"));
             Assert.Null(r.Engine.StartPlanDocForTest().Disclosure);
+            Assert.False((await r.Engine.GetConsentAsync()).Current);   // a refused grant gives nothing
+            Assert.False((await AskAsync(r, "Sales")).Asked);
 
-            await r.Engine.GrantStartDisclosureAsync(r.Digest, "human");
+            await r.Engine.GrantStartDisclosureAsync(r.Digest, "human");   // D2: one yes is the model's permission and the plan's tables
+            Assert.True((await r.Engine.GetConsentAsync()).Current);
             Assert.NotNull(r.Engine.StartPlanDocForTest().Disclosure);
             Assert.True((await AskAsync(r, "Sales")).Asked);
         }

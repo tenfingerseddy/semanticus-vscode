@@ -248,7 +248,18 @@ async function handleDecide(request, env, { upstreamFetch, now }) {
             'The advice service did not answer in time.'), timedOut ? 'upstream_timeout' : 'upstream_failed');
     }
 
-    const text = await response.text();
+    // The body can die after the headers arrive (a reset, the deadline firing mid-read). The vendor has the
+    // request, so it stays possibly charged: stuck, never forwarded-forever and never thrown past the ledger.
+    let text;
+    try {
+        text = await response.text();
+    } catch (error) {
+        await stick(env, identity.id, attemptId, now());
+        const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+        return finish(refusal(timedOut ? 504 : 502,
+            timedOut ? 'upstream_timeout' : 'upstream_failed',
+            'The advice service did not answer in time.'), timedOut ? 'upstream_timeout' : 'upstream_failed');
+    }
 
     if (!response.ok) {
         if (response.status >= 500 || response.status === 429) {

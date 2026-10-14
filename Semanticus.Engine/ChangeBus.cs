@@ -163,6 +163,11 @@ namespace Semanticus.Engine
         public void PublishStudioSuggest(StudioSuggestion v) => PublishIsolated(StudioSuggest, v);
 
         /// <summary>Fired when the assistant asked a data question (ask_data). Broadcast as <c>studio/answer</c> so the Ask page shows it.</summary>
+        /// <summary>The Next line changed (1.5). Broadcast as <c>studio/nextStep</c>; fired only when the view itself changes.</summary>
+        public event Action<NextStepView> StudioNextStep;
+
+        public void PublishStudioNextStep(NextStepView v) => PublishIsolated(StudioNextStep, v);
+
         public event Action<StudioAnswer> StudioAnswer;
 
         public void PublishStudioAnswer(StudioAnswer v) => PublishIsolated(StudioAnswer, v);
@@ -171,6 +176,14 @@ namespace Semanticus.Engine
         public event Action<AgentCallEvent> AgentCall;
 
         public void PublishAgentCall(AgentCallEvent v) => PublishIsolated(AgentCall, v);
+
+        /// <summary>Fired when the running entitlement changed: a licence applied or removed, or a licence passing its end
+        /// while the engine runs (a free Pro month ending, a paid licence going into or out of grace). The RpcServer
+        /// re-broadcasts it as <c>entitlement/didChange</c> with the whole get_entitlement answer, so a Studio left open
+        /// changes on time. The agent door reads it on its next call, as it learns of every change.</summary>
+        public event Action<Entitlement.EntitlementInfo> EntitlementChanged;
+
+        public void PublishEntitlement(Entitlement.EntitlementInfo info) => PublishIsolated(EntitlementChanged, info);
 
         /// <summary>Set by the RpcServer: true while a person's Studio connection is attached. show_in_studio answers "noStudio" without it.</summary>
         public Func<bool> HumanClientAttached { get; set; }

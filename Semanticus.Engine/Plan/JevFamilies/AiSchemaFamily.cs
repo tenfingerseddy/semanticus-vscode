@@ -108,11 +108,23 @@ namespace Semanticus.Engine
         {
             var count = "Jev has looked at " + looked.ToString("N0", System.Globalization.CultureInfo.InvariantCulture) + " of "
                         + JevFamily.Count(total, "thing", "things") + " in this model so far.";
-            if (restFollow) return count + " The rest follow.";
+            if (restFollow && string.Equals(stopReason, LookingAgain, StringComparison.Ordinal)) return count + " " + LookingAgain;
+            if (restFollow) return JevDecisionOracle.IsCrowded(stopReason) ? count + " " + JevDecisionOracle.CrowdedReason : count + " The rest follow.";
             if (string.IsNullOrWhiteSpace(stopReason))
                 return count + " This session has used its suggestion budget, so the rest wait for the next session.";
             if (JevDecisionOracle.IsNotAvailable(stopReason)) return looked == 0 ? null : count;
             return count + " " + AsSentence(stopReason);
+        }
+
+        /// <summary>The line a row carries from the moment a stopped job starts again until it lands. It replaces the old refusal text; the row stays, so the page does not flicker.</summary>
+        internal const string LookingAgain = "Jev is looking again.";
+
+        /// <summary>The calm line a row carries while the relay is crowded and Jev's asks wait their turn: "Jev is waiting its turn, 0:12."</summary>
+        internal static string WaitingLine(TimeSpan waited)
+        {
+            if (waited < TimeSpan.Zero) waited = TimeSpan.Zero;
+            return "Jev is waiting its turn, " + ((int)waited.TotalMinutes).ToString(System.Globalization.CultureInfo.InvariantCulture)
+                   + ":" + waited.Seconds.ToString("00", System.Globalization.CultureInfo.InvariantCulture) + ".";
         }
 
         /// <summary>A reason in the service's own words as one sentence: a capital at the front and a full stop at

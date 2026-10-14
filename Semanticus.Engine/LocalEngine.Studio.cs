@@ -30,11 +30,10 @@ namespace Semanticus.Engine
         /// <summary>The clock the Studio's notes use. A test moves it; nothing else does.</summary>
         internal Func<DateTime> StudioClock { get; set; } = () => DateTime.UtcNow;
         internal static readonly TimeSpan StudioExplicitWins = TimeSpan.FromSeconds(10);
-        internal static readonly TimeSpan StudioAutoSpacing = TimeSpan.FromSeconds(3);
         internal static readonly TimeSpan StudioBurstGap = TimeSpan.FromSeconds(20);
         private DateTime _studioLastShow = DateTime.MinValue;
         private string _studioLastShowPress;
-        private DateTime _studioLastAuto = DateTime.MinValue;
+        private string _studioLastShowPlace;
         private AutoRun _studioRun;
         private readonly Dictionary<string, StudioAnswer> _studioAnswer = new Dictionary<string, StudioAnswer>(StringComparer.Ordinal);
         private readonly HashSet<string> _studioProNotices = new HashSet<string>(StringComparer.Ordinal);
@@ -71,6 +70,7 @@ namespace Semanticus.Engine
             {
                 _studioLastShow = StudioClock();   // an explicit show speaks for itself: the engine stays quiet for a while
                 _studioLastShowPress = press;
+                _studioLastShowPlace = place.Id;
                 _studioRun = null;
                 var key = sessionId ?? "";
                 if (!_studioNotes.TryGetValue(key, out var ring)) _studioNotes[key] = ring = new List<StudioNote>();
@@ -168,24 +168,24 @@ namespace Semanticus.Engine
             }
         }
 
-        public Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null)
+        public Task NoteAgentCallAsync(string tool, string focus = null, string client = null, string clientVersion = null, bool? commit = null)
         {
             _sessions.Bus.PublishAgentCall(new AgentCallEvent
             {
                 SessionId = _sessions.SessionId, Call = HealthCorrelation.CurrentId, Tool = tool, At = DateTime.UtcNow.ToString("o"),
                 Assistant = ReadAssistant(client, clientVersion),
             });
-            Follow(tool, focus);
+            Follow(tool, focus, commit);
             return Task.CompletedTask;
         }
 
         /// <summary>Follow (1.4): the assistant made 190 calls and 2 shows, so the engine narrates for it. A call whose tool the place map lists
-        /// adds one automatic note when no show spoke in the last 10 seconds and the place or object differs from the last note's; at most one
-        /// new note every 3 seconds; a burst of the same kind on one place updates that note's count instead of adding more. An explicit show
+        /// adds one automatic note when no show spoke for that place in the last 10 seconds and the place or object differs from the last note's;
+        /// a call that goes to another place always gets its note, however soon after the last (the Studio paces the moves, not the engine); a burst of the same kind on one place updates that note's count instead of adding more. An explicit show
         /// always wins. Nothing here moves a screen: the Studio's driver store decides that.
         /// Two kinds of call always get their own note (hero15): a call that presses a control on screen (the press map), so the Studio's cursor
         /// draws on it, unless the assistant's show already named that press; and a call that changes the plan (Always in the place map).</summary>
-        private void Follow(string tool, string focus)
+        private void Follow(string tool, string focus, bool? commit = null)
         {
             // These calls narrate their measured result after they commit, including rejected items and no-ops.
             if (tool is "waive_findings" or "write_words" or "edit_objects" or "create_measures" or "delete_objects" or "unwaive_findings" or "apply_fixes" or "duplicate_objects" or "set_doc_sections" or "set_perspective_members" or "set_object_permissions" or "set_plan_items" or "add_plan_items" or "edit_start_plans" or "plan_rows") return;
@@ -193,13 +193,18 @@ namespace Semanticus.Engine
             if (say == null || _sessions.Bus.HumanClientAttached?.Invoke() != true) return;
             focus = string.IsNullOrWhiteSpace(focus) || focus.IndexOf(':') < 1 ? null : focus.Trim();
             var press = StudioMaps.PressFor(tool);
+            // A dry run presses nothing: the note names it as a preview and the cursor stays still (h17 P8: four previews read as four Publish presses).
+            string previewSay = null;
+            if (press != null && commit == false && !string.IsNullOrWhiteSpace(press.PreviewSay)) { previewSay = press.PreviewSay; press = null; }
             var place = (press != null ? StudioMaps.FindPlace(press.Place) : null) ?? say.Place;
             var always = press != null || say.Always;
             StudioNote publish;
             lock (_studioGate)
             {
                 var now = StudioClock();
-                if (now - _studioLastShow < StudioExplicitWins && (press == null || press.Id == _studioLastShowPress)) return;
+                // A show speaks for its own place only. A tool that works on another place is the assistant moving on, and the screen goes with it
+                // (drive follow, Kane 13 Oct: "checking BPA but stay on AI readiness").
+                if (now - _studioLastShow < StudioExplicitWins && place.Id == _studioLastShowPlace && (press == null || press.Id == _studioLastShowPress)) return;
                 var sessionId = _sessions.SessionId;
                 var key = sessionId ?? "";
                 _studioNotes.TryGetValue(key, out var ring);
@@ -210,7 +215,7 @@ namespace Semanticus.Engine
                     run.Count++; run.LastAt = now;
                     var updated = Copy(last);
                     updated.Count = run.Count;
-                    updated.Say = Clip(say.CountSentence(run.Count));
+                    updated.Say = Clip(previewSay ?? say.CountSentence(run.Count));
                     ring[ring.Count - 1] = updated;
                     publish = Copy(updated);
                     publish.Update = true;
@@ -218,11 +223,10 @@ namespace Semanticus.Engine
                 else
                 {
                     if (!always && last != null && last.Place == place.Id && string.Equals(last.Focus, focus, StringComparison.Ordinal)) return;
-                    if (!always && now - _studioLastAuto < StudioAutoSpacing) return;
                     var note = new StudioNote
                     {
                         Id = "sn-" + Guid.NewGuid().ToString("N").Substring(0, 12),
-                        Say = Clip(press?.Say ?? say.Say), How = place.How, Place = place.Id, Focus = focus, Press = press?.Id,
+                        Say = Clip(press?.Say ?? previewSay ?? say.Say), How = place.How, Place = place.Id, Focus = focus, Press = press?.Id,
                         At = now.ToString("o"), By = "assistant", Auto = true,
                         Call = HealthCorrelation.CurrentId, SessionId = sessionId,
                     };
@@ -230,7 +234,6 @@ namespace Semanticus.Engine
                     ring.Add(note);
                     if (ring.Count > StudioNoteRing) ring.RemoveRange(0, ring.Count - StudioNoteRing);
                     _studioRun = new AutoRun { NoteId = note.Id, Say = say.Say, Place = place.Id, Count = 1, LastAt = now };
-                    _studioLastAuto = now;
                     publish = Copy(note);
                 }
             }
@@ -257,7 +260,6 @@ namespace Semanticus.Engine
                 ring.Add(note);
                 if (ring.Count > StudioNoteRing) ring.RemoveRange(0, ring.Count - StudioNoteRing);
                 _studioRun = null;
-                _studioLastAuto = StudioClock();
             }
             _sessions.Bus.PublishStudioShow(note);
         }
@@ -271,7 +273,7 @@ namespace Semanticus.Engine
         };
 
         // A completed step has its own measured result. Tool-call burst counts cannot stand in for its fixes.
-        private void NoteProStep(string sessionId, string rowId, string say, bool upgrade = false, string placeId = "plan")
+        private void NoteProStep(string sessionId, string rowId, string say, bool upgrade = false, string placeId = "plan", string by = "assistant")
         {
             var place = StudioMaps.FindPlace(placeId);
             StudioNote note;
@@ -282,25 +284,25 @@ namespace Semanticus.Engine
                 note = new StudioNote
                 {
                     Id = "sn-" + Guid.NewGuid().ToString("N").Substring(0, 12), Say = Clip(say),
-                    How = place.How, Place = place.Id, At = StudioClock().ToString("o"), By = "assistant", Auto = true,
+                    How = place.How, Place = place.Id, At = StudioClock().ToString("o"), By = by, Auto = true,
                     Call = HealthCorrelation.CurrentId, SessionId = sessionId, ProStep = true, Upgrade = upgrade,
                 };
                 if (!_studioNotes.TryGetValue(key, out var ring)) _studioNotes[key] = ring = new List<StudioNote>();
                 ring.Add(note);
                 if (ring.Count > StudioNoteRing) ring.RemoveRange(0, ring.Count - StudioNoteRing);
                 _studioRun = null;
-                _studioLastAuto = StudioClock();
             }
             _sessions.Bus.PublishStudioShow(note);
         }
 
-        private void NoteProFixes(string sessionId, ModelPlanItem item, int count, bool upgrade = false)
+        private void NoteProFixes(string sessionId, ModelPlanItem item, int count, bool upgrade = false, string origin = "agent")
         {
             if (count <= 0 || (!IsSafeFixItem(item.Id) && !IsBpaFixItem(item.Id))) return;
             var kind = IsBpaFixItem(item.Id) ? "best-practice" : "safe";
             NoteProStep(sessionId, item.Id, (upgrade ? "Pro would apply " : "Pro applied ")
                 + count + " " + kind + " " + (count == 1 ? "fix" : "fixes") + " in one step."
-                + (upgrade ? "" : " One undo takes " + (count == 1 ? "it" : "them") + " back."), upgrade);
+                + (upgrade ? "" : " One undo takes " + (count == 1 ? "it" : "them") + " back."), upgrade,
+                by: DeployGuard.IsAgent(origin) ? "assistant" : "person");
         }
 
         private async Task NoteFreeProRowsAsync(Session s, IEnumerable<ModelPlanItem> rows, bool keptOnly = true)
@@ -387,6 +389,8 @@ namespace Semanticus.Engine
             public string[] Tools { get; set; }
             /// <summary>The note for a press on a real button, naming it ("Your assistant pressed Run the plan."); null for a panel.</summary>
             public string Say { get; set; }
+            /// <summary>The note for a dry run of the same tool (commit=false): a look at the change, not a press.</summary>
+            public string PreviewSay { get; set; }
         }
         private sealed class PressFile { public PressRow[] Presses { get; set; } }
 

@@ -351,17 +351,19 @@ namespace Semanticus.Tests
 
         [Trait(TestCost.Key, TestCost.Sweep)]
         [Fact]
-        public async Task Red_gate_blocks_commit_without_reason()
+        public async Task Red_gate_without_reason_publishes_with_warnings_for_a_person()
         {
             var (engine, _, _, _) = await OpenRedGateModelAsync();
             using (engine)
             {
-                // A committed deploy into a RED gate with no reason is PAUSED (not a hard wall — a reason unblocks it).
+                // Kane 8 Oct: a person is never asked for a reason. A committed deploy into a RED gate goes on and the
+                // record says "Published with warnings". The throw is the dead port, reached AFTER the gate.
                 var token = await ReviewFenceTest.TokenAsync(engine, "localhost:59999", "db");
-                var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                var ex = await Assert.ThrowsAnyAsync<Exception>(() =>
                     engine.DeployLiveAsync("localhost:59999", "db", null, null, null, commit: true, "human", overrideReason: null, confirmToken: token));
-                Assert.Contains("blocked by the deploy gate", ex.Message);
-                Assert.Empty((await engine.ListVerifiedEditsAsync()).Records);   // paused before anything shipped ⇒ no record
+                Assert.DoesNotContain("blocked by the deploy gate", ex.Message);
+                var rec = (await engine.ListVerifiedEditsAsync()).Records.Single(r => r.Op == "deploy_live");
+                Assert.StartsWith("Published with warnings", rec.Summary);
             }
         }
 

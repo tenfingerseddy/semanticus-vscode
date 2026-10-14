@@ -36,6 +36,7 @@ namespace Semanticus.Engine
             new Dictionary<string, (string, string)>(System.StringComparer.Ordinal)
         {
             // Open a model and connect > Connections and targets (24)
+            { "connect_assistant", ("Open a model and connect", "Connections and targets") },
             { "connect_local", ("Open a model and connect", "Connections and targets") },
             { "connect_xmla", ("Open a model and connect", "Connections and targets") },
             { "connection_context", ("Open a model and connect", "Connections and targets") },
@@ -249,6 +250,8 @@ namespace Semanticus.Engine
             // Make it better > Findings and fixes (22)
             { "apply_fix", ("Make it better", "Findings and fixes") },
             { "apply_safe_fixes", ("Make it better", "Findings and fixes") },
+            { "fix_them", ("Make it better", "Findings and fixes") },
+            { "reading_card", ("Make it better", "Findings and fixes") },
             { "bpa_scan", ("Make it better", "Findings and fixes") },
             { "get_custom_rules", ("Make it better", "Findings and fixes") },
             { "load_rules", ("Make it better", "Findings and fixes") },
@@ -304,6 +307,8 @@ namespace Semanticus.Engine
             // on the model, so they sit with the Plan's other assistant tools. PLACEMENT NOT YET RATIFIED BY KANE.
             { "show_in_studio", ("Make it better", "Findings and fixes") },
             { "suggest_next", ("Make it better", "Findings and fixes") },
+            { "get_next_step", ("Make it better", "Findings and fixes") },
+            { "set_next_step", ("Make it better", "Findings and fixes") },
             // Prove it is right > Tests, numbers and evidence (24)
             { "add_interview_question", ("Prove it is right", "Tests, numbers and evidence") },
             { "capture_baseline", ("Prove it is right", "Tests, numbers and evidence") },
@@ -419,7 +424,7 @@ namespace Semanticus.Engine
             { "set_synonyms", ("Teach the AI about this model", "Teach the AI") },
             { "update_data_agent", ("Teach the AI about this model", "Teach the AI") },
             { "upvote_insight", ("Teach the AI about this model", "Teach the AI") },
-            // Set the rules of the work > Workflows and rules (36)
+            // Set the rules of the work > Workflows and rules (37)
             { "abort_workflow", ("Set the rules of the work", "Workflows and rules") },
             { "activate_workflow_profile", ("Set the rules of the work", "Workflows and rules") },
             { "check_workflow", ("Set the rules of the work", "Workflows and rules") },
@@ -428,6 +433,7 @@ namespace Semanticus.Engine
             { "export_workflow_evidence", ("Set the rules of the work", "Workflows and rules") },
             { "get_agent_policy", ("Set the rules of the work", "Workflows and rules") },
             { "get_entitlement", ("Set the rules of the work", "Workflows and rules") },
+            { "get_trial_tally", ("Set the rules of the work", "Workflows and rules") },
             { "get_op_catalog", ("Set the rules of the work", "Workflows and rules") },
             { "get_workflow", ("Set the rules of the work", "Workflows and rules") },
             { "get_workflow_document", ("Set the rules of the work", "Workflows and rules") },

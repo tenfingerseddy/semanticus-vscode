@@ -427,7 +427,7 @@ assert.doesNotMatch(extension, /async function checkForLicenceRenewal[\s\S]{0,16
 assert.match(extension, /checkForRenewedToken\([\s\S]{0,1200}if \(licenseInteractiveFlowActive\) return;/,
   'the single-flight guard must be looked at again after the await, not only before it');
 
-assert.match(pro, /export function upgradeToPro\(\)[\s\S]{0,120}navigateInStudio\('pro'\)/,
+assert.match(pro, /export function upgradeToPro\((?:pending\?: unknown)?\)[\s\S]{0,360}navigateInStudio\('pro'\)/,
   'Studio reaches buying through the Pro page, never its own billing call');
 assert.match(propreview, /data-testid="pro-preview-unlock"[\s\S]{0,160}onClick=\{upgradeToPro\}/,
   'the locked-page replica Unlock Pro action must open the Pro page');

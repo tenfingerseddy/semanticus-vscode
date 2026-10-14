@@ -8,12 +8,12 @@ namespace Semanticus.Engine
 {
     public static partial class McpTools
     {
-        [McpServerTool(Name = "get_start_words"), Description("Read words still to write for the start plan, a page at a time. Each item has its ref, kind and context. Write them with write_start_words. Total counts the whole list. Continue at offset + items.length until that reaches total. Pages stop near 7,000 characters; one larger item is returned whole. detail=true keeps the existing full page, up to 40,000 characters. Reads only.")]
+        [McpServerTool(Name = "get_start_words"), Description("Read words still to write for the start plan, a page at a time. Each item has its ref, kind and context. Write them with write_start_words. Total counts the whole list. Continue at offset + items.length until that reaches total. Pages stop near 7,000 characters (40,000 when max is above 40); one larger item is returned whole. detail=true keeps the existing full page, up to 40,000 characters. Reads only.")]
         public static async Task<StartWordsPage> GetStartWordsOp(IEngine engine, int max = 40, int offset = 0, bool detail = false)
         {
             var page = await GetStartWords(engine, max, offset).ConfigureAwait(false);
             if (detail) return page;
-            while (page.Items.Count > 1 && McpLeanResults.Chars(page) > McpLeanResults.Cap)
+            while (page.Items.Count > 1 && McpLeanResults.Chars(page) > McpLeanResults.StartBudget(max))
                 page.Items.RemoveAt(page.Items.Count - 1);
             return page;
         }
@@ -31,7 +31,7 @@ namespace Semanticus.Engine
         public static async Task<StartPlanView> StartModelFromSqlOp(IEngine engine,
             string server, string database, string folder, string name,
             [Description("import or directLake")] string storageMode = "import",
-            [Description("azcli, serviceprincipal, interactive or devicecode")] string authMode = "azcli", string tenantId = null,
+            [Description("azcli, serviceprincipal, interactive or devicecode. Leave out to use the sign-in that is ready")] string authMode = null, string tenantId = null,
             [Description("true returns the full view; false returns counts, decisions and the next step")] bool detail = false)
             => McpLeanResults.Start(engine, await StartModelFromSql(engine, server, database, folder, name, storageMode, authMode, tenantId).ConfigureAwait(false), detail);
 
@@ -39,7 +39,7 @@ namespace Semanticus.Engine
         public static async Task<StartPlanView> GetStartPlanOp(IEngine engine,
             [Description("Section id: tables, links, measures, words, bestpractice; or columns, needs_you, edges, knock_ons. Omit for a summary.")] string item = null,
             [Description("Start at 0, then use summary.page.nextOffset. The digest identifies the plan being read.")] int offset = 0,
-            [Description("Most entries on a page, 1 to 100. Pages also stop near 7,000 characters.")] int max = 40,
+            [Description("Most entries on a page, 1 to 100. Pages also stop near 7,000 characters, or 40,000 when max is above 40.")] int max = 40,
             [Description("true returns the full Studio view")] bool detail = false)
             => McpLeanResults.Start(engine, await GetStartPlan(engine).ConfigureAwait(false), detail, item, offset, max);
 
@@ -49,7 +49,7 @@ namespace Semanticus.Engine
             string target, string value = null, bool detail = false)
             => McpLeanResults.Start(engine, await EditStartPlan(engine, op, target, value).ConfigureAwait(false), detail);
 
-        [McpServerTool(Name = "grant_start_disclosure"), Description("Allow Jev to see this source, its included tables and allowed sample facts, never rows. Ask the person in chat first, naming what would be shared; call this after they say yes. Their yes in chat is enough: the call grants it, with no question in Studio. Pass the current plan digest; changes to the source, tables or sample settings invalidate permission. A free session does not use Jev. Builds nothing and approves no plan (approve_start_plan does that). Returns a compact summary. Read get_start_plan pages for lists; detail=true returns the full view.")]
+        [McpServerTool(Name = "grant_start_disclosure"), Description("Allow Jev to see this source, its included tables and allowed sample facts, never rows. Ask the person in chat first, naming what would be shared; call this after they say yes. Their yes in chat is enough: the call grants it, with no question in Studio, and turns Jev on for this model if it is not on yet, so one yes is all the build needs. Pass the current plan digest; changes to the source, tables or sample settings invalidate permission. A free session does not use Jev. Builds nothing and approves no plan (approve_start_plan does that). Returns a compact summary. Read get_start_plan pages for lists; detail=true returns the full view.")]
         public static async Task<StartPlanView> GrantStartDisclosureOp(IEngine engine, string digest, bool detail = false)
             => McpLeanResults.Start(engine, await GrantStartDisclosure(engine, digest).ConfigureAwait(false), detail);
 

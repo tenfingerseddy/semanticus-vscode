@@ -171,7 +171,7 @@ namespace Semanticus.Tests
 
             // (b) Every column the sweep calls unused is a line. The two keys are not safe (a relationship uses them) and the measure is
             // not a column, so they are not on it; the row said so.
-            var sweep = await f.Engine.UnusedObjectsAsync();
+            var sweep = await f.Engine.UnusedObjectsCoreAsync(keepVisibleUntilReportsChecked: false);   // the Plan's own list: a person reviews it
             var safeColumns = sweep.Items.Where(i => (i.Verdict == "safe" || i.Verdict == "visibleAttribute") && i.Kind != "measure").Select(i => i.Ref).OrderBy(r => r).ToArray();
             Assert.Equal(AllListed, safeColumns);
             Assert.Equal(AllListed, set.Lines.Select(l => l.Target).OrderBy(t => t).ToArray());
@@ -238,10 +238,11 @@ namespace Semanticus.Tests
             var before = await ColumnsAsync(f);
             var plan = await ClearTheWayAsync(f);
 
-            // The person cannot hand it over: "Let it run" is only on a row the engine can apply with no choices, and this is a list.
+            // Nobody can hand it to Semanticus: "Let it run" is only on a row the engine can apply with no choices, and this is a list.
+            // It is the assistant's (13 Oct 2026: the person is the last resort), which reads the lineage before it removes anything.
             await Assert.ThrowsAsync<ArgumentException>(() => f.Engine.SetPlanItemDoerAsync("cleanup/model", PlanDoers.Semanticus));
             plan = await f.Engine.GetModelPlanAsync();
-            Assert.Equal(PlanDoers.You, Row(plan, "cleanup/model").Doer);
+            Assert.Equal(PlanDoers.Assistant, Row(plan, "cleanup/model").Doer);
             Assert.DoesNotContain("cleanup/model", plan.ReadyRows());
 
             var run = await f.Engine.ApplyPlanItemsAsync(null, door, plan.ReadyDigest ?? "x");

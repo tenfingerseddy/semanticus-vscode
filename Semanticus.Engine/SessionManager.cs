@@ -27,6 +27,9 @@ namespace Semanticus.Engine
 
         public ChangeBus Bus { get; } = new ChangeBus();
         public Session Current => _current.Session;
+        /// <summary>Raised after another model replaces the current one. Whatever was held for the old model (a live publish's open
+        /// connection) is closed by its owner here, not left to a timer.</summary>
+        internal event Action SessionReplaced;
         internal SessionContext CurrentContext => _current;
 
         /// <summary>The open session's id, or null when no model is open.</summary>
@@ -153,6 +156,7 @@ namespace Semanticus.Engine
                 _current = nextContext;     // one atomic publication: session + model state + surviving workflow runs
                 Interlocked.Increment(ref _generation);     // the exchange happened: every in-flight job is now stale
             }
+            RaiseReplaced();
             previous.Session?.DiscardReplacedFileRecovery();
             next.StartFileRecovery();
             next.WarmObservers();
@@ -164,12 +168,19 @@ namespace Semanticus.Engine
             return next;
         }
 
+        private void RaiseReplaced()
+        {
+            try { SessionReplaced?.Invoke(); }
+            catch (Exception ex) { try { Console.Error.WriteLine("[session] a replaced-model listener failed (the swap itself is committed): " + ex.Message); } catch { } }
+        }
+
         /// <summary>Publish a fully-built context after its predecessor has been retired and drained.</summary>
         internal SessionContext ExchangeRetiredContext(SessionContext next)
         {
             var previous = _current;
             _current = next;
             Interlocked.Increment(ref _generation);         // the same exchange, seen from LocalEngine's side
+            RaiseReplaced();
             previous.Session?.DiscardReplacedFileRecovery();
             next.Session?.StartFileRecovery();
             next.Session?.WarmObservers();

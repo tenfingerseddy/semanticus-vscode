@@ -21,7 +21,14 @@ assert.match(bpa, /unfixed\?: BpaUnfixed\[\]/, 'the press result must be read fo
 assert.match(bpa, /setLeftOver\(r\?\.unfixed \?\? \[\]\)/, 'the remainder must land in state, not be dropped');
 assert.match(bpa, /setLeftOver\(\[\]\)/, 'a fresh press must clear the previous press\'s remainder before it runs');
 assert.match(bpa, /leftOver\.length > 0 &&/, 'the remainder must reach the page or the count above it stays a promise');
-assert.match(bpa, /still on the model, and each one says why it stayed/, 'the reminder must say the findings are still there');
+assert.match(bpa, /These are still on the model, and each one says why\./, 'the reminder must say the findings are still there');
+// 13 Oct 2026: the old line said "Fix all cleared the rest" even when the press fixed nothing. The words now follow what the press did.
+assert.doesNotMatch(bpa, /Fix all cleared the rest/, 'the page never claims a clear the press did not make');
+assert.match(bpa, /setPressLine\(fixAllLine\(pressed, /, 'the line counts what the press did in the unit the button named (hero 20 D11)');
+assert.match(readFileSync(resolve(root, 'webview/src/bpa-detail.ts'), 'utf8'), /'Fix all changed nothing\.'/, 'and says so when it changed nothing');
+// The Fix N button counts what Fix all will make: the engine leaves withheld fixes out of autoFixable, and the page hands them to the assistant.
+assert.match(bpa, /fixWithheld/, 'the page knows which fixes Fix all withholds');
+assert.match(bpa, /!v\?\.canAutoFix \|\| v\.fixWithheld/, 'a withheld fix goes to the assistant with the rest');
 assert.match(bpa, /u\.reason/, 'each leftover finding must show the engine\'s reason');
 // Colour is never the only channel: the heading states the count in words too.
 assert.match(bpa, /could not be fixed/, 'the leftover heading must say what happened in words');

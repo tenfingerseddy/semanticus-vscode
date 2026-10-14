@@ -67,6 +67,8 @@ namespace Semanticus.Engine
 
         private void Run()
         {
+            // Thread.Start copies the creator's context: a session built inside a person's press must not keep that press for every later work item.
+            SignInPress.Clear();
             foreach (var item in _queue.GetConsumingEnumerable())
             {
                 try { item(); }

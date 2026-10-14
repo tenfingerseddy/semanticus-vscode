@@ -18,6 +18,17 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; time
 const pending = new Map<number, Pending>();
 let seq = 0;
 
+// An observation of the existing call, never a second request or an engine write.
+export type RpcObservation = { id: number; method: string; params: unknown[]; phase: 'start' | 'end'; result?: unknown; error?: unknown };
+const rpcObservers = new Set<(event: RpcObservation) => void>();
+export function onRpcObservation(fn: (event: RpcObservation) => void): () => void {
+  rpcObservers.add(fn);
+  return () => { rpcObservers.delete(fn); };
+}
+function observeRpc(event: RpcObservation): void {
+  rpcObservers.forEach((fn) => { try { fn(event); } catch { /* a decoration must never change a call's outcome */ } });
+}
+
 // Per-request timeout so a wedged or vanished host can't leave a promise (and its UI spinner) hanging forever. Most
 // methods are fast local TOM/metadata ops → 30s. Everything that leaves the process for real work gets a generous
 // 10-min ceiling so the guard never rejects a genuine in-flight op: Fabric/cloud round-trips, LIVE QUERIES against
@@ -207,6 +218,13 @@ export function onStudioSuggest(fn: (s: StudioSuggestionPayload) => void): () =>
   studioSuggestListeners.add(fn);
   return () => { studioSuggestListeners.delete(fn); };
 }
+/** The "Next:" line's view (1.5), pushed as studioNextStep whenever the engine's step changes. Mirrors NextStepView. */
+export type StudioNextStepPayload = { id: string; on: boolean; stage: number; stageName?: string | null; step?: unknown; hidden?: boolean };
+const studioNextStepListeners = new Set<(v: StudioNextStepPayload) => void>();
+export function onStudioNextStep(fn: (v: StudioNextStepPayload) => void): () => void {
+  studioNextStepListeners.add(fn);
+  return () => { studioNextStepListeners.delete(fn); };
+}
 const studioAnswerListeners = new Set<(a: StudioAnswerPayload) => void>();
 export function onStudioAnswer(fn: (a: StudioAnswerPayload) => void): () => void {
   studioAnswerListeners.add(fn);
@@ -280,8 +298,8 @@ export function onProState(fn: (state: ProPageStateMessage) => void): () => void
   proStateListeners.add(fn);
   return () => { proStateListeners.delete(fn); };
 }
-export type ProAction = 'hello' | 'buy' | 'reopen' | 'cancel' | 'activate' | 'manage' | 'remove';
-export function postProAction(action: ProAction, extra?: { plan?: string; token?: string }): void {
+export type ProAction = 'hello' | 'buy' | 'reopen' | 'cancel' | 'activate' | 'manage' | 'remove' | 'trialStart' | 'trialCancel';
+export function postProAction(action: ProAction, extra?: { plan?: string; token?: string; email?: string }): void {
   postToHostStamped({ type: 'pro', action, ...(extra ?? {}) });
 }
 
@@ -566,6 +584,9 @@ window.addEventListener('message', (e: MessageEvent) => {
   } else if (msg.type === 'studioSuggest') {
     const v = msg.payload as StudioSuggestionPayload;
     if (v && typeof v === 'object' && Array.isArray(v.steps)) studioSuggestListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
+  } else if (msg.type === 'studioNextStep') {
+    const v = msg.payload as StudioNextStepPayload;
+    if (v && typeof v === 'object' && typeof v.on === 'boolean') studioNextStepListeners.forEach((l) => { try { l(v); } catch { /* isolate a view's handler */ } });
   } else if (msg.type === 'studioAnswer') {
     const a = msg.payload as StudioAnswerPayload;
     if (a && typeof a === 'object' && a.answer && typeof a.answer === 'object') studioAnswerListeners.forEach((l) => { try { l(a); } catch { /* isolate a view's handler */ } });
@@ -819,14 +840,27 @@ export function requestDropTables(): Promise<string[]> {
 }
 
 export function rpc<T = unknown>(method: string, ...params: unknown[]): Promise<T> {
+  return send<T>(false, method, params);
+}
+
+/** A call a person's button makes: the only kind that may open a sign-in window when the saved sign-in does not work. Everything the page starts by itself uses rpc. */
+export function rpcPressed<T = unknown>(method: string, ...params: unknown[]): Promise<T> {
+  return send<T>(true, method, params);
+}
+
+function send<T>(pressed: boolean, method: string, params: unknown[]): Promise<T> {
   const id = ++seq;
   return new Promise<T>((resolve, reject) => {
+    observeRpc({ id, method, params, phase: 'start' });
+    const end = (result?: unknown, error?: unknown) => observeRpc({ id, method, params, phase: 'end', result, error });
+    const succeed = (v: unknown) => { end(v); resolve(v as T); };
+    const fail = (error: Error) => { end(undefined, error); reject(error); };
     const timer = window.setTimeout(() => {
-      if (pending.delete(id)) reject(new Error(`Semanticus: no response to "${method}" within ${Math.round(rpcTimeoutMs(method) / 1000)}s. The engine may be busy or disconnected. If this was a change it may still complete. Check the Semanticus output before retrying.`));
+      if (pending.delete(id)) fail(new Error(`Semanticus: no response to "${method}" within ${Math.round(rpcTimeoutMs(method) / 1000)}s. The engine may be busy or disconnected. If this was a change it may still complete. Check the Semanticus output before retrying.`));
     }, rpcTimeoutMs(method));
-    pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+    pending.set(id, { resolve: succeed, reject: fail, timer });
     // Every request names the model this page is showing; the engine refuses a write whose page is not on the open model (pagemodel.ts). One place, so no editor can forget it.
-    postToHostStamped({ type: 'rpc', id, method, params });
+    postToHostStamped(pressed ? { type: 'rpc', id, method, params, pressed: true } : { type: 'rpc', id, method, params });
   });
 }
 

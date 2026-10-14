@@ -7,7 +7,197 @@ All notable changes to Semanticus are recorded here. The format follows
 > with what verification. [`PLAN.md`](docs/PLAN.md) is the forward roadmap (what's next, not what shipped);
 > the per-commit narrative that used to live in PLAN's "Shipped & verified" section now lives here.
 
-## [Unreleased]
+## [1.5.0] - 2026-10-15
+
+### A new model gets created, the assistant uses the saved sign-in, and the page shows the steps (hero20 D7 and D8, 13 Oct 2026)
+`publish_new_model` hung for 8 minutes twice on a small import model while the Fabric API made the same model in 20 seconds. The create now
+follows the address Power BI returns, reads an answer that starts with a byte-order mark (a poll that could not read an answer counted it as "still
+running" for 240 polls), stops after three answers it cannot read, looks in the workspace as it waits (a listed model was created), and gives up after
+4 minutes with one plain line. The assistant no longer picks a browser, device-code or az sign-in: the saved one is used with no question,
+and with none saved the tool says to press Connect in Studio. The New model card shows each step with the seconds it has taken.
+
+### Hero run 20 gaps: date table row, consent for an assistant's model, plain counts (13 Oct 2026)
+A model with a date column and no date table now gets an "Add a date table" row for the assistant even when it uses no time intelligence (the row hung on DATE-MARK, which is dormant then; the grade is unchanged). At 1701 the brief names a calendar and the hierarchy. A model the assistant opens that nobody has decided about for Jev now brings up the Pro card at once, once per model; nothing turns on without the person's press, and the Pro page footnote says so. Fix N reports "Fixed N issues (M changes)" in the unit the button named and Review shows Undo after Fix all. The red-check line on Publish says the rule in plain words, with no category tag or brackets.
+
+### Hands off: the assistant works every row a tool can do, without asking (Kane, 13 Oct 2026)
+Hero run 19 stopped "get this model as good as it can be" at six questions. The assistant skill, the server instructions and the reading card now say: do what Undo can take back, report after, ask only for a sign-in, a fact no tool can find, or a step Undo cannot take back. Every assistant row ends with "Done when" and "Default, no need to ask". A model with a date column and no date table tells the assistant to add a calculated date table (`generate_date_table`); with no date column the row says why. A Waiting row always says who it waits for and why, and says "Waiting for your assistant. Ask it to run the plan." when none is connected or the person chose By hand. Saving never writes over the only copy without a way back.
+
+### Claude drives: the screen follows the tool to its home (Kane, 13 Oct 2026)
+Kane saw the assistant check best practice while the Studio stayed on AI readiness. Three causes, all fixed. A show on one place kept the
+engine silent for ten seconds for every place, so the next tool's note never came. The engine also dropped a note when the place changed
+within three seconds. And the Studio kept each page for the whole read time of its sentence, so the next page came four to eight seconds
+late. Now a show speaks for its own place only, a change of place always gets its note, and a page holds for 1.8 seconds before the next
+page may replace it (one move per call, no bounce back). A table test lists every MCP tool: each has a home page, narrates itself after
+it commits, or is named as staying where it is on purpose (`places.json`: `narratesItself`, `staysWhereItIs`). A new tool with none fails.
+
+### The Plan holds every finding that costs a grade (Kane, 13 Oct 2026)
+
+- Every open finding that scores and that no row fixes joins one assistant row for its page: "Fix N best-practice issues" and
+  "Fix N AI readiness issues". Each rule has a line with its points and the tool that fixes it. A float column is the
+  assistant's decision (4 decimal places enough: change the type, one Undo, say so).
+- Fix N on Model quality counts only what Fix all will make, and its leftover line no longer says "cleared the rest" when
+  nothing was fixed.
+- After Run the plan: a measure the summarize row creates arrives in its table's folder in the same line, a column that has a
+  base measure is not asked about again, and "N tasks" counts only rows where something landed.
+- The person is the last resort: the cleanup, Copilot limits and "Raise compatibility level" are the assistant's rows, and
+  "Jev has not finished" is a waiting note for nobody.
+- A task from a coverage row, the cleanup or the words row holds only what it listed. A finding that appears later (a column
+  added in Studio, the calendar template's columns) is on a Plan row of its own, and a task that said done while its gap
+  stands no longer hides that row. A task that was to remove its columns can be completed once they are gone. A finding on an
+  object the resolver has no kind for (a KPI) stays on a line. Changing a relationship's direction no longer makes its tasks
+  read as "no longer in the model".
+- Plan done counts the rows you see. Each job is listed once, as its row or as the task that holds it. A coverage row is never
+  marked Done just because a task took its findings, and a task that said done while its gap stands is the reopened row, not a
+  second line beside it.
+
+The Plan is calmer, and you can see which worker did what. This release is about four things: one quiet Plan page, a
+Lineage Graph that opens fast on a big model, a free month of Pro, and your own assistant joining Studio from any tool
+it runs in.
+
+### A calmer Plan page
+
+- The Plan has one header line. It holds the grade figures, one live slot, who has the wheel, the Work and History
+  switch, and Run the plan. The driver bar, the Latest line and the facts line are gone from the page.
+- The list is grouped by who does the work: Your assistant, Semanticus and You, each with a count. History lives in one
+  place, the Work and History switch.
+- The live slot shows one thing at a time. It shows what you pressed, what your assistant is doing, or the end of a run,
+  such as "Done. 5 tasks in 4 s. A 91 to A 94." with Undo, and Save when it is offered. At rest it shows your assistant's
+  next step.
+- The header has three figures: AI ready, Best practice and Plan done. Point at one, or tab to it, for what it measures
+  and where its number comes from. Plan done counts up as rows finish.
+- A Semanticus row that is ready has a quiet Run. It runs that one task as one change with one Undo. Like Run the plan,
+  it needs Pro.
+- A long plan stays short. Each group folds by its header. A group over 10 rows shows 10 and a Show all button. Above 15
+  rows a Filter appears with All, AI ready, Quality and a box to type words.
+- The first grade is faster. On a model with 100 tables, 1,220 columns and 400 measures it took about 3.2 seconds after
+  open and now takes about 0.3. The very first open on a cold engine takes about 1.7 seconds.
+
+### Lineage Graph on a big model
+
+- On a model with 40 tables and 850 objects, the Graph view took 20 to 40 seconds and froze the page. It now opens in
+  about half a second and Studio stays usable while it draws.
+- The Graph lays out the same way each time you open it.
+- The Filter menu opens inside the view and follows its button.
+
+### Try Pro free for 30 days
+
+- Start with your email and press the link in the message we send. One trial for each email address.
+- Your Pro month shows a tally of what Pro did for you, counted on this computer. A line in the last 3 days says how
+  long is left and offers Keep Pro.
+- When the month ends, Pro switches off on time, even while Studio is open. Work already running is not cut off. An end
+  card says what changed, and a month already used says so and offers Buy Pro.
+- A locked press, such as Run the plan, runs once Pro is on.
+- The trial's Pro page has Remove licence, and the status line ends with the days left.
+
+### Connect another assistant
+
+- The Your assistant menu has a new row, Connect another assistant. It lists Claude Desktop, Codex, Cursor and Claude
+  Code. Each row says On this computer, Not found here, Connected or Needs an update, and has one button.
+- A press writes the Semanticus entry into that assistant's own settings and says the one next step, such as "Quit
+  Claude Desktop fully and open it again." Only the Semanticus entry changes. The first change leaves a copy of the
+  file beside it. A file that is not valid is left alone, and the answer says so.
+- Your Pro licence is saved for them. Before, an assistant that started the engine with VS Code closed read Free.
+- Pro now follows you to an assistant that you connected while you were on Free. When Pro starts, the licence file is
+  written for it too.
+- Your assistant can do the same with the connect_assistant tool.
+
+### One colour for each worker, and one chart palette
+
+- Semanticus is green, you are blue and your assistant is purple, on every page. This covers the Plan rows and counts,
+  the live slot, the assistant's sign, and the press ring.
+- Needs you is blue now, not amber. Amber and red are kept for real warnings.
+- Charts use one palette of six steps: green, blue and purple, then a lighter step of each. Charts, node kinds and tags
+  that had several colours now draw from it, and they change with the editor theme. Grey is kept for other and unused.
+- When your assistant drives, a clear purple outline runs round Studio. It is at least 2 screen pixels wide at every zoom
+  and stronger than before. Before, it was 1 pixel at 25 to 50 percent strength and faded over light bands.
+
+### The Link, the Next step line, voice and motion
+
+- The Link sits at the end of the bottom bar and in the Plan header. It shows when Studio is idle, working, thinking,
+  done or stopped. A stopped Link is grey and still. When work stops, the Link stops too.
+- The status line shows a plain verb while work runs, such as one for DAX or one for Jev. It ends in "Done." or
+  "Stopped." with the engine's own sentence.
+- A Next line sits under the bar at the top of every page except the Plan. It names the next step with a Do it button and
+  an Ask your assistant button. On the Plan, the live slot shows your assistant's next step. You can hide the Next line,
+  stop one kind of suggestion, or turn suggestions off. Your assistant can set the next step too. On Pro, Jev picks
+  between steps the rules allow. On Free, fixed rules pick. If you already agreed to Jev on Pro, you see the permission
+  card once more.
+- Studio speaks in short plain lines at empty pages, large models, successes, long waits, undo and test publishes, and
+  uses your real counts. It stays quiet on errors, production and deletes.
+- Small movements show what changed: the grade flips, a bulk count runs up, a new relationship snaps in, a published
+  model draws the S, and Undo rewinds.
+- Help has Personality and Sounds rows. Personality can be Quiet. Sounds are off until you turn them on. Movement
+  follows your VS Code and system reduced-motion setting.
+
+### Publish
+
+- Publish creates, updates and deletes roles on the live model, with the permission, description, members, row filter
+  and column permissions. A role is a normal row in the preview and is no longer held back.
+- A restore point holds the roles, so Undo of a push brings a deleted role back.
+- A role that names a table the live model does not have is listed as not written.
+- A new role that hides a table goes live hiding it.
+- A role you renamed no longer stays live under its old name. The preview counts the delete, and a ticked delete removes it.
+- When your assistant publishes, Undo publish is offered after it, and Earlier versions shows the new copy.
+- A publish preview is named a preview in the notes: "Your assistant previewed the publish." Only a real publish says
+  it pressed Publish.
+- A live publish marks the model saved only when every edit was written. If you edit while it runs, or a change is left
+  out, the model stays unsaved and keeps its recovery copy. A model published back to its own live origin is clean, so
+  Next and the footer stop saying unsaved.
+- When your assistant publishes through a red check, your yes in chat is enough. The assistant passes your words, and
+  they are kept in the audit record. Without your words it asks you in chat first. Upkeep-only warnings never block a
+  publish.
+- Opening a live model takes the ready sign-in. You are no longer sent to an az login when one is ready.
+- The new-model card no longer says the data loads. It says what it will write.
+
+### The diagram and the workflow canvas
+
+- The default Diagram is the bus matrix of 1.4.0, with its lines, as before. A new choice under Arrange, Dot grid, puts
+  lookup tables in a row, facts in a column, and a dot where a fact uses a lookup table. No lines cross. A link that is
+  not a dot is a short mark between two cards that sit one under the other, or a small tag on each card. Point at a tag
+  to outline the other card. Fit in the dot grid keeps the text readable, then you pan, and the legend is never cut.
+- The workflow canvas shows each step in plain words, and the step editor gives check rows the same spacing as the rest
+  of Studio.
+- The Source column on the Plan fits its words.
+
+### Faster test runs
+
+- A full Validation run on a large test suite took 51 seconds and now takes 33, with the same 432 results and the same
+  grade.
+- Trusted numbers are asked in batches of 20. 67 queries became 4 batches, and that part went from 6.8 seconds to 0.7. A
+  check that does not match is asked again alone, so its evidence is the exact query.
+- SQL checks run beside the DAX, up to three at once. Validation also shows the other check tools your assistant ran.
+
+### One allow is enough for a build
+
+- When your assistant starts a build plan, one allow from you gives Jev its permission for the model and the tables in
+  the plan. You no longer open the Permissions page first.
+- Start from SQL uses the ready sign-in: your saved one, else a ready service principal. The az sign-in is the last
+  choice.
+
+### Your assistant
+
+- model_diff compares the working copy with a live model, with targetEndpoint and targetDatabase.
+- get_plan_history gives one short line for each row, 20 rows to start, and one row opens in full when asked.
+- get_start_plan and get_start_words give a bigger page when your assistant asks for more, up to 40,000 characters.
+- While your assistant publishes, the new-model card says "Your assistant is publishing X to Y."
+- Your own Run the plan note wears your colour, and it no longer says "To do this yourself".
+- Stop works on Free.
+
+### Fixes
+
+- Fix all no longer turns MDX off on a column the same press just hid. The next press finishes it.
+- Once the newer unsaved copy is restored, saved or dismissed, the older kept copy is offered next. Save As keeps the old
+  file's older copy.
+- A run still active when Pro ends can be stopped.
+- A column permission on a column that is not live is reported.
+- A new role member names AzureAD as its provider, so Power BI accepts it.
+- After an undone build, the card says the model has nothing to grade now, and that the grade after the build is a
+  forecast.
+- History fits a long tool result.
+- Connect, then Remove licence, leaves the engine on Free.
+- Deleting from the tree asks no question. Undo takes it back.
+- The Plan reopens quietly after the engine restarts, with no error for the read that was cut off.
+- The Pro page no longer shows a line for tokens used this month.
 
 ## [1.4.0] - 2026-10-13
 

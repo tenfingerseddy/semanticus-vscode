@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { rpc, onPlanChange } from './bridge';
 import { GiveToAssistant, slotTask, type PlanTaskRequest } from './sendtask';
 import { uiLabel } from './copy';
+import { BulkCount } from './personality/motion';
+import { pendingSummary, pendingNote, groupState, readableFormat, rowNote } from './pending-copy';
+import { plainRuleName } from './rule-words';
 
 // ---- wire types (camelCase, from Semanticus.Engine/Plan.cs) ----------------------------------
 interface Grounding { objectRef: string; name: string; kind: string; table?: string; expression?: string; formatString?: string; existingDescription?: string; dataType?: string; siblingNames?: string[]; }
@@ -31,7 +34,7 @@ const STATUS: Record<string, { label: string; color: string }> = {
   needs_content: { label: 'needs content', color: 'var(--sem-accent)' },
   proposed: { label: 'review', color: 'var(--sem-warn)' },
   rejected: { label: 'rejected', color: 'var(--sem-muted)' },
-  applied: { label: 'applied ✓', color: 'var(--sem-good)' },
+  applied: { label: 'applied', color: 'var(--sem-good)' },
   skipped: { label: 'skipped', color: 'var(--sem-warn)' },
   failed: { label: 'failed', color: 'var(--sem-bad)' },
 };
@@ -55,6 +58,7 @@ function scoreText(value: number | undefined): string {
 export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
   const [plan, setPlan] = useState<ChangePlanView | null>(null);
   const [report, setReport] = useState<ApplyPlanReport | null>(null);
+  const [applyElapsedMs, setApplyElapsedMs] = useState(0);
   const [busy, setBusy] = useState<'analyse' | 'apply' | 'safe' | false>(false);
   const [err, setErr] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, AuthorWords>>({});
@@ -111,7 +115,8 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
   }
   async function apply(ids: string[] | null, which: 'apply' | 'safe') {
     setBusy(which); setErr(null);
-    try { const r = await rpc<ApplyPlanReport>('applyPlan', ids, 'human'); setReport(r); await load(); }
+    const started = performance.now();
+    try { const r = await rpc<ApplyPlanReport>('applyPlan', ids, 'human'); setApplyElapsedMs(performance.now() - started); setReport(r); await load(); }
     // Applying the whole approved set in one step is FREE from 2026-09-15 (Kane's feature line), so a
     // failure here is a real failure and keeps its loud red treatment.
     catch (e) { setErr(String((e as Error).message ?? e)); } finally { setBusy(false); }
@@ -176,7 +181,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
               {hasPlan
                 ? (items.length === 0
                   ? (plan?.note ? 'No changes could be planned. The note below explains why.' : 'No applicable changes were found.')
-                  : <>{s!.deterministic + s!.bpa} deterministic · {s!.ai} AI-authored · {s!.jev ?? 0} from Jev · {s!.renames} rename{s!.renames === 1 ? '' : 's'} · {s!.approved} approved · {s!.needsContent} need content{s!.unverified ? ` · ${s!.unverified} unverified` : ''}</>)
+                  : <><div data-testid="opt-summary">{pendingSummary(s!)}</div><div data-testid="opt-note">{pendingNote(s!)}</div></>)
                 : 'Pending changes are local. Applied changes stay in your copy until you publish.'}
             </div>
             {hasPlan && plan?.scope && <div className="text-(length:--sem-text-label) mt-1" style={{ color: 'var(--sem-muted)' }}>scope: {plan.scope}</div>}
@@ -208,6 +213,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
 
       {report && (
         <Panel>
+          {(report.appliedCount ?? 0) > 1 && (report.failedCount ?? 0) === 0 && <BulkCount count={report.appliedCount} elapsedMs={applyElapsedMs} eventKey={report} />}
           <div className="flex items-center gap-4 flex-wrap">
             <div className="text-(length:--sem-text-body) font-semibold xe-dot xe-dot-good">{report.appliedCount ?? 0} applied</div>
             {(report.skippedCount ?? 0) > 0 && <div className="text-xs xe-dot xe-dot-warn">{report.skippedCount} skipped</div>}
@@ -226,8 +232,8 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
       {hasPlan && (
         <div className="flex items-center gap-1">
           <Chip active={filter === 'all'} onClick={() => setFilter('all')}>All {s?.total ?? 0}</Chip>
-          <Chip active={filter === 'deterministic'} onClick={() => setFilter('deterministic')}>Deterministic {(s?.deterministic ?? 0) + (s?.bpa ?? 0)}</Chip>
-          <Chip active={filter === 'ai'} onClick={() => setFilter('ai')}>AI {s?.ai ?? 0}</Chip>
+          <Chip active={filter === 'deterministic'} onClick={() => setFilter('deterministic')}>Automatic {(s?.deterministic ?? 0) + (s?.bpa ?? 0)}</Chip>
+          <Chip active={filter === 'ai'} onClick={() => setFilter('ai')}>Assistant {s?.ai ?? 0}</Chip>
           <Chip active={filter === 'jev'} onClick={() => setFilter('jev')}>Jev {s?.jev ?? 0}</Chip>
           <Chip active={filter === 'rename'} onClick={() => setFilter('rename')}>Renames {s?.renames ?? 0}</Chip>
           <Chip active={filter === 'needs_content'} onClick={() => setFilter('needs_content')}>Needs content {s?.needsContent ?? 0}</Chip>
@@ -245,7 +251,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
 
       {groups.map(([cat, list]) => {
         const isCollapsed = collapsed.has(cat);
-        const approvedN = list.filter((i) => i.status === 'approved' || i.status === 'applied').length;
+        const state = groupState(list);
         return (
           <Panel key={cat}>
             {/* Collapsible category section — mirrors the AI Readiness / BPA Category headers. */}
@@ -255,7 +261,7 @@ export function OptimizeView({ seedNonce }: { seedNonce?: number } = {}) {
               <Twist open={!isCollapsed} />
               <span>{cat}</span>
               <span>({list.length})</span>
-              {approvedN > 0 && <span className="ml-1 normal-case font-medium xe-dot xe-dot-good">· {approvedN} approved</span>}
+              {state && <span className="ml-1 normal-case font-medium xe-dot xe-dot-good" data-testid="opt-group-state">{state}</span>}
             </div>
             {!isCollapsed && (
               <div className="flex flex-col mt-1">
@@ -289,6 +295,9 @@ export function Row({ it, draft, onDraft, onToggle, onSave, onReject, onGive, on
   const done = it.status === 'applied';
   const needsContent = it.status === 'needs_content';
   const isDax = it.kind === 'set_dax';
+  // A format string is shown the way people read it: no backslashes (hero19 D10).
+  const isFormat = it.kind === 'set_format_string';
+  const shown = (text: string) => (isFormat ? readableFormat(text) : text);
   // Words typed for this line stay on it when another writer filled it (or it was applied): the box is kept with them, and the value now there is named (R-B).
   const typed = draft.trim();
   const filledUnder = !needsContent && !!typed && it.after?.trim() !== typed;
@@ -304,7 +313,7 @@ export function Row({ it, draft, onDraft, onToggle, onSave, onReject, onGive, on
       <div className="min-w-0 flex-1 sem-row-line">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-(length:--sem-text-label) px-2 py-0 rounded shrink-0" style={{ background: 'var(--sem-surface-2)', color: risk.color }}>{risk.label}</span>
-          <span className="text-xs font-medium truncate">{it.title}</span>
+          <span className="text-xs font-medium truncate">{plainRuleName(isFormat ? readableFormat(it.title) : it.title)}</span>
           <span className="text-(length:--sem-text-label) truncate" style={{ color: 'var(--sem-muted)' }}>· {it.objectName}</span>
           {/* The status colour is the dot; the word stays in the text colour, so it reads at 4.5:1 in every theme. */}
           <span className="ml-auto text-(length:--sem-text-label) px-2 py-0 rounded shrink-0 xe-dot" style={{ '--xe-dot': st.color, background: 'var(--sem-surface-2)' } as React.CSSProperties}>{st.label}</span>
@@ -312,14 +321,14 @@ export function Row({ it, draft, onDraft, onToggle, onSave, onReject, onGive, on
 
         {/* before → after diff */}
         <div className="mt-1 text-(length:--sem-text-label) flex items-start gap-2 flex-wrap" style={{ fontFamily: isDax ? 'var(--vscode-editor-font-family, monospace)' : undefined }}>
-          {it.before != null && <span className="px-1 rounded" style={{ background: 'var(--sem-wash-bad)', color: 'var(--sem-fg)', textDecoration: it.after != null ? 'line-through' : undefined }}>{trunc(it.before)}</span>}
+          {it.before != null && <span className="px-1 rounded" style={{ background: 'var(--sem-wash-bad)', color: 'var(--sem-fg)', textDecoration: it.after != null ? 'line-through' : undefined }}>{trunc(shown(it.before))}</span>}
           {it.after != null
-            ? <><span style={{ color: 'var(--sem-muted)' }}>→</span><span className="px-1 rounded" style={{ background: 'var(--sem-wash-good)', color: 'var(--sem-fg)' }}>{trunc(it.after)}</span></>
+            ? <><span style={{ color: 'var(--sem-muted)' }}>→</span><span className="px-1 rounded" style={{ background: 'var(--sem-wash-good)', color: 'var(--sem-fg)' }}>{trunc(shown(it.after))}</span></>
             : <span>→ (awaiting authored value)</span>}
         </div>
 
         {it.suggestion && it.checkText && <div className="text-(length:--sem-text-label) mt-1 xe-dot xe-dot-warn" data-testid={`pending-suggestion-note-${it.id}`}>{it.checkText}</div>}
-        {it.note && <div className={'text-(length:--sem-text-label) mt-1 xe-dot ' + (it.status === 'failed' ? 'xe-dot-bad' : 'xe-dot-warn')}>{it.note}</div>}
+        {rowNote(it.status, it.note) && <div className={'text-(length:--sem-text-label) mt-1 xe-dot ' + (it.status === 'failed' ? 'xe-dot-bad' : 'xe-dot-warn')}>{rowNote(it.status, it.note)}</div>}
         {it.verifyState === 'verified' && <div className="text-(length:--sem-text-label) mt-1 xe-dot xe-dot-good">verified equivalent ✓</div>}
 
         {/* AI content authoring */}

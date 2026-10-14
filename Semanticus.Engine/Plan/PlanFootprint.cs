@@ -182,6 +182,8 @@ namespace Semanticus.Engine
         // ---- the facets ---------------------------------------------------------------------------------------
 
         public const string Objects = "model:objects";
+        /// <summary>The model's compatibility level. "Raise compatibility level" writes it; a calendar needs it high enough, so the calendar row reads it.</summary>
+        public const string Compat = "model:compat";
         public const string Revision = "model:revision";
         public const string DateTable = "model:date-table";
         public const string Culture = "model:culture";
@@ -369,6 +371,20 @@ namespace Semanticus.Engine
                 // it is then, so a row that goes ahead of it changes only what the optional row will offer.
                 var optionalLed = rows[j].Fp.Optional != rows[i].Fp.Optional;
                 if (optionalLed) first = rows[i].Fp.Optional;
+                // An optional row that the assistant does (the cleanup, since 13 Oct) never waits for the person's row either: a person's row
+                // holds up no automated row, and nothing may wait for the optional one, so the pair is simply not ordered.
+                if (optionalLed && doers != null)
+                {
+                    var optionalRow = rows[i].Fp.Optional ? rows[i] : rows[j];
+                    var otherRow = rows[i].Fp.Optional ? rows[j] : rows[i];
+                    if (doers.TryGetValue(otherRow.Id, out var otherDoer) && string.Equals(otherDoer, PlanDoers.You, StringComparison.Ordinal)
+                        && doers.TryGetValue(optionalRow.Id, out var optionalDoer) && !string.Equals(optionalDoer, PlanDoers.You, StringComparison.Ordinal))
+                        continue;
+                }
+                // LOOKING AT THE REPORTS AGAIN COMES LAST, whoever does it (Kane, 11 Oct 2026; the row is the assistant's since 13 Oct). Any
+                // change makes a report reading out of date, so it waits for what it conflicts with and nothing waits for it.
+                var recheckLed = IsRecheck(rows[j].Id) != IsRecheck(rows[i].Id);
+                if (recheckLed) first = IsRecheck(rows[i].Id);
                 // THE BEST-PRACTICE ROW IS THE LAST PASS (lane m11/plan-rows). Its fills are worked out on the model as
                 // the other rows leave it, so nothing ever waits for it, and it waits only for Semanticus's own rows,
                 // which Run the plan lands first. A person's or an assistant's row it shares an object with holds it
@@ -384,7 +400,7 @@ namespace Semanticus.Engine
                 edges[j].Add(i);
                 // Each feeds the other: plan order decided it, and the later row says so. Not when the task rule
                 // decided it, because then plan order did not.
-                if (ji && ij && !taskLed && !cleanupLed && !wordsLed && !optionalLed) mutual.Add(rows[i].Id);
+                if (ji && ij && !taskLed && !cleanupLed && !wordsLed && !optionalLed && !recheckLed) mutual.Add(rows[i].Id);
             }
 
             // Tarjan's strongly connected components, iteratively deep enough for any plan (a plan is tens of rows).
@@ -439,6 +455,8 @@ namespace Semanticus.Engine
             if (!string.Equals(doer, PlanDoers.Semanticus, StringComparison.Ordinal)) return false;
             return ObjectsIn(format.Fp.Writes).Any(o => other.Fp.Writes.Contains(o));
         }
+
+        private static bool IsRecheck(string id) => id != null && id.StartsWith("recheck/", StringComparison.Ordinal);
 
         private static bool IsJevFormatRow(string id) =>
             id != null && (id.StartsWith(JevFamily.ItemId(MeasuresFamily.Name, ""), StringComparison.Ordinal)
@@ -618,6 +636,7 @@ namespace Semanticus.Engine
                 ["datetable/"] = DateTableRow,
                 ["calendar/"] = CalendarRow,
                 ["starter/"] = Starter,
+                ["compat/"] = (_, lines, x) => LinesOrDeclared(lines, x, () => new Footprint().Write(Compat).Write(Revision)),   // a model-level setting, set by the assistant after the person's yes
                 ["target/"] = (_, _, _) => Footprint.Unknown(),   // an aim: words only, nothing the engine can name
                 [LocalEngine.AssistantItemPrefix] = Assistant,
                 [JevFamily.ItemPrefix] = Jev,
@@ -995,6 +1014,8 @@ namespace Semanticus.Engine
         private static Footprint Proposal(string id, IReadOnlyList<ModelPlanChangeLine> lines, FootprintInputs x)
         {
             var family = id.Substring("proposal/".Length);
+            // The coverage rows are a brief for the assistant: any tool on any object, so they may create, rename or remove (the objects facet).
+            if (family.StartsWith("coverage-", StringComparison.Ordinal)) return LinesOrDeclared(lines, x, () => new Footprint().Write(Objects).Write(Revision).Read(Objects));   // a population row, so it holds nothing until chosen (Stamp)
             var findings = Live(x).Where(f => LocalEngine.IsProposalFinding(f) && x.ProposalFamily(f) == family).ToArray();
             var fp = LinesOrDeclared(lines, x, () =>
             {
@@ -1073,7 +1094,7 @@ namespace Semanticus.Engine
         /// <summary>Defining a calendar creates a model-level object and reads which table is marked.</summary>
         private static Footprint CalendarRow(string id, IReadOnlyList<ModelPlanChangeLine> lines, FootprintInputs x) =>
             LinesOrDeclared(lines, x, () => new Footprint().Write(Calendar).Write(Objects).Write(Revision))
-                .Read(DateTable).Read(Calendar).ReadAll(x.Model.MeasureRefs).Read(Objects);
+                .Read(DateTable).Read(Calendar).ReadAll(x.Model.MeasureRefs).Read(Objects).Read(Compat);
 
         /// <summary>The starter rule reads every column of its fact table (type, summary, format, key role), the
         /// relationships at it, and every measure (a column a measure already sums gets none; a name taken is

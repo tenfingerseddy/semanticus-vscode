@@ -42,3 +42,6 @@ Semanticus.VSCode/test/uishot-runtime.test.mjs	assert.equal(parseShellDirName('c
 tools/fulfillment/e2e/browser.mjs	const CHROMIUM = process.env.BILLING_E2E_CHROMIUM || '/usr/bin/chromium';
 Semanticus.Tests/PlanStatementCheck4FixTests.cs	private static readonly string[] EngineWords = { "introspection", "authMode", "tenant=", "tenantId", "token", "az default", "MCP", "parameter", "azcli", "AADSTS", "Azure.Identity", "Exception", "RootActivityId" };
 Semanticus.Tests/PlanStatementCheck4FixTests.cs	Assert.Contains("az login", message);
+# hero20 D8: these assert the product never tells the person to run it.
+Semanticus.Tests/NewModelPublishCreateTests.cs	Assert.DoesNotContain("az login", NewModelPublish.NoSignInSaved);
+Semanticus.Tests/NewModelPublishCreateTests.cs	Assert.DoesNotContain("az login", ex.Message, StringComparison.OrdinalIgnoreCase);

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import * as echarts from 'echarts';
 import 'echarts/theme/v5.js';
+import { neutralColor, onSeriesInk, paintColor, seriesColor, seriesVar, tokenColor, useThemeEpoch } from './chartpalette';
 
 // Test-only hook: the uishot interaction driver (tools/uishot/lineage-interact.mjs) needs the echarts namespace to
 // resolve a canvas chart instance (getInstanceByDom) and compute a graph node's on-screen pixel — so it can issue a
@@ -61,10 +62,13 @@ export function EChart({ option, height, className, onEvents, onChartReady }: {
 export interface VpaqColumn { table: string; column: string; totalSize: number; encoding: string; pctOfModel: number; dataSize?: number; dictionarySize?: number; hashIndexSize?: number; }
 export interface VpaqTable { name: string; size: number; rows: number | null; pctOfModel: number; columns?: number; }
 
-const ENCODING_COLOR: Record<string, string> = { Hash: '#7C8BA5', Value: '#36c98b', RLE: '#e0b341' };
+// How a column is stored: Value green, run-length blue, Hash purple (steps 1 to 3 of the chart palette, tokens.css). The encoding is also named in the table below the chart.
+const ENCODING_STEP: Record<string, number> = { Value: 0, RLE: 1, Hash: 2 };
 
 export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns: VpaqColumn[] }) {
-  const accent = cssVar('--sem-accent', '#2ED47A');
+  const theme = useThemeEpoch();
+  const accent = seriesColor(0);
+  const ink = onSeriesInk();
   const fg = cssVar('--sem-fg', '#ddd');
   const border = cssVar('--sem-bg', '#1e1e1e');
 
@@ -78,12 +82,12 @@ export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns:
       const children = cols.map((c) => ({
         name: c.column,
         value: c.totalSize,
-        itemStyle: { color: ENCODING_COLOR[c.encoding] ?? accent },
+        itemStyle: { color: c.encoding in ENCODING_STEP ? seriesColor(ENCODING_STEP[c.encoding]) : accent },
       }));
       // The DMV gives us only the biggest columns; show the remainder so table areas stay true-to-size.
       const other = Math.max(0, t.size - known);
       if (other > t.size * 0.02 && children.length > 0) {
-        children.push({ name: '(other columns)', value: other, itemStyle: { color: 'rgba(140,140,160,0.35)' } });
+        children.push({ name: '(other columns)', value: other, itemStyle: { color: neutralColor(0.55) } });
       }
       return { name: t.name, value: t.size, children: children.length ? children : undefined };
     });
@@ -102,8 +106,8 @@ export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns:
         type: 'treemap',
         roam: false,
         nodeClick: 'zoomToNode',
-        breadcrumb: { show: true, height: 22, bottom: 0, itemStyle: { color: accent, textStyle: { color: '#fff' } } },
-        label: { show: true, color: '#fff', fontSize: tokenPx('--sem-text-label'), overflow: 'truncate' },
+        breadcrumb: { show: true, height: 22, bottom: 0, itemStyle: { color: accent, textStyle: { color: ink } } },
+        label: { show: true, color: ink, fontSize: tokenPx('--sem-text-label'), overflow: 'truncate' },
         upperLabel: { show: true, height: 20, color: fg, fontSize: tokenPx('--sem-text-label') },
         itemStyle: { borderColor: border, borderWidth: 1, gapWidth: 1 },
         levels: [
@@ -113,19 +117,19 @@ export function VpaqTreemap({ tables, columns }: { tables: VpaqTable[]; columns:
         data,
       }],
     };
-  }, [tables, columns, accent, fg, border]);
+  }, [tables, columns, accent, ink, fg, border, theme]);
 
   return <EChart option={option} height={420} />;
 }
 
 // ---- VertiPaq ranked component bars ----------------------------------------------------------
 // The three storage components a column pays for. Same palette as the header composition cards so the
-// legend, the cards, and the bar segments read as one system. Fixed hex (like the treemap) — distinct
-// and legible in both light and dark themes.
-export const VPAQ_COMPONENT_COLORS = { data: '#3fa66d', dict: '#5b8ff9', hash: '#e0a53d' };
+// legend, the cards, and the bar segments read as one system: steps 1 to 3 of the chart palette (tokens.css), so
+// they follow the theme. A DOM key reads the var(); the chart paints the same step through paintColor.
+export const VPAQ_COMPONENT_COLORS = { data: seriesVar(0), dict: seriesVar(1), hash: seriesVar(2) };
 // The neutral remainder shade for a table bar's bytes NOT covered by the scanned columns' component split —
 // the table total is exact but the split is partial, and the gap must be visible, never silently absorbed.
-export const VPAQ_UNATTRIBUTED_COLOR = 'rgba(140,140,160,0.45)';
+export const VPAQ_UNATTRIBUTED_COLOR = 'var(--sem-series-neutral)';
 
 export interface VpaqBarItem {
   ref: string; label: string; sublabel?: string;
@@ -145,7 +149,9 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
   const fg = cssVar('--sem-fg', '#ddd');
   const border = cssVar('--sem-border', 'rgba(140,140,160,0.22)');
   const rows = useMemo(() => items.slice(0, 12), [items]);
-  const C = VPAQ_COMPONENT_COLORS;
+  const theme = useThemeEpoch();
+  const C = { data: paintColor(VPAQ_COMPONENT_COLORS.data, '#3CC08F'), dict: paintColor(VPAQ_COMPONENT_COLORS.dict, '#59A4F9'), hash: paintColor(VPAQ_COMPONENT_COLORS.hash, '#B180D7') };
+  const unattributed = paintColor(VPAQ_UNATTRIBUTED_COLOR, '#8C8CA0');
 
   const option = useMemo<echarts.EChartsCoreOption>(() => {
     const fmt = (b: number) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1024).toFixed(0) + ' KB');
@@ -155,7 +161,7 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
     });
     const hasUnattributed = rows.some((r) => (r.unattributed ?? 0) > 0);
     const series = [seg('Data', C.data, (r) => r.data), seg('Dictionary', C.dict, (r) => r.dict), seg('Hash indexes', C.hash, (r) => r.hash)];
-    if (hasUnattributed) series.push(seg('Unattributed', VPAQ_UNATTRIBUTED_COLOR, (r) => r.unattributed ?? 0));
+    if (hasUnattributed) series.push(seg('Unattributed', unattributed, (r) => r.unattributed ?? 0));
     return {
       grid: { left: 4, right: 64, top: 6, bottom: 6, containLabel: true },
       tooltip: {
@@ -164,7 +170,7 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
           const it = rows[ps?.[0]?.dataIndex ?? 0]; if (!it) return '';
           const sub = it.sublabel ? ` <span style="opacity:.65">${esc(it.sublabel)}</span>` : '';
           const rem = (it.unattributed ?? 0) > 0
-            ? `<br/><span style="color:${VPAQ_UNATTRIBUTED_COLOR}">■</span> Unattributed ${fmt(it.unattributed as number)} (not covered by the scanned columns)`
+            ? `<br/><span style="color:${unattributed}">■</span> Unattributed ${fmt(it.unattributed as number)} (not covered by the scanned columns)`
             : '';
           const shares = storageMode === 'directLake'
             ? `${fmt(it.total)} resident · ${it.pctModel}% of resident storage · ${it.pctTable}% of its table's resident storage`
@@ -185,7 +191,7 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
       },
       series,
     };
-  }, [rows, storageMode, muted, fg, border, C.data, C.dict, C.hash]);
+  }, [rows, storageMode, muted, fg, border, C.data, C.dict, C.hash, unattributed, theme]);
 
   const onEvents = useMemo(() => ({
     click: (p: any) => { const it = rows[p?.dataIndex]; if (it) onSelect?.(it.ref); },
@@ -196,7 +202,8 @@ export function VpaqComponentBars({ items, storageMode = 'unknown', onSelect }: 
 
 // ---- DAX benchmark bars ---------------------------------------------------------------------
 export function BenchBars({ runsMs }: { runsMs: number[] }) {
-  const accent = cssVar('--sem-accent', '#2ED47A');
+  useThemeEpoch();
+  const accent = seriesColor(0);
   const muted = cssVar('--sem-muted', '#9aa0aa');
   const border = cssVar('--sem-border', 'rgba(140,140,160,0.22)');
   const option = useMemo<echarts.EChartsCoreOption>(() => ({
@@ -211,7 +218,9 @@ export function BenchBars({ runsMs }: { runsMs: number[] }) {
 
 // ---- Readiness trend sparkline --------------------------------------------------------------
 export function Sparkline({ values, height = 40 }: { values: number[]; height?: number }) {
-  const accent = cssVar('--sem-accent', '#2ED47A');
+  useThemeEpoch();
+  const accent = seriesColor(0);
+  const wash = tokenColor('--sem-series-1', 'rgb(60, 192, 143)', 0.2);
   const option = useMemo<echarts.EChartsCoreOption>(() => ({
     grid: { left: 2, right: 2, top: 4, bottom: 2 },
     xAxis: { type: 'category', show: false, data: values.map((_, i) => i) },
@@ -220,8 +229,8 @@ export function Sparkline({ values, height = 40 }: { values: number[]; height?: 
     series: [{
       type: 'line', data: values, smooth: true, symbol: 'none',
       lineStyle: { color: accent, width: 2 },
-      areaStyle: { color: 'rgba(46,212,122,0.20)' }, // Signal-green wash at --sem-accent-soft's dark-theme weight (20%); was the pre-rebrand purple
+      areaStyle: { color: wash }, // the line's own green at 20%
     }],
-  }), [values, accent]);
+  }), [values, accent, wash]);
   return <EChart option={option} height={height} />;
 }

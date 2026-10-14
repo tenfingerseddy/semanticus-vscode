@@ -822,6 +822,7 @@ namespace Semanticus.Engine
         public int Cultures { get; set; }            // linguistic schema (synonyms + AI instructions)
         public int Partitions { get; set; }          // partition source expressions (M / calc-table DAX / legacy query)
         public int NamedExpressions { get; set; }    // shared M expressions / parameters
+        public int Roles { get; set; }               // roles created or changed (permission, members, RLS filters, column permissions); a role delete counts under Deleted
         public int CalcGroup { get; set; }           // calc-group Precedence + calc-item Ordinal changes — the calc-only props with no generic bucket (calc-item description/expression/format count under the generic buckets)
         public int Metadata { get; set; }            // model/table/column/measure metadata (annotations, detail rows, calc-group selection expressions)
         public int SortBy { get; set; }              // SortByColumn set/changed/cleared on a matched column (answer-affecting: it re-orders a visual's axis) — bound to the LIVE sort-key column
@@ -848,6 +849,8 @@ namespace Semanticus.Engine
         public string ConfirmToken { get; set; }                                // preview token a commit must echo; binds session, destination, and change set
         public string ChangeFingerprint { get; set; }                           // hash of each change's before and after; binds the live token to what was reviewed
         public string RestorePointId { get; set; }                              // the pre-write snapshot this live commit can be rolled back to
+        public DeployStep[] Steps { get; set; } = System.Array.Empty<DeployStep>();   // each step of this call with its time, so the assistant can say where the time went
+        public string Timing { get; set; }                                      // the same steps as one plain line
     }
 
     public sealed class SafeFixResult
@@ -1595,6 +1598,41 @@ namespace Semanticus.Engine
         public StudioNote[] Notes { get; set; }
         public StudioSuggestion Suggestion { get; set; }
         public StudioAnswer Answer { get; set; }    // the assistant's latest data answer for this session, for an Ask page that mounts after it
+    }
+
+    /// <summary>The Next line (1.5, option A): the one next step the Studio shows under the driver bar on every page, and where the
+    /// person is on the seven-part journey. Read by getNextStep / get_next_step; broadcast as <c>studio/nextStep</c> only when it changes.
+    /// Built by LocalEngine.NextStep.cs from the engine's own state; the words come from a fixed table (NextStepRules), never from Jev.</summary>
+    public sealed class NextStepView
+    {
+        public string Id { get; set; }            // "ns-" + 12 hex of (kind, ask, stage); the same state gives the same id
+        public bool On { get; set; }              // false when the person turned Suggestions off (then Step is null)
+        public int Stage { get; set; }            // 1..7
+        public string StageName { get; set; }
+        public NextStepStep Step { get; set; }    // null when off, no model, hidden, or nothing to suggest
+        public bool Hidden { get; set; }          // the current step was hidden with x
+    }
+
+    /// <summary>One suggested step. <see cref="Kind"/> is the rule id ("save", "workflow", "run-plan", "run-checks",
+    /// "check-then-publish", "publish-test", "publish-production", "keep-healthy", or "assistant" for Claude's suggest_next).</summary>
+    public sealed class NextStepStep
+    {
+        public string Kind { get; set; }
+        public string Lead { get; set; }
+        public string Ask { get; set; }
+        public string Why { get; set; }
+        public string Source { get; set; }
+        public string ChosenBy { get; set; }      // "rules" | "jev" | "assistant"
+        public string Prompt { get; set; }        // what "Ask your assistant" puts on the assistant queue
+        public NextStepDoIt DoIt { get; set; }    // null when Semanticus cannot do it alone
+    }
+
+    /// <summary>What "Do it" runs: op is "save" | "run_checks" | "draft_workflow"; done is the line shown after.</summary>
+    public sealed class NextStepDoIt
+    {
+        public string Op { get; set; }
+        public string Label { get; set; }
+        public string Done { get; set; }
     }
 
     /// <summary>One assistant tool call began. Broadcast as <c>assistant/call</c> so the Studio can tell a new prompt from the work

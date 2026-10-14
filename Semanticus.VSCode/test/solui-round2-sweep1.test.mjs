@@ -137,6 +137,17 @@ test('2b. the open row stays on the list while it is open: pushed past the cap o
   // A row of yours that is open and past the list goes back to the fold, where its group is.
   const mine = task({ id: 'pt-y' });
   assert.deepEqual(R.withOpenRow(work, [a, mine], 'pt-y').onlyYou.map((r) => r.id), ['pt-y']);
+  // The calm Plan page (1.5) groups by who and caps a group at 10 with Show all. The open row must still stay: past the cap, under a filter that does not match it, and done by the assistant.
+  const calm = planRowPage().pg.load('plan-calm-model.ts');
+  const many = Array.from({ length: 14 }, (_, i) => task({ id: `pt-${i}`, title: `Row ${'abcdefghijklmn'[i]}`, doer: 'assistant' }));
+  assert.deepEqual(calm.capRows(many, false, 'pt-12').map((r) => r.id), [...many.slice(0, 10).map((r) => r.id), 'pt-12'], 'an open row past the cap is drawn');
+  assert.equal(calm.capRows(many, false, null).length, 10);
+  assert.equal(calm.capRows(many, true, null).length, 14, 'Show all draws every row');
+  assert.deepEqual(calm.filterRows(many, 'Row d', 'all', 'pt-12').map((r) => r.id), ['pt-3', 'pt-12'], 'a filter that does not match the open row still leaves it');
+  assert.deepEqual(calm.filterRows(many, 'Row d', 'all').map((r) => r.id), ['pt-3']);
+  const doneByAssistant = task({ id: 'pt-d', doer: 'assistant', stateWord: 'done' });
+  assert.deepEqual(calm.calmRows([many[0], doneByAssistant], new Set(), 'pt-d').map((r) => r.id), ['pt-0', 'pt-d'], 'a row done by the assistant stays while it is open');
+  assert.deepEqual(calm.calmRows([many[0], doneByAssistant], new Set(), null).map((r) => r.id), ['pt-0'], 'and goes when it is closed');
   assert.match(src('plan.tsx'), /withOpenRow\(/, 'the Plan draws the list through it');
   assert.match(src('plan.tsx'), /<PlanRowWordsKept /, 'the Plan names words kept for a row that is gone');
 });
@@ -231,6 +242,7 @@ function optimizePage(world) {
   const pg = makePage({
     './bridge': bridgeOf(disk, { rpc: async (m) => (m === 'getPlan' ? structuredClone(world.plan) : null), onPlanChange: (f) => { world.listeners.push(f); return () => undefined; } }),
     './sendtask': { GiveToAssistant: () => null, slotTask: () => ({}) }, './copy': { uiLabel: (s) => s },
+    './personality/motion': { BulkCount: () => null },   // the count animation is a folder of its own now (context, bridge); the Author box does not need it
   }, MODEL);
   return { pg, O: pg.load('optimize.tsx') };
 }

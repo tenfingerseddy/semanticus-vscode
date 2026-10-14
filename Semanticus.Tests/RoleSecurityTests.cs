@@ -217,6 +217,26 @@ namespace Semanticus.Tests
             }
         }
 
+        // Found live (12 Oct): AddExternalMember(name) landed "AzureAD" in memberId and left identityProvider "default",
+        // so Power BI refused the member ("invalid identity provider 'default'"). A new member names AzureAD as its provider.
+        [Fact]
+        public async Task A_new_member_names_AzureAD_as_its_identity_provider()
+        {
+            var (engine, sessions) = await NewModelAsync();
+            using (engine)
+            {
+                await engine.CreateRoleAsync("UAT Members", "Read", "human");
+                await engine.SetRoleMemberAsync("UAT Members", "alex@contoso.com", true, "human");
+                var (provider, id) = await sessions.Current.ReadAsync(m =>
+                {
+                    var mem = (TabularEditor.TOMWrapper.ExternalModelRoleMember)m.Roles["UAT Members"].Members.Single();
+                    return (mem.IdentityProvider, mem.MemberID);
+                });
+                Assert.Equal("AzureAD", provider);
+                Assert.True(string.IsNullOrEmpty(id), "the server assigns the member id");
+            }
+        }
+
         [Fact]
         public async Task Duplicate_member_is_reported_and_does_not_advance_revision()
         {

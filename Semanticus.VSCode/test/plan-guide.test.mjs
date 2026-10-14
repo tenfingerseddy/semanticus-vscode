@@ -66,26 +66,25 @@ const H = load(join(webview, 'src', 'help.tsx'));
 // 1. The six steps, anchored to real parts of the Plan, in the mockup's words.
 // ===================================================================================================
 assert.equal(G.PLAN_TOUR.length, 6, 'the tour is six steps');
-assert.deepEqual(G.PLAN_TOUR.map((s) => s.anchor[0]), ['strip', 'row', 'doer', 'field', 'queue-switch', 'history-row'],
-  'anchored, in order, to the strip, a row, a row\'s doer, the field, the queue switch and a History row');
+assert.deepEqual(G.PLAN_TOUR.map((s) => s.anchor[0]), ['head', 'row', 'row', 'field', 'drive-switch', 'history-row'],
+  'anchored, in order, to the header, a row, a row, the field, the drive switch and a History row');
 assert.deepEqual(G.PLAN_TOUR.map((s) => s.title), [
-  'The work on your model', 'Every row answers three questions', 'How Semanticus works', 'Add your own',
+  'The work on your model', 'Every row is one task', 'How Semanticus works', 'Add your own',
   "Your assistant's tasks", 'What changed, and Undo',
 ]);
-assert.equal(G.PLAN_TOUR[3].body, 'Describe a task or an aim in your own words. It becomes a task. Hand it to your assistant, or do it yourself.');
+assert.equal(G.PLAN_TOUR[3].body, 'Add a task in your own words. Hand it to your assistant, or do it yourself.');
 assert.equal(G.PLAN_TOUR[5].view, 'history', 'the last step opens History, where its anchor is');
 assert.ok(G.PLAN_TOUR[5].anchor.includes('history'), 'and falls back to the History switch when no row has drawn yet');
 assert.equal(G.PLAN_TOUR[2].how, true, 'step three is the four-line how it works');
-assert.equal(G.WHAT_CHANGED_CARD_ID, 'm11-1', 'the card id is a content id, not the package version');
-assert.deepEqual(G.WHAT_CHANGED['m11-1'].lines, [
-  'The Plan is now where you start. The Overview is gone.',
-  'Edit History moved into the Plan. Open History at the top.',
-  'Workflow runs show as tasks in the Plan.',
-  "One switch pauses your assistant's tasks.",
-  'Connections are on one page, with a SQL endpoint for each model.',
-  'Workflows is one page. With Pro, a workflow you describe in words becomes steps.',
-  'With Pro, Ask your data, under Explore, answers a question about your numbers. If it can be read two ways, it names the other.',
-  'With Pro, Jev picks column formats and base measures, and chooses what Copilot sees.',
+assert.equal(G.WHAT_CHANGED_CARD_ID, 'm15-1', 'the card id is a content id, not the package version');
+assert.deepEqual(G.WHAT_CHANGED['m15-1'].lines, [
+  'The Plan is calmer. One header line holds the grade figures, the live slot and Run the plan.',
+  'Run one task on its own, with one Undo.',
+  'Lineage Graph opens in about half a second on a big model.',
+  'Try Pro free for 30 days. Open the Pro page and use your email.',
+  'Connect another assistant from the Your assistant menu.',
+  'You are blue, your assistant is purple and Semanticus is green, on every page.',
+  'Publish now sends role changes. Your yes in chat lets your assistant publish through a red check.',
 ]);
 assert.equal(Object.keys(G.WHAT_CHANGED).length, 1, 'one card per build');
 
@@ -154,7 +153,7 @@ at = G.placeTourCard({ left: 20, top: 90, right: 1160, bottom: 245 }, card, boun
 assert.deepEqual(at, { left: 20, top: 302 }, 'a step that names a block to clear sits 12 below the bottom of that block');
 at = G.placeTourCard({ left: 20, top: 90, right: 1160, bottom: 245 }, card, bounds, 'start', 100);
 assert.deepEqual(at, { left: 20, top: 263 }, 'a block above the anchor gap changes nothing');
-assert.deepEqual(G.PLAN_TOUR[0].clearOf, 'facts', 'step one clears the model summary line');
+assert.equal(G.PLAN_TOUR[0].clearOf, undefined, 'the model summary line is gone (1.5), so step one has no block to clear');
 // UAT-J9-S10a-006: the tour opened from History kept describing the work strip. Every step but the last lives in Work.
 assert.deepEqual(G.PLAN_TOUR.map((_, i) => G.tourView(i)), ['work', 'work', 'work', 'work', 'work', 'history']);
 assert.match(readFileSync(new URL('../webview/src/plan-guide.tsx', import.meta.url), 'utf8'), /if \(wantView === 'work'\) \{[^}]*onView\('work'\)/, 'a tour step in Work puts the page on Work, even when the tour was opened from History');

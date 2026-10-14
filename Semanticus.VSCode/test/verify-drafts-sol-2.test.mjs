@@ -94,13 +94,6 @@ test('tree Rename (F2): a name typed for A while B opens is not given to B\'s ob
   assert.deepEqual(w.engine.models['file:/m/B.bim'].measures, ['Amount'], `B's measure was renamed by a name typed on A (request sent: ${JSON.stringify(w.sent.at(-1))})`);
 });
 
-test('tree Delete: a delete confirmed for A while B opens does not delete B\'s object of the same name', async () => {
-  const w = world();
-  const { fn } = run('authorDelete', w, { showWarningMessage: async () => { w.switchToB(); return 'Delete'; } });   // the modal is open; meanwhile B opens
-  await fn(node, [node]);
-  assert.deepEqual(w.engine.models['file:/m/B.bim'].measures, ['Amount'], `B's measure was deleted by a Delete confirmed on A (request sent: ${JSON.stringify(w.sent.at(-1))})`);
-});
-
 test('tree Add Row-Level Filter: a filter typed for A while B opens is not written into B\'s role', async () => {
   const w = world();
   let asked = 0;
@@ -114,7 +107,7 @@ test('control: with no model switch each command writes on A as the person asked
   await run('renameCmd', w1, { showInputBox: async () => 'Revenue' }).fn(node);
   assert.deepEqual(w1.engine.models['file:/m/A.bim'].measures, ['Revenue']);
   const w2 = world();
-  await run('authorDelete', w2, { showWarningMessage: async () => 'Delete' }).fn(node, [node]);
+  await run('authorDelete', w2, { showWarningMessage: async () => { throw new Error('a delete asks nothing: undo is the safety net'); } }).fn(node, [node]);
   assert.deepEqual(w2.engine.models['file:/m/A.bim'].measures, []);
   const w3 = world();
   let asked = 0;

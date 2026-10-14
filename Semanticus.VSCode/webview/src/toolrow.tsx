@@ -225,7 +225,7 @@ export function anchorUnder(trigger: Element | null | undefined, popup: Element 
 // A group of controls folded behind one button. The popover is position:fixed and placed against the
 // button's own box, because the row clips horizontally (that is what stops a long row from pushing the page
 // sideways) and an absolutely-positioned popover inside it would be cut off at the row's edge.
-export function RowMenu({ label, title, badge, children, align = 'start', closeOnPick = false }: {
+export function RowMenu({ label, title, badge, children, align = 'start', closeOnPick = false, wide = false }: {
   label: string;
   /** Close once a button inside is pressed: a menu of one-shot actions (Arrange), not of toggles (Show) that a
    *  person flips several of in a row. Journey m11 F17: Arrange stayed open over the canvas after Expand all. */
@@ -234,6 +234,8 @@ export function RowMenu({ label, title, badge, children, align = 'start', closeO
   badge?: number;
   children: React.ReactNode;
   align?: 'start' | 'end';
+  /** A menu that holds lists (Filter): 300px wide instead of the 168px floor, so a list's labels are not cut. */
+  wide?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const btn = useRef<HTMLButtonElement>(null);
@@ -244,6 +246,20 @@ export function RowMenu({ label, title, badge, children, align = 'start', closeO
     if (!open) { setBox(null); return; }
     const placed = anchorUnder(btn.current, pop.current, align);
     if (placed) setBox(placed);
+  }, [open, align]);
+
+  // The row can move under an open menu (a view finishes drawing, a banner goes away): follow the button, so the menu
+  // never ends up beside it. One cheap rect read per frame, only while the menu is open.
+  useEffect(() => {
+    if (!open) return;
+    let raf = 0;
+    const follow = () => {
+      const placed = anchorUnder(btn.current, pop.current, align);
+      if (placed) setBox((b) => (b && Math.abs(b.left - placed.left) < 0.5 && Math.abs(b.top - placed.top) < 0.5 ? b : placed));
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
+    return () => cancelAnimationFrame(raf);
   }, [open, align]);
 
   useEffect(() => {
@@ -268,7 +284,7 @@ export function RowMenu({ label, title, badge, children, align = 'start', closeO
         <span aria-hidden style={{ opacity: 0.7 }}>▾</span>
       </button>
       {open && (
-        <div ref={pop} role="menu" aria-label={label} className="sem-rowmenu-pop"
+        <div ref={pop} role="menu" aria-label={label} className={wide ? 'sem-rowmenu-pop sem-rowmenu-pop-wide' : 'sem-rowmenu-pop'}
           style={box ? { left: box.left, top: box.top } : { left: -9999, top: -9999 }}
           onClick={closeOnPick ? (e) => { if ((e.target as Element).closest('button')) setOpen(false); } : undefined}>
           {children}

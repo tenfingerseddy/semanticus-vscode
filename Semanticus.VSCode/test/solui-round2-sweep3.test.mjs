@@ -261,7 +261,7 @@ test('site 6: a new column set keeps the open filter box with its typed value an
 function dataAgent(world) {
   const disk = makeDisk();
   const pg = makePage({}, MODEL);
-  const bridge = { rpc: world.rpc, copyText: () => undefined, loadState: disk.loadState, saveState: disk.saveState };
+  const bridge = { rpc: world.rpc, rpcPressed: (...a) => world.rpc(...a), copyText: () => undefined, loadState: disk.loadState, saveState: disk.saveState };
   const mod = loadOne(pg, 'dataagent.tsx', {
     './bridge': bridge, './hooks': { usePersistedState: (k, v) => pg.React.useState(v) }, './workflows': { Button: (x) => x },
     './pro': { useTier: () => 'pro', isEntitlementError: () => false, ProBadge: () => null, UpsellNotice: () => null },

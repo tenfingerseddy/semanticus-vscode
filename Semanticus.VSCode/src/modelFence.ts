@@ -21,6 +21,14 @@ import type { Message, MessageWriter, Event } from 'vscode-jsonrpc/node';
 export const MODEL_IDENTITY_MEMBER = 'modelIdentity';
 /** The wire name of the second member (the engine reads the same: RequestModelIdentity.StrictWireName). */
 export const NAMES_MODEL_MEMBER = 'namesModel';
+/** The wire name of the third member (the engine reads the same: SignInPress.WireName): `pressed: true` says a person pressed a button for this request, so a sign-in window may open for it. */
+export const PRESSED_MEMBER = 'pressed';
+
+const presses = new AsyncLocalStorage<boolean>();
+/** Run `send` (which must call `sendRequest` synchronously) as a person's press when `pressed` is true; the request it makes then carries `pressed: true`. Otherwise it is automatic. */
+export function withPress<T>(pressed: boolean, send: () => T): T {
+    return pressed ? presses.run(true, send) : send();
+}
 
 /** The sentence the engine refuses a write with when the model changed under it (ModelFence.Refusal): one text, so the person reads the same words wherever it is shown. */
 export const MODEL_REFUSAL = 'This page was showing another model than the one open now, so nothing was changed. Anything you typed is kept.';
@@ -91,6 +99,7 @@ export class FencedMessageWriter implements MessageWriter {
             m[NAMES_MODEL_MEMBER] = true;
             const named = actionModelIdentity();
             if (named) m[MODEL_IDENTITY_MEMBER] = named;
+            if (presses.getStore() === true) m[PRESSED_MEMBER] = true;
         }
         return this.inner.write(msg);
     }

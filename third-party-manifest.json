@@ -331,6 +331,23 @@
       "upstreamEquivalence": "nuget-version-pin"
     },
     {
+      "path": "System.Security.Cryptography.Pkcs",
+      "kind": "nuget",
+      "upstream": "dotnet/runtime",
+      "upstreamPath": "n/a (NuGet binary)",
+      "url": "https://github.com/dotnet/runtime",
+      "author": ".NET Foundation and Contributors",
+      "licence": "MIT",
+      "licenceVerified": true,
+      "version": "8.0.2",
+      "verifiedOn": "2026-10-14",
+      "evidence": "The shipped system.security.cryptography.pkcs.nuspec (8.0.2) declares <license type=\"expression\">MIT</license> and records repository https://github.com/dotnet/runtime commit b9a49e4a6d3a444a3685e318c74a7892d01873f7. The package carries its own LICENSE.TXT inside the .nupkg, read from there: The MIT License (MIT), Copyright (c) .NET Foundation and Contributors. That file is byte-identical (SHA-256 d7a68596ab69b06f..., 1139 bytes) to the one the five other dotnet/runtime packages carry, so the one reproduction in THIRD-PARTY-NOTICES.md covers it. The package was already in the payload as a transitive dependency of Microsoft.Data.SqlClient at 8.0.1; it is now a direct pin at 8.0.2 because 8.0.1 carries GHSA-846f-f764-76mx and GHSA-2fmv-rv2c-59x7.",
+      "header": false,
+      "headerWaiverReason": "NuGet binary. There is no source file in this tree to carry an attribution header.",
+      "noticeSection": ".NET runtime library packages (dotnet/runtime)",
+      "upstreamEquivalence": "nuget-version-pin"
+    },
+    {
       "path": "YamlDotNet",
       "kind": "nuget",
       "upstream": "aaubry/YamlDotNet",

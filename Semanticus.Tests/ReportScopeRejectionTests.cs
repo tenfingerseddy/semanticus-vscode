@@ -72,6 +72,7 @@ namespace Semanticus.Tests
                     var path = WriteReport(x.Root, "R1", table, "R1 Displayed");
 
                     // Model-only, it looks safe: nothing in the model references it.
+                    await x.Engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
                     Assert.Contains((await x.Engine.UnusedObjectsAsync()).Items, i => i.Ref == shown && i.Verdict == "safe");
 
                     // A report is CHOSEN and deliberately NOT checked. The protection was intended; it must not be
@@ -406,6 +407,7 @@ namespace Semanticus.Tests
                     var target = await x.Engine.CreateMeasureAsync("table:" + table, "B2 Target", "1", "human");
 
                     // Model-only it looks safe, and the report that would protect it is not chosen yet.
+                    await x.Engine.SetReportScopeAsync(System.Array.Empty<Semanticus.Engine.Lineage.ReportScopeChoice>(), "human");   // no reports: the sweep is report-aware over an empty set, so an unused measure is "safe" (with no report declared it is "caution")
                     Assert.Contains((await x.Engine.UnusedObjectsAsync()).Items, i => i.Ref == target && i.Verdict == "safe");
                     Assert.Equal(0, (await x.Engine.ListReportScopeAsync()).Listed);
 
